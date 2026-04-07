@@ -1,0 +1,6 @@
+{
+  "mcpServers": {
+    "aws-outlook-mcp": { "command": "aws-outlook-mcp", "env": { "MIDWAY_AUTH": "true" } },
+    "tickety": { "command": "tickety-aws-mcp" }
+  }
+}
