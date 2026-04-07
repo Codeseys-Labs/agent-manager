@@ -1,0 +1,49 @@
+model = "gpt-5.4"
+model_provider = "openai"
+approval_policy = "on-request"
+sandbox_mode = "workspace-write"
+personality = "pragmatic"
+web_search = "cached"
+model_reasoning_effort = "medium"
+
+[mcp_servers.context7]
+command = "npx"
+args = ["-y", "@upstash/context7-mcp"]
+env = { API_KEY = "test-key" }
+enabled = true
+startup_timeout_sec = 10
+tool_timeout_sec = 60
+enabled_tools = ["search", "summarize"]
+
+[mcp_servers.figma]
+url = "https://mcp.figma.com/mcp"
+bearer_token_env_var = "FIGMA_OAUTH_TOKEN"
+http_headers = { "X-Region" = "us-east-1" }
+enabled = true
+required = true
+startup_timeout_sec = 10
+tool_timeout_sec = 60
+enabled_tools = ["list_issues"]
+disabled_tools = ["delete_issue"]
+
+[mcp_servers.local-tool]
+command = "my-local-mcp"
+args = ["--port", "3000"]
+env_vars = ["MY_SECRET"]
+cwd = "/tmp/local-tool"
+enabled = false
+
+[profiles.deep-review]
+model = "gpt-5-pro"
+model_reasoning_effort = "high"
+approval_policy = "never"
+sandbox_mode = "read-only"
+
+[profiles.fast]
+model = "gpt-5.4"
+model_reasoning_effort = "low"
+service_tier = "fast"
+
+[agents]
+max_threads = 6
+max_depth = 1
