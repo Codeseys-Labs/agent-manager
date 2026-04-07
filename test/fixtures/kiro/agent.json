@@ -1,0 +1,15 @@
+{
+  "name": "code-reviewer",
+  "description": "Reviews code for quality and security issues",
+  "prompt": "You are a thorough code reviewer focused on security and best practices.",
+  "mcpServers": {
+    "git": {
+      "command": "git-mcp",
+      "args": ["--repo", "."]
+    }
+  },
+  "tools": ["read", "write", "@git"],
+  "allowedTools": ["read", "@git/git_status"],
+  "model": "claude-sonnet-4",
+  "welcomeMessage": "Ready to review code!"
+}

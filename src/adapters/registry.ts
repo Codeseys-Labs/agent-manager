@@ -15,6 +15,18 @@ const ADAPTER_FACTORIES: Record<string, AdapterFactory> = {
     const { codexCliAdapter } = await import("./codex-cli/index.ts");
     return codexCliAdapter;
   },
+  kiro: async () => {
+    const { kiroAdapter } = await import("./kiro/index.ts");
+    return kiroAdapter;
+  },
+  cursor: async () => {
+    const { cursorAdapter } = await import("./cursor/index.ts");
+    return cursorAdapter;
+  },
+  "kilo-code": async () => {
+    const { kiloCodeAdapter } = await import("./kilo-code/index.ts");
+    return kiloCodeAdapter;
+  },
 };
 
 const adapterCache = new Map<string, Adapter>();
