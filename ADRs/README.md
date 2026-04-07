@@ -17,11 +17,7 @@ This folder contains the architectural decisions for agent-manager.
 | [0009](0009-mcp-server-mode.md) | agent-manager as an MCP Server | Accepted | 2026-04-07 |
 | [0010](0010-bunts-single-binary.md) | BunTS Single Binary Distribution | Accepted | 2026-04-07 |
 
-## Pending
-
-| ADR | Title | Status | Depends On |
-|-----|-------|--------|------------|
-| 0011 | Adapter Packaging Strategy | Proposed | Research doc 12 |
+| [0011](0011-built-in-adapters.md) | Built-In Adapters with Subprocess Escape Hatch | Accepted | 2026-04-07 |
 
 ## Template
 

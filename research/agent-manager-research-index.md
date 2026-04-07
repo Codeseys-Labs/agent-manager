@@ -29,7 +29,7 @@ The investigation proceeded in four phases:
 2. **Patterns & Technology** (docs 02, 03, 05, 06, 07) — What design patterns and
    technology choices should we adopt?
 3. **Synthesis** (doc 08) — How does it all come together into a buildable architecture?
-4. **Deep Dives** (doc 11) — Focused research on specific design challenges (extensible schema patterns)
+4. **Deep Dives** (docs 11, 12) — Focused research on specific design challenges (extensible schema patterns, adapter packaging strategy)
 
 ---
 
@@ -47,6 +47,7 @@ The investigation proceeded in four phases:
 | 08 | [[08-agent-manager-architecture-design\|Architecture Design (Capstone)]] | `architecture`, `design` | Full synthesis: data model, TOML schema, CLI tree, git sync, config gen, TUI, web, roadmap |
 | 09 | [[09-adapter-architecture-patterns\|Adapter Architecture Patterns]] | `patterns/adapters`, `architecture` | 8 production systems (Terraform, VS Code, ESLint, Prettier, Docker, Backstage, Grafana, HA); 3 dominant patterns; recommended hybrid for agent-manager |
 | 11 | [[11-extensible-schema-patterns\|Extensible Schema Patterns]] | `patterns/schema`, `architecture` | 9 extensibility patterns (OpenAPI, Cargo, K8s CRDs, Zod, protobuf, GraphQL, VS Code); recommended `[adapters.*]` design |
+| 12 | [[12-adapter-packaging-strategy\|Adapter Packaging Strategy]] | `packaging/adapters`, `bun/compile` | Bun compile can't side-load; 7-system survey (Terraform, Caddy, Grafana, Telegraf, ESLint, Tauri); recommends built-in + subprocess escape hatch |
 
 ---
 
@@ -102,6 +103,7 @@ These are the most consequential recommendations from the research:
 | Adapter extensions | `[entity.adapters.<name>]` namespaced subtables (Cargo metadata pattern) | [[11-extensible-schema-patterns\|Doc 11]] |
 | Validation strategy | Two-phase: core validates core, adapters validate their sections (Zod) | [[11-extensible-schema-patterns\|Doc 11]] |
 | Unknown field handling | Tolerant Reader: warn on unknown core fields, preserve unknown adapter sections | [[11-extensible-schema-patterns\|Doc 11]] |
+| Adapter packaging | Built-in (compiled), config-gated activation, subprocess IPC escape hatch | [[12-adapter-packaging-strategy\|Doc 12]] |
 
 ---
 
@@ -164,7 +166,7 @@ graph TD
 
 ## Statistics
 
-- **Total documents:** 10
+- **Total documents:** 11
 - **Research phase:** 2026-04-07
 - **Tools surveyed:** 20+ MCP tools, 8 dotfile managers, 10 AI coding agents, 13 config systems, 6 TUI frameworks, 4 web frameworks
 - **Architecture entities:** 6 (Server, Skill, Plugin, Instruction, Profile, Agent)
