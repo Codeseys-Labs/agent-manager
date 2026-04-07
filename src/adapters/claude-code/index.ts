@@ -1,5 +1,17 @@
-import type { Adapter, Capability } from "../types.ts";
+import type {
+  Adapter,
+  Capability,
+  ImportOptions,
+  ImportResult,
+  ExportOptions,
+  ExportResult,
+  ResolvedConfig,
+  DiffResult,
+} from "../types.ts";
 import { detect } from "./detect.ts";
+import { importConfig } from "./import.ts";
+import { exportConfig } from "./export.ts";
+import { diffConfig } from "./diff.ts";
 import { claudeCodeSchema } from "./schema.ts";
 
 const CAPABILITIES: Capability[] = [
@@ -25,16 +37,16 @@ export const claudeCodeAdapter: Adapter = {
     return detect();
   },
 
-  import() {
-    throw new Error("claude-code adapter: import not implemented");
+  import(options: ImportOptions): ImportResult {
+    return importConfig(options);
   },
 
-  export() {
-    throw new Error("claude-code adapter: export not implemented");
+  export(config: ResolvedConfig, options: ExportOptions): ExportResult {
+    return exportConfig(config, options);
   },
 
-  diff() {
-    throw new Error("claude-code adapter: diff not implemented");
+  diff(config: ResolvedConfig): DiffResult {
+    return diffConfig(config);
   },
 
   schema: claudeCodeSchema,
