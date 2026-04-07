@@ -1,8 +1,8 @@
 # agent-manager Design Specification
 
-> **Version:** 0.1.0-draft
+> **Version:** 0.2.0
 > **Date:** 2026-04-07
-> **Status:** Approved for implementation
+> **Status:** Revised after Codex adversarial review
 >
 > chezmoi for AI agent configs — define your MCP servers, skills, and instructions
 > once in TOML, sync via git, and generate native configs for every AI coding tool.
@@ -74,21 +74,40 @@ supports profile-based subsets for context switching.
 │  diff()    │ diff()    │ diff()    │ diff()  │ diff() │         │
 ├────────────┴───────────┴───────────┴─────────┴────────┴─────────┤
 │                        Storage                                   │
-│  ~/.config/agent-manager/ (git repo)  │  SQLite (state.db)      │
-│  config.toml + instructions/ + skills/│  Drift cache, sync log  │
+│  ~/.config/agent-manager/ (git repo)  │  state.toml (local)     │
+│  config.toml + instructions/ + skills/│  Active profile, cache  │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
 ---
 
-## 3. Data Model — Core Schema
+## 3. Phase 1 Scope Fence
 
-### 8 Entity Types
+Phase 1 builds the minimum viable product. Everything else is designed but deferred.
+
+| In Phase 1 | Deferred |
+|------------|----------|
+| 4 core entities: Servers, Instructions, Skills, Profiles | Plugins, Agents, Permissions, Models (adapter-only until normalizable across 3+ tools) |
+| 1 adapter: Claude Code | Cursor (Phase 2), Windsurf, Copilot, etc. |
+| 11 CLI commands: init, add server, list servers, use, apply, status, import, push, pull, undo, log | profile create/delete, doctor, mcp-serve, config edit |
+| Git sync: init, commit, push, pull, revert | Encrypted secrets (Phase 2), batch mode |
+| Stateless drift detection | MCP server mode (Phase 3) |
+| macOS binary | Cross-platform (Phase 2), TUI (Phase 4), Web UI (Phase 5) |
+
+**Promotion criteria:** An entity moves from adapter-only to core when it can be
+meaningfully normalized across 3+ tools with defined lossiness rules.
+
+---
+
+## 4. Data Model — Core Schema
+
+### 4 Core Entity Types (Phase 1)
 
 Every entity supports an optional `[entity.adapters.<adapter-name>]` subtable for
-tool-specific extensions (ADR-0001).
+tool-specific extensions (ADR-0001). Plugins, Agents, Permissions, and Models live
+in adapter sections only until cross-tool normalization is proven.
 
-#### 3.1 Servers (MCP)
+#### 4.1 Servers (MCP) — Phase 1
 
 The most universal entity — identical JSON schema across 9/10 tools.
 
@@ -109,12 +128,16 @@ always_allow = ["email_search", "calendar_view"]
 always_allow = true
 ```
 
-#### 3.2 Instructions
+#### 4.2 Instructions — Phase 1
 
 Markdown content with semantic activation rules. Core captures intent; adapters
 translate to tool-specific formats.
 
+Instructions use **either** inline `content` or a `content_file` reference (mutually
+exclusive, enforced by Zod validation):
+
 ```toml
+# Short rules: inline content (under ~20 lines)
 [instructions.typescript-conventions]
 content = """
 Use strict TypeScript with no `any` types.
@@ -125,10 +148,22 @@ globs = ["**/*.ts", "**/*.tsx"]
 description = "TypeScript coding conventions"
 targets = ["claude-code", "cursor", "windsurf", "copilot"]
 
+# Long rules: file reference
+[instructions.code-review-checklist]
+content_file = "instructions/code-review-checklist.md"  # relative to config dir
+scope = "always"
+description = "Code review checklist"
+
 [instructions.typescript-conventions.adapters.cursor]
 format = "mdc"
 always_apply = false
 ```
+
+**`content` vs `content_file` rules:**
+- Mutually exclusive — Zod rejects both on the same instruction
+- `content_file` paths are relative to the config directory (`~/.config/agent-manager/`)
+- For project config, paths are relative to the project root
+- At resolution time, `content_file` is read and treated identically to inline `content`
 
 **Generated outputs per adapter:**
 
@@ -140,7 +175,7 @@ always_apply = false
 | Copilot | `.github/instructions/<name>.instructions.md` | Convert to Copilot frontmatter |
 | AGENTS.md-compatible | `AGENTS.md` (appended) | Universal fallback format |
 
-#### 3.3 Skills
+#### 4.3 Skills — Phase 1
 
 ```toml
 [skills.research-rabbithole]
@@ -152,62 +187,37 @@ tags = ["research"]
 trigger = "/research-rabbithole"
 ```
 
-#### 3.4 Plugins
+#### 4.4 Adapter-Only Entities (deferred from core)
+
+These entities exist only in `[adapters.<name>]` sections until proven normalizable
+across 3+ tools:
 
 ```toml
-[plugins.superpowers]
-source = "registry"
-version = "latest"
-description = "Enhanced workflow patterns"
-tags = ["workflow"]
-```
+# Plugins — only Claude Code has a real plugin system
+[adapters.claude-code]
+plugins = ["superpowers"]
 
-#### 3.5 Agents (Subagents)
-
-```toml
-[agents.code-reviewer]
-model = "sonnet"
-description = "Reviews code for bugs and style"
-instructions = "instructions/code-review.md"
-tools = ["Read", "Grep", "Glob", "Bash"]
-
-[agents.code-reviewer.adapters.claude-code]
-subagent_type = "feature-dev:code-reviewer"
-
-[agents.code-reviewer.adapters.roo-code]
-mode = "code-review"
-```
-
-#### 3.6 Permissions
-
-```toml
-[permissions]
-allow = ["Read", "Glob", "Grep", "Bash(git *)"]
-ask = ["Write", "Edit", "Bash"]
-deny = ["Write(.env)", "Bash(rm -rf *)"]
-
-[permissions.adapters.claude-code]
+# Permissions — radically different shapes per tool
+[adapters.claude-code]
 permission_mode = "allowEdits"
 
-[permissions.adapters.cline]
+[adapters.cline]
 always_allow_read = true
-auto_approve_max_requests = 20
-```
 
-#### 3.7 Models
-
-```toml
-[models]
-primary = "claude-sonnet-4"
-fast = "claude-haiku-4-5"
-planning = "claude-opus-4"
-
-[models.adapters.claude-code]
-ANTHROPIC_MODEL = "global.anthropic.claude-sonnet-4-6-v1"
+# Models — env vars vs UI vs structured config
+[adapters.claude-code]
+model = "opus[1m]"
 ANTHROPIC_SMALL_FAST_MODEL = "global.anthropic.claude-haiku-4-5-20251001-v1:0"
+
+# Agents/subagents — only Claude Code and Roo Code
+[adapters.claude-code.agents.code-reviewer]
+subagent_type = "feature-dev:code-reviewer"
+
+[adapters.roo-code.modes.code-review]
+tools = ["Read", "Grep", "Glob"]
 ```
 
-#### 3.8 Profiles
+#### 4.5 Profiles — Phase 1
 
 ```toml
 [profiles.base]
@@ -232,7 +242,7 @@ AWS_PROFILE = "work-sso"
 
 ---
 
-## 4. Hierarchical Config (ADR-0003)
+## 5. Hierarchical Config (ADR-0003)
 
 ### Two Layers + Local Overrides
 
@@ -245,7 +255,7 @@ AWS_PROFILE = "work-sso"
   secrets.age              # Encrypted secrets (git-tracked)
   .agent-manager/
     key.txt                # age identity (gitignored)
-    state.db               # SQLite state (gitignored)
+    state.toml             # active profile, last-apply time (gitignored)
 
 <repo>/
   .agent-manager.toml      # Project config (version-controlled in repo)
@@ -275,6 +285,47 @@ CLI flags (--profile, --config key=val)
 | Env vars | Key-level override | Project overrides per-key |
 | Adapter sections | Deep merge | Project adapter config merges into global |
 
+### Merge Semantics
+
+**Scalars (strings, numbers, booleans):** Higher-precedence layer wins completely.
+
+**Arrays (servers, skills lists):** Union, deduped by value. Child adds to parent.
+Explicit removal: use `enabled = false` in server definition, not array subtraction.
+
+**Tables (settings, env):** Shallow merge. Each key from higher layer replaces same
+key from lower layer. Keys not present in higher layer are inherited. To remove a
+key: set it to empty string `""`.
+
+**Adapter sections:** Core preserves them as-is (passthrough). Adapter receives all
+layers and merges them with its own logic. Core does NOT deep-merge adapter sections.
+
+**Generated files (CLAUDE.md, .mdc):** Fully regenerated on each `am apply`. No
+merge, no preservation of hand-edits. Hand-edits detected by `am status` as drift.
+
+### Secret Resolution Pipeline
+
+Resolution order (highest priority wins):
+
+```
+1. CLI flags (--config key=value)
+2. Environment variables (process env at am apply time)
+3. config.local.toml values
+4. secrets.age decrypted values (Phase 2)
+5. Profile [env] section values
+6. config.toml literal values
+7. .agent-manager.local.toml values
+8. .agent-manager.toml values
+```
+
+**Interpolation rules:**
+- Syntax: `${VAR_NAME}` (dollar-brace only)
+- Escaping: `$${VAR_NAME}` produces literal `${VAR_NAME}`
+- Interpolation happens at `am apply` time, NOT tool runtime
+- Unresolved variables: warn and leave as-is (tool may resolve)
+- `am apply --strict` fails on unresolved variables (for CI/CD)
+
+**Phase 1:** Supports levels 1, 2, 3, 5, 6, 7, 8. Secrets.age (level 4) deferred to Phase 2.
+
 ### Project Config Example
 
 ```toml
@@ -299,16 +350,31 @@ command = "scripts/board-sync-check.sh"
 
 ---
 
-## 5. Git-Backed Everything (ADR-0002)
+## 6. Git-Backed Everything (ADR-0002)
 
-The config directory IS a git repository. Every mutation commits automatically.
+The config directory IS a git repository. Durable config changes commit automatically.
+Ephemeral state (active profile) does not.
 
-### Automatic Commits
+### State Categories
+
+| Category | Examples | Storage | Committed? |
+|----------|----------|---------|------------|
+| Durable config | Server defs, profiles, instructions | config.toml | Yes (auto-commit) |
+| Active state | Current profile, last-applied time | .agent-manager/state.toml | No (gitignored) |
+| Ephemeral | --profile flag, --config overrides | In-memory | No |
+
+**Key distinction:** `am use <profile>` changes active state in `state.toml`, NOT
+`config.toml`. It does not create a commit. Only `am add`, `am remove`, `am import`,
+and `am config edit` modify config.toml and create commits.
+
+The `default_profile` in config.toml IS committed (the intended default). `am use`
+overrides it locally without modifying it.
+
+### Automatic Commits (durable changes only)
 
 | Action | Commit Message |
 |--------|---------------|
 | `am add server tavily ...` | `add server: tavily (search, web)` |
-| `am use research` | `switch profile: work -> research` |
 | `am import claude-code` | `import: claude-code (15 servers, 2 skills)` |
 | `am remove server old-mcp` | `remove server: old-mcp` |
 
@@ -329,12 +395,12 @@ am clone <url>          # clone config repo + auto-apply
 |-------------|------------|
 | `config.toml` | `config.local.toml` |
 | `instructions/`, `skills/` | `.agent-manager/key.txt` (age key) |
-| `secrets.age` (encrypted) | `.agent-manager/state.db` |
+| `secrets.age` (encrypted) | `.agent-manager/state.toml` |
 | `.agent-manager.toml` (project) | `.agent-manager.local.toml` |
 
 ---
 
-## 6. Adapter System (ADRs 0005, 0011)
+## 7. Adapter System (ADRs 0005, 0011)
 
 ### Adapter Interface
 
@@ -397,16 +463,54 @@ native config files          resolved TOML config
           compares resolved vs native
 ```
 
-### Import Reconciliation
+### Server Identity Resolution (Import)
 
-When importing from multiple tools, the importer:
-1. Matches servers by command (not name) to detect duplicates
-2. Prompts on conflicts (different versions, different names for same server)
-3. Preserves tool-specific config in `[adapters.<name>]` sections
+During import, servers are matched using a ranked signal chain:
+
+1. **Explicit name match** — same server name key across tools (highest confidence)
+2. **Package identity** — extract npm/pip package name from command+args:
+   - `npx -y tavily-mcp@latest` / `bunx tavily-mcp@latest` → `tavily-mcp`
+   - Strip `npx -y`, `bunx`, `uvx`, `pipx run` prefixes and `@version` suffixes
+3. **Endpoint identity** — for proxy-wrapped servers, extract upstream URL:
+   - `uvx mcp-proxy --endpoint https://mcp.exa.ai/sse` → `mcp.exa.ai`
+4. **Command basename** — last resort: `/usr/local/bin/aws-outlook-mcp` → `aws-outlook-mcp`
+
+| Match confidence | Behavior |
+|-----------------|----------|
+| Signal 1 or 2 | Auto-merge (prompt on field conflicts) |
+| Signal 3 | Suggest merge (user confirms) |
+| Signal 4 only | Warn of possible duplicate |
+| No match | New server |
+
+### Diff Model (Drift Detection)
+
+Drift detection uses **structural comparison**, not textual diff:
+
+1. Adapter parses native config into normalized object
+2. Deep-compare against resolved config object
+3. Normalization rules (applied before comparison):
+   - Sort object keys alphabetically
+   - Strip fields with default values
+   - Normalize paths (resolve `~`, remove trailing slashes)
+   - Treat null/missing as equivalent for optional fields
+
+```typescript
+interface DiffResult {
+  status: "in-sync" | "drifted" | "unmanaged";
+  changes: DiffChange[];
+}
+
+interface DiffChange {
+  entity: "server" | "instruction" | "skill" | "setting";
+  name: string;
+  type: "added-locally" | "removed-locally" | "modified" | "added-in-config";
+  details?: { field: string; expected: unknown; actual: unknown }[];
+}
+```
 
 ---
 
-## 7. Drift Detection (ADR-0006)
+## 8. Drift Detection (ADR-0006)
 
 ```bash
 $ am status
@@ -430,9 +534,14 @@ $ am status
 - `am apply --force` overrides drift detection
 - `am import <tool>` adopts native changes into config.toml
 
+**Enterprise/managed layer limitation:** agent-manager detects drift in user-writable
+config only. Enterprise-managed settings (Claude `managed-settings.json`, Cursor Team
+Rules, Windsurf system rules) are invisible to `am status`. The `am doctor` command
+warns if managed config files are detected.
+
 ---
 
-## 8. UX Design
+## 9. UX Design
 
 ### Zero-Config Start
 
@@ -480,12 +589,26 @@ MCP server mode (ADR-0009):
 }
 ```
 
-Exposes tools: `am_list_servers`, `am_add_server`, `am_use_profile`, `am_apply`,
-`am_status`, `am_import`, `am_sync_push`, `am_sync_pull`, `am_config_show`.
+**MCP Server Permission Model:**
+
+| Tier | Tools | Default |
+|------|-------|---------|
+| Read-only | am_list_servers, am_list_profiles, am_status, am_config_show | Always available |
+| Write-local | am_add_server, am_remove_server, am_use_profile, am_import | Available (undoable) |
+| Write-remote | am_apply, am_sync_push | Requires opt-in via config |
+
+```toml
+[settings.mcp_serve]
+allow_apply = true    # enables am_apply
+allow_push = false    # enables am_sync_push (off by default)
+```
+
+Self-referential loop prevention: `am_add_server` rejects adding a server with
+command `am` or `agent-manager`.
 
 ---
 
-## 9. CLI Command Tree
+## 10. CLI Command Tree
 
 ```
 am
@@ -544,7 +667,7 @@ am
 
 ---
 
-## 10. Validation (ADR-0007)
+## 11. Validation (ADR-0007)
 
 Two-phase Zod validation:
 
@@ -563,7 +686,7 @@ Two-phase Zod validation:
 
 ---
 
-## 11. Build & Distribution (ADR-0010)
+## 12. Build & Distribution (ADR-0010)
 
 ### Tech Stack
 
@@ -574,8 +697,8 @@ Two-phase Zod validation:
 | CLI framework | citty (command routing) + @clack/prompts (wizards) |
 | Config | @iarna/toml (parser) + Zod (validation) |
 | Git | isomorphic-git (default) + simple-git (when system git available) |
-| Encryption | age-encryption |
-| State | bun:sqlite |
+| Encryption | age-encryption (Phase 2) |
+| State | Flat TOML file (.agent-manager/state.toml) |
 
 ### Build Targets
 
@@ -599,20 +722,26 @@ Binary: `agent-manager` with `am` as symlink/alias.
 
 ---
 
-## 12. Implementation Roadmap
+## 13. Implementation Roadmap
 
 ### Phase 1: MVP — CLI + TOML + Git + Claude Code
+
+**Core entities:** Servers, Instructions, Skills, Profiles (4 only).
+**Adapter:** Claude Code only. **Platform:** macOS only.
 
 | Component | Description |
 |-----------|-------------|
 | Project scaffold | Bun + TypeScript + citty + Zod |
-| TOML engine | Read/write config.toml, profile resolution, merge rules |
+| TOML engine | Read/write config.toml, profile resolution, merge semantics |
 | Claude Code adapter | import + export + diff for ~/.claude.json, .mcp.json, CLAUDE.md |
 | Git layer | isomorphic-git: init, commit, push, pull, log, revert |
 | Import wizard | `am init` with auto-detect and @clack/prompts |
+| Diff engine | Structural comparison with normalization rules |
+| Secret interpolation | `${VAR}` resolution from env + config.local.toml (no age yet) |
 | Binary build | `bun build --compile` for macOS |
 
-**Deliverable:** `am init`, `am use <profile>`, `am apply`, `am status`, `am push/pull`
+**CLI (11 commands):** `am init`, `am add server`, `am list servers`, `am use`,
+`am apply`, `am status`, `am import claude-code`, `am push`, `am pull`, `am undo`, `am log`
 
 ### Phase 2: Multi-Adapter + Full Profiles
 
@@ -657,7 +786,7 @@ Binary: `agent-manager` with `am` as symlink/alias.
 
 ---
 
-## 13. Project Structure
+## 14. Project Structure
 
 ```
 agent-manager/
