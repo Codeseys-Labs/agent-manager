@@ -1,0 +1,6 @@
+[test]
+preload = []
+coverage = false
+
+[install]
+peer = false
