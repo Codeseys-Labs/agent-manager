@@ -10,7 +10,7 @@ updated: 2026-04-07
 
 > [!info] Purpose
 > This index catalogs the research conducted during the design phase of **agent-manager**
-> (`am`) — a unified configuration manager for AI coding agents. Eight documents cover
+> (`am`) — a unified configuration manager for AI coding agents. Nine documents cover
 > the full landscape from existing tools through architecture design.
 
 ---
@@ -22,13 +22,14 @@ MCP servers, skills, plugins, instructions, and settings across every major AI
 coding agent (Claude Code, Cursor, Windsurf, Copilot, Cline, Roo, Codex, Gemini CLI)
 with git-backed sync, profile inheritance, and both TUI and web interfaces?**
 
-The investigation proceeded in three phases:
+The investigation proceeded in four phases:
 
 1. **Landscape & Gaps** (docs 01, 04) — What exists today, what formats do tools use,
    and where are the gaps?
 2. **Patterns & Technology** (docs 02, 03, 05, 06, 07) — What design patterns and
    technology choices should we adopt?
 3. **Synthesis** (doc 08) — How does it all come together into a buildable architecture?
+4. **Deep Dives** (doc 11) — Focused research on specific design challenges (extensible schema patterns)
 
 ---
 
@@ -44,6 +45,8 @@ The investigation proceeded in three phases:
 | 06 | [[06-tui-frameworks-typescript-bun\|TUI Frameworks for TypeScript/Bun]] | `tools/tui`, `tools/typescript` | Silvery recommended (122x faster); citty for CLI; @clack/prompts for wizards |
 | 07 | [[07-browser-ui-git-oauth\|Browser UI & Git OAuth]] | `patterns/oauth`, `tools/web-ui` | Hono + Preact SPA; OAuth Device Flow; isomorphic-git; SSE; Grafana single-binary pattern |
 | 08 | [[08-agent-manager-architecture-design\|Architecture Design (Capstone)]] | `architecture`, `design` | Full synthesis: data model, TOML schema, CLI tree, git sync, config gen, TUI, web, roadmap |
+| 09 | [[09-adapter-architecture-patterns\|Adapter Architecture Patterns]] | `patterns/adapters`, `architecture` | 8 production systems (Terraform, VS Code, ESLint, Prettier, Docker, Backstage, Grafana, HA); 3 dominant patterns; recommended hybrid for agent-manager |
+| 11 | [[11-extensible-schema-patterns\|Extensible Schema Patterns]] | `patterns/schema`, `architecture` | 9 extensibility patterns (OpenAPI, Cargo, K8s CRDs, Zod, protobuf, GraphQL, VS Code); recommended `[adapters.*]` design |
 
 ---
 
@@ -96,6 +99,9 @@ These are the most consequential recommendations from the research:
 | Real-time updates | SSE over WebSocket | [[07-browser-ui-git-oauth\|Doc 07]] |
 | MCP config key | `mcpServers` (near-universal, VS Code uses `servers`) | [[04-agent-ide-config-format-survey\|Doc 04]] |
 | Merge semantics | Union merge for lists, key-level override for maps | [[05-toml-profile-configuration-design\|Doc 05]] |
+| Adapter extensions | `[entity.adapters.<name>]` namespaced subtables (Cargo metadata pattern) | [[11-extensible-schema-patterns\|Doc 11]] |
+| Validation strategy | Two-phase: core validates core, adapters validate their sections (Zod) | [[11-extensible-schema-patterns\|Doc 11]] |
+| Unknown field handling | Tolerant Reader: warn on unknown core fields, preserve unknown adapter sections | [[11-extensible-schema-patterns\|Doc 11]] |
 
 ---
 
@@ -158,7 +164,7 @@ graph TD
 
 ## Statistics
 
-- **Total documents:** 8
+- **Total documents:** 10
 - **Research phase:** 2026-04-07
 - **Tools surveyed:** 20+ MCP tools, 8 dotfile managers, 10 AI coding agents, 13 config systems, 6 TUI frameworks, 4 web frameworks
 - **Architecture entities:** 6 (Server, Skill, Plugin, Instruction, Profile, Agent)
