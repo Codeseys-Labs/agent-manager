@@ -53,6 +53,26 @@ export const SkillSchema = z.object({
 });
 export type Skill = z.infer<typeof SkillSchema>;
 
+// --- Agent Profile Schema ---
+// prompt XOR prompt_file (mutually exclusive)
+export const AgentProfileSchema = z
+  .object({
+    name: z.string(),
+    description: z.string().optional(),
+    prompt: z.string().optional(),
+    prompt_file: z.string().optional(),
+    model: z.string().optional(),
+    tools: z.array(z.string()).optional(),
+    disallowed_tools: z.array(z.string()).optional(),
+    mcp_servers: z.array(z.string()).optional(),
+    max_turns: z.number().optional(),
+    adapters: adaptersPassthrough,
+  })
+  .refine((data) => !(data.prompt && data.prompt_file), {
+    message: "Agent profile must have either 'prompt' or 'prompt_file', not both",
+  });
+export type AgentProfile = z.infer<typeof AgentProfileSchema>;
+
 // --- Profile Schema ---
 export const ProfileSchema = z.object({
   description: z.string().optional(),
@@ -60,6 +80,7 @@ export const ProfileSchema = z.object({
   servers: z.array(z.string()).optional(),
   server_tags: z.array(z.string()).optional(),
   skills: z.array(z.string()).optional(),
+  agents: z.array(z.string()).optional(),
   instructions: z.array(z.string()).optional(),
   env: z.record(z.string(), z.string()).optional(),
   adapters: adaptersPassthrough,
@@ -85,6 +106,7 @@ export const ConfigSchema = z.object({
   settings: SettingsSchema.optional(),
   servers: z.record(z.string(), ServerSchema).optional(),
   skills: z.record(z.string(), SkillSchema).optional(),
+  agents: z.record(z.string(), AgentProfileSchema).optional(),
   instructions: z.record(z.string(), InstructionSchema).optional(),
   profiles: z.record(z.string(), ProfileSchema).optional(),
   adapters: adaptersPassthrough,
@@ -102,6 +124,7 @@ export const ProjectConfigSchema = z.object({
     .optional(),
   servers: z.record(z.string(), ServerSchema).optional(),
   skills: z.record(z.string(), SkillSchema).optional(),
+  agents: z.record(z.string(), AgentProfileSchema).optional(),
   instructions: z.record(z.string(), InstructionSchema).optional(),
   env: z.record(z.string(), z.string()).optional(),
   adapters: adaptersPassthrough,

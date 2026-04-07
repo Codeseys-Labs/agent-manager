@@ -5,6 +5,7 @@ export interface ResolvedProfile {
   name: string;
   servers: string[];
   skills: string[];
+  agents: string[];
   instructions: string[];
   env: Record<string, string>;
   adapters: Record<string, unknown>;
@@ -52,6 +53,7 @@ export function resolveProfile(name: string, config: Config): ResolvedProfile {
 
   const servers: string[] = [];
   const skills: string[] = [];
+  const agents: string[] = [];
   const instructions: string[] = [];
   const serverTags: string[] = [];
   let env: Record<string, string> = {};
@@ -66,6 +68,11 @@ export function resolveProfile(name: string, config: Config): ResolvedProfile {
     if (profile.skills) {
       for (const s of profile.skills) {
         if (!skills.includes(s)) skills.push(s);
+      }
+    }
+    if (profile.agents) {
+      for (const a of profile.agents) {
+        if (!agents.includes(a)) agents.push(a);
       }
     }
     if (profile.instructions) {
@@ -92,7 +99,7 @@ export function resolveProfile(name: string, config: Config): ResolvedProfile {
     if (!servers.includes(s)) servers.push(s);
   }
 
-  return { name, servers, skills, instructions, env, adapters };
+  return { name, servers, skills, agents, instructions, env, adapters };
 }
 
 /**

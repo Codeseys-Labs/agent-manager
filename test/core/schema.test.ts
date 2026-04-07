@@ -3,12 +3,14 @@ import {
   ServerSchema,
   InstructionSchema,
   SkillSchema,
+  AgentProfileSchema,
   ProfileSchema,
   ConfigSchema,
   ProjectConfigSchema,
   type Server,
   type Instruction,
   type Skill,
+  type AgentProfile,
   type Profile,
   type Config,
   type ProjectConfig,
@@ -115,6 +117,61 @@ describe("SkillSchema", () => {
   });
 });
 
+describe("AgentProfileSchema", () => {
+  test("parses minimal agent profile", () => {
+    const result = AgentProfileSchema.parse({ name: "code-reviewer" });
+    expect(result.name).toBe("code-reviewer");
+    expect(result.description).toBeUndefined();
+    expect(result.prompt).toBeUndefined();
+    expect(result.model).toBeUndefined();
+    expect(result.tools).toBeUndefined();
+  });
+
+  test("parses full agent profile", () => {
+    const result = AgentProfileSchema.parse({
+      name: "security-auditor",
+      description: "Reviews code for security vulnerabilities",
+      prompt: "You are a security expert.",
+      model: "opus",
+      tools: ["Read", "Grep", "Glob"],
+      disallowed_tools: ["Write", "Edit"],
+      mcp_servers: ["secureguide", "loaf"],
+      max_turns: 50,
+      adapters: {
+        "claude-code": { permissionMode: "default" },
+      },
+    });
+    expect(result.name).toBe("security-auditor");
+    expect(result.description).toBe("Reviews code for security vulnerabilities");
+    expect(result.prompt).toBe("You are a security expert.");
+    expect(result.model).toBe("opus");
+    expect(result.tools).toEqual(["Read", "Grep", "Glob"]);
+    expect(result.disallowed_tools).toEqual(["Write", "Edit"]);
+    expect(result.mcp_servers).toEqual(["secureguide", "loaf"]);
+    expect(result.max_turns).toBe(50);
+    expect(result.adapters?.["claude-code"]).toEqual({ permissionMode: "default" });
+  });
+
+  test("parses agent profile with prompt_file", () => {
+    const result = AgentProfileSchema.parse({
+      name: "reviewer",
+      prompt_file: "agents/reviewer.md",
+    });
+    expect(result.prompt_file).toBe("agents/reviewer.md");
+    expect(result.prompt).toBeUndefined();
+  });
+
+  test("rejects both prompt and prompt_file", () => {
+    expect(() =>
+      AgentProfileSchema.parse({
+        name: "bad-agent",
+        prompt: "inline prompt",
+        prompt_file: "agents/bad.md",
+      })
+    ).toThrow();
+  });
+});
+
 describe("ProfileSchema", () => {
   test("parses minimal profile", () => {
     const result = ProfileSchema.parse({});
@@ -128,6 +185,7 @@ describe("ProfileSchema", () => {
       servers: ["tavily", "exa"],
       server_tags: ["work"],
       skills: ["research-rabbithole"],
+      agents: ["code-reviewer", "security-auditor"],
       instructions: ["typescript-conventions"],
       env: { AWS_PROFILE: "work-sso" },
       adapters: {
@@ -137,6 +195,7 @@ describe("ProfileSchema", () => {
     expect(result.inherits).toBe("base");
     expect(result.servers).toEqual(["tavily", "exa"]);
     expect(result.server_tags).toEqual(["work"]);
+    expect(result.agents).toEqual(["code-reviewer", "security-auditor"]);
     expect(result.env).toEqual({ AWS_PROFILE: "work-sso" });
   });
 });
@@ -165,6 +224,15 @@ describe("ConfigSchema", () => {
           description: "Multi-agent research",
         },
       },
+      agents: {
+        "code-reviewer": {
+          name: "code-reviewer",
+          description: "Reviews code",
+          prompt: "You are a code reviewer.",
+          model: "sonnet",
+          tools: ["Read", "Grep"],
+        },
+      },
       instructions: {
         "ts-conventions": {
           content: "Use strict TypeScript.",
@@ -176,6 +244,7 @@ describe("ConfigSchema", () => {
           description: "Work profile",
           inherits: "base",
           servers: ["outlook"],
+          agents: ["code-reviewer"],
         },
       },
       adapters: {
@@ -184,7 +253,9 @@ describe("ConfigSchema", () => {
     });
     expect(result.settings?.default_profile).toBe("work");
     expect(result.servers?.outlook.command).toBe("aws-outlook-mcp");
+    expect(result.agents?.["code-reviewer"]?.model).toBe("sonnet");
     expect(result.profiles?.work.inherits).toBe("base");
+    expect(result.profiles?.work.agents).toEqual(["code-reviewer"]);
   });
 });
 

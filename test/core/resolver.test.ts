@@ -150,8 +150,57 @@ describe("resolveProfile", () => {
     expect(resolved.name).toBe("minimal");
     expect(resolved.servers).toEqual([]);
     expect(resolved.skills).toEqual([]);
+    expect(resolved.agents).toEqual([]);
     expect(resolved.instructions).toEqual([]);
     expect(resolved.env).toEqual({});
+  });
+
+  test("resolves agents list from profile", () => {
+    const config: Config = {
+      agents: {
+        "code-reviewer": {
+          name: "code-reviewer",
+          description: "Reviews code",
+          prompt: "You are a code reviewer.",
+        },
+        "security-auditor": {
+          name: "security-auditor",
+          description: "Security checks",
+          prompt: "You are a security expert.",
+        },
+      },
+      profiles: {
+        parent: {
+          agents: ["code-reviewer"],
+        },
+        child: {
+          inherits: "parent",
+          agents: ["security-auditor"],
+        },
+      },
+    };
+    const resolved = resolveProfile("child", config);
+    expect(resolved.agents).toContain("code-reviewer");
+    expect(resolved.agents).toContain("security-auditor");
+    expect(resolved.agents).toHaveLength(2);
+  });
+
+  test("deduplicates agents across inheritance", () => {
+    const config: Config = {
+      profiles: {
+        parent: {
+          agents: ["code-reviewer"],
+        },
+        child: {
+          inherits: "parent",
+          agents: ["code-reviewer", "security-auditor"],
+        },
+      },
+    };
+    const resolved = resolveProfile("child", config);
+    const reviewerCount = resolved.agents.filter((a) => a === "code-reviewer").length;
+    expect(reviewerCount).toBe(1);
+    expect(resolved.agents).toHaveLength(2);
   });
 });
 
@@ -194,6 +243,7 @@ describe("resolveActiveServers", () => {
       name: "test",
       servers: ["fetch", "nonexistent"],
       skills: [],
+      agents: [],
       instructions: [],
       env: {},
       adapters: {},

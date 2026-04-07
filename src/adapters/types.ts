@@ -136,10 +136,24 @@ export interface ResolvedSkill {
   adapters: Record<string, Record<string, unknown>>;
 }
 
+export interface ResolvedAgent {
+  name: string;
+  description: string;
+  prompt: string;
+  prompt_file: string;
+  model: string;
+  tools: string[];
+  disallowed_tools: string[];
+  mcp_servers: string[];
+  max_turns: number | undefined;
+  adapters: Record<string, Record<string, unknown>>;
+}
+
 export interface ResolvedConfig {
   servers: Record<string, ResolvedServer>;
   instructions: Record<string, ResolvedInstruction>;
   skills: Record<string, ResolvedSkill>;
+  agents: Record<string, ResolvedAgent>;
   profile: string;
   adapters: Record<string, Record<string, unknown>>;
 }
