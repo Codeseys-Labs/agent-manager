@@ -1,0 +1,17 @@
+{
+  "servers": {
+    "github": {
+      "type": "http",
+      "url": "https://api.githubcopilot.com/mcp/"
+    },
+    "local-server": {
+      "command": "npx",
+      "args": ["-y", "@some/mcp-server"]
+    },
+    "python-server": {
+      "command": "uvx",
+      "args": ["mcp-server-fetch"],
+      "env": { "DEBUG": "true" }
+    }
+  }
+}
