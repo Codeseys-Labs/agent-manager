@@ -18,6 +18,8 @@ This folder contains the architectural decisions for agent-manager.
 | [0010](0010-bunts-single-binary.md) | BunTS Single Binary Distribution | Accepted | 2026-04-07 |
 
 | [0011](0011-built-in-adapters.md) | Built-In Adapters with Subprocess Escape Hatch | Accepted | 2026-04-07 |
+| [0012](0012-application-level-encryption.md) | Application-Level Encryption (AES-256-GCM, platform-agnostic) | Accepted | 2026-04-07 |
+| [0013](0013-git-platform-adapters.md) | Git Platform Adapters (GitHub, GitLab, bare) | Accepted | 2026-04-07 |
 
 ## Template
 
