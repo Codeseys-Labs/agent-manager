@@ -1,4 +1,6 @@
 import type { Adapter, Capability } from "../types.ts";
+import { detect } from "./detect.ts";
+import { claudeCodeSchema } from "./schema.ts";
 
 const CAPABILITIES: Capability[] = [
   "mcp",
@@ -20,7 +22,7 @@ export const claudeCodeAdapter: Adapter = {
   },
 
   detect() {
-    return { installed: false, paths: {} };
+    return detect();
   },
 
   import() {
@@ -35,5 +37,5 @@ export const claudeCodeAdapter: Adapter = {
     throw new Error("claude-code adapter: diff not implemented");
   },
 
-  schema: {},
+  schema: claudeCodeSchema,
 };
