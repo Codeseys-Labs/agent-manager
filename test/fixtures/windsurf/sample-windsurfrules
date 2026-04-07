@@ -1,0 +1,2 @@
+Use TypeScript strict mode. Prefer interfaces over type aliases.
+Run bun test before committing.

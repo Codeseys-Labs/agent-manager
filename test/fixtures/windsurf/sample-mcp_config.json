@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "fetch": { "command": "uvx", "args": ["mcp-server-fetch"] },
+    "tavily": {
+      "command": "bunx",
+      "args": ["tavily-mcp@latest"],
+      "env": { "TAVILY_API_KEY": "${env:TAVILY_API_KEY}" }
+    },
+    "context7": { "command": "bunx", "args": ["@upstash/context7-mcp@latest"] }
+  }
+}

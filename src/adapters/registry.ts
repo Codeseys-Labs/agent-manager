@@ -27,6 +27,14 @@ const ADAPTER_FACTORIES: Record<string, AdapterFactory> = {
     const { kiloCodeAdapter } = await import("./kilo-code/index.ts");
     return kiloCodeAdapter;
   },
+  windsurf: async () => {
+    const { windsurfAdapter } = await import("./windsurf/index.ts");
+    return windsurfAdapter;
+  },
+  copilot: async () => {
+    const { copilotAdapter } = await import("./copilot/index.ts");
+    return copilotAdapter;
+  },
 };
 
 const adapterCache = new Map<string, Adapter>();

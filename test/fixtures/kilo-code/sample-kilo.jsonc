@@ -1,0 +1,50 @@
+{
+  // Global Kilo Code configuration
+  "$schema": "https://kilo.ai/schema/kilo.json",
+  "model": "anthropic/claude-sonnet-4-20250514",
+
+  /* MCP servers — new CLI-native format */
+  "mcp": {
+    "fetch-server": {
+      "type": "local",
+      "command": ["uvx", "mcp-server-fetch"],
+      "enabled": true
+    },
+    "tavily": {
+      "type": "local",
+      "command": ["bunx", "tavily-mcp@latest"],
+      "environment": {
+        "TAVILY_API_KEY": "{env:TAVILY_API_KEY}"
+      },
+      "timeout": 15000
+    },
+    "remote-api": {
+      "type": "remote",
+      "url": "https://example.com/mcp",
+      "headers": {
+        "Authorization": "Bearer {env:API_TOKEN}"
+      },
+      "enabled": true
+    },
+    "disabled-server": {
+      "type": "local",
+      "command": ["node", "disabled.js"],
+      "enabled": false
+    }
+  },
+
+  // Agent definitions
+  "agent": {
+    "code-reviewer": {
+      "description": "Reviews code for best practices",
+      "mode": "subagent",
+      "model": "anthropic/claude-sonnet-4-20250514",
+      "prompt": "You are a code reviewer..."
+    }
+  },
+
+  // Custom instructions
+  "instructions": [
+    "./docs/coding-standards.md",
+  ],
+}

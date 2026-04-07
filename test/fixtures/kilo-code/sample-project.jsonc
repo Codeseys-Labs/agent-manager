@@ -1,0 +1,23 @@
+{
+  // Project-specific Kilo configuration
+  "mcp": {
+    "project-server": {
+      "type": "local",
+      "command": ["node", "local-server.js"],
+      "environment": {
+        "PROJECT_KEY": "proj-123"
+      }
+    }
+  },
+
+  /* Also has a legacy server */
+  "mcpServers": {
+    "legacy-project": {
+      "command": "python",
+      "args": ["legacy.py"],
+      "env": {
+        "LEGACY_KEY": "leg-456"
+      }
+    }
+  },
+}
