@@ -1,0 +1,18 @@
+profile = "work"
+
+[project]
+name = "ADMINISTRIVIA"
+description = "Personal productivity vault"
+
+[servers.wiki]
+command = "amazon-wiki-mcp"
+tags = ["wiki", "work"]
+description = "Amazon Wiki access"
+
+[instructions.vault-conventions]
+content = "Follow vault conventions. Use [[wikilinks]] for internal references."
+scope = "always"
+description = "Vault writing conventions"
+
+[adapters.claude-code]
+hooks = { Stop = "scripts/board-sync-check.sh" }

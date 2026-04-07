@@ -1,0 +1,62 @@
+[settings]
+default_profile = "work"
+
+[settings.mcp_serve]
+allow_apply = true
+allow_push = false
+
+[servers.fetch]
+command = "uvx mcp-server-fetch"
+args = []
+transport = "stdio"
+description = "Raw URL fetching"
+tags = ["utils"]
+enabled = true
+
+[servers.outlook]
+command = "aws-outlook-mcp"
+args = ["--verbose"]
+env = { MIDWAY_AUTH = "true" }
+transport = "stdio"
+description = "Outlook email and calendar"
+tags = ["email", "calendar", "work"]
+enabled = true
+
+[servers.outlook.adapters.claude-code]
+always_allow = ["email_search", "calendar_view"]
+
+[skills.research-rabbithole]
+path = "skills/research-rabbithole"
+description = "Multi-agent parallel research"
+tags = ["research"]
+
+[skills.research-rabbithole.adapters.claude-code]
+trigger = "/research-rabbithole"
+
+[instructions.typescript-conventions]
+content = """
+Use strict TypeScript with no `any` types.
+Prefer `interface` over `type` for object shapes.
+"""
+scope = "glob"
+globs = ["**/*.ts", "**/*.tsx"]
+description = "TypeScript coding conventions"
+targets = ["claude-code", "cursor"]
+
+[profiles.base]
+description = "Always-on utilities"
+servers = ["fetch"]
+
+[profiles.work]
+description = "Work profile with email and research"
+inherits = "base"
+servers = ["outlook"]
+server_tags = ["work"]
+skills = ["research-rabbithole"]
+instructions = ["typescript-conventions"]
+
+[profiles.work.env]
+AWS_PROFILE = "work-sso"
+
+[adapters.claude-code]
+permission_mode = "allowEdits"
