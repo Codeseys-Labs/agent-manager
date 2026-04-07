@@ -14,10 +14,26 @@ export const pushCommand = defineCommand({
     const opts = { json: args.json, quiet: args.quiet, verbose: args.verbose };
     const configDir = resolveConfigDir();
 
-    // Check for remote
-    const status = await getStatus(configDir);
+    let status;
+    try {
+      status = await getStatus(configDir);
+    } catch {
+      error("Config not found. Run `am init` first.", opts);
+      process.exitCode = 1;
+      return;
+    }
+
     if (status.remotes.length === 0) {
-      error("No remote configured. Run `am remote add <url>` first.", opts);
+      if (args.json) {
+        console.error(JSON.stringify({
+          error: "No remote configured",
+          suggestion: "Run `am remote add <url>` to set up sync",
+        }));
+      } else {
+        console.error("error: No remote configured");
+        console.error("  suggestion: Run `am remote add <url>` to set up sync");
+      }
+      process.exitCode = 1;
       return;
     }
 
@@ -29,6 +45,7 @@ export const pushCommand = defineCommand({
       }
     } catch (e: any) {
       error(`Push failed: ${e?.message ?? "unknown error"}`, opts);
+      process.exitCode = 1;
     }
   },
 });

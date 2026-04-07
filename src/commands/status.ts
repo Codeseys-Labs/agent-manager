@@ -55,6 +55,7 @@ export const statusCommand = defineCommand({
       config = await loadResolvedConfig({ configDir, projectFile });
     } catch {
       error("Config not found. Run `am init` first.", opts);
+      process.exitCode = 1;
       return;
     }
 

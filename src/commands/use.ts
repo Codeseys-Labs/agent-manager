@@ -2,8 +2,9 @@ import { defineCommand } from "citty";
 import { join } from "node:path";
 import { readFile, writeFile, mkdir } from "node:fs/promises";
 import * as TOML from "@iarna/toml";
-import { resolveConfigDir } from "../core/config";
+import { resolveConfigDir, readConfig } from "../core/config";
 import { output, info, error } from "../lib/output";
+import { AmError } from "../lib/errors";
 
 const STATE_FILE = ".agent-manager/state.toml";
 
@@ -53,7 +54,33 @@ export const useCommand = defineCommand({
   async run({ args }) {
     const opts = { json: args.json, quiet: args.quiet, verbose: args.verbose };
     const configDir = resolveConfigDir();
+    const configPath = join(configDir, "config.toml");
     const profile = args.profile;
+
+    // Validate config exists
+    let config;
+    try {
+      config = await readConfig(configPath);
+    } catch {
+      error("Config not found. Run `am init` first.", opts);
+      process.exitCode = 1;
+      return;
+    }
+
+    // Validate profile exists
+    const profiles = config.profiles ?? {};
+    const available = Object.keys(profiles);
+    if (available.length > 0 && !profiles[profile]) {
+      const suggestion = `Available profiles: ${available.join(", ")}`;
+      if (args.json) {
+        console.error(JSON.stringify({ error: `Profile "${profile}" not found`, suggestion }));
+      } else {
+        console.error(`error: Profile "${profile}" not found`);
+        console.error(`  available: ${available.join(", ")}`);
+      }
+      process.exitCode = 1;
+      return;
+    }
 
     await writeActiveProfile(configDir, profile);
 

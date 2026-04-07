@@ -31,6 +31,7 @@ export const listCommand = defineCommand({
       });
     } catch {
       error("Config not found. Run `am init` first.", opts);
+      process.exitCode = 1;
       return;
     }
 

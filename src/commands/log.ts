@@ -39,6 +39,7 @@ export const logCommand = defineCommand({
       entries = await gitLog(configDir, parseInt(args.count, 10));
     } catch {
       error("Cannot read git log. Run `am init` first.", opts);
+      process.exitCode = 1;
       return;
     }
 

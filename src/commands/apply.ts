@@ -6,7 +6,7 @@ import {
   resolveProjectConfig,
 } from "../core/config";
 import { readActiveProfile } from "./use";
-import { getDetectedAdapters, getAdapter } from "../adapters/registry";
+import { getDetectedAdapters, getAdapter, listAdapters } from "../adapters/registry";
 import { output, info, error, debug } from "../lib/output";
 import type { ResolvedConfig, ResolvedServer } from "../adapters/types";
 
@@ -59,6 +59,7 @@ export const applyCommand = defineCommand({
       config = await loadResolvedConfig({ configDir, projectFile });
     } catch {
       error("Config not found. Run `am init` first.", opts);
+      process.exitCode = 1;
       return;
     }
 
@@ -76,7 +77,17 @@ export const applyCommand = defineCommand({
     if (args.target) {
       const adapter = await getAdapter(args.target);
       if (!adapter) {
-        error(`Adapter "${args.target}" not found`, opts);
+        const available = listAdapters();
+        if (args.json) {
+          console.error(JSON.stringify({
+            error: `Adapter "${args.target}" not found`,
+            suggestion: `Available adapters: ${available.join(", ")}`,
+          }));
+        } else {
+          console.error(`error: Adapter "${args.target}" not found`);
+          console.error(`  available: ${available.join(", ")}`);
+        }
+        process.exitCode = 1;
         return;
       }
       adapters = [adapter];

@@ -29,6 +29,7 @@ export const addCommand = defineCommand({
       config = await readConfig(configPath);
     } catch {
       error("Config not found. Run `am init` first.", opts);
+      process.exitCode = 1;
       return;
     }
 
@@ -37,6 +38,7 @@ export const addCommand = defineCommand({
     // Check for duplicate
     if (config.servers?.[name]) {
       error(`Server "${name}" already exists. Remove it first or use a different name.`, opts);
+      process.exitCode = 1;
       return;
     }
 

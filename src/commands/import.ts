@@ -6,7 +6,7 @@ import {
   writeConfig,
 } from "../core/config";
 import { commitAll } from "../core/git";
-import { getDetectedAdapters, getAdapter } from "../adapters/registry";
+import { getDetectedAdapters, getAdapter, listAdapters } from "../adapters/registry";
 import { output, info, error, debug } from "../lib/output";
 import type { ImportedServer } from "../adapters/types";
 
@@ -75,6 +75,7 @@ export const importCommand = defineCommand({
       config = await readConfig(configPath);
     } catch {
       error("Config not found. Run `am init` first.", opts);
+      process.exitCode = 1;
       return;
     }
 
@@ -89,7 +90,17 @@ export const importCommand = defineCommand({
     } else {
       const adapter = await getAdapter(args.source);
       if (!adapter) {
-        error(`Adapter "${args.source}" not found`, opts);
+        const available = listAdapters();
+        if (args.json) {
+          console.error(JSON.stringify({
+            error: `Adapter "${args.source}" not found`,
+            suggestion: `Available adapters: ${available.join(", ")}`,
+          }));
+        } else {
+          console.error(`error: Adapter "${args.source}" not found`);
+          console.error(`  available: ${available.join(", ")}`);
+        }
+        process.exitCode = 1;
         return;
       }
       adapters = [adapter];

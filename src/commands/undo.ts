@@ -19,12 +19,14 @@ export const undoCommand = defineCommand({
     try {
       entries = await gitLog(configDir, 2);
     } catch {
-      error("Cannot read git log", opts);
+      error("Cannot read git log. Run `am init` first.", opts);
+      process.exitCode = 1;
       return;
     }
 
     if (entries.length < 2) {
       error("Nothing to undo — only the initial commit exists", opts);
+      process.exitCode = 1;
       return;
     }
 
@@ -39,6 +41,7 @@ export const undoCommand = defineCommand({
       }
     } catch (e: any) {
       error(`Undo failed: ${e?.message ?? "unknown error"}`, opts);
+      process.exitCode = 1;
     }
   },
 });
