@@ -7,6 +7,14 @@ const ADAPTER_FACTORIES: Record<string, AdapterFactory> = {
     const { claudeCodeAdapter } = await import("./claude-code/index.ts");
     return claudeCodeAdapter;
   },
+  forgecode: async () => {
+    const { forgeCodeAdapter } = await import("./forgecode/index.ts");
+    return forgeCodeAdapter;
+  },
+  "codex-cli": async () => {
+    const { codexCliAdapter } = await import("./codex-cli/index.ts");
+    return codexCliAdapter;
+  },
 };
 
 const adapterCache = new Map<string, Adapter>();

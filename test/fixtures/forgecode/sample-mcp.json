@@ -1,0 +1,7 @@
+{
+  "mcpServers": {
+    "fetch": { "command": "uvx", "args": ["mcp-server-fetch"] },
+    "tavily": { "command": "bunx", "args": ["tavily-mcp@latest"], "env": { "TAVILY_API_KEY": "${TAVILY_API_KEY}" } },
+    "disabled-server": { "command": "some-mcp", "disable": true }
+  }
+}
