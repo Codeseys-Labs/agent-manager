@@ -1,0 +1,70 @@
+import { defineCommand } from "citty";
+import { join } from "node:path";
+import { mkdir } from "node:fs/promises";
+import { resolveConfigDir, writeConfig, tryReadConfig } from "../core/config";
+import { initRepo } from "../core/git";
+import { getDetectedAdapters } from "../adapters/registry";
+import { output, info, error } from "../lib/output";
+import type { Config } from "../core/schema";
+
+export const initCommand = defineCommand({
+  meta: { name: "init", description: "Initialize agent-manager config and git repo" },
+  args: {
+    json: { type: "boolean", description: "JSON output", default: false },
+    quiet: { type: "boolean", alias: "q", description: "Suppress non-essential output", default: false },
+    verbose: { type: "boolean", alias: "v", description: "Verbose output", default: false },
+  },
+  async run({ args }) {
+    const opts = { json: args.json, quiet: args.quiet, verbose: args.verbose };
+    const configDir = resolveConfigDir();
+    const configPath = join(configDir, "config.toml");
+
+    // Check if already initialized
+    const existing = await tryReadConfig(configPath);
+    if (existing) {
+      if (args.json) {
+        output({ status: "already_initialized", configDir }, opts);
+      } else {
+        error("Already initialized. Config exists at " + configPath, opts);
+      }
+      return;
+    }
+
+    // Create config directory
+    await mkdir(configDir, { recursive: true });
+
+    // Initialize git repo
+    await initRepo(configDir);
+
+    // Write initial config
+    const config: Config = {
+      settings: { default_profile: "default" },
+      servers: {},
+      profiles: {
+        default: {
+          description: "Default profile — all servers",
+        },
+      },
+    };
+    await writeConfig(configPath, config);
+
+    // Detect installed tools
+    const detected = await getDetectedAdapters();
+    const detectedNames = detected.map((a) => a.meta.displayName);
+
+    info(`Initialized agent-manager at ${configDir}`, opts);
+    if (detectedNames.length > 0) {
+      info(`Detected tools: ${detectedNames.join(", ")}`, opts);
+      info(`Run \`am import auto\` to import existing configs`, opts);
+    }
+
+    if (args.json) {
+      output({
+        status: "initialized",
+        configDir,
+        configPath,
+        detectedTools: detectedNames,
+      }, opts);
+    }
+  },
+});
