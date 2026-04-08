@@ -33,6 +33,7 @@ const main = defineCommand({
     adapter: () => import("./commands/adapter").then((m) => m.adapterCommand),
     "mcp-serve": () => import("./commands/mcp-serve").then((m) => m.mcpServeCommand),
     serve: () => import("./commands/serve").then((m) => m.serveCommand),
+    tui: () => import("./commands/tui").then((m) => m.tuiCommand),
   },
 });
 

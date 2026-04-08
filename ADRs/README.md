@@ -21,6 +21,7 @@ This folder contains the architectural decisions for agent-manager.
 | [0012](0012-application-level-encryption.md) | Application-Level Encryption (AES-256-GCM, platform-agnostic) | Accepted | 2026-04-07 |
 | [0013](0013-git-platform-adapters.md) | Git Platform Adapters (GitHub, GitLab, bare) | Accepted | 2026-04-07 |
 | [0014](0014-workspace-profile-import.md) | Workspace-to-Profile Import | Accepted | 2026-04-07 |
+| [0015](0015-stateless-web-ui.md) | Stateless Web UI — Git-Backed, Independently Deployable | Accepted | 2026-04-08 |
 
 ## Template
 
