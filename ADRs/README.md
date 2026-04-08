@@ -16,7 +16,6 @@ This folder contains the architectural decisions for agent-manager.
 | [0008](0008-profile-based-config-subsets.md) | Profile-Based Configuration Subsets | Accepted | 2026-04-07 |
 | [0009](0009-mcp-server-mode.md) | agent-manager as an MCP Server | Accepted | 2026-04-07 |
 | [0010](0010-bunts-single-binary.md) | BunTS Single Binary Distribution | Accepted | 2026-04-07 |
-
 | [0011](0011-built-in-adapters.md) | Built-In Adapters with Subprocess Escape Hatch | Accepted | 2026-04-07 |
 | [0012](0012-application-level-encryption.md) | Application-Level Encryption (AES-256-GCM, platform-agnostic) | Accepted | 2026-04-07 |
 | [0013](0013-git-platform-adapters.md) | Git Platform Adapters (GitHub, GitLab, bare) | Accepted | 2026-04-07 |

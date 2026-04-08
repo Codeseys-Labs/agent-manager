@@ -1,223 +1,210 @@
-# AGENTS.md — agent-manager
+# AGENTS.md -- agent-manager
 
 agent-manager (`am`) is chezmoi for AI agent configs. Define your MCP servers, skills,
-and instructions once in TOML, sync the config via git, and generate native config files
-for every AI coding tool (Claude Code, Cursor, Windsurf, Copilot, Cline, and more).
-Single source of truth, bidirectional sync, profile-based subsets, drift detection.
+instructions, and agent profiles once in TOML, sync the config via git, and generate
+native config files for every AI coding tool. Single source of truth, bidirectional
+sync, profile-based subsets, drift detection.
 
 ## Architecture
 
-Layered Core + Adapter Extensions (ADR-0001). The core engine owns four entities:
+Layered Core + Dual-Axis Adapter Extensions (ADR-0001, ADR-0013). The core engine owns
+five entity types:
 
 | Entity | Purpose | Config key |
 |--------|---------|------------|
 | **Servers** | MCP server definitions (command, args, env, transport) | `[servers.<name>]` |
-| **Instructions** | Markdown rules with activation scope (always/glob/manual) | `[instructions.<name>]` |
+| **Instructions** | Markdown rules with activation scope (always/glob/agent-decision/manual) | `[instructions.<name>]` |
 | **Skills** | Reusable prompt/skill bundles with paths and descriptions | `[skills.<name>]` |
-| **Profiles** | Named subsets with inheritance, tag-based server selection | `[profiles.<name>]` |
+| **Agent Profiles** | Named agent configurations (prompt, model, tools, MCP servers) | `[agents.<name>]` |
+| **Profiles** | Named config subsets with inheritance and tag-based server selection | `[profiles.<name>]` |
 
 Each entity supports `[entity.adapters.<tool>]` subtables for tool-specific extensions
 that core preserves but does not validate (two-phase validation, ADR-0007).
 
-Adapters implement `detect() | import() | export() | diff()` to bridge between the
-universal TOML config and each tool's native format. All adapters are built into the
-binary with lazy factory instantiation (ADR-0011).
+**8 IDE adapters** bridge the universal TOML to native formats: Claude Code, Codex CLI,
+ForgeCode, Cursor, Kiro, Kilo Code, Windsurf, GitHub Copilot. Each implements
+`detect() | import() | export() | diff()`. All ship in the binary with lazy factory
+instantiation (ADR-0011).
+
+**3 platform adapters** handle git remote operations: GitHub, GitLab, bare git. Detection
+is URL-based, ordered by specificity (ADR-0013).
 
 Config is hierarchical: global (`~/.config/agent-manager/config.toml`) + project
 (`.agent-manager.toml`), with `.local.toml` overrides at each level. The config
-directory is a git repo — durable changes auto-commit (ADR-0002).
+directory is a git repo -- durable changes auto-commit (ADR-0002).
+
+Secrets are encrypted at rest with AES-256-GCM (ADR-0012), stored as `enc:v1:nonce:ciphertext`
+in TOML, decrypted at apply time.
 
 ## Tech Stack
 
 | Layer | Choice |
 |-------|--------|
 | Runtime | [Bun](https://bun.sh) (TypeScript, `bun build --compile` for single binary) |
-| CLI | [citty](https://github.com/unjs/citty) (command routing) + [@clack/prompts](https://github.com/bombshell-dev/clack) (wizards) |
+| CLI | [citty](https://github.com/unjs/citty) + [@clack/prompts](https://github.com/bombshell-dev/clack) |
 | Validation | [Zod](https://zod.dev) (two-phase: core strict, adapter passthrough) |
-| Config | [@iarna/toml](https://github.com/iarna/iarna-toml) (TOML parse/stringify) |
+| Config | [@iarna/toml](https://github.com/iarna/iarna-toml) |
 | Git | [isomorphic-git](https://isomorphic-git.org) |
-| Formatting | [chalk](https://github.com/chalk/chalk) |
+| Web | [Hono](https://hono.dev) (local + Cloudflare Workers) |
+| TUI | [Ink](https://github.com/vadimdemedes/ink) + React |
+| Encryption | Web Crypto API (AES-256-GCM) |
 
 ## Directory Structure
 
 ```
 src/
-  cli.ts                    # Entry point — citty command routing
-  commands/                 # One file per CLI command (init, add, list, use, apply, ...)
+  cli.ts                    # Entry point -- 20 subcommands via citty
+  commands/                 # One file per CLI command
   core/
-    config.ts               # TOML read/write
-    resolver.ts             # Profile resolution + hierarchical merge
-    diff.ts                 # Structural drift detection engine
+    schema.ts               # Zod schemas (Server, Instruction, Skill, AgentProfile, Profile, Config)
+    config.ts               # TOML read/write, 4-layer hierarchical merge
+    resolver.ts             # Profile resolution: inheritance, tag activation, merge
     git.ts                  # Git operations (isomorphic-git)
-    schema.ts               # Core Zod schemas (Server, Instruction, Skill, Profile, Config)
-    identity.ts             # Server identity matching for import dedup
-    secrets.ts              # ${VAR} interpolation
+    secrets.ts              # AES-256-GCM encryption + ${VAR} interpolation
+    instructions.ts         # Shared instruction generation for all formats
   adapters/
     types.ts                # Adapter interface + all type definitions
-    registry.ts             # Lazy factory adapter registry
-    claude-code/            # Claude Code adapter (detect/import/export/diff)
-  mcp/                      # MCP server mode (am mcp-serve)
+    registry.ts             # Lazy factory adapter registry (8 adapters)
+    claude-code/            # Claude Code (808 lines)
+    codex-cli/              # Codex CLI (781 lines)
+    copilot/                # GitHub Copilot (726 lines)
+    cursor/                 # Cursor (886 lines)
+    forgecode/              # ForgeCode (717 lines)
+    kilo-code/              # Kilo Code (1280 lines, includes JSONC parser)
+    kiro/                   # Kiro (938 lines)
+    windsurf/               # Windsurf (673 lines)
+  platforms/
+    types.ts                # GitPlatformAdapter interface
+    registry.ts             # Platform detection (GitHub > GitLab > bare)
+    github.ts, gitlab.ts, bare.ts
+  mcp/
+    server.ts               # MCP server: JSON-RPC 2.0, 10 tools, 3 permission tiers
+  tui/
+    index.tsx, App.tsx      # Ink/React terminal UI with dashboard, status, profiles
+  web/
+    server.ts               # Local Hono server (REST API + SSE)
+    worker.ts               # Cloudflare Workers (stateless, GitHub OAuth)
+    public/                 # Static HTML
   lib/                      # Shared utilities
-test/
-  core/                     # Unit tests for core modules
-  adapters/                 # Adapter-specific tests
-  commands/                 # CLI command integration tests
-  fixtures/                 # Sample native config files per tool
-  helpers/                  # Test utilities (temp dirs, config builders)
-  integration/              # End-to-end tests
-ADRs/                       # 11 architectural decision records
-research/                   # Research documents (tool formats, prior art)
-docs/                       # Design specifications
+test/                       # 67 files, 647 tests, 1569 assertions
+ADRs/                       # 15 architectural decision records
 scripts/
-  build.ts                  # Cross-platform binary build script
+  build.ts                  # Cross-platform build (5 targets)
+  install.sh                # curl-based installer
 ```
+
+## CLI Commands
+
+| Command | Description |
+|---------|-------------|
+| `am init` | First-time setup: detect tools, import configs, init git |
+| `am add server <name>` | Add an MCP server (auto-commits) |
+| `am list servers` | List all servers (`--active`, `--json`) |
+| `am use <profile>` | Switch active profile |
+| `am apply` | Generate native configs for all detected tools (`--dry-run`, `--force`) |
+| `am status` | Drift detection + sync state across all tools |
+| `am import <adapter>` | Import native configs into core TOML (auto-commits) |
+| `am push` | Git push config to remote |
+| `am pull` | Git pull from remote |
+| `am undo` | Git revert HEAD |
+| `am log` | Git log with am formatting |
+| `am config` | View/edit configuration settings |
+| `am profile` | Manage profiles (list, show, create) |
+| `am doctor` | Health check: config validation, adapter status, git state |
+| `am secret set/get/init` | Manage AES-256-GCM encrypted secrets |
+| `am adapter list` | Show registered adapters with install status |
+| `am version` | Print version |
+| `am mcp-serve` | Run as MCP server (JSON-RPC over stdio) |
+| `am tui` | Interactive terminal dashboard (Ink/React) |
+| `am serve` | Local web UI server (Hono) |
+
+Global flags: `--profile <name>`, `--json`, `--verbose`, `--quiet`
 
 ## Key Design Decisions
 
 **TOML config format (ADR-0004):** Human-friendly, supports comments, validated as
-the best format for developer configs via adversarial review.
+the best format for developer configs.
 
 **Git-backed everything (ADR-0002):** The config directory is a git repo. `am add`,
 `am import`, `am remove` auto-commit. `am push`/`am pull` sync. `am undo` reverts.
 Ephemeral state (active profile) lives in gitignored `state.toml`.
 
 **Two-phase validation (ADR-0007):** Core Zod schemas validate core fields strictly.
-Adapter sections use `z.record(z.string(), z.unknown())` passthrough — preserved by
+Adapter sections use `z.record(z.string(), z.unknown())` passthrough -- preserved by
 core, validated by each adapter's own schema.
 
-**Built-in adapters (ADR-0011):** All adapters ship in the binary. Lazy factory
-instantiation — only detected tools are activated. No external plugin loading in Phase 1.
+**Built-in adapters (ADR-0011):** All 8 adapters ship in the binary. Lazy factory
+instantiation -- only detected tools are activated.
 
 **Drift detection over overwrite (ADR-0006):** `am status` uses structural comparison
-(not textual diff) to detect when a user edited native configs directly. Surfaces drift
-rather than silently overwriting. `am apply --force` to override.
+to detect native config edits. Surfaces drift rather than silently overwriting.
 
-**Bidirectional adapters (ADR-0005):** Every adapter implements `import()` (native to
-core), `export()` (core to native), and `diff()` (detect drift). Brownfield-friendly.
+**Application-level encryption (ADR-0012):** AES-256-GCM for secrets in TOML. Key
+from env var or file. Encrypted values are safe to commit to git.
+
+**Platform adapters (ADR-0013):** GitHub, GitLab, bare git. URL-based detection for
+push/pull auth handling.
+
+**Stateless web UI (ADR-0015):** Cloudflare Workers with GitHub OAuth, encrypted
+cookies, no persistent storage. Config accessed via GitHub API.
 
 ## Development Workflow
 
 ```bash
 bun install              # Install dependencies
-bun test                 # Run all tests
+bun test                 # Run all 647 tests
 bun test --watch         # Watch mode
-bun run dev              # Run CLI in dev mode (bun run src/cli.ts)
-bun run dev -- init      # Run a specific command
-bun run build            # Compile single binary (scripts/build.ts)
-bun run lint             # Biome lint + format check
-bun run lint:fix         # Auto-fix lint issues
-bun run typecheck        # TypeScript type checking
+bun run dev              # Run CLI in dev mode
+bun run build            # Single binary (macOS arm64)
+bun run build -- --all   # All 5 platform targets
+bun run lint             # Biome lint
+bun run typecheck        # TypeScript checking
+bun run dev:web          # Local web UI dev (Wrangler)
 ```
-
-**TDD workflow:** Write a failing test -> implement the minimum code -> verify all
-tests pass -> commit. Tests live next to the code they test, mirroring the `src/` structure.
-
-**Environment override:** Set `AM_CONFIG_DIR` to use a temp directory as the config
-root during testing. All tests that touch the filesystem must use isolated temp dirs.
 
 ## Adding a New Adapter
 
-Each adapter follows a 5-file pattern:
+Each adapter follows a 5-6 file pattern under `src/adapters/<name>/`:
 
-```
-src/adapters/<name>/
-  index.ts      # Implements the Adapter interface (detect, import, export, diff)
-  schema.ts     # Zod schemas for adapter-specific TOML fields
-  detect.ts     # Tool installation detection (optional, can inline in index)
-  import.ts     # Native config -> core config mapping
-  export.ts     # Core config -> native config file generation
-```
+1. `detect.ts` -- tool installation detection
+2. `import.ts` -- native config -> core config
+3. `export.ts` -- core config -> native files
+4. `diff.ts` -- structural drift comparison
+5. `schema.ts` -- Zod schemas for adapter TOML sections
+6. `index.ts` -- wire everything, export adapter object
 
-Steps:
-1. Create the adapter directory under `src/adapters/`
-2. Implement the `Adapter` interface from `src/adapters/types.ts`
-3. Register it in `src/adapters/registry.ts` (lazy factory entry)
-4. Add test fixtures in `test/fixtures/<name>/` with sample native configs
-5. Write tests in `test/adapters/<name>/`
-
-The `Adapter` interface requires:
-- `meta` — name, displayName, version, capabilities list
-- `detect()` — returns `{ installed: boolean, version?, paths }` 
-- `import(options)` — reads native configs, returns servers/instructions/skills
-- `export(config, options)` — writes native config files from resolved config
-- `diff(config)` — compares resolved config vs native files, returns drift status
-- `schema` — Zod schemas for validating `[entity.adapters.<name>]` sections
-
-## Testing Conventions
-
-- **Runner:** `bun:test` (built into Bun)
-- **Isolation:** Every test that touches the filesystem creates a temp dir and cleans
-  up after. Use `AM_CONFIG_DIR` env var to redirect config operations.
-- **Fixtures:** `test/fixtures/` contains sample native config files for each tool
-  (e.g., `claude-code/.claude.json`, `cursor/.cursor/mcp.json`)
-- **Helpers:** `test/helpers/` provides utilities for creating temp config dirs and
-  building test configs
-- **Structure:** `test/core/` mirrors `src/core/`, `test/adapters/` mirrors
-  `src/adapters/`, `test/commands/` tests CLI command handlers
-
-## CLI Commands
-
-| Command | Description |
-|---------|-------------|
-| `am init` | First-time setup: detect installed tools, import configs, init git |
-| `am add server <name>` | Add an MCP server to config (auto-commits) |
-| `am list servers` | List all servers (supports `--active`, `--json`) |
-| `am use <profile>` | Switch active profile + auto-apply |
-| `am apply` | Generate native configs for all detected tools (`--dry-run`, `--force`) |
-| `am status` | Show drift detection + sync state across all tools (`--json`) |
-| `am import <adapter>` | Import native configs into core TOML (auto-commits) |
-| `am push` | Git push config to remote |
-| `am pull` | Git pull + auto-apply |
-| `am undo` | Git revert HEAD + re-apply |
-| `am log` | Git log with am formatting |
-| `am version` | Print version |
-
-Global flags: `--profile <name>`, `--json`, `--verbose`, `--quiet`
+Register the lazy factory in `src/adapters/registry.ts`. Add tests in `test/adapters/<name>/`.
 
 ## Config Format
 
 ```toml
-# ~/.config/agent-manager/config.toml
-
 [settings]
 default_profile = "work"
 
 [servers.tavily]
 command = "bunx"
 args = ["tavily-mcp@latest"]
-transport = "stdio"
-description = "Web search"
 tags = ["search", "web"]
 enabled = true
 
-[servers.tavily.adapters.claude-code]
-always_allow = ["tavily_search"]
-
 [instructions.typescript-rules]
-content = "Use strict TypeScript. Prefer interface over type."
+content = "Use strict TypeScript."
 scope = "glob"
 globs = ["**/*.ts"]
-description = "TypeScript conventions"
 
-[skills.research]
-path = "skills/research"
-description = "Deep research skill"
-tags = ["research"]
-
-[profiles.base]
-description = "Always-on utilities"
-servers = ["tavily"]
+[agents.researcher]
+name = "researcher"
+prompt = "You are a thorough researcher..."
+model = "opus"
+mcp_servers = ["tavily"]
 
 [profiles.work]
 inherits = "base"
-servers = ["outlook", "slack"]
+servers = ["outlook", "tavily"]
 server_tags = ["work"]
 instructions = ["typescript-rules"]
-
-[adapters.claude-code]
-permission_mode = "allowEdits"
-model = "opus[1m]"
+agents = ["researcher"]
 ```
 
-Project-level config uses the same schema in `.agent-manager.toml` at the repo root.
+Project config uses the same schema in `.agent-manager.toml` at the repo root.
 Local overrides (gitignored) go in `config.local.toml` or `.agent-manager.local.toml`.

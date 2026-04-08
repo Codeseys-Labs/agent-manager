@@ -24,32 +24,54 @@ bun install
 bun test
 ```
 
-If all tests pass, you're ready.
+If all 647 tests pass, you're ready.
 
 ## Project Structure
 
 ```
 agent-manager/
   src/
-    cli.ts                  # Entry point (citty command routing)
-    commands/               # CLI command handlers (init, add, apply, etc.)
-    core/                   # Config engine (TOML, resolver, diff, git, schema)
-    adapters/               # Built-in adapters (one directory each)
+    cli.ts                  # Entry point (citty, 20 subcommands)
+    commands/               # CLI command handlers (20 files)
+    core/                   # Config engine (TOML, resolver, git, schema, secrets, instructions)
+      schema.ts             # Zod schemas (Server, Instruction, Skill, AgentProfile, Profile, Config)
+      config.ts             # TOML read/write, hierarchical 4-layer merge
+      resolver.ts           # Profile resolution with inheritance chains
+      git.ts                # Git operations (isomorphic-git)
+      secrets.ts            # AES-256-GCM encryption + ${VAR} interpolation
+      instructions.ts       # Shared instruction generation for all output formats
+    adapters/               # 8 built-in IDE adapters
       types.ts              # Adapter interface -- start here for adapter work
       registry.ts           # Lazy factory registry for all adapters
-      claude-code/          # Reference adapter implementation
-    lib/                    # Shared utilities
-    mcp/                    # MCP server mode
+      claude-code/          # Reference adapter (808 lines, 7 files)
+      codex-cli/            # Codex CLI adapter (781 lines)
+      copilot/              # GitHub Copilot adapter (726 lines)
+      cursor/               # Cursor adapter (886 lines)
+      forgecode/            # ForgeCode adapter (717 lines)
+      kilo-code/            # Kilo Code adapter (1280 lines, includes JSONC parser)
+      kiro/                 # Kiro adapter (938 lines)
+      windsurf/             # Windsurf adapter (673 lines)
+    platforms/              # 3 git platform adapters
+      types.ts              # GitPlatformAdapter interface
+      registry.ts           # Platform detection from remote URL
+      github.ts, gitlab.ts, bare.ts
+    mcp/                    # MCP server mode (JSON-RPC over stdio)
+      server.ts             # 10 tools across 3 permission tiers
+    tui/                    # Terminal UI (Ink + React)
+    web/                    # Web UI (Hono local + Cloudflare Workers)
+    lib/                    # Shared utilities (output.ts)
   test/
     core/                   # Core engine tests
     adapters/               # Adapter tests (mirror src/adapters structure)
     commands/               # CLI command tests
     fixtures/               # Sample config files for testing
     helpers/                # Test utilities (temp dirs, mock configs)
-  ADRs/                     # Architectural decision records
+    integration/            # End-to-end tests
+  ADRs/                     # 15 architectural decision records
   docs/                     # Design specs and guides
   scripts/
-    build.ts                # Cross-platform build script
+    build.ts                # Cross-platform build script (5 targets)
+    install.sh              # curl-based installer
 ```
 
 ## Development Workflow
@@ -61,7 +83,7 @@ Check existing issues first. For adapter work, see `docs/adapter-development-gui
 ### 2. Create a Branch
 
 ```bash
-git checkout -b feat/cursor-adapter   # or fix/import-crash, docs/readme, etc.
+git checkout -b feat/new-adapter   # or fix/import-crash, docs/readme, etc.
 ```
 
 ### 3. Write Tests First (TDD)
@@ -87,7 +109,7 @@ Keep changes focused. One feature or fix per PR.
 ### 5. Validate
 
 ```bash
-bun test            # All tests pass
+bun test            # All 647 tests pass
 bun run lint        # Biome linting + formatting
 bun run typecheck   # TypeScript type checking
 ```
@@ -111,7 +133,7 @@ Use conventional commit messages:
 Examples:
 
 ```bash
-git commit -m "feat(adapter): add Cursor adapter with import/export/diff"
+git commit -m "feat(adapter): add Kilo Code adapter with JSONC parsing"
 git commit -m "fix(import): handle missing mcpServers key in .claude.json"
 git commit -m "test(diff): add drift detection tests for env var changes"
 ```
@@ -121,7 +143,7 @@ Keep commits atomic -- one logical change per commit.
 ### 7. Push and Open a PR
 
 ```bash
-git push -u origin feat/cursor-adapter
+git push -u origin feat/new-adapter
 ```
 
 Open a PR against `main`. Describe what changed and why. Include test evidence.
@@ -139,7 +161,7 @@ Key conventions:
 - TypeScript strict mode -- no `any` types
 - Prefer `interface` over `type` for object shapes
 - Use named exports (not default exports) for functions
-- Adapter modules export a single default adapter object from `index.ts`
+- Adapter modules export a single adapter object from `index.ts`
 
 ## How To...
 
@@ -149,13 +171,36 @@ Key conventions:
 2. Wire it into `src/cli.ts` as a subcommand
 3. Add tests in `test/commands/<name>.test.ts`
 
-### Add an Adapter
+### Add an IDE Adapter
 
 See `docs/adapter-development-guide.md` for the full walkthrough. Summary:
 
 1. Create `src/adapters/<name>/` with detect, import, export, diff, schema, index
 2. Register the lazy factory in `src/adapters/registry.ts`
 3. Add tests in `test/adapters/<name>/`
+
+Study the existing adapters for patterns:
+- **Claude Code** (808 lines) -- reference implementation, 7 files
+- **Kilo Code** (1280 lines) -- most complex, includes JSONC parser
+- **Windsurf** (673 lines) -- simplest, good starting point
+
+### Add a Platform Adapter
+
+Platform adapters handle git remote URL detection and auth:
+
+1. Create `src/platforms/<name>.ts` implementing `GitPlatformAdapter` from `src/platforms/types.ts`
+2. Add to the `PLATFORMS` array in `src/platforms/registry.ts` (order by specificity -- more specific first, bare last)
+3. Write tests for URL detection patterns
+
+### Add an MCP Tool
+
+MCP tools are defined in `src/mcp/server.ts`:
+
+1. Add a `ToolEntry` to the `defineTools()` function
+2. Choose the permission tier: `read-only`, `write-local`, or `write-remote`
+3. Define the JSON Schema for input parameters
+4. Implement the async handler function
+5. Write-remote tools require opt-in via `settings.mcp_serve` in config.toml (ADR-0009)
 
 ### Modify the Core Schema
 
@@ -175,9 +220,9 @@ To add an adapter-specific field, update only that adapter's `schema.ts`.
 
 ## Architecture Decisions
 
-Design decisions are recorded in `ADRs/`. Before proposing a change that conflicts
-with an existing ADR, read it first. To propose a new direction, create a new ADR
-using `ADRs/template.md`.
+Design decisions are recorded in [15 ADRs](ADRs/README.md). Before proposing a change
+that conflicts with an existing ADR, read it first. To propose a new direction, create
+a new ADR using `ADRs/template.md`.
 
 ## Questions?
 

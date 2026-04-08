@@ -7,8 +7,9 @@ coding tool's native configuration files.
 ## What is an Adapter?
 
 Every AI coding tool stores configuration differently -- Claude Code uses
-`~/.claude.json` and `.mcp.json`, Cursor uses `~/.cursor/mcp.json`, Copilot uses
-`.github/copilot-instructions.md`, and so on.
+`~/.claude.json` and `.mcp.json`, Cursor uses `~/.cursor/mcp.json`, Kiro uses
+`.kiro/mcp.json`, Kilo Code uses `~/.kilo-code/mcp_settings.json` (JSONC format),
+and so on.
 
 An adapter handles three operations:
 
@@ -20,6 +21,21 @@ An adapter handles three operations:
 
 Plus detection (is the tool installed?) and schema validation (Zod schemas for
 adapter-specific TOML fields).
+
+## Current Adapters
+
+All 8 adapters are fully implemented with detect, import, export, and diff:
+
+| Adapter | Tool | Lines | Files | Key Complexity |
+|---------|------|-------|-------|----------------|
+| `claude-code` | Claude Code | 808 | 7 | Reference impl; identity.ts for server dedup |
+| `codex-cli` | Codex CLI | 781 | 6 | YAML config format |
+| `copilot` | GitHub Copilot | 726 | 6 | Multi-file instructions (.instructions.md) |
+| `cursor` | Cursor | 886 | 6 | .mdc frontmatter for scoped rules |
+| `forgecode` | ForgeCode | 717 | 6 | Similar to Kilo Code format |
+| `kilo-code` | Kilo Code | 1280 | 8 | JSONC parsing (comments + trailing commas), identity.ts |
+| `kiro` | Kiro | 938 | 7 | Steering files with YAML frontmatter, identity.ts |
+| `windsurf` | Windsurf | 673 | 7 | Trigger-based rule frontmatter |
 
 ## The Adapter Interface
 
@@ -51,14 +67,14 @@ interface Adapter {
 
 ## Step-by-Step: Creating a New Adapter
 
-We'll use a hypothetical "cursor" adapter as the example. The Claude Code adapter
-(`src/adapters/claude-code/`) is the reference implementation -- 7 files, ~808 lines
-total, with 5 test files (~1094 lines).
+We'll use a hypothetical "example-tool" adapter. Study the existing adapters for
+patterns -- the Claude Code adapter is the reference implementation, while Windsurf
+is the simplest and Kilo Code is the most complex.
 
 ### 1. Create the Directory
 
 ```bash
-mkdir -p src/adapters/cursor
+mkdir -p src/adapters/example-tool
 ```
 
 ### 2. Implement detect.ts
@@ -75,12 +91,12 @@ export function detect(homeDir?: string): DetectResult {
   const home = homeDir ?? homedir();
   const paths: Record<string, string> = {};
 
-  const configDir = join(home, ".cursor");
+  const configDir = join(home, ".example-tool");
   if (existsSync(configDir)) {
     paths.configDir = configDir;
   }
 
-  const mcpJson = join(home, ".cursor", "mcp.json");
+  const mcpJson = join(home, ".example-tool", "mcp.json");
   if (existsSync(mcpJson)) {
     paths.mcpConfig = mcpJson;
   }
@@ -99,15 +115,19 @@ home directory to use temp fixtures instead of the real filesystem.
 
 Read native config files and convert to the core `ImportResult` format.
 
-- Read the tool's config files (JSON, YAML, TOML, etc.)
+- Read the tool's config files (JSON, YAML, TOML, JSONC, etc.)
 - Convert servers to `ImportedServer[]` with `name`, `command`, `args`, `env`, `scope`
 - Convert instructions to `ImportedInstruction[]`
 - Put tool-specific fields (not in the core schema) into `adapterExtras`
-- Use `extractPackageId()` from the Claude Code adapter's `identity.ts` (or factor it
-  out to a shared utility) for server deduplication
+- Use identity matching (see `claude-code/identity.ts`, `kilo-code/identity.ts`,
+  `kiro/identity.ts`) for server deduplication
 
 **Handle missing files gracefully:** Push a warning string, don't throw. The user
 may have the tool installed but no servers configured.
+
+**JSONC parsing note:** If the tool uses JSONC (JSON with Comments), see the
+Kilo Code adapter's `jsonc.ts` for a lightweight parser that strips comments and
+trailing commas before JSON.parse. This avoids a heavy dependency.
 
 ### 4. Implement export.ts
 
@@ -117,8 +137,12 @@ Take a `ResolvedConfig` and write the tool's native config files.
 - Generate the tool's native file format
 - Preserve existing non-managed fields (read the file first, merge, write back)
 - Use `WrittenFile[]` for dry-run support -- set `written: false` when `dryRun` is true
-- For instruction files, use `<!-- am:begin -->` / `<!-- am:end -->` markers to
-  manage a section within existing content
+- For instruction files, use the shared generators in `src/core/instructions.ts`:
+  - `generateClaudeMd()` / `generateAgentsMd()` for marker-based formats
+  - `generateCursorMdc()` for .mdc frontmatter
+  - `generateWindsurfRule()` for .windsurf/rules format
+  - `generateKiroSteering()` for .kiro/steering format
+  - `generateCopilotInstruction()` for .github/instructions format
 
 **Critical:** Always preserve fields you don't manage. If the native config has
 `"theme": "dark"` and you only manage `mcpServers`, keep the theme setting.
@@ -155,17 +179,17 @@ Define Zod schemas for adapter-specific TOML fields. These validate the
 import { z } from "zod";
 import type { AdapterSchema } from "../types.ts";
 
-export const cursorServerSchema = z.object({
+export const exampleServerSchema = z.object({
   // Fields specific to this tool's server config
 }).passthrough();
 
-export const cursorGlobalSchema = z.object({
+export const exampleGlobalSchema = z.object({
   // Global adapter settings
 }).passthrough();
 
-export const cursorSchema: AdapterSchema = {
-  server: cursorServerSchema,
-  global: cursorGlobalSchema,
+export const exampleSchema: AdapterSchema = {
+  server: exampleServerSchema,
+  global: exampleGlobalSchema,
 };
 ```
 
@@ -183,14 +207,14 @@ import { detect } from "./detect.ts";
 import { importConfig } from "./import.ts";
 import { exportConfig } from "./export.ts";
 import { diffConfig } from "./diff.ts";
-import { cursorSchema } from "./schema.ts";
+import { exampleSchema } from "./schema.ts";
 
-const CAPABILITIES: Capability[] = ["mcp", "instructions", "permissions", "models"];
+const CAPABILITIES: Capability[] = ["mcp", "instructions"];
 
-export const cursorAdapter: Adapter = {
+export const exampleToolAdapter: Adapter = {
   meta: {
-    name: "cursor",
-    displayName: "Cursor",
+    name: "example-tool",
+    displayName: "Example Tool",
     version: "0.1.0",
     capabilities: CAPABILITIES,
   },
@@ -199,7 +223,7 @@ export const cursorAdapter: Adapter = {
   export: (config: ResolvedConfig, options: ExportOptions): ExportResult =>
     exportConfig(config, options),
   diff: (config: ResolvedConfig): DiffResult => diffConfig(config),
-  schema: cursorSchema,
+  schema: exampleSchema,
 };
 ```
 
@@ -209,13 +233,10 @@ Add a lazy factory entry to `src/adapters/registry.ts`:
 
 ```typescript
 const ADAPTER_FACTORIES: Record<string, AdapterFactory> = {
-  "claude-code": async () => {
-    const { claudeCodeAdapter } = await import("./claude-code/index.ts");
-    return claudeCodeAdapter;
-  },
-  "cursor": async () => {
-    const { cursorAdapter } = await import("./cursor/index.ts");
-    return cursorAdapter;
+  // ... existing adapters ...
+  "example-tool": async () => {
+    const { exampleToolAdapter } = await import("./example-tool/index.ts");
+    return exampleToolAdapter;
   },
 };
 ```
@@ -225,10 +246,10 @@ All adapters ship in the binary but unused ones are never instantiated (ADR-0011
 
 ### 9. Add Tests
 
-Create `test/adapters/cursor/` with test files mirroring the source modules:
+Create `test/adapters/example-tool/` with test files mirroring the source modules:
 
 ```
-test/adapters/cursor/
+test/adapters/example-tool/
   detect.test.ts        # Detection with mocked filesystem
   import.test.ts        # Import from fixture configs
   export.test.ts        # Export to temp directories, verify output
@@ -236,7 +257,7 @@ test/adapters/cursor/
   roundtrip.test.ts     # Import -> export -> diff = in-sync
 ```
 
-**Testing patterns from the Claude Code adapter:**
+**Testing patterns from the existing adapters:**
 
 - Use temp directories (`mkdtemp`) for filesystem tests
 - Pass `homeDir` overrides to avoid touching the real home directory
@@ -248,8 +269,33 @@ test/adapters/cursor/
 Run tests:
 
 ```bash
-bun test test/adapters/cursor/
+bun test test/adapters/example-tool/
 ```
+
+## Platform Adapter Development
+
+Platform adapters in `src/platforms/` handle git remote URL detection and operations.
+They are simpler than IDE adapters -- typically a single file.
+
+### Interface
+
+From `src/platforms/types.ts`:
+
+```typescript
+interface GitPlatformAdapter {
+  meta: { name: string; displayName: string };
+  detect(remoteUrl: string): boolean;
+}
+```
+
+### Adding a Platform Adapter
+
+1. Create `src/platforms/<name>.ts`
+2. Implement the `GitPlatformAdapter` interface
+3. Add to the `PLATFORMS` array in `src/platforms/registry.ts`
+4. Order matters: more specific platforms first, `bare` is always last as fallback
+
+Current platforms: GitHub, GitLab, bare git.
 
 ## Key Patterns
 
@@ -265,6 +311,29 @@ export function detect(homeDir?: string): DetectResult {
   // ...
 }
 ```
+
+### JSONC Parsing
+
+Some tools (Kilo Code, potentially others) use JSONC (JSON with Comments) for config
+files. The Kilo Code adapter includes a lightweight JSONC parser at
+`src/adapters/kilo-code/jsonc.ts` that strips `//` and `/* */` comments plus trailing
+commas before feeding to `JSON.parse`. Use this pattern rather than adding a heavy
+JSONC dependency.
+
+### Shared Instruction Generation
+
+The `src/core/instructions.ts` module provides format-specific generators:
+
+| Function | Format | Used By |
+|----------|--------|---------|
+| `generateClaudeMd()` | `<!-- am:begin -->` markers in CLAUDE.md | Claude Code |
+| `generateAgentsMd()` | `<!-- am:begin -->` markers in AGENTS.md | Codex CLI |
+| `generateCursorMdc()` | YAML frontmatter `.mdc` files | Cursor |
+| `generateWindsurfRule()` | Trigger-based `.md` rules | Windsurf |
+| `generateKiroSteering()` | Inclusion-based steering `.md` | Kiro |
+| `generateCopilotInstruction()` | `applyTo` frontmatter `.instructions.md` | Copilot |
+
+New adapters should add a generator here if their instruction format differs from existing ones.
 
 ### WrittenFile[] for Dry-Run
 
@@ -296,49 +365,18 @@ In diff, normalize both sides before comparing:
 - Treat `[]` and missing as equivalent for arrays
 - Resolve `~` in paths
 
-## Tools That Need Adapters
+## Reference: Adapter Sizes
 
-Based on research, these tools are candidates for adapters (priority from the design spec):
+| Adapter | Lines | Files | Notable Features |
+|---------|-------|-------|------------------|
+| `claude-code` | 808 | 7 | Reference impl, identity.ts for server dedup |
+| `codex-cli` | 781 | 6 | YAML config, AGENTS.md instructions |
+| `copilot` | 726 | 6 | Multi-file .instructions.md with applyTo frontmatter |
+| `cursor` | 886 | 6 | .mdc frontmatter rules, scoped instructions |
+| `forgecode` | 717 | 6 | Similar structure to Kilo Code |
+| `kilo-code` | 1280 | 8 | JSONC parser, identity.ts, modes support |
+| `kiro` | 938 | 7 | Steering files, identity.ts, spec awareness |
+| `windsurf` | 673 | 7 | Simplest adapter, good template for new ones |
 
-| Tool | Priority | Config Format | Key Files |
-|------|----------|---------------|-----------|
-| Cursor | P0 | JSON | `~/.cursor/mcp.json`, `.cursor/rules/*.mdc` |
-| Windsurf | P1 | JSON + MD | `~/.windsurf/mcp.json`, `.windsurf/rules/*.md` |
-| Copilot | P1 | JSON + MD | `.vscode/mcp.json`, `.github/instructions/*.md` |
-| Cline | P1 | JSON | `~/.cline/mcp_settings.json` |
-| Roo Code | P1 | JSON | `~/.roo-code/mcp_settings.json`, `.roo/` modes |
-| Continue | P2 | JSON | `~/.continue/config.json` |
-| Gemini CLI | P2 | JSON | `~/.gemini/settings.json`, `GEMINI.md` |
-| Codex CLI | P2 | YAML + MD | `~/.codex/config.yaml`, `AGENTS.md` |
-| Kilo Code | P2 | JSON | `~/.kilo-code/mcp_settings.json` |
-| Kiro | P2 | JSON | `.kiro/mcp.json`, `.kiro/specs/` |
-| ForgeCode | P2 | JSON | `~/.forgecode/mcp_settings.json` |
-| Amazon Q | P2 | JSON | `.amazonq/mcp.json` |
-
-## Reference: Claude Code Adapter
-
-The Claude Code adapter is the reference implementation. File sizes:
-
-| File | Lines | Purpose |
-|------|-------|---------|
-| `detect.ts` | 70 | Check for `~/.claude.json`, `~/.claude/`, project configs |
-| `identity.ts` | 88 | Package ID extraction for server deduplication |
-| `import.ts` | 182 | Read `~/.claude.json` + `.mcp.json` + `CLAUDE.md` |
-| `export.ts` | 201 | Write `~/.claude.json` + `.mcp.json` + `CLAUDE.md` |
-| `diff.ts` | 172 | Structural comparison with key sorting + normalization |
-| `schema.ts` | 42 | Zod schemas for `always_allow`, `permission_mode`, etc. |
-| `index.ts` | 53 | Wire everything together, export adapter object |
-| **Total** | **808** | |
-
-Tests (5 files, ~1094 lines):
-
-| Test File | Lines | Covers |
-|-----------|-------|--------|
-| `detect.test.ts` | 90 | File existence, version detection, project paths |
-| `import.test.ts` | 221 | Global + project servers, CLAUDE.md, malformed JSON |
-| `export.test.ts` | 204 | File generation, marker preservation, dry-run |
-| `diff.test.ts` | 240 | In-sync, drifted, added/removed servers, field changes |
-| `roundtrip.test.ts` | 142 | Import -> export -> diff = in-sync |
-
-Study these files before writing a new adapter. Most adapters will follow the same
-structure with different file paths and format-specific parsing.
+Study these before writing a new adapter. Most adapters follow the same structure
+with different file paths and format-specific parsing.

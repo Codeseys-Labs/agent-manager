@@ -1,7 +1,8 @@
 # agent-manager (`am`)
 
-chezmoi for AI agent configs — define your MCP servers, skills, and instructions
-once in TOML, sync via git, and generate native configs for every AI coding tool.
+chezmoi for AI agent configs -- define your MCP servers, skills, instructions,
+and agent profiles once in TOML, sync via git, and generate native configs for
+every AI coding tool.
 
 ## Tech Stack
 
@@ -12,58 +13,89 @@ once in TOML, sync via git, and generate native configs for every AI coding tool
 | CLI framework | citty (command routing) + @clack/prompts (interactive wizards) |
 | Config | @iarna/toml (parser) + Zod (validation) |
 | Git | isomorphic-git (pure JS, no system git dependency) |
+| Web framework | Hono (local server + Cloudflare Workers) |
+| TUI | Ink + React (terminal dashboard) |
+| Encryption | Web Crypto API (AES-256-GCM) |
 | Output | chalk (colors), @clack/prompts (interactive) |
-| Testing | bun:test |
+| Testing | bun:test (647 tests across 67 files) |
 | Linting | Biome |
 
 ## Directory Layout
 
 ```
-src/
-  cli.ts                        # Entry point — citty command routing with lazy subcommand imports
-  commands/                     # CLI command handlers (one file per command)
+src/                                 # 99 TypeScript files
+  cli.ts                             # Entry point -- citty command routing with 20 lazy subcommands
+  commands/                          # CLI command handlers (one file per command)
     init.ts, add.ts, list.ts, use.ts, apply.ts, status.ts,
-    import.ts, push.ts, pull.ts, undo.ts, log.ts, version.ts
-  core/                         # Core engine — config, resolution, git, validation
-    schema.ts                   # Zod schemas: Server, Instruction, Skill, Profile, Config
-    config.ts                   # TOML read/write, hierarchical merge, project config
-    resolver.ts                 # Profile resolution: inheritance, tag activation, merge
-    git.ts                      # Git operations via isomorphic-git
-    secrets.ts                  # ${VAR} interpolation from env + config.local.toml
-  adapters/                     # Built-in adapters (one dir per tool)
-    types.ts                    # Adapter interface: detect/import/export/diff + types
-    registry.ts                 # Lazy factory registry (ADAPTER_FACTORIES map)
-    claude-code/                # Claude Code adapter
-      index.ts                  # Adapter entry — wires detect/import/export/diff
-      detect.ts                 # Check if claude CLI is installed, find config paths
-      import.ts                 # Parse ~/.claude.json + .mcp.json -> core format
-      export.ts                 # Write resolved config -> native JSON + CLAUDE.md
-      diff.ts                   # Structural drift detection
-      identity.ts               # Server identity resolution (package, endpoint, basename)
-      schema.ts                 # Claude Code-specific Zod schema
-  lib/                          # Shared utilities
-    output.ts                   # JSON/text output helpers (--json, --quiet, --verbose)
-  mcp/                          # MCP server mode (Phase 3)
+    config.ts, profile.ts, doctor.ts, import.ts, push.ts, pull.ts,
+    undo.ts, log.ts, secret.ts, version.ts, adapter.ts,
+    mcp-serve.ts, serve.ts, tui.ts
+  core/                              # Core engine -- config, resolution, git, validation, encryption
+    schema.ts                        # Zod schemas: Server, Instruction, Skill, AgentProfile, Profile, Config, ProjectConfig
+    config.ts                        # TOML read/write, hierarchical merge (4 layers), project config resolution
+    resolver.ts                      # Profile resolution: inheritance chains, tag activation, server/skill/agent/instruction merge
+    git.ts                           # Git operations via isomorphic-git (init, commit, push, pull, revert, status, log)
+    secrets.ts                       # AES-256-GCM encryption + ${VAR} interpolation + async decrypt walk
+    instructions.ts                  # Shared instruction generation: CLAUDE.md, AGENTS.md, .mdc, steering, .windsurf rules, copilot
+  adapters/                          # 8 built-in IDE adapters (~6,800 lines)
+    types.ts                         # Adapter interface: detect/import/export/diff + all type definitions
+    registry.ts                      # Lazy factory registry (ADAPTER_FACTORIES map + cache)
+    claude-code/                     # Claude Code: ~/.claude.json, .mcp.json, CLAUDE.md (808 lines, 7 files)
+    codex-cli/                       # Codex CLI: ~/.codex/config.yaml, AGENTS.md (781 lines, 6 files)
+    copilot/                         # GitHub Copilot: .vscode/mcp.json, .github/instructions/*.md (726 lines, 6 files)
+    cursor/                          # Cursor: ~/.cursor/mcp.json, .cursor/rules/*.mdc (886 lines, 6 files)
+    forgecode/                       # ForgeCode: ~/.forgecode/mcp_settings.json (717 lines, 6 files)
+    kilo-code/                       # Kilo Code: ~/.kilo-code/mcp_settings.json, JSONC parsing (1280 lines, 8 files)
+    kiro/                            # Kiro: .kiro/mcp.json, .kiro/steering/*.md (938 lines, 7 files)
+    windsurf/                        # Windsurf: ~/.windsurf/mcp.json, .windsurf/rules/*.md (673 lines, 7 files)
+  platforms/                         # 3 git platform adapters
+    types.ts                         # GitPlatformAdapter interface (detect, pushUrl, pullUrl, auth)
+    registry.ts                      # Platform detection from remote URL (ordered by specificity)
+    github.ts                        # GitHub platform adapter
+    gitlab.ts                        # GitLab platform adapter
+    bare.ts                          # Bare git fallback
+  mcp/                               # MCP server mode
+    server.ts                        # JSON-RPC 2.0 over stdio, 10 tools, 3 permission tiers (ADR-0009)
+  tui/                               # Terminal UI (Ink + React)
+    index.tsx                        # TUI launcher
+    App.tsx                          # Root component with tab navigation
+    Dashboard.tsx                    # Main dashboard view
+    StatusView.tsx                   # Drift status display
+    ProfileSwitcher.tsx              # Interactive profile switching
+    HelpView.tsx                     # Help/keybindings view
+    data.ts                          # Data loading for TUI
+  web/                               # Web UI
+    server.ts                        # Local Hono server: REST API + SSE events + static dashboard
+    worker.ts                        # Cloudflare Workers: stateless, GitHub OAuth, encrypted cookies, GitHub API
+    public/                          # Static HTML (index.html, login.html)
+  lib/                               # Shared utilities
+    output.ts                        # JSON/text output helpers (--json, --quiet, --verbose)
 
-test/                           # Mirrors src/ structure
-  core/                         # Unit tests for core engine
-  adapters/claude-code/         # Adapter-specific tests
-  commands/                     # Command integration tests
-  helpers/                      # Test utilities (tmp dirs, fixtures)
+test/                                # 67 test files, 647 tests, 1569 assertions
+  core/                              # Unit tests for core modules
+  adapters/                          # Adapter-specific tests (per-adapter directories)
+  commands/                          # CLI command integration tests
+  fixtures/                          # Sample native config files per tool
+  helpers/                           # Test utilities (tmp dirs, config builders)
+  integration/                       # End-to-end tests
 
-ADRs/                           # 11 architectural decision records
-docs/                           # Design spec
+ADRs/                                # 15 architectural decision records
+docs/                                # Design specs and guides
 scripts/
-  build.ts                      # Cross-platform build script (Bun.spawn)
+  build.ts                           # Cross-platform build (5 targets via Bun.spawn)
+  install.sh                         # curl-based installer (platform detection)
 ```
 
 ## Architecture
 
-**Layered Core + Adapter Extensions** (ADR-0001):
+**Layered Core + Dual-Axis Adapter Extensions** (ADR-0001, ADR-0013):
 
-1. **Core** owns the universal schema (servers, instructions, skills, profiles) and validates it with Zod
-2. **Adapters** own tool-specific extensions via `[entity.adapters.<name>]` passthrough sections
-3. **Two-phase validation** (ADR-0007): Core validates core fields strictly; adapter sections are `z.record(z.string(), z.unknown())` at the core level, then each adapter validates its own section
+1. **Core** owns the universal schema (servers, instructions, skills, agent profiles, config profiles) and validates it with Zod
+2. **IDE adapters** (8) bridge core TOML to each tool's native format: detect, import, export, diff
+3. **Platform adapters** (3) handle git remote URL detection and auth: GitHub, GitLab, bare
+4. **Two-phase validation** (ADR-0007): Core validates core fields strictly; adapter sections are `z.record(z.string(), z.unknown())` at the core level, then each adapter validates its own section
+5. **MCP server mode** (ADR-0009): agent-manager as an MCP tool server with 3 permission tiers
+6. **Stateless web UI** (ADR-0015): Cloudflare Workers with GitHub OAuth, encrypted cookies, no persistent storage
 
 **Config hierarchy** (highest wins):
 ```
@@ -71,6 +103,8 @@ CLI flags -> ENV vars -> .agent-manager.local.toml -> .agent-manager.toml -> con
 ```
 
 **Git-backed everything** (ADR-0002): Durable config changes auto-commit. Ephemeral state (active profile in `state.toml`) does not.
+
+**AES-256-GCM encryption** (ADR-0012): Secrets are encrypted with `am secret set`, stored as `enc:v1:nonce:ciphertext` in TOML, decrypted at apply time. Key from `AM_ENCRYPTION_KEY` env var or `.agent-manager/key.txt`.
 
 ## Key Conventions
 
@@ -87,14 +121,14 @@ Write failing test first, implement, verify, commit. Tests mirror `src/` structu
 ### Structured Output
 
 Every command supports `--json` for structured output. Use the helpers in `src/lib/output.ts`:
-- `output(data, opts)` — JSON when `--json`, silent otherwise
-- `info(msg, opts)` — suppressed in JSON or quiet mode
-- `error(msg, opts)` — structured JSON error or plain text
-- `debug(msg, opts)` — only in verbose mode
+- `output(data, opts)` -- JSON when `--json`, silent otherwise
+- `info(msg, opts)` -- suppressed in JSON or quiet mode
+- `error(msg, opts)` -- structured JSON error or plain text
+- `debug(msg, opts)` -- only in verbose mode
 
 ### Adapter Interface
 
-All adapters implement the `Adapter` interface from `src/adapters/types.ts`:
+All 8 IDE adapters implement the `Adapter` interface from `src/adapters/types.ts`:
 
 ```typescript
 interface Adapter {
@@ -106,6 +140,20 @@ interface Adapter {
   schema: AdapterSchema;       // Zod schemas for adapter-specific TOML fields
 }
 ```
+
+### Platform Adapter Interface
+
+The 3 platform adapters in `src/platforms/` implement `GitPlatformAdapter`:
+
+```typescript
+interface GitPlatformAdapter {
+  meta: { name: string; displayName: string };
+  detect(remoteUrl: string): boolean;   // Does this URL match this platform?
+  // Platform-specific push/pull URL handling
+}
+```
+
+Detection is ordered by specificity (GitHub > GitLab > bare fallback).
 
 ### Config Hierarchy
 
@@ -130,25 +178,24 @@ All git operations use **isomorphic-git** (pure JS). No dependency on system `gi
 
 | Section | Strategy |
 |---------|----------|
-| Servers / Skills / Instructions | Union — same-name key in higher layer wins |
-| Settings / Env | Shallow merge — per-key override |
-| Adapter sections | Passthrough — core preserves, adapter merges |
+| Servers / Skills / Instructions / Agents | Union -- same-name key in higher layer wins |
+| Settings / Env | Shallow merge -- per-key override |
+| Adapter sections | Passthrough -- core preserves, adapter merges |
 
-## How to Add a New Adapter
+## How to Add a New IDE Adapter
 
 1. Create `src/adapters/<name>/` with these files:
-   - `index.ts` — adapter entry point, wires the interface
-   - `detect.ts` — check if tool is installed, return config file paths
-   - `import.ts` — parse native config files into `ImportResult`
-   - `export.ts` — write `ResolvedConfig` to native config files
-   - `diff.ts` — structural comparison for drift detection
-   - `schema.ts` — Zod schemas for this adapter's TOML extensions
+   - `index.ts` -- adapter entry point, wires the interface
+   - `detect.ts` -- check if tool is installed, return config file paths
+   - `import.ts` -- parse native config files into `ImportResult`
+   - `export.ts` -- write `ResolvedConfig` to native config files
+   - `diff.ts` -- structural comparison for drift detection
+   - `schema.ts` -- Zod schemas for this adapter's TOML extensions
 
 2. Implement the `Adapter` interface from `src/adapters/types.ts`
 
 3. Register in `src/adapters/registry.ts`:
    ```typescript
-   // In ADAPTER_FACTORIES:
    "<name>": async () => {
      const { myAdapter } = await import("./<name>/index.ts");
      return myAdapter;
@@ -159,7 +206,13 @@ All git operations use **isomorphic-git** (pure JS). No dependency on system `gi
 
 5. Add fixture files in `test/helpers/fixtures.ts` if needed
 
-## How to Add a New Command
+## How to Add a New Platform Adapter
+
+1. Create `src/platforms/<name>.ts` implementing the `GitPlatformAdapter` interface
+2. Add the adapter to the `PLATFORMS` array in `src/platforms/registry.ts` (order matters -- more specific first)
+3. Add tests verifying URL detection and platform-specific behavior
+
+## How to Add a New CLI Command
 
 1. Create `src/commands/<name>.ts` exporting a `defineCommand()` from citty
 2. Accept the global flags (`--json`, `--verbose`, `--quiet`, `--profile`) where relevant
@@ -170,9 +223,17 @@ All git operations use **isomorphic-git** (pure JS). No dependency on system `gi
    ```
 5. Add tests in `test/commands/<name>.test.ts`
 
+## How to Add an MCP Tool
+
+1. Add a `ToolEntry` to the `defineTools()` array in `src/mcp/server.ts`
+2. Choose the appropriate tier: `read-only`, `write-local`, or `write-remote`
+3. Define the JSON Schema for input parameters
+4. Implement the async handler function
+5. Write-remote tools require explicit opt-in via `settings.mcp_serve` in config.toml
+
 ## How to Modify the Schema
 
-1. Edit `src/core/schema.ts` — add/change Zod schemas
+1. Edit `src/core/schema.ts` -- add/change Zod schemas
 2. Update `src/core/config.ts` if merge behavior changes
 3. Update `src/core/resolver.ts` if profile resolution is affected
 4. Run `bun test test/core/schema.test.ts` to verify
@@ -181,7 +242,7 @@ All git operations use **isomorphic-git** (pure JS). No dependency on system `gi
 ## Testing
 
 ```bash
-bun test                          # Run all tests
+bun test                          # Run all 647 tests
 bun test:unit                     # Core + adapter unit tests only
 bun test:integration              # Integration tests only
 bun test --watch                  # Watch mode
@@ -198,6 +259,7 @@ bun run build -- --all            # All 5 platform targets
 bun run build -- --target bun-linux-x64  # Specific target
 ```
 
+Targets: `bun-darwin-arm64`, `bun-darwin-x64`, `bun-linux-x64`, `bun-linux-arm64`, `bun-windows-x64`.
 The build uses `Bun.spawn()` to invoke `bun build --compile` (the JS API doesn't support `--compile`).
 
 ## Development
@@ -207,23 +269,29 @@ bun run dev -- <command> [args]   # Run CLI in dev mode (e.g., bun run dev -- li
 bun run lint                      # Biome check
 bun run lint:fix                  # Biome auto-fix
 bun run typecheck                 # tsc --noEmit
+bun run dev:web                   # Cloudflare Workers local dev
+bun run deploy:web                # Deploy to Cloudflare Workers
 ```
 
 ## ADRs
 
 | ADR | Decision |
 |-----|----------|
-| [0001](ADRs/0001-layered-core-plus-adapter-extensions.md) | Layered Core + Adapter Extensions — universal core, tool-specific escape hatches |
-| [0002](ADRs/0002-git-backed-everything.md) | Git-Backed Everything — config dir is a git repo, durable changes auto-commit |
-| [0003](ADRs/0003-hierarchical-config.md) | Hierarchical Config — global + project layers with defined merge rules |
-| [0004](ADRs/0004-toml-config-format.md) | TOML as Configuration Format — human-friendly, supports comments |
-| [0005](ADRs/0005-bidirectional-adapters.md) | Bidirectional Adapters — import + export + diff for brownfield and greenfield |
-| [0006](ADRs/0006-drift-detection-over-overwrite.md) | Drift Detection Over Overwrite — detect and surface native changes, don't clobber |
-| [0007](ADRs/0007-two-phase-zod-validation.md) | Two-Phase Zod Validation — core validates core, adapters validate their sections |
-| [0008](ADRs/0008-profile-based-config-subsets.md) | Profile-Based Subsets — inheritance + tag activation for context switching |
-| [0009](ADRs/0009-mcp-server-mode.md) | MCP Server Mode — AI agents as first-class users via `am mcp-serve` |
-| [0010](ADRs/0010-bunts-single-binary.md) | BunTS Single Binary — zero runtime deps, `bun build --compile` |
-| [0011](ADRs/0011-built-in-adapters.md) | Built-In Adapters — all adapters in binary, lazy factory, subprocess escape hatch |
+| [0001](ADRs/0001-layered-core-plus-adapter-extensions.md) | Layered Core + Adapter Extensions -- universal core, tool-specific escape hatches |
+| [0002](ADRs/0002-git-backed-everything.md) | Git-Backed Everything -- config dir is a git repo, durable changes auto-commit |
+| [0003](ADRs/0003-hierarchical-config.md) | Hierarchical Config -- global + project layers with defined merge rules |
+| [0004](ADRs/0004-toml-config-format.md) | TOML as Configuration Format -- human-friendly, supports comments |
+| [0005](ADRs/0005-bidirectional-adapters.md) | Bidirectional Adapters -- import + export + diff for brownfield and greenfield |
+| [0006](ADRs/0006-drift-detection-over-overwrite.md) | Drift Detection Over Overwrite -- detect and surface native changes, don't clobber |
+| [0007](ADRs/0007-two-phase-zod-validation.md) | Two-Phase Zod Validation -- core validates core, adapters validate their sections |
+| [0008](ADRs/0008-profile-based-config-subsets.md) | Profile-Based Subsets -- inheritance + tag activation for context switching |
+| [0009](ADRs/0009-mcp-server-mode.md) | MCP Server Mode -- AI agents as first-class users via `am mcp-serve` |
+| [0010](ADRs/0010-bunts-single-binary.md) | BunTS Single Binary -- zero runtime deps, `bun build --compile` |
+| [0011](ADRs/0011-built-in-adapters.md) | Built-In Adapters -- all adapters in binary, lazy factory, subprocess escape hatch |
+| [0012](ADRs/0012-application-level-encryption.md) | Application-Level Encryption -- AES-256-GCM, platform-agnostic secret storage |
+| [0013](ADRs/0013-git-platform-adapters.md) | Git Platform Adapters -- GitHub, GitLab, bare git with URL-based detection |
+| [0014](ADRs/0014-workspace-profile-import.md) | Workspace-to-Profile Import -- import from existing workspace configs |
+| [0015](ADRs/0015-stateless-web-ui.md) | Stateless Web UI -- git-backed, independently deployable, encrypted cookies |
 
 ## Git Commit Style
 
