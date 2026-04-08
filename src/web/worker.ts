@@ -1,8 +1,9 @@
 /**
  * Cloudflare Workers entry point for agent-manager web UI.
  *
- * Stateless, git-backed via GitHub API. The CLI's `am serve` stays for local
- * use; this worker is for cloud deployment. See ADR-0015 for architecture.
+ * FULLY STATELESS — no KV, D1, or R2. Zero persistent storage.
+ * Sessions use encrypted cookies. Config lives in user's git repo.
+ * See ADR-0015 for architecture.
  */
 import { Hono } from "hono";
 import { cors } from "hono/cors";
@@ -11,19 +12,10 @@ import { cors } from "hono/cors";
 // Types
 // ---------------------------------------------------------------------------
 
-/** Cloudflare Workers KV — minimal interface for type safety without
- *  requiring @cloudflare/workers-types in the main tsconfig. */
-interface KVStore {
-  get(key: string): Promise<string | null>;
-  put(key: string, value: string, opts?: { expirationTtl?: number }): Promise<void>;
-  delete(key: string): Promise<void>;
-}
-
 type Bindings = {
   GITHUB_CLIENT_ID: string;
   GITHUB_CLIENT_SECRET: string;
   SESSION_SECRET: string;
-  AM_SESSIONS: KVStore;
   ENVIRONMENT: string;
   ASSETS?: { fetch: (req: Request) => Promise<Response> };
 };
@@ -33,12 +25,73 @@ type Variables = {
 };
 
 // ---------------------------------------------------------------------------
+// Cookie-based session helpers (no persistent storage)
+// ---------------------------------------------------------------------------
+
+async function encryptSession(
+  data: Record<string, unknown>,
+  secret: string,
+): Promise<string> {
+  const key = await deriveKey(secret);
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const encoded = new TextEncoder().encode(JSON.stringify(data));
+  const ciphertext = await crypto.subtle.encrypt(
+    { name: "AES-GCM", iv },
+    key,
+    encoded,
+  );
+  const combined = new Uint8Array(iv.length + new Uint8Array(ciphertext).length);
+  combined.set(iv);
+  combined.set(new Uint8Array(ciphertext), iv.length);
+  return btoa(String.fromCharCode(...combined));
+}
+
+async function decryptSession(
+  encrypted: string,
+  secret: string,
+): Promise<Record<string, unknown> | null> {
+  try {
+    const key = await deriveKey(secret);
+    const combined = Uint8Array.from(atob(encrypted), (c) => c.charCodeAt(0));
+    const iv = combined.slice(0, 12);
+    const ciphertext = combined.slice(12);
+    const plaintext = await crypto.subtle.decrypt(
+      { name: "AES-GCM", iv },
+      key,
+      ciphertext,
+    );
+    return JSON.parse(new TextDecoder().decode(plaintext));
+  } catch {
+    return null;
+  }
+}
+
+async function deriveKey(secret: string): Promise<CryptoKey> {
+  const raw = new TextEncoder().encode(secret.padEnd(32, "0").slice(0, 32));
+  return crypto.subtle.importKey("raw", raw, "AES-GCM", false, [
+    "encrypt",
+    "decrypt",
+  ]);
+}
+
+function getSessionCookie(c: {
+  req: { header: (name: string) => string | undefined };
+}): string | null {
+  const cookie = c.req.header("cookie") ?? "";
+  const match = cookie.match(/am_session=([^;]+)/);
+  return match?.[1] ?? null;
+}
+
+function sessionCookie(value: string, maxAge = 86400): string {
+  return `am_session=${value}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=${maxAge}`;
+}
+
+// ---------------------------------------------------------------------------
 // App
 // ---------------------------------------------------------------------------
 
 const app = new Hono<{ Bindings: Bindings; Variables: Variables }>();
 
-// CORS for the SPA
 app.use("/api/*", cors());
 
 // ---------------------------------------------------------------------------
@@ -50,7 +103,7 @@ app.get("/api/health", (c) =>
 );
 
 // ---------------------------------------------------------------------------
-// GitHub OAuth flow
+// GitHub OAuth flow (stateless — CSRF state in short-lived encrypted cookie)
 // ---------------------------------------------------------------------------
 
 app.get("/auth/github/login", async (c) => {
@@ -58,10 +111,11 @@ app.get("/auth/github/login", async (c) => {
   const redirectUri = new URL("/auth/github/callback", c.req.url).toString();
   const state = crypto.randomUUID();
 
-  // Store state in KV for CSRF verification (5 min TTL)
-  await c.env.AM_SESSIONS.put(`oauth-state:${state}`, "1", {
-    expirationTtl: 300,
-  });
+  // Store CSRF state in a short-lived encrypted cookie (5 min)
+  const stateCookie = await encryptSession(
+    { state, ts: Date.now() },
+    c.env.SESSION_SECRET,
+  );
 
   const params = new URLSearchParams({
     client_id: clientId,
@@ -70,7 +124,13 @@ app.get("/auth/github/login", async (c) => {
     state,
   });
 
-  return c.redirect(`https://github.com/login/oauth/authorize?${params}`);
+  return new Response(null, {
+    status: 302,
+    headers: {
+      Location: `https://github.com/login/oauth/authorize?${params}`,
+      "Set-Cookie": `am_oauth_state=${stateCookie}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=300`,
+    },
+  });
 });
 
 app.get("/auth/github/callback", async (c) => {
@@ -81,12 +141,21 @@ app.get("/auth/github/callback", async (c) => {
     return c.json({ error: "Missing code or state" }, 400);
   }
 
-  // Verify CSRF state
-  const valid = await c.env.AM_SESSIONS.get(`oauth-state:${state}`);
-  if (!valid) {
+  // Verify CSRF state from cookie
+  const stateCookieRaw = c.req.header("cookie")?.match(/am_oauth_state=([^;]+)/)?.[1];
+  if (!stateCookieRaw) {
+    return c.json({ error: "Missing state cookie" }, 403);
+  }
+
+  const stateData = await decryptSession(stateCookieRaw, c.env.SESSION_SECRET);
+  if (!stateData || stateData.state !== state) {
     return c.json({ error: "Invalid state — CSRF check failed" }, 403);
   }
-  await c.env.AM_SESSIONS.delete(`oauth-state:${state}`);
+
+  // Check state isn't too old (5 min)
+  if (Date.now() - (stateData.ts as number) > 300000) {
+    return c.json({ error: "State expired" }, 403);
+  }
 
   // Exchange code for access token
   const tokenRes = await fetch(
@@ -117,54 +186,46 @@ app.get("/auth/github/callback", async (c) => {
     );
   }
 
-  // Create session in KV (24h TTL)
-  const sessionId = crypto.randomUUID();
-  await c.env.AM_SESSIONS.put(
-    `session:${sessionId}`,
-    JSON.stringify({ token: tokenData.access_token, created: Date.now() }),
-    { expirationTtl: 86400 },
+  // Create encrypted session cookie (no server-side storage)
+  const sessionCookieValue = await encryptSession(
+    { token: tokenData.access_token, created: Date.now() },
+    c.env.SESSION_SECRET,
   );
 
   return new Response(null, {
     status: 302,
     headers: {
       Location: "/",
-      "Set-Cookie": `am_session=${sessionId}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=86400`,
+      "Set-Cookie": [
+        sessionCookie(sessionCookieValue),
+        "am_oauth_state=; Path=/; HttpOnly; Secure; Max-Age=0", // clear state cookie
+      ].join(", "),
     },
   });
 });
 
-// Logout
-app.post("/auth/logout", async (c) => {
-  const sessionId = getSessionId(c);
-  if (sessionId) {
-    await c.env.AM_SESSIONS.delete(`session:${sessionId}`);
-  }
+// Logout — just clear the cookie
+app.post("/auth/logout", (c) => {
   return new Response(null, {
     status: 302,
     headers: {
       Location: "/",
-      "Set-Cookie":
-        "am_session=; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=0",
+      "Set-Cookie": sessionCookie("", 0),
     },
   });
 });
 
 // ---------------------------------------------------------------------------
-// Auth check endpoint (for the SPA to detect login state)
+// Auth check (for SPA to detect login state)
 // ---------------------------------------------------------------------------
 
 app.get("/auth/check", async (c) => {
-  const sessionId = getSessionId(c);
-  if (!sessionId) {
-    return c.json({ authenticated: false });
-  }
-  const sessionData = await c.env.AM_SESSIONS.get(`session:${sessionId}`);
-  if (!sessionData) {
-    return c.json({ authenticated: false });
-  }
-  // Fetch GitHub user info
-  const session = JSON.parse(sessionData);
+  const encrypted = getSessionCookie(c);
+  if (!encrypted) return c.json({ authenticated: false });
+
+  const session = await decryptSession(encrypted, c.env.SESSION_SECRET);
+  if (!session?.token) return c.json({ authenticated: false });
+
   try {
     const userRes = await fetch("https://api.github.com/user", {
       headers: {
@@ -172,11 +233,15 @@ app.get("/auth/check", async (c) => {
         "User-Agent": "agent-manager",
       },
     });
-    if (!userRes.ok) {
-      return c.json({ authenticated: false });
-    }
-    const user = (await userRes.json()) as { login: string; avatar_url: string };
-    return c.json({ authenticated: true, user: { login: user.login, avatar: user.avatar_url } });
+    if (!userRes.ok) return c.json({ authenticated: false });
+    const user = (await userRes.json()) as {
+      login: string;
+      avatar_url: string;
+    };
+    return c.json({
+      authenticated: true,
+      user: { login: user.login, avatar: user.avatar_url },
+    });
   } catch {
     return c.json({ authenticated: false });
   }
@@ -189,29 +254,28 @@ app.get("/auth/check", async (c) => {
 app.use("/api/*", async (c, next) => {
   if (c.req.path === "/api/health") return next();
 
-  const sessionId = getSessionId(c);
-  if (!sessionId) {
+  const encrypted = getSessionCookie(c);
+  if (!encrypted) {
     return c.json(
       { error: "Not authenticated", login: "/auth/github/login" },
       401,
     );
   }
 
-  const sessionData = await c.env.AM_SESSIONS.get(`session:${sessionId}`);
-  if (!sessionData) {
+  const session = await decryptSession(encrypted, c.env.SESSION_SECRET);
+  if (!session?.token) {
     return c.json(
       { error: "Session expired", login: "/auth/github/login" },
       401,
     );
   }
 
-  const session = JSON.parse(sessionData);
-  c.set("githubToken", session.token);
+  c.set("githubToken", session.token as string);
   return next();
 });
 
 // ---------------------------------------------------------------------------
-// API: List user's repos (to pick config repo)
+// API: List user's repos
 // ---------------------------------------------------------------------------
 
 app.get("/api/repos", async (c) => {
@@ -272,7 +336,6 @@ app.get("/api/config/:owner/:repo", async (c) => {
 
   const content = await res.text();
 
-  // TOML parsing — dynamic import so it degrades gracefully in Workers
   try {
     const TOML = await import("@iarna/toml");
     const parsed = TOML.parse(content);
@@ -305,12 +368,9 @@ app.get("/api/servers/:owner/:repo", async (c) => {
     },
   );
 
-  if (!res.ok) {
-    return c.json({ error: "Config not found" }, 404);
-  }
+  if (!res.ok) return c.json({ error: "Config not found" }, 404);
 
   const content = await res.text();
-
   try {
     const TOML = await import("@iarna/toml");
     const config = TOML.parse(content) as Record<string, any>;
@@ -333,7 +393,7 @@ app.get("/api/servers/:owner/:repo", async (c) => {
 });
 
 // ---------------------------------------------------------------------------
-// API: Commit a change to the repo (edit config.toml)
+// API: Commit a change to the repo
 // ---------------------------------------------------------------------------
 
 app.post("/api/config/:owner/:repo", async (c) => {
@@ -345,7 +405,6 @@ app.post("/api/config/:owner/:repo", async (c) => {
     return c.json({ error: "Missing content field" }, 400);
   }
 
-  // Get current file SHA (required for update)
   const getRes = await fetch(
     `https://api.github.com/repos/${owner}/${repo}/contents/config.toml`,
     {
@@ -356,13 +415,10 @@ app.post("/api/config/:owner/:repo", async (c) => {
     },
   );
 
-  if (!getRes.ok) {
-    return c.json({ error: "Config not found" }, 404);
-  }
+  if (!getRes.ok) return c.json({ error: "Config not found" }, 404);
 
   const fileData = (await getRes.json()) as { sha: string };
 
-  // Update file via GitHub Contents API
   const updateRes = await fetch(
     `https://api.github.com/repos/${owner}/${repo}/contents/config.toml`,
     {
@@ -373,8 +429,7 @@ app.post("/api/config/:owner/:repo", async (c) => {
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        message:
-          body.message ?? "Update config via agent-manager web UI",
+        message: body.message ?? "Update config via agent-manager web UI",
         content: btoa(body.content),
         sha: fileData.sha,
       }),
@@ -391,27 +446,13 @@ app.post("/api/config/:owner/:repo", async (c) => {
 });
 
 // ---------------------------------------------------------------------------
-// Static assets — Cloudflare Workers static assets via `assets` in wrangler.toml
-// serve index.html for all non-API, non-auth routes (SPA fallback)
+// Static assets — SPA fallback
 // ---------------------------------------------------------------------------
 
 app.get("/*", async (c) => {
-  // Workers Sites / assets binding handles static files automatically via
-  // the `assets` config in wrangler.toml. For any unmatched route, serve
-  // index.html so the SPA can handle client-side routing.
   return c.env.ASSETS
     ? c.env.ASSETS.fetch(new Request(new URL("/index.html", c.req.url)))
     : c.text("Not found", 404);
 });
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-function getSessionId(c: { req: { header: (name: string) => string | undefined } }): string | null {
-  const cookie = c.req.header("cookie") ?? "";
-  const match = cookie.match(/am_session=([^;]+)/);
-  return match?.[1] ?? null;
-}
 
 export default app;

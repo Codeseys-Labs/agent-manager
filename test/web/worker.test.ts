@@ -128,7 +128,7 @@ describe("Worker — OAuth flow", () => {
     const res = await req("/auth/github/callback?code=abc&state=bad-state");
     expect(res.status).toBe(403);
     const data = (await res.json()) as { error: string };
-    expect(data.error).toContain("CSRF");
+    expect(data.error).toContain("state");
   });
 
   it("POST /auth/logout clears session cookie", async () => {

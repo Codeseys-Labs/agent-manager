@@ -10,11 +10,9 @@ minify = true
 # Static assets — serves files from src/web/public/ at the root URL path
 assets = { directory = "src/web/public" }
 
-# KV namespace for OAuth sessions (24h TTL, auto-expiring)
-[[kv_namespaces]]
-binding = "AM_SESSIONS"
-id = "REPLACE_WITH_KV_ID"
-preview_id = "REPLACE_WITH_PREVIEW_KV_ID"
+# No persistent storage — fully stateless
+# Sessions use encrypted cookies (no KV/D1/R2 needed)
+# Config data lives in user's git repo (accessed via GitHub API)
 
 # Non-secret environment variables
 [vars]
