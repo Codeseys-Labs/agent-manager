@@ -1,0 +1,6 @@
+---
+description: "Project-wide rules"
+alwaysApply: true
+---
+
+This project uses bun as the runtime. Run tests with `bun test`.

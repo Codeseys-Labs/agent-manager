@@ -1,0 +1,6 @@
+---
+description: "Database migration patterns"
+alwaysApply: false
+---
+
+When writing database migrations, always use Drizzle ORM.

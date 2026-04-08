@@ -1,0 +1,6 @@
+{
+  "mcpServers": {
+    "db-mcp": { "command": "npx", "args": ["-y", "db-mcp-server"], "env": { "DB_URL": "postgres://localhost/dev" } },
+    "remote-api": { "url": "https://api.example.com/mcp", "headers": { "Authorization": "Bearer ${TOKEN}" } }
+  }
+}

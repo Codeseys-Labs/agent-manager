@@ -1,0 +1,8 @@
+---
+description: "TypeScript conventions"
+globs: ["**/*.ts", "**/*.tsx"]
+alwaysApply: false
+---
+
+Use strict TypeScript. Prefer interfaces over type aliases.
+Always use explicit return types on exported functions.
