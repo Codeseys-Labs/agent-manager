@@ -1,0 +1,26 @@
+# Cloudflare Workers configuration for agent-manager web UI
+# See ADR-0015 for architecture (stateless, git-backed, OAuth)
+
+name = "agent-manager-web"
+main = "src/web/worker.ts"
+compatibility_date = "2025-12-01"
+compatibility_flags = ["nodejs_compat"]
+minify = true
+
+# Static assets — serves files from src/web/public/ at the root URL path
+assets = { directory = "src/web/public" }
+
+# KV namespace for OAuth sessions (24h TTL, auto-expiring)
+[[kv_namespaces]]
+binding = "AM_SESSIONS"
+id = "REPLACE_WITH_KV_ID"
+preview_id = "REPLACE_WITH_PREVIEW_KV_ID"
+
+# Non-secret environment variables
+[vars]
+ENVIRONMENT = "production"
+
+# Secrets (set via `wrangler secret put <NAME>`):
+#   GITHUB_CLIENT_ID     — GitHub OAuth App client ID
+#   GITHUB_CLIENT_SECRET — GitHub OAuth App client secret
+#   SESSION_SECRET       — random string for cookie signing

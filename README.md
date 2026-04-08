@@ -192,6 +192,35 @@ CLI flags  <-  ENV vars  <-  .agent-manager.local.toml  <-  .agent-manager.toml
 --quiet, -q          Suppress non-essential output
 ```
 
+## Web UI (Cloud Deployment)
+
+The web dashboard can be deployed to Cloudflare Workers for browser-based config
+management from any device. It is stateless -- config lives in your GitHub repo,
+sessions live in Workers KV. See [ADR-0015](ADRs/0015-stateless-web-ui.md) for
+the full architecture.
+
+```bash
+# Prerequisites: wrangler CLI authenticated with Cloudflare
+
+# 1. Create KV namespace for sessions
+bun run web:kv:create
+# Copy the ID into wrangler.toml (replace REPLACE_WITH_KV_ID)
+
+# 2. Set secrets
+wrangler secret put GITHUB_CLIENT_ID
+wrangler secret put GITHUB_CLIENT_SECRET
+wrangler secret put SESSION_SECRET
+
+# 3. Deploy
+bun run deploy:web
+
+# Local dev (uses .dev.vars for secrets)
+bun run dev:web
+```
+
+The CLI's `am serve` remains for local use (reads local filesystem).
+The Workers version reads/writes config via the GitHub API using OAuth tokens.
+
 ## Architecture
 
 agent-manager follows a **layered core + adapter** architecture:

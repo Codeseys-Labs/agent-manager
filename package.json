@@ -17,7 +17,10 @@
     "test:integration": "bun test test/integration",
     "lint": "bunx @biomejs/biome check ./src ./test",
     "lint:fix": "bunx @biomejs/biome check --write ./src ./test",
-    "typecheck": "bun x tsc --noEmit"
+    "typecheck": "bun x tsc --noEmit",
+    "dev:web": "wrangler dev",
+    "deploy:web": "wrangler deploy",
+    "web:kv:create": "wrangler kv namespace create AM_SESSIONS"
   },
   "dependencies": {
     "@clack/prompts": "^0.9.1",
@@ -32,9 +35,11 @@
   },
   "devDependencies": {
     "@biomejs/biome": "^1.9.0",
+    "@cloudflare/workers-types": "^4.20250401.0",
     "@types/bun": "latest",
     "@types/react": "^19.2.14",
-    "typescript": "^5.8.3"
+    "typescript": "^5.8.3",
+    "wrangler": "^4.14.0"
   },
   "license": "MIT"
 }

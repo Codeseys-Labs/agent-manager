@@ -117,11 +117,43 @@
     .profile-switcher { display: flex; align-items: center; gap: 0.5rem; }
     .loading { color: var(--fg2); font-style: italic; }
     #git-info { font-size: 0.8rem; color: var(--fg2); }
+    /* Cloud mode: login prompt and repo selector */
+    .cloud-login { text-align: center; margin: 3rem auto; max-width: 400px; }
+    .cloud-login a {
+      display: inline-flex; align-items: center; gap: 0.5rem;
+      padding: 0.6rem 1.5rem; border-radius: var(--radius);
+      background: #24292e; color: #fff; text-decoration: none;
+      font-size: 0.9rem; transition: opacity 0.15s;
+    }
+    .cloud-login a:hover { opacity: 0.85; }
+    .user-info { display: flex; align-items: center; gap: 0.5rem; float: right; font-size: 0.8rem; color: var(--fg2); }
+    .user-info img { width: 24px; height: 24px; border-radius: 50%; }
+    .user-info a { color: var(--fg2); text-decoration: none; margin-left: 0.5rem; }
+    .repo-selector { margin-bottom: 1.5rem; }
+    .repo-selector select { width: 100%; padding: 0.5rem; }
   </style>
 </head>
 <body>
+  <!-- Cloud mode: user info + logout (hidden in local mode) -->
+  <div id="user-bar" class="user-info" style="display:none;"></div>
+
   <h1>agent-manager</h1>
   <p class="subtitle">MCP server configuration dashboard</p>
+
+  <!-- Cloud mode: login prompt (shown when not authenticated in cloud) -->
+  <div id="cloud-login" class="cloud-login card" style="display:none;">
+    <p style="margin-bottom:1rem;">Sign in to manage your config repo</p>
+    <a href="/auth/github/login">Login with GitHub</a>
+  </div>
+
+  <!-- Cloud mode: repo selector (shown after login in cloud) -->
+  <div id="repo-selector" class="repo-selector card" style="display:none;">
+    <label><strong>Config repo:</strong></label>
+    <div style="display:flex;gap:0.5rem;margin-top:0.5rem;">
+      <select id="repo-select"><option>Loading repos...</option></select>
+      <button id="btn-select-repo" class="primary">Select</button>
+    </div>
+  </div>
 
   <div class="status-bar card" id="status-bar">
     <div class="stat">
@@ -393,14 +425,124 @@
       loadStatus();
     }
 
-    // Initial load
-    loadAll();
+    // --- Cloud mode detection ---
+    // If /auth/check exists and returns JSON, we are in cloud (Workers) mode.
+    // In local mode (`am serve`), /auth/check returns 404 and we skip auth entirely.
 
-    // Auto-refresh every 30s
-    setInterval(loadStatus, 30000);
+    let cloudMode = false;
+    let selectedRepo = null; // { owner, repo }
 
-    // SSE for real-time
-    connectSSE();
+    async function detectCloudMode() {
+      try {
+        const res = await fetch("/auth/check");
+        if (!res.ok) return false; // local mode — no auth endpoint
+        const data = await res.json();
+        if (data.authenticated !== undefined) {
+          cloudMode = true;
+          if (data.authenticated && data.user) {
+            showUserBar(data.user);
+            await loadRepos();
+          } else {
+            document.getElementById("cloud-login").style.display = "block";
+          }
+          return true;
+        }
+      } catch { /* local mode */ }
+      return false;
+    }
+
+    function showUserBar(user) {
+      const bar = document.getElementById("user-bar");
+      bar.style.display = "flex";
+      bar.replaceChildren();
+      if (user.avatar) {
+        const img = document.createElement("img");
+        img.src = user.avatar;
+        img.alt = user.login;
+        bar.appendChild(img);
+      }
+      const span = document.createElement("span");
+      span.textContent = user.login;
+      bar.appendChild(span);
+      const logout = document.createElement("a");
+      logout.href = "#";
+      logout.textContent = "Logout";
+      logout.addEventListener("click", async (e) => {
+        e.preventDefault();
+        await fetch("/auth/logout", { method: "POST" });
+        window.location.reload();
+      });
+      bar.appendChild(logout);
+    }
+
+    async function loadRepos() {
+      const data = await api("/api/repos");
+      if (!data || !Array.isArray(data)) return;
+      const sel = document.getElementById("repo-select");
+      sel.replaceChildren();
+      const placeholder = document.createElement("option");
+      placeholder.value = "";
+      placeholder.textContent = "-- select a config repo --";
+      sel.appendChild(placeholder);
+      for (const r of data) {
+        const opt = document.createElement("option");
+        opt.value = r.name;
+        opt.textContent = r.name + (r.private ? " (private)" : "");
+        sel.appendChild(opt);
+      }
+      document.getElementById("repo-selector").style.display = "block";
+    }
+
+    // Repo selection
+    document.getElementById("btn-select-repo")?.addEventListener("click", async () => {
+      const val = document.getElementById("repo-select").value;
+      if (!val) return;
+      const [owner, repo] = val.split("/");
+      selectedRepo = { owner, repo };
+      document.getElementById("repo-selector").style.display = "none";
+      loadCloudDashboard();
+    });
+
+    async function loadCloudDashboard() {
+      if (!selectedRepo) return;
+      const { owner, repo } = selectedRepo;
+
+      // Load servers from the selected repo
+      const serversData = await api("/api/servers/" + owner + "/" + repo);
+      if (serversData && serversData.servers) {
+        const body = document.getElementById("servers-body");
+        body.replaceChildren();
+        for (const s of serversData.servers) {
+          const tr = document.createElement("tr");
+          tr.appendChild(createCell(s.name, { strong: true }));
+          tr.appendChild(createCell(s.command, { code: true }));
+          tr.appendChild(createCell("-")); // transport not in cloud API
+          tr.appendChild(createCell((s.tags ?? []).join(", ") || "-"));
+          tr.appendChild(createBadge(
+            s.enabled ? "active" : "disabled",
+            s.enabled ? "badge-active" : "badge-disabled"
+          ));
+          body.appendChild(tr);
+        }
+        document.getElementById("server-count").textContent = serversData.servers.length;
+      }
+
+      // Update status bar for cloud mode
+      document.getElementById("profile-name").textContent = "cloud";
+      document.getElementById("git-branch").textContent = owner + "/" + repo;
+      document.getElementById("git-status").textContent = "remote";
+    }
+
+    // --- Startup ---
+    (async () => {
+      const isCloud = await detectCloudMode();
+      if (!isCloud) {
+        // Local mode — load everything directly
+        loadAll();
+        setInterval(loadStatus, 30000);
+        connectSSE();
+      }
+    })();
   </script>
 </body>
 </html>
