@@ -8,7 +8,25 @@ permissions:
 
 jobs:
   build:
-    runs-on: macos-14
+    strategy:
+      matrix:
+        include:
+          - target: bun-darwin-arm64
+            artifact: am-darwin-arm64
+            runner: macos-14
+          - target: bun-darwin-x64
+            artifact: am-darwin-x64
+            runner: macos-13
+          - target: bun-linux-x64
+            artifact: am-linux-x64
+            runner: ubuntu-latest
+          - target: bun-linux-arm64
+            artifact: am-linux-arm64
+            runner: ubuntu-latest
+          - target: bun-windows-x64
+            artifact: am-windows-x64.exe
+            runner: windows-latest
+    runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v4
       - uses: oven-sh/setup-bun@v2
@@ -17,11 +35,11 @@ jobs:
       - run: bun install --frozen-lockfile
       - run: bun test
       - name: Build
-        run: VERSION="${GITHUB_REF_NAME#v}" bun run build
+        run: VERSION="${GITHUB_REF_NAME#v}" bun run build --target ${{ matrix.target }}
       - uses: actions/upload-artifact@v4
         with:
-          name: am-darwin-arm64
-          path: dist/am-darwin-arm64
+          name: ${{ matrix.artifact }}
+          path: dist/${{ matrix.artifact }}
 
   release:
     needs: build

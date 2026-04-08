@@ -63,7 +63,7 @@ export async function push(
   const ref = branch ?? (await git.currentBranch({ fs, dir })) ?? "main";
   await git.push({
     fs,
-    http: (await import("isomorphic-git/http/node/index.cjs")).default,
+    http: (await import("isomorphic-git/http/node")).default,
     dir,
     remote,
     ref,
@@ -78,7 +78,7 @@ export async function pull(
   const ref = branch ?? (await git.currentBranch({ fs, dir })) ?? "main";
   await git.pull({
     fs,
-    http: (await import("isomorphic-git/http/node/index.cjs")).default,
+    http: (await import("isomorphic-git/http/node")).default,
     dir,
     remote,
     ref,
