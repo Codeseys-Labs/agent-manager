@@ -30,6 +30,8 @@ const main = defineCommand({
     log: () => import("./commands/log").then((m) => m.logCommand),
     secret: () => import("./commands/secret").then((m) => m.secretCommand),
     version: () => import("./commands/version").then((m) => m.versionCommand),
+    adapter: () => import("./commands/adapter").then((m) => m.adapterCommand),
+    "mcp-serve": () => import("./commands/mcp-serve").then((m) => m.mcpServeCommand),
   },
 });
 
