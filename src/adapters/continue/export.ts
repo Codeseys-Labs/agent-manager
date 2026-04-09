@@ -3,6 +3,8 @@
  *
  * Generates ~/.continue/config.json with mcpServers as an ARRAY
  * (Continue's format uses name-bearing array entries, not object maps).
+ * Also writes .continue/rules/<name>.md (project scope) or
+ * ~/.continue/rules/<name>.md (global scope) for instructions.
  */
 
 import { homedir } from "node:os";
@@ -25,6 +27,10 @@ export function exportConfig(
   const configPath = join(home, ".continue", "config.json");
   const configContent = generateConfig(config, configPath);
   files.push({ path: configPath, content: configContent, written: false });
+
+  // Generate rule .md files for instructions
+  const ruleFiles = generateRuleFiles(config, home, options.projectPath);
+  files.push(...ruleFiles);
 
   // Write files unless dryRun
   if (!options.dryRun) {
@@ -103,4 +109,35 @@ function generateConfig(config: ResolvedConfig, existingPath: string): string {
   }
 
   return `${JSON.stringify(output, null, 2)}\n`;
+}
+
+/** Generate .continue/rules/*.md files from instructions. */
+function generateRuleFiles(
+  config: ResolvedConfig,
+  home: string,
+  projectPath?: string,
+): WrittenFile[] {
+  const files: WrittenFile[] = [];
+
+  for (const [name, instr] of Object.entries(config.instructions)) {
+    if (instr.targets.length > 0 && !instr.targets.includes("continue")) {
+      continue;
+    }
+
+    // Skip instructions that are external references (not inline content)
+    if (
+      instr.content.startsWith("file://") ||
+      (instr.content.includes("/") && !instr.content.includes(" "))
+    ) {
+      continue;
+    }
+
+    const content = `${instr.content}\n`;
+    // Write to project .continue/rules/ if projectPath is available, otherwise global
+    const basePath = projectPath ?? home;
+    const filePath = join(basePath, ".continue", "rules", `${name}.md`);
+    files.push({ path: filePath, content, written: false });
+  }
+
+  return files;
 }

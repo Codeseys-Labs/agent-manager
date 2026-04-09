@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
+import { join } from "node:path";
 import { exportConfig } from "@/adapters/continue/export.ts";
 import type { ResolvedConfig, ResolvedServer } from "@/adapters/types.ts";
 import { type TestDir, createTestDir } from "../../helpers/tmp.ts";
@@ -204,6 +205,109 @@ describe("continue exportConfig()", () => {
     expect(parsed.models).toHaveLength(1);
     expect(parsed.mcpServers).toHaveLength(1);
     expect(parsed.mcpServers[0].name).toBe("fetch");
+  });
+
+  test("writes rule .md files for instructions with inline content", async () => {
+    dir = await createTestDir("am-ct-export-");
+    const cfg = config({
+      instructions: {
+        "coding-standards": {
+          name: "coding-standards",
+          content: "Always use strict TypeScript.",
+          scope: "always",
+          globs: [],
+          description: "",
+          targets: [],
+          adapters: {},
+        },
+        "test-rules": {
+          name: "test-rules",
+          content: "Write tests for all new code.",
+          scope: "always",
+          globs: [],
+          description: "",
+          targets: ["continue"],
+          adapters: {},
+        },
+      },
+    });
+
+    const result = exportConfig(cfg, { dryRun: true }, dir.path);
+
+    // config.json + 2 rule files
+    const ruleFiles = result.files.filter((f) => f.path.endsWith(".md"));
+    expect(ruleFiles).toHaveLength(2);
+
+    const codingFile = ruleFiles.find((f) => f.path.includes("coding-standards.md"));
+    expect(codingFile).toBeDefined();
+    expect(codingFile?.content).toContain("Always use strict TypeScript.");
+    expect(codingFile?.path).toContain(".continue/rules/coding-standards.md");
+
+    const testFile = ruleFiles.find((f) => f.path.includes("test-rules.md"));
+    expect(testFile).toBeDefined();
+    expect(testFile?.content).toContain("Write tests for all new code.");
+  });
+
+  test("writes rule files to disk on actual export", async () => {
+    dir = await createTestDir("am-ct-export-");
+    const projectPath = join(dir.path, "my-project");
+    const cfg = config({
+      instructions: {
+        "my-rule": {
+          name: "my-rule",
+          content: "Follow the conventions.",
+          scope: "always",
+          globs: [],
+          description: "",
+          targets: [],
+          adapters: {},
+        },
+      },
+    });
+
+    const result = exportConfig(cfg, { projectPath }, dir.path);
+    const ruleFile = result.files.find((f) => f.path.endsWith("my-rule.md"));
+    expect(ruleFile).toBeDefined();
+    expect(ruleFile?.written).toBe(true);
+
+    // Verify the file is on disk at the project path
+    const fs = require("node:fs");
+    const onDisk = fs.readFileSync(
+      join(projectPath, ".continue", "rules", "my-rule.md"),
+      "utf-8",
+    );
+    expect(onDisk).toContain("Follow the conventions.");
+  });
+
+  test("skips rule files for external references", async () => {
+    dir = await createTestDir("am-ct-export-");
+    const cfg = config({
+      instructions: {
+        "external-ref": {
+          name: "external-ref",
+          content: "org/my-ruleset",
+          scope: "always",
+          globs: [],
+          description: "",
+          targets: [],
+          adapters: {},
+        },
+        "file-ref": {
+          name: "file-ref",
+          content: "file://.continue/rules/custom.md",
+          scope: "always",
+          globs: [],
+          description: "",
+          targets: [],
+          adapters: {},
+        },
+      },
+    });
+
+    const result = exportConfig(cfg, { dryRun: true }, dir.path);
+    const ruleFiles = result.files.filter((f) => f.path.endsWith(".md"));
+    // External references should NOT produce .md files
+    expect(ruleFiles).toHaveLength(0);
   });
 
   test("maps adapter-specific fields to export", async () => {

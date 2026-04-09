@@ -164,7 +164,7 @@ async function scanAdapters(projectPath: string, opts: OutputOptions): Promise<S
     const projectServers = imported.servers.filter((s) => s.scope === "project");
     const projectInstructions = imported.instructions.filter((i) => {
       // Include instructions with a sourcePath inside the project
-      if (i.sourcePath?.startsWith(projectPath)) return true;
+      if (i.sourcePath?.startsWith(projectPath + "/")) return true;
       // Exclude instructions from global paths (home dir, ~/.config, etc.)
       if (i.sourcePath) return false;
       // No sourcePath — include only if we also found project servers
@@ -254,7 +254,7 @@ function mergeInstructions(
       nameSet.add(name);
 
       // Use content_file if we have a sourcePath within the project
-      if (instr.sourcePath?.startsWith(projectPath)) {
+      if (instr.sourcePath?.startsWith(projectPath + "/")) {
         const relPath = relative(projectPath, instr.sourcePath);
         instructions[name] = {
           content_file: relPath,

@@ -13,16 +13,17 @@ import type { DetectResult } from "../types.ts";
  *   - Windows: %APPDATA%/Code/User/globalStorage/saoudrizwan.claude-dev
  */
 export function getGlobalStoragePath(home: string): string {
-  // macOS
-  return join(
-    home,
-    "Library",
-    "Application Support",
-    "Code",
-    "User",
-    "globalStorage",
-    "saoudrizwan.claude-dev",
-  );
+  const extensionId = "saoudrizwan.claude-dev";
+  const suffix = join("Code", "User", "globalStorage", extensionId);
+
+  if (process.platform === "darwin") {
+    return join(home, "Library", "Application Support", suffix);
+  }
+  if (process.platform === "win32") {
+    return join(process.env.APPDATA ?? join(home, "AppData", "Roaming"), suffix);
+  }
+  // Linux and other platforms
+  return join(home, ".config", suffix);
 }
 
 /**
