@@ -1,14 +1,15 @@
 /**
- * Session knowledge extractor (ADR-0020, Phase 1).
+ * Session knowledge extractor (ADR-0020).
  *
  * Parses harvested session data and extracts knowledge entries using
- * pattern matching. Implements confidence scoring and deduplication
- * via Jaccard similarity on word tokens.
+ * pattern matching. Produces WikiPage objects for the markdown-file storage.
+ * Implements confidence scoring and deduplication via Jaccard similarity.
  */
 
 import type { Message, Session, ToolCall } from "../core/session";
-import { getAllEntries } from "./storage";
-import type { EntityType, KnowledgeEntry, KnowledgeSource, Provenance } from "./types";
+import { entityToSlug, extractEntities } from "./ner";
+import { getAllEntries, listPages, readPage, writePage } from "./storage";
+import type { EntityType, KnowledgeEntry, KnowledgeSource, Provenance, WikiPage } from "./types";
 
 // ── String Similarity ───────────────────────────────────────────
 
@@ -81,12 +82,51 @@ function makeEntry(
   };
 }
 
+// ── WikiPage Factory ────────────────────────────────────────────
+
+/**
+ * Convert a KnowledgeEntry to a WikiPage for markdown-file storage.
+ */
+function entryToWikiPage(entry: KnowledgeEntry): WikiPage {
+  const now = new Date().toISOString();
+
+  // Build markdown content
+  const lines: string[] = [];
+  lines.push(entry.content);
+  if (entry.context) {
+    lines.push("");
+    lines.push(`> Context: ${entry.context}`);
+  }
+
+  // Extract entities from content for auto-linking
+  const entities = extractEntities(entry.content);
+  if (entities.length > 0) {
+    lines.push("");
+    lines.push("## Extracted Entities");
+    lines.push("");
+    for (const ent of entities) {
+      lines.push(`- \`${ent.text}\` (${ent.type})`);
+    }
+  }
+
+  return {
+    slug: entry.id,
+    title: entry.content.split("\n")[0].slice(0, 100) || entry.entity_type,
+    type: "entity",
+    content: lines.join("\n"),
+    tags: [...entry.tags, entry.entity_type],
+    sources: entry.source.session_id ? [entry.source.session_id] : [],
+    backlinks: entry.references,
+    created: entry.extracted_at,
+    updated: now,
+    confidence: entry.confidence,
+  };
+}
+
 // ── Pattern Extractors ──────────────────────────────────────────
 
 /**
  * Extract procedure entries from commands run and their outcomes.
- * Looks for tool calls with command-like names (bash, exec, shell, run)
- * and pairs them with the output/result.
  */
 function extractProcedures(messages: Message[], source: KnowledgeSource): KnowledgeEntry[] {
   const entries: KnowledgeEntry[] = [];
@@ -114,7 +154,6 @@ function extractProcedures(messages: Message[], source: KnowledgeSource): Knowle
 
 /**
  * Extract error/resolution pairs.
- * Looks for messages containing error indicators followed by resolution messages.
  */
 function extractErrorResolutions(messages: Message[], source: KnowledgeSource): KnowledgeEntry[] {
   const entries: KnowledgeEntry[] = [];
@@ -125,7 +164,6 @@ function extractErrorResolutions(messages: Message[], source: KnowledgeSource): 
     const msg = messages[i];
     if (!errorPatterns.test(msg.content)) continue;
 
-    // Extract the error itself as a fact
     const errorSnippet = msg.content.slice(0, 300);
     entries.push(
       makeEntry(
@@ -163,7 +201,6 @@ function extractErrorResolutions(messages: Message[], source: KnowledgeSource): 
 
 /**
  * Extract user preferences from correction patterns.
- * Detects user messages that override or correct assistant suggestions.
  */
 function extractPreferences(messages: Message[], source: KnowledgeSource): KnowledgeEntry[] {
   const entries: KnowledgeEntry[] = [];
@@ -175,7 +212,6 @@ function extractPreferences(messages: Message[], source: KnowledgeSource): Knowl
     if (msg.role !== "user") continue;
     if (!correctionPatterns.test(msg.content)) continue;
 
-    // Get preceding assistant message for context
     let context = "";
     if (i > 0 && messages[i - 1].role === "assistant") {
       context = `In response to: ${messages[i - 1].content.slice(0, 200)}`;
@@ -188,7 +224,7 @@ function extractPreferences(messages: Message[], source: KnowledgeSource): Knowl
         context,
         ["user-preference", "correction"],
         source,
-        0.7, // Higher confidence — explicit user statement
+        0.7,
       ),
     );
   }
@@ -198,7 +234,6 @@ function extractPreferences(messages: Message[], source: KnowledgeSource): Knowl
 
 /**
  * Extract capability entries from tool calls and their results.
- * Records what tools were available and used successfully.
  */
 function extractCapabilities(messages: Message[], source: KnowledgeSource): KnowledgeEntry[] {
   const entries: KnowledgeEntry[] = [];
@@ -230,7 +265,7 @@ function extractCapabilities(messages: Message[], source: KnowledgeSource): Know
         `Last input: ${JSON.stringify(usage.lastInput ?? "").slice(0, 200)}`,
         ["tool-usage", name],
         source,
-        0.5 + Math.min(0.3, usage.count * 0.05), // More usage = higher confidence
+        0.5 + Math.min(0.3, usage.count * 0.05),
       ),
     );
   }
@@ -240,7 +275,6 @@ function extractCapabilities(messages: Message[], source: KnowledgeSource): Know
 
 /**
  * Extract explicit factual statements.
- * Looks for definitive user or assistant statements about the project/codebase.
  */
 function extractFacts(messages: Message[], source: KnowledgeSource): KnowledgeEntry[] {
   const entries: KnowledgeEntry[] = [];
@@ -252,8 +286,6 @@ function extractFacts(messages: Message[], source: KnowledgeSource): KnowledgeEn
     if (msg.role !== "user" && msg.role !== "assistant") continue;
     if (msg.content.length < 20 || msg.content.length > 2000) continue;
     if (!factPatterns.test(msg.content)) continue;
-
-    // Skip if this looks like a question
     if (msg.content.trim().endsWith("?")) continue;
 
     const confidence = msg.role === "user" ? 0.7 : 0.5;
@@ -278,9 +310,7 @@ function extractFacts(messages: Message[], source: KnowledgeSource): KnowledgeEn
 const SIMILARITY_THRESHOLD = 0.8;
 
 /**
- * Deduplicate new entries against existing ones.
- * Entries with >0.8 Jaccard similarity to an existing entry are merged
- * (confidence is increased) rather than added as new.
+ * Deduplicate new entries against existing wiki pages.
  */
 async function deduplicateEntries(newEntries: KnowledgeEntry[]): Promise<{
   unique: KnowledgeEntry[];
@@ -293,7 +323,6 @@ async function deduplicateEntries(newEntries: KnowledgeEntry[]): Promise<{
   for (const entry of newEntries) {
     let bestMatch: { id: string; similarity: number } | null = null;
 
-    // Check against existing entries
     for (const ex of existing) {
       if (ex.entity_type !== entry.entity_type) continue;
       const sim = stringSimilarity(entry.content, ex.content);
@@ -302,7 +331,6 @@ async function deduplicateEntries(newEntries: KnowledgeEntry[]): Promise<{
       }
     }
 
-    // Also check against already-accepted new entries
     for (const u of unique) {
       if (u.entity_type !== entry.entity_type) continue;
       const sim = stringSimilarity(entry.content, u.content);
@@ -326,6 +354,7 @@ async function deduplicateEntries(newEntries: KnowledgeEntry[]): Promise<{
 /**
  * Harvest knowledge entries from a session.
  * Runs all pattern extractors, applies confidence scoring, and deduplicates.
+ * Returns KnowledgeEntry objects (the caller writes them via addEntry/writePage).
  */
 export async function harvestSession(session: Session): Promise<KnowledgeEntry[]> {
   const source: KnowledgeSource = {
@@ -335,7 +364,6 @@ export async function harvestSession(session: Session): Promise<KnowledgeEntry[]
     timestamp: new Date().toISOString(),
   };
 
-  // Run all extractors
   const rawEntries: KnowledgeEntry[] = [
     ...extractProcedures(session.messages, source),
     ...extractErrorResolutions(session.messages, source),
@@ -344,19 +372,31 @@ export async function harvestSession(session: Session): Promise<KnowledgeEntry[]
     ...extractFacts(session.messages, source),
   ];
 
-  // Apply repetition bonus: if the same concept appears multiple times
-  // in the raw entries, boost confidence
   const withRepetitionBonus = applyRepetitionBonus(rawEntries);
-
-  // Deduplicate against existing knowledge base
   const { unique } = await deduplicateEntries(withRepetitionBonus);
 
   return unique;
 }
 
 /**
- * Boost confidence for entries whose content is similar to other entries
- * in the same batch (indicates repetition/reinforcement within the session).
+ * Harvest a session and write results as wiki pages (the "ingest" flow).
+ * Returns the created WikiPage slugs.
+ */
+export async function harvestSessionAsPages(session: Session): Promise<string[]> {
+  const entries = await harvestSession(session);
+  const slugs: string[] = [];
+
+  for (const entry of entries) {
+    const page = entryToWikiPage(entry);
+    await writePage(page);
+    slugs.push(page.slug);
+  }
+
+  return slugs;
+}
+
+/**
+ * Boost confidence for entries repeated within the same batch.
  */
 function applyRepetitionBonus(entries: KnowledgeEntry[]): KnowledgeEntry[] {
   return entries.map((entry, i) => {

@@ -65,6 +65,7 @@
     "citty": "^0.1.6",
     "hono": "^4.12.12",
     "isomorphic-git": "^1.27.2",
+    "minisearch": "^7.2.0",
     "react": "^19.2.4",
     "silvery": "^0.10.0",
     "zod": "^3.24.4"

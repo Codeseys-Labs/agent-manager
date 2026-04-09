@@ -1,84 +1,19 @@
 /**
- * Knowledge synthesis engine (ADR-0020, Phase 1).
+ * Knowledge synthesis engine (ADR-0020).
  *
- * Provides TF-IDF-like relevance scoring, context generation,
- * wiki page generation, gap identification, and agent briefings.
+ * Uses MiniSearch BM25 for retrieval, wiki page generation with frontmatter,
+ * gap identification, and agent briefings.
  */
 
-import { queryEntries, searchEntries } from "./storage";
-import type { KnowledgeEntry } from "./types";
-
-// ── TF-IDF–like Scoring ─────────────────────────────────────────
-
-/** Tokenize text into lowercase words (alphanumeric, 2+ chars). */
-function tokenize(text: string): string[] {
-  return text
-    .toLowerCase()
-    .split(/[^a-z0-9]+/)
-    .filter((w) => w.length >= 2);
-}
-
-/** Build a term frequency map from a list of tokens. */
-function termFrequency(tokens: string[]): Map<string, number> {
-  const tf = new Map<string, number>();
-  for (const token of tokens) {
-    tf.set(token, (tf.get(token) ?? 0) + 1);
-  }
-  return tf;
-}
-
-/**
- * Score an entry against a query using TF-IDF-like overlap scoring.
- * Higher scores indicate more relevance.
- */
-function scoreEntry(
-  queryTokens: string[],
-  entry: KnowledgeEntry,
-  idf: Map<string, number>,
-): number {
-  const entryTokens = new Set(tokenize(`${entry.content} ${entry.context}`));
-  let score = 0;
-
-  for (const qt of queryTokens) {
-    if (entryTokens.has(qt)) {
-      score += idf.get(qt) ?? 1;
-    }
-  }
-
-  // Boost by confidence
-  score *= 0.5 + entry.confidence * 0.5;
-
-  return score;
-}
-
-/**
- * Build an IDF (inverse document frequency) map from a set of entries.
- * IDF = log(N / df) where N is total docs and df is docs containing the term.
- */
-function buildIdf(entries: KnowledgeEntry[]): Map<string, number> {
-  const N = entries.length;
-  if (N === 0) return new Map();
-
-  const df = new Map<string, number>();
-  for (const entry of entries) {
-    const uniqueTokens = new Set(tokenize(`${entry.content} ${entry.context}`));
-    for (const token of uniqueTokens) {
-      df.set(token, (df.get(token) ?? 0) + 1);
-    }
-  }
-
-  const idf = new Map<string, number>();
-  for (const [term, freq] of df) {
-    idf.set(term, Math.log(N / freq) + 1);
-  }
-  return idf;
-}
+import { entityToSlug, extractEntities, generateWikilinks } from "./ner";
+import { listPages, queryEntries, searchEntries, searchPages } from "./storage";
+import type { KnowledgeEntry, WikiPage } from "./types";
 
 // ── Public API ──────────────────────────────────────────────────
 
 /**
  * Retrieve top-K relevant entries for a query and format as a context block.
- * Used to inject relevant knowledge into future agent sessions.
+ * Uses MiniSearch BM25 for retrieval instead of TF-IDF.
  */
 export async function synthesizeContext(
   query: string,
@@ -86,39 +21,61 @@ export async function synthesizeContext(
 ): Promise<string> {
   const topK = options?.topK ?? 10;
 
-  // Get candidate entries, optionally filtered by agent
+  // Use MiniSearch BM25 for primary retrieval
+  const searchResults = await searchPages(query, topK * 2);
+
+  // Also get agent-specific entries if specified
   let entries = await searchEntries(query);
 
   if (options?.agentId) {
     const agentEntries = await queryEntries({ agent_id: options.agentId });
-    // Merge: prioritize search results but include agent-specific entries
     const searchIds = new Set(entries.map((e) => e.id));
     const extra = agentEntries.filter((e) => !searchIds.has(e.id));
     entries = [...entries, ...extra];
   }
 
-  if (entries.length === 0) {
+  if (entries.length === 0 && searchResults.length === 0) {
     return `No knowledge found for: "${query}"`;
   }
 
-  // Build IDF and score
-  const idf = buildIdf(entries);
-  const queryTokens = tokenize(query);
-
-  const scored = entries
-    .map((entry) => ({
-      entry,
-      score: scoreEntry(queryTokens, entry, idf),
-    }))
-    .sort((a, b) => b.score - a.score)
-    .slice(0, topK);
-
-  // Format as context block
+  // Format as context block (using search results for ranking)
   const lines: string[] = [];
   lines.push(`## Relevant Knowledge: "${query}"`);
   lines.push("");
 
-  for (const { entry, score } of scored) {
+  // Use searchPages results first (better ranking), then fall back to entries
+  const seen = new Set<string>();
+  let count = 0;
+
+  for (const { page, score } of searchResults) {
+    if (count >= topK) break;
+    if (seen.has(page.slug)) continue;
+    seen.add(page.slug);
+    count++;
+
+    const confidenceLabel =
+      (page.confidence ?? 0.5) >= 0.7 ? "high" : (page.confidence ?? 0.5) >= 0.4 ? "medium" : "low";
+    lines.push(`### ${page.title} (confidence: ${confidenceLabel})`);
+    lines.push("");
+    // Truncate content for context
+    const preview = page.content.slice(0, 500);
+    lines.push(preview);
+    if (page.tags.length > 0) {
+      lines.push("");
+      lines.push(`Tags: ${page.tags.join(", ")}`);
+    }
+    lines.push("");
+    lines.push("---");
+    lines.push("");
+  }
+
+  // Fill remaining slots from entry-based results
+  for (const entry of entries) {
+    if (count >= topK) break;
+    if (seen.has(entry.id)) continue;
+    seen.add(entry.id);
+    count++;
+
     const confidenceLabel =
       entry.confidence >= 0.7 ? "high" : entry.confidence >= 0.4 ? "medium" : "low";
     lines.push(`### ${entry.entity_type} (confidence: ${confidenceLabel})`);
@@ -141,7 +98,8 @@ export async function synthesizeContext(
 }
 
 /**
- * Aggregate knowledge entries into a structured markdown wiki page.
+ * Generate a structured markdown wiki page from knowledge entries.
+ * Produces proper markdown with YAML frontmatter structure.
  */
 export function generateWikiPage(topic: string, entries: KnowledgeEntry[]): string {
   if (entries.length === 0) {
@@ -163,7 +121,6 @@ export function generateWikiPage(topic: string, entries: KnowledgeEntry[]): stri
     grouped.set(entry.entity_type, group);
   }
 
-  // Section order
   const sectionOrder = ["fact", "procedure", "preference", "capability", "relationship"] as const;
   const sectionTitles: Record<string, string> = {
     fact: "Facts",
@@ -177,7 +134,6 @@ export function generateWikiPage(topic: string, entries: KnowledgeEntry[]): stri
     const group = grouped.get(type);
     if (!group || group.length === 0) continue;
 
-    // Sort by confidence (highest first)
     group.sort((a, b) => b.confidence - a.confidence);
 
     lines.push(`## ${sectionTitles[type]}`);
@@ -228,7 +184,6 @@ export function generateWikiPage(topic: string, entries: KnowledgeEntry[]): stri
 
 /**
  * Identify knowledge gaps based on existing entries.
- * Looks for areas with low coverage, low confidence, or missing connections.
  */
 export function identifyGaps(
   entries: KnowledgeEntry[],
@@ -236,14 +191,13 @@ export function identifyGaps(
 ): Array<{ area: string; confidence: number; suggestion: string }> {
   const gaps: Array<{ area: string; confidence: number; suggestion: string }> = [];
 
-  // Filter to agent if specified
   const filtered = agentId ? entries.filter((e) => e.source.agent_id === agentId) : entries;
 
   if (filtered.length === 0) {
     gaps.push({
       area: "No knowledge entries",
       confidence: 0,
-      suggestion: "Run 'am wiki harvest' to extract knowledge from sessions.",
+      suggestion: "Run 'am wiki ingest' to extract knowledge from sessions.",
     });
     return gaps;
   }
@@ -260,7 +214,7 @@ export function identifyGaps(
       gaps.push({
         area: `Missing ${type} entries`,
         confidence: 0,
-        suggestion: `No ${type} entries found. Consider harvesting more sessions or adding manual entries.`,
+        suggestion: `No ${type} entries found. Consider ingesting more sessions or adding manual entries.`,
       });
     }
   }
@@ -272,7 +226,7 @@ export function identifyGaps(
       area: "Low overall confidence",
       confidence: lowConfidence.reduce((sum, e) => sum + e.confidence, 0) / lowConfidence.length,
       suggestion:
-        "More than half of entries have low confidence. Verify key entries or harvest additional sessions for corroboration.",
+        "More than half of entries have low confidence. Verify key entries or ingest additional sessions for corroboration.",
     });
   }
 
@@ -283,7 +237,7 @@ export function identifyGaps(
       area: "Isolated entries",
       confidence: 0.3,
       suggestion:
-        "Most entries have no cross-references. Consider linking related entries to build a knowledge graph.",
+        "Most entries have no cross-references. Consider linking related entries to build the knowledge graph.",
     });
   }
 
@@ -294,7 +248,7 @@ export function identifyGaps(
     gaps.push({
       area: "Stale knowledge",
       confidence: 0.4,
-      suggestion: `${stale.length} entries are older than 30 days. Harvest recent sessions to refresh the knowledge base.`,
+      suggestion: `${stale.length} entries are older than 30 days. Ingest recent sessions to refresh the knowledge base.`,
     });
   }
 
@@ -321,11 +275,10 @@ export function identifyGaps(
 
 /**
  * Produce a markdown briefing document for a specific agent.
- * Includes relevant knowledge, capabilities, preferences, and gaps.
  */
 export function buildAgentBriefing(entries: KnowledgeEntry[], agentId: string): string {
   const agentEntries = entries.filter((e) => e.source.agent_id === agentId);
-  const allEntries = entries; // Keep reference to full set
+  const allEntries = entries;
 
   const lines: string[] = [];
   lines.push(`# Agent Briefing: ${agentId}`);

@@ -1,11 +1,66 @@
 /**
  * Knowledge schema types for the LLM Wiki / Knowledge Synthesis system (ADR-0020).
  *
- * Defines the core data model: knowledge entries, sources, provenance tracking,
- * filters, and the wiki index structure.
+ * Defines the core data model: knowledge entries, wiki pages (Karpathy llm-wiki pattern),
+ * extracted entities from NER, the knowledge graph, filters, and the wiki index structure.
  */
 
-// ── Knowledge Entry ─────────────────────────────────────────────
+// ── Wiki Page (Karpathy llm-wiki pattern) ───────────────────────
+
+/** Wiki page with YAML frontmatter (Karpathy llm-wiki pattern) */
+export interface WikiPage {
+  slug: string; // filename without .md extension
+  title: string;
+  type: WikiPageType;
+  content: string; // markdown body (after frontmatter)
+  tags: string[];
+  sources: string[]; // raw source references
+  backlinks: string[]; // slugs of pages linking to this one
+  created: string; // ISO8601
+  updated: string; // ISO8601
+  confidence?: number; // 0.0-1.0 for auto-generated pages
+}
+
+export type WikiPageType = "entity" | "concept" | "summary" | "synthesis" | "decision";
+
+// ── Named Entity Recognition ────────────────────────────────────
+
+/** Extracted entity from NER pipeline */
+export interface ExtractedEntity {
+  text: string;
+  type: EntityCategory;
+  span: [number, number]; // character offsets in source text
+}
+
+export type EntityCategory =
+  | "file_path"
+  | "package_name"
+  | "config_key"
+  | "cli_command"
+  | "function_name"
+  | "url"
+  | "tool_name"
+  | "person"
+  | "concept";
+
+// ── Knowledge Graph ─────────────────────────────────────────────
+
+/** Edge in the entity/knowledge graph */
+export interface GraphEdge {
+  from: string; // slug
+  to: string; // slug
+  type: "wikilink" | "backlink" | "entity_mention" | "related";
+  weight: number; // 0.0-1.0
+}
+
+/** The full graph stored as JSON */
+export interface KnowledgeGraph {
+  nodes: Record<string, { slug: string; title: string; type: WikiPageType; tags: string[] }>;
+  edges: GraphEdge[];
+  updated: string;
+}
+
+// ── Knowledge Entry (legacy, still used by CRUD layer) ──────────
 
 export interface KnowledgeEntry {
   id: string; // UUID v4
