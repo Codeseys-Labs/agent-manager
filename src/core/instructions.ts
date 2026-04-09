@@ -97,7 +97,7 @@ export function generateAgentsMd(
 /** Splice a managed block into existing content, preserving content outside markers. */
 function spliceMarkerBlock(block: string, existingContent?: string): string {
   if (!existingContent) {
-    return block + "\n";
+    return `${block}\n`;
   }
 
   const beginIdx = existingContent.indexOf(AM_BEGIN);
@@ -109,7 +109,27 @@ function spliceMarkerBlock(block: string, existingContent?: string): string {
   }
 
   // No existing markers — append
-  return existingContent.trimEnd() + "\n\n" + block + "\n";
+  return `${existingContent.trimEnd()}\n\n${block}\n`;
+}
+
+/**
+ * Generate managed content block for GEMINI.md.
+ * Same marker-based approach as CLAUDE.md.
+ */
+export function generateGeminiMd(
+  instructions: Record<string, ResolvedInstruction>,
+  existingContent?: string,
+): string {
+  const parts: string[] = [];
+  for (const [, instr] of Object.entries(instructions)) {
+    parts.push(instr.content);
+  }
+  if (parts.length === 0) return existingContent ?? "";
+
+  const managedContent = parts.join("\n\n");
+  const block = `${AM_BEGIN}\n${managedContent}\n${AM_END}`;
+
+  return spliceMarkerBlock(block, existingContent);
 }
 
 // ── Cursor .mdc Format ──────────────────────────────────────────
@@ -140,15 +160,13 @@ export function generateCursorMdc(instruction: ResolvedInstruction): string {
   parts.push("");
   parts.push(instruction.content);
 
-  return parts.join("\n") + "\n";
+  return `${parts.join("\n")}\n`;
 }
 
 // ── Windsurf Rule Format ────────────────────────────────────────
 
 /** Map scope to Windsurf trigger value. */
-function scopeToWindsurfTrigger(
-  scope: "always" | "glob" | "agent-decision" | "manual",
-): string {
+function scopeToWindsurfTrigger(scope: "always" | "glob" | "agent-decision" | "manual"): string {
   switch (scope) {
     case "always":
       return "always_on";
@@ -173,7 +191,7 @@ export function generateWindsurfRule(instruction: ResolvedInstruction): string {
   }
   frontmatter += "---\n";
 
-  return frontmatter + "\n" + instruction.content + "\n";
+  return `${frontmatter}\n${instruction.content}\n`;
 }
 
 // ── Copilot Instruction Format ──────────────────────────────────
@@ -183,24 +201,20 @@ export function generateWindsurfRule(instruction: ResolvedInstruction): string {
  * - always scope: plain markdown (for copilot-instructions.md)
  * - glob scope: YAML frontmatter with applyTo (for .instructions.md)
  */
-export function generateCopilotInstruction(
-  instruction: ResolvedInstruction,
-): string {
+export function generateCopilotInstruction(instruction: ResolvedInstruction): string {
   if (instruction.scope === "glob" && instruction.globs.length > 0) {
     const applyTo = instruction.globs.join(",");
     return `---\napplyTo: "${applyTo}"\n---\n\n${instruction.content}\n`;
   }
 
   // always / agent-decision / manual — plain content
-  return instruction.content + "\n";
+  return `${instruction.content}\n`;
 }
 
 // ── Kiro Steering Format ────────────────────────────────────────
 
 /** Map scope to Kiro inclusion mode. */
-function scopeToKiroInclusion(
-  scope: "always" | "glob" | "agent-decision" | "manual",
-): string {
+function scopeToKiroInclusion(scope: "always" | "glob" | "agent-decision" | "manual"): string {
   switch (scope) {
     case "always":
       return "always";
@@ -233,7 +247,7 @@ export function generateKiroSteering(
       const after = existingContent.slice(endIdx + AM_END.length);
       return before + managedBlock + after;
     }
-    return existingContent.trimEnd() + "\n\n" + managedBlock + "\n";
+    return `${existingContent.trimEnd()}\n\n${managedBlock}\n`;
   }
 
   // New file — generate with frontmatter
