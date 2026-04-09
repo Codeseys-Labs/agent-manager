@@ -954,7 +954,7 @@ function defineTools(): ToolEntry[] {
           required: ["name", "message"],
         },
       },
-      tier: "write-local",
+      tier: "write-remote",
       handler: async (args) => {
         const { loadRoster } = await import("../protocols/a2a/discovery");
         const { A2AClient } = await import("../protocols/a2a/client");

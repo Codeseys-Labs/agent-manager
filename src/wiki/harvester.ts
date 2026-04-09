@@ -282,9 +282,7 @@ const SIMILARITY_THRESHOLD = 0.8;
  * Entries with >0.8 Jaccard similarity to an existing entry are merged
  * (confidence is increased) rather than added as new.
  */
-async function deduplicateEntries(
-  newEntries: KnowledgeEntry[],
-): Promise<{
+async function deduplicateEntries(newEntries: KnowledgeEntry[]): Promise<{
   unique: KnowledgeEntry[];
   merged: Array<{ newEntry: KnowledgeEntry; existingId: string }>;
 }> {

@@ -73,6 +73,7 @@ interface GitPlatformAdapter {
 | `github` | URL contains `github.com` | `gh auth` / OAuth device flow | GitHub Secrets API | 1 |
 | `gitlab` | URL contains `gitlab` | `glab auth` / OAuth | GitLab CI/CD Variables API | 2 |
 | `gitea` | Configurable URL pattern | Token-based | Gitea Secrets API | 2 |
+| `codeberg` | URL contains `codeberg.org` | Token-based | Codeberg Secrets API (Forgejo) | 3 |
 
 ### Detection logic
 
@@ -137,8 +138,24 @@ const bareAdapter: GitPlatformAdapter = {
 };
 ```
 
-This ensures agent-manager works with Gitea, Forgejo, Gogs, BitBucket, Azure DevOps,
-AWS CodeCommit, or any bare SSH repo without any platform-specific code.
+This ensures agent-manager works with Gitea, Forgejo, Codeberg, Gogs, BitBucket,
+Azure DevOps, AWS CodeCommit, or any bare SSH repo without any platform-specific code.
+
+### Future platform adapters (Phase 2+)
+
+The following platforms are candidates for dedicated adapters when demand warrants:
+
+| Platform | Based On | Detection | Notes |
+|----------|----------|-----------|-------|
+| **Gitea** | Gitea | API probing (`/api/v1/version`) | Self-hosted, Gitea Actions (1.19+) |
+| **Codeberg** | Forgejo | `codeberg.org` in URL | Largest Forgejo instance, same API as Gitea |
+| **Forgejo** | Forgejo | API probing | Fork of Gitea, API-compatible |
+| **BitBucket** | Atlassian | `bitbucket.org` in URL | Pipelines variables for CI key storage |
+
+All of these are covered by the `bare` adapter today. Dedicated adapters would add:
+CI key storage via platform secrets, repo creation, and PR/MR creation.
+The Gitea/Forgejo/Codeberg adapters can share a common base since their APIs are
+compatible — a single `gitea-compatible` adapter with URL-based sub-detection.
 
 ## Consequences
 

@@ -383,7 +383,7 @@ const synthesizeSubcommand = defineCommand({
     if (args.json) {
       output({ query, context }, opts);
     } else {
-      console.log(context);
+      info(context, opts);
     }
   },
 });
@@ -406,7 +406,7 @@ const briefingSubcommand = defineCommand({
     if (args.json) {
       output({ agent_id: agentId, briefing }, opts);
     } else {
-      console.log(briefing);
+      info(briefing, opts);
     }
   },
 });
@@ -461,11 +461,11 @@ const exportSubcommand = defineCommand({
         lines.push("");
       }
 
-      console.log(lines.join("\n"));
+      info(lines.join("\n"), opts);
     } else {
       // JSON export
       const data = { index, entries };
-      console.log(JSON.stringify(data, null, 2));
+      output(data, opts);
     }
   },
 });

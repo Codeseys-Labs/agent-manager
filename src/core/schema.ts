@@ -3,6 +3,15 @@ import { z } from "zod";
 // Adapter passthrough — core preserves, adapters validate their own sections
 const adaptersPassthrough = z.record(z.string(), z.unknown()).optional();
 
+// --- Registry Provenance (tracks servers installed via am install) ---
+export const RegistryProvenanceSchema = z.object({
+  source: z.literal("mcp-registry"),
+  package: z.string(),
+  version: z.string(),
+  installed_at: z.string(),
+});
+export type RegistryProvenance = z.infer<typeof RegistryProvenanceSchema>;
+
 // --- Server Schema (MCP) ---
 export const ServerSchema = z.object({
   command: z.string(),
@@ -12,6 +21,7 @@ export const ServerSchema = z.object({
   description: z.string().optional(),
   tags: z.array(z.string()).optional(),
   enabled: z.boolean().default(true),
+  _registry: RegistryProvenanceSchema.optional(),
   adapters: adaptersPassthrough,
 });
 export type Server = z.infer<typeof ServerSchema>;

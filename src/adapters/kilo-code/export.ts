@@ -141,11 +141,11 @@ function generateKiloConfig(
     }
   }
 
-  const output = { ...existing, mcp };
-  // Remove legacy mcpServers if we're writing new format
-  output.mcpServers = undefined;
+  // Remove legacy mcpServers if we're writing new format, add new mcp key
+  const { mcpServers: _legacy, ...rest } = existing as Record<string, unknown>;
+  const final = { ...rest, mcp };
 
-  return `${JSON.stringify(output, null, 2)}\n`;
+  return `${JSON.stringify(final, null, 2)}\n`;
 }
 
 /** Concatenate instructions targeted at kilo-code. */
