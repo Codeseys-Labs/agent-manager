@@ -15,6 +15,7 @@ export type RegistryProvenance = z.infer<typeof RegistryProvenanceSchema>;
 // --- Server Schema (MCP) ---
 export const ServerSchema = z.object({
   command: z.string(),
+  url: z.string().optional(),
   args: z.array(z.string()).optional(),
   env: z.record(z.string(), z.string()).optional(),
   transport: z.enum(["stdio", "streamable-http", "sse"]).default("stdio"),
@@ -99,14 +100,20 @@ export const ProfileSchema = z.object({
 export type Profile = z.infer<typeof ProfileSchema>;
 
 // --- Settings Schema ---
+/** Available MCP tool groups for settings.mcp_serve.tools */
+export const MCP_TOOL_GROUPS = ["core", "registry", "a2a", "wiki"] as const;
+export type McpToolGroup = (typeof MCP_TOOL_GROUPS)[number];
+
 export const SettingsSchema = z
   .object({
     default_profile: z.string().optional(),
     mcp_serve: z
       .object({
         allow_push: z.boolean().optional(),
+        tools: z.array(z.enum(MCP_TOOL_GROUPS)).optional(),
       })
       .optional(),
+    env: z.record(z.string(), z.string()).optional(),
   })
   .passthrough();
 export type Settings = z.infer<typeof SettingsSchema>;

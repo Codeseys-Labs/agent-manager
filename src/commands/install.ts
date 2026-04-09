@@ -75,7 +75,7 @@ export const installCommand = defineCommand({
       const existing = config.servers?.[pkg.name];
       if (existing) {
         // Check if it's a registry-installed server
-        const existingProvenance = (existing as any)._registry as RegistryProvenance | undefined;
+        const existingProvenance = existing._registry;
         if (existingProvenance) {
           if (existingProvenance.version === pkg.version) {
             info(`"${pkg.name}" is already installed at version ${pkg.version}.`, opts);
@@ -167,7 +167,7 @@ export const installCommand = defineCommand({
 
       // Add URL for remote transports
       if (pkg.server.url && pkg.server.transport !== "stdio") {
-        (server as any).url = pkg.server.url;
+        server.url = pkg.server.url;
       }
 
       if (dryRun) {

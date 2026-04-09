@@ -6,6 +6,7 @@ import { listAdapters } from "../adapters/registry";
 import { loadResolvedConfig, resolveConfigDir, resolveProjectConfig } from "../core/config";
 import { ConfigSchema } from "../core/schema";
 import { error, info, output } from "../lib/output";
+import { tomlStringify } from "../lib/toml";
 
 export const configCommand = defineCommand({
   meta: { name: "config", description: "Manage agent-manager configuration" },
@@ -145,7 +146,7 @@ export const showCommand = defineCommand({
       if (args.json) {
         output(config, opts);
       } else {
-        info(TOML.stringify(config as any), opts);
+        info(tomlStringify(config as Record<string, unknown>), opts);
       }
       return;
     }

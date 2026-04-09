@@ -5,6 +5,7 @@ import { defineCommand } from "citty";
 import { readConfig, resolveConfigDir } from "../core/config";
 import { AmError } from "../lib/errors";
 import { error, info, output } from "../lib/output";
+import { tomlStringify } from "../lib/toml";
 
 const STATE_FILE = ".agent-manager/state.toml";
 
@@ -36,7 +37,7 @@ export async function writeActiveProfile(configDir: string, profile: string): Pr
   }
 
   state.active_profile = profile;
-  const toml = TOML.stringify(state as any);
+  const toml = tomlStringify(state as Record<string, unknown>);
   await writeFile(join(configDir, STATE_FILE), toml, "utf-8");
 }
 

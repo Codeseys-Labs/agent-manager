@@ -19,7 +19,7 @@ import {
   writeConfig,
 } from "../core/config";
 import { commitAll, getStatus, pull, push } from "../core/git";
-import type { Config, Settings } from "../core/schema";
+import type { Config, McpToolGroup, Settings } from "../core/schema";
 import { interpolateEnvAsync, loadKey } from "../core/secrets";
 import { filterMessages, formatJson, formatMarkdown } from "../core/session";
 import type { SessionSummary } from "../core/session";
@@ -58,6 +58,37 @@ interface ToolEntry {
   def: McpToolDef;
   tier: ToolTier;
   handler: (args: Record<string, unknown>) => Promise<unknown>;
+}
+
+/** Default tool groups exposed when settings.mcp_serve.tools is unset. */
+const DEFAULT_TOOL_GROUPS: McpToolGroup[] = ["core"];
+
+/**
+ * Map each MCP tool name to its tool group (ADR-0021).
+ * Tools not in this map are assigned to "core" by default.
+ */
+const TOOL_GROUP_MAP: Record<string, McpToolGroup> = {
+  // registry group
+  am_registry_search: "registry",
+  am_registry_install: "registry",
+  am_registry_list_installed: "registry",
+  // a2a group
+  am_agent_discover: "a2a",
+  am_agent_list: "a2a",
+  am_agent_delegate: "a2a",
+  am_agent_task_status: "a2a",
+  // wiki group
+  am_wiki_search: "wiki",
+  am_wiki_add: "wiki",
+  am_wiki_synthesize: "wiki",
+  am_wiki_briefing: "wiki",
+  am_wiki_harvest: "wiki",
+  // All other tools (am_list_servers, am_list_profiles, am_status, etc.) default to "core"
+};
+
+/** Resolve the tool group for a given tool name. */
+function getToolGroup(toolName: string): McpToolGroup {
+  return TOOL_GROUP_MAP[toolName] ?? "core";
 }
 
 // ── Permission check ────────────────────────────────────────────
@@ -652,12 +683,11 @@ function defineTools(): ToolEntry[] {
       tier: "read-only",
       handler: async (args) => {
         const { search } = await import("../registry/client");
-        const filters: Record<string, unknown> = {};
-        if (args.tag) filters.tag = args.tag;
+        const filters: import("../registry/types").RegistrySearchFilters = {};
+        if (args.tag) filters.tag = args.tag as string;
         if (args.verified) filters.verified = true;
-        if (args.limit) filters.limit = args.limit;
-        if (!filters.limit) filters.limit = 20;
-        const result = await search(args.query as string, filters as any);
+        filters.limit = (args.limit as number) ?? 20;
+        const result = await search(args.query as string, filters);
         return result;
       },
     },
@@ -724,12 +754,12 @@ function defineTools(): ToolEntry[] {
           description: pkg.description,
           tags: pkg.tags,
           _registry: {
-            source: "mcp-registry",
+            source: "mcp-registry" as const,
             package: pkg.name,
             version: pkg.version,
             installed_at: new Date().toISOString(),
           },
-        } as any;
+        };
 
         await writeConfig(configPath, config);
         try {
@@ -765,9 +795,7 @@ function defineTools(): ToolEntry[] {
         }> = [];
 
         for (const [name, srv] of Object.entries(servers)) {
-          const provenance = (srv as any)._registry as
-            | { source: string; package: string; version: string; installed_at: string }
-            | undefined;
+          const provenance = srv._registry;
           if (provenance?.source === "mcp-registry") {
             installed.push({
               name,
@@ -1267,14 +1295,21 @@ export class McpServer {
         // Client acknowledgement — no response needed
         return null;
 
-      case "tools/list":
+      case "tools/list": {
+        // Filter tools by configured tool groups (ADR-0021)
+        await this.refreshSettings();
+        const enabledGroups = new Set<McpToolGroup>(
+          this.settings?.mcp_serve?.tools ?? DEFAULT_TOOL_GROUPS,
+        );
+        const visibleTools = this.tools.filter((t) => enabledGroups.has(getToolGroup(t.def.name)));
         return {
           jsonrpc: "2.0",
           id,
           result: {
-            tools: this.tools.map((t) => t.def),
+            tools: visibleTools.map((t) => t.def),
           },
         };
+      }
 
       case "tools/call": {
         const params = req.params ?? {};

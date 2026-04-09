@@ -10,6 +10,7 @@
 import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import * as TOML from "@iarna/toml";
+import { tomlStringify } from "../../lib/toml";
 import { A2AClient } from "./client";
 import type { AgentCard, AgentRosterEntry } from "./types";
 
@@ -87,7 +88,7 @@ export async function saveRoster(configDir: string, entries: AgentRosterEntry[])
     };
   }
 
-  const toml = TOML.stringify({ agents } as any);
+  const toml = tomlStringify({ agents });
   await writeFile(rosterPath, toml, "utf-8");
 }
 

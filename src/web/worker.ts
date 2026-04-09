@@ -6,6 +6,7 @@
  * See ADR-0015 for architecture.
  */
 import { Hono } from "hono";
+import type { ContentfulStatusCode } from "hono/utils/http-status";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -267,7 +268,7 @@ app.get("/api/repos", async (c) => {
   });
 
   if (!res.ok) {
-    return c.json({ error: "Failed to fetch repos" }, res.status as any);
+    return c.json({ error: "Failed to fetch repos" }, res.status as ContentfulStatusCode);
   }
 
   const repos = (await res.json()) as Array<{

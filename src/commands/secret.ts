@@ -79,8 +79,8 @@ const setCommand = defineCommand({
     } else {
       // Set in settings.env (top-level env for profiles/global use)
       if (!config.settings) config.settings = {};
-      (config.settings as any).env = (config.settings as any).env ?? {};
-      (config.settings as any).env[args.name] = encrypted;
+      config.settings.env = config.settings.env ?? {};
+      config.settings.env[args.name] = encrypted;
     }
 
     await writeConfig(configPath, config);
@@ -133,7 +133,7 @@ const getCommand = defineCommand({
     if (args.server) {
       value = config.servers?.[args.server]?.env?.[args.name];
     } else {
-      value = (config.settings as any)?.env?.[args.name];
+      value = config.settings?.env?.[args.name];
     }
 
     if (!value) {
@@ -176,7 +176,7 @@ const listCommand = defineCommand({
     const secrets: Array<{ name: string; location: string }> = [];
 
     // Check settings.env
-    const settingsEnv = (config.settings as any)?.env;
+    const settingsEnv = config.settings?.env;
     if (settingsEnv) {
       for (const [name, value] of Object.entries(settingsEnv)) {
         if (typeof value === "string" && isEncrypted(value)) {

@@ -41,7 +41,7 @@ export const uninstallCommand = defineCommand({
       return;
     }
 
-    const provenance = (server as any)._registry as RegistryProvenance | undefined;
+    const provenance = server._registry;
 
     if (dryRun) {
       info(`[dry-run] Would remove server "${name}"`, opts);

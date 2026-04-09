@@ -53,7 +53,7 @@ export const updateCommand = defineCommand({
     // Find servers installed from the registry
     const registryServers: Array<{ name: string; provenance: RegistryProvenance }> = [];
     for (const [name, server] of Object.entries(config.servers ?? {})) {
-      const provenance = (server as any)._registry as RegistryProvenance | undefined;
+      const provenance = server._registry;
       if (provenance?.source === "mcp-registry") {
         registryServers.push({ name, provenance });
       }
@@ -167,12 +167,12 @@ export const updateCommand = defineCommand({
         // Preserve user's env vars
         ...(existingEnv ? { env: existingEnv } : {}),
         _registry: {
-          source: "mcp-registry",
+          source: "mcp-registry" as const,
           package: c.pkg.name,
           version: c.pkg.version,
           installed_at: new Date().toISOString(),
         },
-      } as any;
+      };
 
       updated.push(c.name);
       info(`Updated "${c.name}" ${c.currentVersion} → ${c.latestVersion}`, opts);

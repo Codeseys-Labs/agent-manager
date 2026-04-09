@@ -110,6 +110,7 @@ export interface DiffResult {
 export interface ResolvedServer {
   name: string;
   command: string;
+  url?: string;
   args: string[];
   env: Record<string, string>;
   transport: "stdio" | "streamable-http" | "sse";

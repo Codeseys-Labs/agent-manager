@@ -10,6 +10,7 @@ import type {
   ResolvedServer,
   ResolvedSkill,
 } from "../adapters/types";
+import { tomlStringify } from "../lib/toml";
 import { type Config, ConfigSchema, type ProjectConfig, ProjectConfigSchema } from "./schema";
 
 /** Return the agent-manager config directory. */
@@ -90,7 +91,7 @@ export async function writeConfig(path: string, config: Config): Promise<void> {
   if (config.profiles) ordered.profiles = config.profiles;
   if (config.adapters) ordered.adapters = config.adapters;
 
-  const toml = TOML.stringify(ordered as any);
+  const toml = tomlStringify(ordered);
   await writeFile(path, toml, "utf-8");
 }
 
@@ -110,7 +111,7 @@ export async function writeProjectConfig(path: string, config: ProjectConfig): P
   if (config.env) ordered.env = config.env;
   if (config.adapters) ordered.adapters = config.adapters;
 
-  const toml = TOML.stringify(ordered as any);
+  const toml = tomlStringify(ordered);
   await writeFile(path, toml, "utf-8");
 }
 
@@ -206,6 +207,7 @@ export function buildResolvedConfig(
     servers[name] = {
       name,
       command: srv.command,
+      url: srv.url,
       args: srv.args ?? [],
       env: srv.env ?? {},
       transport: srv.transport ?? "stdio",
