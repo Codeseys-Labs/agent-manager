@@ -6,10 +6,28 @@ on:
     branches: [main]
 
 jobs:
-  check:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+      - run: bun install --frozen-lockfile
+      - name: Type check
+        run: bun run typecheck
+      - name: Lint
+        run: bun run lint
+      - name: Test with coverage
+        run: bun test --coverage
+      - name: Build all targets (smoke test)
+        run: bun run build -- --all
+
+  build-verify:
     strategy:
+      fail-fast: false
       matrix:
-        os: [macos-14, ubuntu-latest]
+        os: [ubuntu-latest, macos-latest, windows-latest]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -17,14 +35,5 @@ jobs:
         with:
           bun-version: latest
       - run: bun install --frozen-lockfile
-      - name: Lint
-        run: bun run lint
-      - name: Type check
-        run: bun run typecheck || true
-        # TODO: Remove || true after fixing src/ type errors (6 real bugs + node_modules excludes)
-      - name: Unit tests
-        run: bun run test:unit
-      - name: Integration tests
-        run: bun run test:integration
-      - name: Build (smoke test)
-        run: bun run build
+      - name: Run tests
+        run: bun test

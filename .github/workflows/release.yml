@@ -1,7 +1,7 @@
 name: Release
 on:
   push:
-    tags: ['v*']
+    tags: ['v*.*.*']
 
 permissions:
   contents: write
@@ -12,54 +12,68 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - target: bun-darwin-arm64
-            artifact: am-darwin-arm64
-            runner: macos-14
-          - target: bun-darwin-x64
-            artifact: am-darwin-x64
-            runner: macos-14
-          - target: bun-linux-x64
-            artifact: am-linux-x64
-            runner: ubuntu-latest
-          - target: bun-linux-arm64
-            artifact: am-linux-arm64
-            runner: ubuntu-latest
-          - target: bun-windows-x64
-            artifact: am-windows-x64.exe
-            runner: windows-latest
-    runs-on: ${{ matrix.runner }}
+          - os: ubuntu-latest
+            targets: "bun-linux-x64 bun-linux-arm64"
+          - os: macos-latest
+            targets: "bun-darwin-arm64 bun-darwin-x64"
+          - os: windows-latest
+            targets: "bun-windows-x64"
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: latest
       - run: bun install --frozen-lockfile
-      - run: bun test
-      - name: Build
-        run: VERSION="${GITHUB_REF_NAME#v}" bun run build --target ${{ matrix.target }}
-      - uses: actions/upload-artifact@v4
+
+      - name: Build targets
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION="${GITHUB_REF_NAME#v}"
+          for target in ${{ matrix.targets }}; do
+            echo "::group::Building $target"
+            VERSION="$VERSION" bun run build -- --target "$target"
+            echo "::endgroup::"
+          done
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.artifact }}
-          path: dist/${{ matrix.artifact }}
+          name: binaries-${{ matrix.os }}
+          path: dist/am-*
+          if-no-files-found: error
+          retention-days: 1
 
   release:
     needs: build
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
         with:
           path: ./artifacts
           merge-multiple: true
-      - uses: softprops/action-gh-release@v2
-        with:
-          files: ./artifacts/*
-          generate_release_notes: true
 
-  publish-npm:
-    needs: build
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
+      - name: Generate checksums
+        working-directory: ./artifacts
+        run: |
+          sha256sum am-* > checksums.sha256
+          echo "--- checksums.sha256 ---"
+          cat checksums.sha256
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "$GITHUB_REF_NAME" \
+            --generate-notes \
+            ./artifacts/*
+
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: latest
@@ -67,11 +81,18 @@ jobs:
         with:
           node-version: '20'
           registry-url: 'https://registry.npmjs.org'
+
       - run: bun install --frozen-lockfile
+
       - name: Set version from tag
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
-          bun -e "const pkg = await Bun.file('package.json').json(); pkg.version = '$VERSION'; await Bun.write('package.json', JSON.stringify(pkg, null, 2) + '\n');"
+          bun -e "
+            const pkg = await Bun.file('package.json').json();
+            pkg.version = '$VERSION';
+            await Bun.write('package.json', JSON.stringify(pkg, null, 2) + '\n');
+          "
+
       - name: Publish to npm
         run: bunx npm publish --access public
         env:
