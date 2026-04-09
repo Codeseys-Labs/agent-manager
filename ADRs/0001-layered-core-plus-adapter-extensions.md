@@ -35,9 +35,11 @@ We evaluated three architectural approaches:
 
 We adopt **Approach C: Layered Core + Adapter Extensions**.
 
-The core schema defines 8 entity types: Servers, Instructions, Skills, Plugins,
-Agents, Permissions, Models, and Profiles. Each entity supports an optional
-`[entity.adapters.<adapter-name>]` TOML subtable for tool-specific extensions.
+The core schema defines 5 entity types: Servers, Instructions, Skills, Agent
+Profiles, and Profiles. Three additional types (Plugins, Permissions, Models)
+remain adapter-only until normalizable across 3+ tools. Each entity supports an
+optional `[entity.adapters.<adapter-name>]` TOML subtable for tool-specific
+extensions.
 
 The adapter interface follows a hybrid of the VS Code contributes manifest pattern
 and the ESLint convention-based object shape:

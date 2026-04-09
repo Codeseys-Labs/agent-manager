@@ -27,12 +27,10 @@ export function diffConfig(
 ): DiffResult {
   const changes: DiffChange[] = [];
 
-  // ForgeCode only has project-level .mcp.json
-  if (!options.projectPath) {
-    return { status: "unmanaged", changes: [] };
-  }
+  // ForgeCode only has project-level .mcp.json — fall back to cwd if no projectPath provided
+  const projectDir = options.projectPath ?? process.cwd();
 
-  const nativeServers = readNativeServers(join(options.projectPath, ".mcp.json"));
+  const nativeServers = readNativeServers(join(projectDir, ".mcp.json"));
   if (nativeServers === null) {
     return { status: "unmanaged", changes: [] };
   }

@@ -344,10 +344,10 @@ function defineTools(): ToolEntry[] {
         };
 
         if (format === "json") {
-          return formatJson(session, Object.keys(filter).length > 0 ? filter : undefined);
+          return formatJson(session, filter);
         }
         return {
-          content: formatMarkdown(session, Object.keys(filter).length > 0 ? filter : undefined),
+          content: formatMarkdown(session, filter),
         };
       },
     },
@@ -711,10 +711,7 @@ function defineTools(): ToolEntry[] {
       },
       tier: "write-remote",
       handler: async () => {
-        const { config, configDir } = await loadConfigAndProfile();
-        const settings = config.settings;
-        const perm = checkPushPermission(settings);
-        if (!perm.allowed) throw new Error(perm.reason);
+        const { configDir } = await loadConfigAndProfile();
 
         const status = await getStatus(configDir);
         if (status.remotes.length === 0) {
@@ -894,6 +891,17 @@ export class McpServer {
             error: { code: -32700, message: "Parse error" },
           };
           process.stdout.write(`${JSON.stringify(errResp)}\n`);
+          continue;
+        }
+
+        if (Array.isArray(req)) {
+          const responses = await Promise.all(
+            req.map((r: JsonRpcRequest) => this.handleRequest(r)),
+          );
+          const filtered = responses.filter(Boolean);
+          if (filtered.length > 0) {
+            process.stdout.write(`${JSON.stringify(filtered)}\n`);
+          }
           continue;
         }
 

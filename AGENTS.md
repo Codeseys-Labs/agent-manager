@@ -93,7 +93,7 @@ src/
     public/                 # Static HTML
   lib/                      # Shared utilities (errors.ts, output.ts)
 test/                       # 106 files, 982 tests, 2604 assertions
-ADRs/                       # 17 architectural decision records
+ADRs/                       # 19 architectural decision records
 scripts/
   build.ts                  # Cross-platform build (5 targets)
   install.sh                # curl-based installer

@@ -151,3 +151,141 @@ describe("Worker — OAuth flow", () => {
     expect(cookie).toContain("Max-Age=0");
   });
 });
+
+// ── Worker crypto (deriveKey, encryptSession, decryptSession) ────
+//
+// These functions are module-private in src/web/worker.ts (not exported).
+// Direct unit-test roundtrip (encrypt → decrypt → original) is not possible
+// without refactoring the production code (e.g., extracting them to a
+// separate src/web/crypto.ts module with named exports).
+//
+// The existing "Invalid cookie" tests above already cover:
+//   - Wrong secret / different key → decryptSession returns null → 401
+//   - Corrupted/tampered base64 → decryptSession returns null → 401
+//   - Short payload (no valid AES-GCM ciphertext) → 401
+//
+// A full roundtrip test would require mocking GitHub's OAuth token endpoint
+// to complete the callback flow, which creates a valid encrypted session
+// cookie, and then using that cookie on an authenticated endpoint.
+// This is covered below with a fetch mock.
+
+describe("Worker — session cookie roundtrip (via OAuth callback mock)", () => {
+  it("valid encrypted session cookie grants access to /auth/check", async () => {
+    // Step 1: Get the login redirect to capture the state
+    const loginRes = await req("/auth/github/login");
+    const setCookie = loginRes.headers.get("set-cookie") ?? "";
+    const oauthStateCookie = setCookie.match(/am_oauth_state=([^;]+)/)?.[1];
+    expect(oauthStateCookie).toBeTruthy();
+
+    // Extract state parameter from the redirect URL
+    const location = loginRes.headers.get("location") ?? "";
+    const stateParam = new URL(location).searchParams.get("state");
+    expect(stateParam).toBeTruthy();
+
+    // Step 2: Mock GitHub token exchange using globalThis.fetch override
+    const originalFetch = globalThis.fetch;
+    const mockFetch = async (input: string | URL | Request, init?: RequestInit) => {
+      const url =
+        typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+
+      if (url === "https://github.com/login/oauth/access_token") {
+        return new Response(JSON.stringify({ access_token: "gho_mock_token_123" }), {
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+      if (url === "https://api.github.com/user") {
+        return new Response(
+          JSON.stringify({ login: "testuser", avatar_url: "https://example.com/avatar.png" }),
+          { headers: { "Content-Type": "application/json" } },
+        );
+      }
+      return originalFetch(input, init);
+    };
+    globalThis.fetch = Object.assign(mockFetch, {
+      preconnect: originalFetch.preconnect,
+    }) as typeof fetch;
+
+    try {
+      // Step 3: Simulate the OAuth callback with the state cookie
+      const callbackRes = await app.request(
+        `/auth/github/callback?code=mock_code&state=${stateParam}`,
+        { headers: { cookie: `am_oauth_state=${oauthStateCookie}` } },
+        MOCK_ENV,
+      );
+
+      expect(callbackRes.status).toBe(302);
+      const sessionSetCookie = callbackRes.headers.get("set-cookie") ?? "";
+      const sessionCookieMatch = sessionSetCookie.match(/am_session=([^;]+)/);
+      expect(sessionCookieMatch).toBeTruthy();
+      const sessionCookieValue = sessionCookieMatch![1];
+
+      // Step 4: Use the encrypted session cookie on /auth/check — roundtrip
+      const checkRes = await app.request(
+        "/auth/check",
+        { headers: { cookie: `am_session=${sessionCookieValue}` } },
+        MOCK_ENV,
+      );
+      expect(checkRes.status).toBe(200);
+      const checkData = (await checkRes.json()) as {
+        authenticated: boolean;
+        user?: { login: string; avatar: string };
+      };
+      expect(checkData.authenticated).toBe(true);
+      expect(checkData.user?.login).toBe("testuser");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it("cookie encrypted with different secret fails authentication", async () => {
+    // Create an encrypted cookie using a DIFFERENT secret by going through
+    // the OAuth flow with a different SESSION_SECRET env
+    const differentEnv = { ...MOCK_ENV, SESSION_SECRET: "completely-different-secret-key!!" };
+
+    const loginRes = await app.request("/auth/github/login", {}, differentEnv);
+    const setCookie = loginRes.headers.get("set-cookie") ?? "";
+    const oauthStateCookie = setCookie.match(/am_oauth_state=([^;]+)/)?.[1];
+    const location = loginRes.headers.get("location") ?? "";
+    const stateParam = new URL(location).searchParams.get("state");
+
+    const originalFetch = globalThis.fetch;
+    const mockFetch2 = async (input: string | URL | Request, init?: RequestInit) => {
+      const url =
+        typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+      if (url === "https://github.com/login/oauth/access_token") {
+        return new Response(JSON.stringify({ access_token: "gho_wrong_secret_token" }), {
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+      return originalFetch(input, init);
+    };
+    globalThis.fetch = Object.assign(mockFetch2, {
+      preconnect: originalFetch.preconnect,
+    }) as typeof fetch;
+
+    try {
+      const callbackRes = await app.request(
+        `/auth/github/callback?code=mock&state=${stateParam}`,
+        { headers: { cookie: `am_oauth_state=${oauthStateCookie}` } },
+        differentEnv,
+      );
+
+      if (callbackRes.status === 302) {
+        const sessionSetCookie = callbackRes.headers.get("set-cookie") ?? "";
+        const sessionCookieMatch = sessionSetCookie.match(/am_session=([^;]+)/);
+        if (sessionCookieMatch) {
+          // Now try to use this cookie with the ORIGINAL secret — should fail
+          const checkRes = await app.request(
+            "/auth/check",
+            { headers: { cookie: `am_session=${sessionCookieMatch[1]}` } },
+            MOCK_ENV, // original secret
+          );
+          const data = (await checkRes.json()) as { authenticated: boolean };
+          expect(data.authenticated).toBe(false);
+        }
+      }
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});

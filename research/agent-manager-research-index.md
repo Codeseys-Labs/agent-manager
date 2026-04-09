@@ -10,7 +10,7 @@ updated: 2026-04-07
 
 > [!info] Purpose
 > This index catalogs the research conducted during the design phase of **agent-manager**
-> (`am`) — a unified configuration manager for AI coding agents. Nine documents cover
+> (`am`) — a unified configuration manager for AI coding agents. Thirteen documents cover
 > the full landscape from existing tools through architecture design.
 
 ---
@@ -46,8 +46,10 @@ The investigation proceeded in four phases:
 | 07 | [[07-browser-ui-git-oauth\|Browser UI & Git OAuth]] | `patterns/oauth`, `tools/web-ui` | Hono + Preact SPA; OAuth Device Flow; isomorphic-git; SSE; Grafana single-binary pattern |
 | 08 | [[08-agent-manager-architecture-design\|Architecture Design (Capstone)]] | `architecture`, `design` | Full synthesis: data model, TOML schema, CLI tree, git sync, config gen, TUI, web, roadmap |
 | 09 | [[09-adapter-architecture-patterns\|Adapter Architecture Patterns]] | `patterns/adapters`, `architecture` | 8 production systems (Terraform, VS Code, ESLint, Prettier, Docker, Backstage, Grafana, HA); 3 dominant patterns; recommended hybrid for agent-manager |
+| 10 | [[10-agent-protocols-and-standards\|Agent Protocols and Standards]] | `protocols/mcp`, `standards` | MCP universality, AGENTS.md standardization, IDE-unique features catalog |
 | 11 | [[11-extensible-schema-patterns\|Extensible Schema Patterns]] | `patterns/schema`, `architecture` | 9 extensibility patterns (OpenAPI, Cargo, K8s CRDs, Zod, protobuf, GraphQL, VS Code); recommended `[adapters.*]` design |
 | 12 | [[12-adapter-packaging-strategy\|Adapter Packaging Strategy]] | `packaging/adapters`, `bun/compile` | Bun compile can't side-load; 7-system survey (Terraform, Caddy, Grafana, Telegraf, ESLint, Tauri); recommends built-in + subprocess escape hatch |
+| 17 | [[17-agent-communication-protocols\|Agent Communication Protocols]] | `protocols/a2a`, `protocols/acp` | MCP, A2A, and ACP protocol landscape for multi-agent integration |
 
 ---
 
@@ -166,7 +168,7 @@ graph TD
 
 ## Statistics
 
-- **Total documents:** 11
+- **Total documents:** 13
 - **Research phase:** 2026-04-07
 - **Tools surveyed:** 20+ MCP tools, 8 dotfile managers, 10 AI coding agents, 13 config systems, 6 TUI frameworks, 4 web frameworks
 - **Architecture entities:** 6 (Server, Skill, Plugin, Instruction, Profile, Agent)

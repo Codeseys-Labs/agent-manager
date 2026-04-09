@@ -206,7 +206,7 @@ describe("ConfigSchema", () => {
     const result = ConfigSchema.parse({
       settings: {
         default_profile: "work",
-        mcp_serve: { allow_apply: true, allow_push: false },
+        mcp_serve: { allow_push: false },
       },
       servers: {
         outlook: {

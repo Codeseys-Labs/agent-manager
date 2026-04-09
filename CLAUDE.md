@@ -86,7 +86,7 @@ test/                                # 106 test files, 982 tests, 2604 assertion
   helpers/                           # Test utilities (tmp dirs, config builders)
   integration/                       # End-to-end tests
 
-ADRs/                                # 17 architectural decision records
+ADRs/                                # 19 architectural decision records
 docs/                                # Design specs and guides
 scripts/
   build.ts                           # Cross-platform build (5 targets via Bun.spawn)
@@ -301,6 +301,8 @@ bun run deploy:web                # Deploy to Cloudflare Workers
 | [0015](ADRs/0015-stateless-web-ui.md) | Stateless Web UI -- git-backed, independently deployable, encrypted cookies |
 | [0016](ADRs/0016-session-harvest.md) | Session Harvest -- cross-tool conversation export via SessionReader interface |
 | [0017](ADRs/0017-agent-communication-protocol.md) | Multi-Protocol Agent Integration -- MCP, A2A, and ACP protocol landscape |
+| [0018](ADRs/0018-tui-framework-silvery.md) | TUI Framework -- Ink to Silvery migration |
+| [0019](ADRs/0019-security-hardening.md) | Security Hardening -- threat model and fixes |
 
 ## Git Commit Style
 

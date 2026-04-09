@@ -37,6 +37,9 @@ const ADAPTERS = {
   "cursor":      () => import("./cursor"),
   "windsurf":    () => import("./windsurf"),
   "copilot":     () => import("./copilot"),
+  "forgecode":   () => import("./forgecode"),
+  "kilo-code":   () => import("./kilo-code"),
+  "kiro":        () => import("./kiro"),
   "cline":       () => import("./cline"),
   "roo-code":    () => import("./roo-code"),
   "continue":    () => import("./continue"),
@@ -46,7 +49,7 @@ const ADAPTERS = {
 } as const;
 ```
 
-All ~10 adapters are imported, but only enabled ones are instantiated (lazy factory
+All 13 adapters are imported, but only enabled ones are instantiated (lazy factory
 pattern). The binary size impact is negligible — adapter code is kilobytes, while the
 Bun runtime is 60+ MB.
 

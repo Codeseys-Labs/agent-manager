@@ -7,7 +7,10 @@ on:
 
 jobs:
   check:
-    runs-on: macos-14
+    strategy:
+      matrix:
+        os: [macos-14, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
       - uses: oven-sh/setup-bun@v2
@@ -18,7 +21,7 @@ jobs:
         run: bun run lint
       - name: Type check
         run: bun run typecheck || true
-        # 3 citty framework typing issues (lazy subcommand Promise types) — non-blocking
+        # TODO: Remove || true after fixing src/ type errors (6 real bugs + node_modules excludes)
       - name: Unit tests
         run: bun run test:unit
       - name: Integration tests

@@ -1,8 +1,9 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, mock, test } from "bun:test";
 import { join } from "node:path";
 import { writeConfig } from "../../src/core/config";
 import { initRepo } from "../../src/core/git";
 import type { Config } from "../../src/core/schema";
+import type { Session, SessionReader, SessionSummary } from "../../src/core/session";
 import { McpServer } from "../../src/mcp/server";
 import { type TestDir, createTestDir } from "../helpers/tmp";
 
@@ -515,5 +516,190 @@ describe("MCP server", () => {
       const content = JSON.parse(searchResult.content[0].text);
       expect(content.error).not.toContain("opt-in");
     }
+  });
+});
+
+// ── Session tools with mocked session data ──────────────────────
+// These tests exercise session tool handlers with actual session data
+// by directly testing the core session functions used by the MCP handlers,
+// since mocking the adapter registry module at the MCP server level is fragile.
+
+describe("MCP session tools — core function integration", () => {
+  // Import the same core functions the MCP session tool handlers use
+  const {
+    filterMessages,
+    formatMarkdown,
+    formatJson,
+  }: typeof import("../../src/core/session") = require("../../src/core/session");
+
+  const testSession: Session = {
+    id: "test-session-001",
+    adapter: "mock-adapter",
+    project: "/home/user/myproject",
+    messages: [
+      {
+        role: "system",
+        content: "You are a helpful assistant.",
+        timestamp: new Date("2024-01-15T10:00:00Z"),
+      },
+      {
+        role: "user",
+        content: "Help me fix the authentication bug in the login handler",
+        timestamp: new Date("2024-01-15T10:01:00Z"),
+      },
+      {
+        role: "assistant",
+        content: "I'll look at the login handler. Let me check the auth middleware first.",
+        timestamp: new Date("2024-01-15T10:01:30Z"),
+        toolCalls: [
+          {
+            name: "read_file",
+            input: { path: "src/auth.ts" },
+            output: "export function authenticate() { ... }",
+          },
+        ],
+      },
+      {
+        role: "tool",
+        content: "File contents: export function authenticate() { ... }",
+        timestamp: new Date("2024-01-15T10:01:31Z"),
+      },
+      {
+        role: "assistant",
+        content:
+          "I found the issue. The token validation is missing the expiry check. Here's the fix that properly validates JWT expiration timestamps before granting access to protected routes. This is a very long message that exceeds two hundred characters to test snippet truncation behavior in the search results output.",
+        timestamp: new Date("2024-01-15T10:02:00Z"),
+      },
+    ],
+    startedAt: new Date("2024-01-15T10:00:00Z"),
+    endedAt: new Date("2024-01-15T10:05:00Z"),
+    metadata: { model: "claude-3" },
+  };
+
+  const testSummaries: SessionSummary[] = [
+    {
+      id: "session-b",
+      adapter: "mock-adapter",
+      project: "/project-b",
+      messageCount: 3,
+      startedAt: new Date("2024-01-14T10:00:00Z"),
+    },
+    {
+      id: "session-a",
+      adapter: "mock-adapter",
+      project: "/project-a",
+      messageCount: 5,
+      startedAt: new Date("2024-01-15T10:00:00Z"),
+      endedAt: new Date("2024-01-15T10:05:00Z"),
+      estimatedTokens: 1200,
+    },
+  ];
+
+  test("session list sorts by date descending", () => {
+    // Replicate the sort logic from the MCP handler
+    const sorted = [...testSummaries].sort((a, b) => b.startedAt.getTime() - a.startedAt.getTime());
+    expect(sorted[0].id).toBe("session-a"); // most recent
+    expect(sorted[1].id).toBe("session-b");
+
+    // Verify serialization matches MCP output format
+    const serialized = sorted.map((s) => ({
+      ...s,
+      startedAt: s.startedAt.toISOString(),
+      endedAt: s.endedAt?.toISOString() ?? null,
+    }));
+    expect(serialized[0].startedAt).toBe("2024-01-15T10:00:00.000Z");
+    expect(serialized[0].endedAt).toBe("2024-01-15T10:05:00.000Z");
+    expect(serialized[1].endedAt).toBeNull();
+  });
+
+  test("session export as markdown contains header and messages", () => {
+    const md = formatMarkdown(testSession);
+    expect(md).toContain("# Session test-session-001");
+    expect(md).toContain("**Adapter:** mock-adapter");
+    expect(md).toContain("**Project:** /home/user/myproject");
+    expect(md).toContain("### User");
+    expect(md).toContain("### Assistant");
+    expect(md).toContain("authentication bug");
+    expect(md).toContain("**Tool:** `read_file`");
+  });
+
+  test("session export as JSON has correct structure", () => {
+    const json = formatJson(testSession) as any;
+    expect(json.id).toBe("test-session-001");
+    expect(json.adapter).toBe("mock-adapter");
+    expect(json.project).toBe("/home/user/myproject");
+    expect(json.startedAt).toBe("2024-01-15T10:00:00.000Z");
+    expect(json.endedAt).toBe("2024-01-15T10:05:00.000Z");
+    expect(json.messageCount).toBe(5);
+    expect(json.messages.length).toBe(5);
+    expect(json.messages[0].role).toBe("system");
+    expect(json.metadata).toEqual({ model: "claude-3" });
+  });
+
+  test("session export with role filter (user only)", () => {
+    const json = formatJson(testSession, { roles: ["user"] }) as any;
+    expect(json.messageCount).toBe(1);
+    expect(json.messages[0].role).toBe("user");
+    expect(json.messages[0].content).toContain("authentication bug");
+  });
+
+  test("session export with noTools filter", () => {
+    const json = formatJson(testSession, { noTools: true }) as any;
+    expect(json.messages.every((m: any) => m.role !== "tool")).toBe(true);
+    expect(json.messageCount).toBe(4); // system + user + 2 assistant
+  });
+
+  test("session export with noSystem filter", () => {
+    const json = formatJson(testSession, { noSystem: true }) as any;
+    expect(json.messages.every((m: any) => m.role !== "system")).toBe(true);
+    expect(json.messageCount).toBe(4); // user + assistant + tool + assistant
+  });
+
+  test("session export with combined noTools + noSystem", () => {
+    const json = formatJson(testSession, { noTools: true, noSystem: true }) as any;
+    expect(json.messages.every((m: any) => m.role !== "tool" && m.role !== "system")).toBe(true);
+    expect(json.messageCount).toBe(3); // user + 2 assistant
+  });
+
+  test("session search filterMessages returns matching messages", () => {
+    const matched = filterMessages(testSession.messages, { query: "authentication" });
+    expect(matched.length).toBe(1);
+    expect(matched[0].role).toBe("user");
+    expect(matched[0].content).toContain("authentication");
+  });
+
+  test("session search with role filter narrows results", () => {
+    const matched = filterMessages(testSession.messages, {
+      query: "auth",
+      roles: ["assistant"],
+    });
+    expect(matched.length).toBe(1);
+    expect(matched[0].role).toBe("assistant");
+    expect(matched[0].content).toContain("auth middleware");
+  });
+
+  test("session search snippet truncation to 200 chars", () => {
+    // Replicate the MCP handler snippet logic
+    const matched = filterMessages(testSession.messages, { query: "token validation" });
+    expect(matched.length).toBe(1);
+
+    const snippets = matched.slice(0, 5).map((m) => ({
+      role: m.role,
+      snippet: m.content.length > 200 ? `${m.content.slice(0, 200)}...` : m.content,
+    }));
+
+    expect(snippets[0].snippet.length).toBeLessThanOrEqual(203); // 200 + "..."
+    expect(snippets[0].snippet).toEndWith("...");
+    expect(snippets[0].role).toBe("assistant");
+  });
+
+  test("session search case-insensitive", () => {
+    const matched = filterMessages(testSession.messages, { query: "AUTHENTICATION" });
+    expect(matched.length).toBe(1);
+  });
+
+  test("session search no matches returns empty", () => {
+    const matched = filterMessages(testSession.messages, { query: "xyznonexistent" });
+    expect(matched.length).toBe(0);
   });
 });

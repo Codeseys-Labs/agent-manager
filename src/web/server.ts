@@ -10,6 +10,7 @@ import {
   resolveProjectConfig,
 } from "../core/config";
 import { getStatus, pull as gitPull, push as gitPush } from "../core/git";
+import { interpolateEnvAsync, loadKey } from "../core/secrets";
 
 export function createApp() {
   const app = new Hono();
@@ -158,7 +159,14 @@ export function createApp() {
   app.post("/api/apply", async (c) => {
     try {
       const { config, configDir, profileName } = await getConfigAndProfile();
-      const resolved = buildResolvedConfig(config, profileName, configDir);
+
+      // Decrypt encrypted values before building resolved config
+      const encryptionKey = await loadKey(configDir);
+      const { config: interpolated } = await interpolateEnvAsync(config, {
+        encryptionKey: encryptionKey ?? undefined,
+      });
+
+      const resolved = buildResolvedConfig(interpolated, profileName, configDir);
 
       const adapters = await getDetectedAdapters();
       const results: Array<{

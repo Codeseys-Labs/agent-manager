@@ -124,7 +124,7 @@ describe("interpolateEnv", () => {
     expect(warnings).toHaveLength(0);
   });
 
-  test("process.env takes precedence over extraEnv", () => {
+  test("extraEnv takes precedence over process.env", () => {
     setEnv("AM_PRECEDENCE_VAR", "from-env");
 
     const config: Config = {
@@ -140,7 +140,7 @@ describe("interpolateEnv", () => {
       extraEnv: { AM_PRECEDENCE_VAR: "from-extra" },
     });
 
-    expect(result.servers?.s.command).toBe("from-env");
+    expect(result.servers?.s.command).toBe("from-extra");
   });
 
   test("handles multiple variables in one string", () => {

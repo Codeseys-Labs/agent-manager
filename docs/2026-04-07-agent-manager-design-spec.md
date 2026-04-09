@@ -619,12 +619,11 @@ MCP server mode (ADR-0009):
 | Tier | Tools | Default |
 |------|-------|---------|
 | Read-only | am_list_servers, am_list_profiles, am_status, am_config_show, am_session_list, am_session_export, am_session_search | Always available |
-| Write-local | am_add_server, am_remove_server, am_use_profile, am_import, am_apply | Available (undoable) |
+| Write-local | am_add_server, am_remove_server, am_use_profile, am_import, am_apply | On by default |
 | Write-remote | am_sync_push, am_sync_pull | Requires opt-in via config |
 
 ```toml
 [settings.mcp_serve]
-allow_apply = true    # enables am_apply
 allow_push = false    # enables am_sync_push (off by default)
 ```
 
@@ -793,14 +792,14 @@ Binary: `agent-manager` with `am` as symlink/alias.
 
 **Deliverable:** Full 13-adapter coverage, MCP server mode, distribution
 
-### Phase 4: TUI (Future)
+### Phase 4: TUI (Implemented)
 
 | Component | Description |
 |-----------|-------------|
 | Silvery + React TUI | Dashboard, server list, profile switcher, sync status |
 | `am tui` command | Interactive terminal dashboard |
 
-### Phase 5: Web UI (Future)
+### Phase 5: Web UI (Implemented)
 
 | Component | Description |
 |-----------|-------------|
@@ -830,7 +829,6 @@ agent-manager/
 │   ├── core/                     # Core engine
 │   │   ├── config.ts             # TOML read/write
 │   │   ├── resolver.ts           # Profile resolution + merge
-│   │   ├── diff.ts               # Drift detection
 │   │   ├── git.ts                # Git operations (isomorphic-git)
 │   │   ├── secrets.ts            # AES-256-GCM encryption + ${VAR} interpolation
 │   │   └── schema.ts             # Core Zod schemas
@@ -864,6 +862,6 @@ agent-manager/
 
 ## References
 
-- [Research Index](../research/agent-manager-research-index.md) — 12 research documents
-- [ADR Index](../ADRs/README.md) — 17 architectural decisions
+- [Research Index](../research/agent-manager-research-index.md) — 13 research documents
+- [ADR Index](../ADRs/README.md) — 19 architectural decisions
 - [GitHub Repository](https://github.com/baladithyab/agent-manager)

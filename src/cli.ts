@@ -4,7 +4,7 @@ import { defineCommand, runMain } from "citty";
 const main = defineCommand({
   meta: {
     name: "am",
-    version: "0.1.0",
+    version: process.env.BUILD_VERSION ?? "0.1.0",
     description:
       "chezmoi for AI agent configs — define once in TOML, sync via git, generate native configs for every tool",
   },

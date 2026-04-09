@@ -93,7 +93,6 @@ export const SettingsSchema = z
     default_profile: z.string().optional(),
     mcp_serve: z
       .object({
-        allow_apply: z.boolean().optional(),
         allow_push: z.boolean().optional(),
       })
       .optional(),

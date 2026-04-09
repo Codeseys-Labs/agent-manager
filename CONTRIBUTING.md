@@ -73,7 +73,7 @@ agent-manager/
     fixtures/               # Sample config files for testing
     helpers/                # Test utilities (temp dirs, mock configs)
     integration/            # End-to-end tests
-  ADRs/                     # 17 architectural decision records
+  ADRs/                     # 19 architectural decision records
   docs/                     # Design specs and guides
   scripts/
     build.ts                # Cross-platform build script (5 targets)
@@ -230,7 +230,7 @@ To add an adapter-specific field, update only that adapter's `schema.ts`.
 
 ## Architecture Decisions
 
-Design decisions are recorded in [17 ADRs](ADRs/README.md). Before proposing a change
+Design decisions are recorded in [19 ADRs](ADRs/README.md). Before proposing a change
 that conflicts with an existing ADR, read it first. To propose a new direction, create
 a new ADR using `ADRs/template.md`.
 

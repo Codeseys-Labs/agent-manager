@@ -251,5 +251,9 @@ export function generateKiroSteering(
   }
 
   // New file — generate with frontmatter
-  return `---\ninclusion: ${inclusion}\ndescription: "${instruction.description}"\n---\n\n${managedBlock}\n`;
+  const safeDesc = (instruction.description ?? "")
+    .replace(/\\/g, "\\\\")
+    .replace(/"/g, '\\"')
+    .replace(/\n/g, "\\n");
+  return `---\ninclusion: ${inclusion}\ndescription: "${safeDesc}"\n---\n\n${managedBlock}\n`;
 }

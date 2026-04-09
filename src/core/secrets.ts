@@ -113,8 +113,8 @@ export function interpolateEnv(
         return match.slice(1); // drop first $
       }
 
-      // Resolve from process.env first, then extraEnv
-      const resolved = process.env[varName!] ?? extraEnv[varName!];
+      // Resolve from extraEnv first (explicit overrides), then process.env
+      const resolved = extraEnv[varName!] ?? process.env[varName!];
       if (resolved !== undefined) {
         return resolved;
       }

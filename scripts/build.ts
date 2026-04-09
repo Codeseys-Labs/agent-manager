@@ -17,9 +17,7 @@ const ALL_TARGETS: Target[] = [
 ];
 
 // Phase 1: only macOS arm64
-const PHASE1_TARGETS: Target[] = [
-  { bun: "bun-darwin-arm64", artifact: "am-darwin-arm64" },
-];
+const PHASE1_TARGETS: Target[] = [{ bun: "bun-darwin-arm64", artifact: "am-darwin-arm64" }];
 
 function getTargets(): Target[] {
   const arg = process.argv[2];
@@ -43,7 +41,9 @@ console.log(
   `Building agent-manager v${version} (${targets.length} target${targets.length > 1 ? "s" : ""})\n`,
 );
 
-const { mkdirSync, readFileSync, writeFileSync, existsSync, copyFileSync } = await import("node:fs");
+const { mkdirSync, readFileSync, writeFileSync, existsSync, copyFileSync } = await import(
+  "node:fs"
+);
 mkdirSync("./dist", { recursive: true });
 
 // Patch Silvery's create-app.tsx to stub out the dynamic require for
@@ -63,6 +63,9 @@ if (existsSync(createAppPath)) {
   if (patched !== src) {
     writeFileSync(createAppPath, patched);
     console.log("  Patched @silvery/create for bun --compile compatibility");
+  } else {
+    console.warn("  ⚠ WARNING: Silvery patch regex did not match — build may fail at runtime");
+    console.warn("    Check if @silvery/create source format changed");
   }
 }
 
@@ -91,6 +94,8 @@ for (const target of targets) {
         "--minify",
         "--sourcemap=linked",
         ...externals,
+        `--define=process.env.BUILD_VERSION='"${version}"'`,
+        `--define=process.env.BUILD_TIME='"${timestamp}"'`,
         `--target=${target.bun}`,
         `--outfile=${outfile}`,
         "./src/cli.ts",

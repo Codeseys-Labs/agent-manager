@@ -174,14 +174,14 @@ describe("mergeConfigs", () => {
 
   test("settings shallow merge — higher precedence key wins", () => {
     const a: Config = {
-      settings: { default_profile: "base", mcp_serve: { allow_apply: true } },
+      settings: { default_profile: "base", mcp_serve: { allow_push: false } },
     };
     const b: Config = {
       settings: { default_profile: "work" },
     };
     const merged = mergeConfigs(a, b);
     expect(merged.settings?.default_profile).toBe("work");
-    expect(merged.settings?.mcp_serve).toEqual({ allow_apply: true });
+    expect(merged.settings?.mcp_serve).toEqual({ allow_push: false });
   });
 
   test("merges agents as union", () => {

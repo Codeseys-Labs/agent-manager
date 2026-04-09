@@ -17,7 +17,7 @@ jobs:
             runner: macos-14
           - target: bun-darwin-x64
             artifact: am-darwin-x64
-            runner: macos-13
+            runner: macos-14
           - target: bun-linux-x64
             artifact: am-linux-x64
             runner: ubuntu-latest
@@ -44,7 +44,6 @@ jobs:
 
   release:
     needs: build
-    if: always() && !cancelled()
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v4
@@ -58,13 +57,16 @@ jobs:
 
   publish-npm:
     needs: build
-    if: always() && !cancelled()
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: latest
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          registry-url: 'https://registry.npmjs.org'
       - run: bun install --frozen-lockfile
       - name: Set version from tag
         run: |

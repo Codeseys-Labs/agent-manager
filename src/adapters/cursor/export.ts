@@ -6,7 +6,7 @@
  */
 
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import type {
   ExportOptions,
   ExportResult,
@@ -74,7 +74,7 @@ export function exportConfig(
     for (const file of files) {
       try {
         const fs = require("node:fs");
-        const dir = file.path.substring(0, file.path.lastIndexOf("/"));
+        const dir = dirname(file.path);
         fs.mkdirSync(dir, { recursive: true });
         fs.writeFileSync(file.path, file.content, "utf-8");
         file.written = true;

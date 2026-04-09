@@ -2,7 +2,6 @@
 default_profile = "work"
 
 [settings.mcp_serve]
-allow_apply = true
 allow_push = false
 
 [servers.fetch]

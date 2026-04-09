@@ -230,7 +230,6 @@ CLI flags -> ENV vars -> .agent-manager.local.toml -> .agent-manager.toml
 default_profile = "work"
 
 [settings.mcp_serve]
-allow_apply = true
 allow_push = false
 
 [servers.outlook]
@@ -374,7 +373,6 @@ Configure write-remote access in your config:
 
 ```toml
 [settings.mcp_serve]
-allow_apply = true
 allow_push = false
 ```
 
@@ -452,7 +450,7 @@ graph LR
 
 **Two-phase validation** (ADR-0007) -- core validates core fields strictly; adapter sections are passthrough at the core level, then each adapter validates its own section with its Zod schema.
 
-Design decisions are documented in [17 ADRs](ADRs/README.md). The full design spec is at [docs/2026-04-07-agent-manager-design-spec.md](docs/2026-04-07-agent-manager-design-spec.md).
+Design decisions are documented in [19 ADRs](ADRs/README.md). The full design spec is at [docs/2026-04-07-agent-manager-design-spec.md](docs/2026-04-07-agent-manager-design-spec.md).
 
 ---
 
@@ -504,7 +502,7 @@ Single binary via `bun build --compile`. Five targets:
 | Platform adapters | 3 |
 | CLI commands | 21 |
 | MCP tools | 14 |
-| ADRs | 17 |
+| ADRs | 19 |
 
 ### Tech Stack
 

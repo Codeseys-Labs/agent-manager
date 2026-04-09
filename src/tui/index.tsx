@@ -1,10 +1,15 @@
 import React from "react";
 import { render } from "silvery";
 import { getDetectedAdapters } from "../adapters/registry.ts";
-import type { ResolvedConfig, ResolvedServer } from "../adapters/types.ts";
 import { readActiveProfile, writeActiveProfile } from "../commands/use.ts";
-import { loadResolvedConfig, resolveConfigDir, resolveProjectConfig } from "../core/config.ts";
+import {
+  buildResolvedConfig,
+  loadResolvedConfig,
+  resolveConfigDir,
+  resolveProjectConfig,
+} from "../core/config.ts";
 import { pull } from "../core/git.ts";
+import { interpolateEnvAsync, loadKey } from "../core/secrets.ts";
 import { App } from "./App.tsx";
 import { loadTuiData } from "./data.ts";
 
@@ -40,28 +45,13 @@ export async function launchTui(): Promise<void> {
     const profileName =
       (await readActiveProfile(configDir)) ?? config.settings?.default_profile ?? "default";
 
-    const servers: Record<string, ResolvedServer> = {};
-    for (const [name, srv] of Object.entries(config.servers ?? {})) {
-      servers[name] = {
-        name,
-        command: srv.command,
-        args: srv.args ?? [],
-        env: srv.env ?? {},
-        transport: srv.transport ?? "stdio",
-        description: srv.description ?? "",
-        tags: srv.tags ?? [],
-        enabled: srv.enabled ?? true,
-        adapters: (srv.adapters as Record<string, Record<string, unknown>>) ?? {},
-      };
-    }
-    const resolved: ResolvedConfig = {
-      servers,
-      instructions: {},
-      skills: {},
-      agents: {},
-      profile: profileName,
-      adapters: (config.adapters as Record<string, Record<string, unknown>>) ?? {},
-    };
+    // Decrypt encrypted values before building resolved config
+    const encryptionKey = await loadKey(configDir);
+    const { config: interpolated } = await interpolateEnvAsync(config, {
+      encryptionKey: encryptionKey ?? undefined,
+    });
+
+    const resolved = buildResolvedConfig(interpolated, profileName, configDir);
 
     const adapters = await getDetectedAdapters();
     for (const adapter of adapters) {

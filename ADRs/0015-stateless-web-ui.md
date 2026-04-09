@@ -117,6 +117,8 @@ The Web UI is stateless per request but needs session persistence for OAuth toke
 
 For Phase 1 of the Web UI, use encrypted session cookies (stateless server).
 
+Decision: Cookie-based encrypted sessions were chosen and implemented.
+
 ### Encryption Key Handling in Web UI
 
 The user's encryption key is NOT stored on the server. Options:
