@@ -1,19 +1,13 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { join } from "node:path";
+import { join, relative } from "node:path";
+import { getGlobalStoragePath } from "@/adapters/cline/detect.ts";
 import { diffConfig } from "@/adapters/cline/diff.ts";
 import type { ResolvedConfig, ResolvedServer } from "@/adapters/types.ts";
 import { type TestDir, createTestDir } from "../../helpers/tmp.ts";
 
-const SETTINGS_REL = join(
-  "Library",
-  "Application Support",
-  "Code",
-  "User",
-  "globalStorage",
-  "saoudrizwan.claude-dev",
-  "settings",
-  "cline_mcp_settings.json",
-);
+function settingsRel(home: string): string {
+  return join(relative(home, getGlobalStoragePath(home)), "settings", "cline_mcp_settings.json");
+}
 
 /** Helper to build a minimal ResolvedServer. */
 function server(overrides: Partial<ResolvedServer> & { command: string }): ResolvedServer {
@@ -53,7 +47,7 @@ describe("cline diffConfig()", () => {
   test("in-sync when native matches resolved", async () => {
     dir = await createTestDir("am-cline-diff-");
     await dir.write(
-      SETTINGS_REL,
+      settingsRel(dir.path),
       JSON.stringify({
         mcpServers: {
           fetch: {
@@ -82,7 +76,7 @@ describe("cline diffConfig()", () => {
   test("detects server added locally", async () => {
     dir = await createTestDir("am-cline-diff-");
     await dir.write(
-      SETTINGS_REL,
+      settingsRel(dir.path),
       JSON.stringify({
         mcpServers: {
           fetch: { command: "uvx", args: ["mcp-server-fetch"] },
@@ -110,7 +104,7 @@ describe("cline diffConfig()", () => {
   test("detects server removed locally", async () => {
     dir = await createTestDir("am-cline-diff-");
     await dir.write(
-      SETTINGS_REL,
+      settingsRel(dir.path),
       JSON.stringify({
         mcpServers: {
           fetch: { command: "uvx", args: ["mcp-server-fetch"] },
@@ -142,7 +136,7 @@ describe("cline diffConfig()", () => {
   test("detects modified server fields", async () => {
     dir = await createTestDir("am-cline-diff-");
     await dir.write(
-      SETTINGS_REL,
+      settingsRel(dir.path),
       JSON.stringify({
         mcpServers: {
           tavily: {
@@ -187,7 +181,7 @@ describe("cline diffConfig()", () => {
   test("normalizes key order for comparison", async () => {
     dir = await createTestDir("am-cline-diff-");
     await dir.write(
-      SETTINGS_REL,
+      settingsRel(dir.path),
       JSON.stringify({
         mcpServers: {
           svc: {
@@ -216,7 +210,7 @@ describe("cline diffConfig()", () => {
   test("detects env changes", async () => {
     dir = await createTestDir("am-cline-diff-");
     await dir.write(
-      SETTINGS_REL,
+      settingsRel(dir.path),
       JSON.stringify({
         mcpServers: {
           svc: {
@@ -246,7 +240,7 @@ describe("cline diffConfig()", () => {
   test("skips disabled native servers", async () => {
     dir = await createTestDir("am-cline-diff-");
     await dir.write(
-      SETTINGS_REL,
+      settingsRel(dir.path),
       JSON.stringify({
         mcpServers: {
           fetch: { command: "uvx", args: ["mcp-server-fetch"] },

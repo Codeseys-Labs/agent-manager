@@ -1,18 +1,12 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { join } from "node:path";
+import { join, relative } from "node:path";
+import { getGlobalStoragePath } from "@/adapters/cline/detect.ts";
 import { importConfig } from "@/adapters/cline/import.ts";
 import { type TestDir, createTestDir } from "../../helpers/tmp.ts";
 
-const SETTINGS_REL = join(
-  "Library",
-  "Application Support",
-  "Code",
-  "User",
-  "globalStorage",
-  "saoudrizwan.claude-dev",
-  "settings",
-  "cline_mcp_settings.json",
-);
+function settingsRel(home: string): string {
+  return join(relative(home, getGlobalStoragePath(home)), "settings", "cline_mcp_settings.json");
+}
 
 describe("cline importConfig()", () => {
   let dir: TestDir;
@@ -24,7 +18,7 @@ describe("cline importConfig()", () => {
   test("imports servers from cline_mcp_settings.json", async () => {
     dir = await createTestDir("am-cline-import-");
     await dir.write(
-      SETTINGS_REL,
+      settingsRel(dir.path),
       JSON.stringify({
         mcpServers: {
           fetch: {
@@ -48,7 +42,7 @@ describe("cline importConfig()", () => {
   test("imports alwaysAllow into adapterExtras", async () => {
     dir = await createTestDir("am-cline-import-");
     await dir.write(
-      SETTINGS_REL,
+      settingsRel(dir.path),
       JSON.stringify({
         mcpServers: {
           server1: {
@@ -67,7 +61,7 @@ describe("cline importConfig()", () => {
   test("marks disabled servers", async () => {
     dir = await createTestDir("am-cline-import-");
     await dir.write(
-      SETTINGS_REL,
+      settingsRel(dir.path),
       JSON.stringify({
         mcpServers: {
           disabled: { command: "node", disabled: true },
@@ -84,7 +78,7 @@ describe("cline importConfig()", () => {
   test("imports multiple servers", async () => {
     dir = await createTestDir("am-cline-import-");
     await dir.write(
-      SETTINGS_REL,
+      settingsRel(dir.path),
       JSON.stringify({
         mcpServers: {
           fetch: { command: "uvx", args: ["mcp-server-fetch"] },
@@ -105,7 +99,7 @@ describe("cline importConfig()", () => {
 
   test("imports .clinerules directory (modern format)", async () => {
     dir = await createTestDir("am-cline-import-");
-    await dir.write(SETTINGS_REL, JSON.stringify({ mcpServers: {} }));
+    await dir.write(settingsRel(dir.path), JSON.stringify({ mcpServers: {} }));
     const projectDir = join(dir.path, "project");
     await dir.write("project/.clinerules/coding.md", "Use functional components.");
     await dir.write("project/.clinerules/testing.md", "Always write tests.");
@@ -118,7 +112,7 @@ describe("cline importConfig()", () => {
 
   test("imports .clinerules single file (legacy format)", async () => {
     dir = await createTestDir("am-cline-import-");
-    await dir.write(SETTINGS_REL, JSON.stringify({ mcpServers: {} }));
+    await dir.write(settingsRel(dir.path), JSON.stringify({ mcpServers: {} }));
     const projectDir = join(dir.path, "project");
     await dir.write("project/.clinerules", "Use strict mode always.");
 
@@ -137,7 +131,7 @@ describe("cline importConfig()", () => {
 
   test("handles malformed JSON gracefully", async () => {
     dir = await createTestDir("am-cline-import-");
-    await dir.write(SETTINGS_REL, "{ not valid json ]]]");
+    await dir.write(settingsRel(dir.path), "{ not valid json ]]]");
 
     const result = importConfig({}, dir.path);
     expect(result.servers).toHaveLength(0);
@@ -146,7 +140,7 @@ describe("cline importConfig()", () => {
 
   test("skips non-md files in .clinerules directory", async () => {
     dir = await createTestDir("am-cline-import-");
-    await dir.write(SETTINGS_REL, JSON.stringify({ mcpServers: {} }));
+    await dir.write(settingsRel(dir.path), JSON.stringify({ mcpServers: {} }));
     const projectDir = join(dir.path, "project");
     await dir.write("project/.clinerules/coding.md", "Rules here.");
     await dir.write("project/.clinerules/notes.txt", "Not a rule.");
@@ -159,7 +153,7 @@ describe("cline importConfig()", () => {
   test("skips servers without command field", async () => {
     dir = await createTestDir("am-cline-import-");
     await dir.write(
-      SETTINGS_REL,
+      settingsRel(dir.path),
       JSON.stringify({
         mcpServers: {
           valid: { command: "node", args: ["server.js"] },

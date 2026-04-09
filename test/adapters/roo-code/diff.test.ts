@@ -1,7 +1,13 @@
 import { afterEach, describe, expect, test } from "bun:test";
+import { join, relative } from "node:path";
+import { getGlobalStoragePath } from "@/adapters/roo-code/detect.ts";
 import { diffConfig } from "@/adapters/roo-code/diff.ts";
 import type { ResolvedConfig, ResolvedServer } from "@/adapters/types.ts";
 import { type TestDir, createTestDir } from "../../helpers/tmp.ts";
+
+function settingsRel(home: string): string {
+  return join(relative(home, getGlobalStoragePath(home)), "settings", "mcp_settings.json");
+}
 
 function makeResolved(servers: Record<string, ResolvedServer>): ResolvedConfig {
   return {
@@ -31,10 +37,7 @@ function makeServer(
 
 /** Write mcp_settings.json into the fake VS Code globalStorage path. */
 async function writeMcpSettings(dir: TestDir, content: string) {
-  await dir.write(
-    "Library/Application Support/Code/User/globalStorage/rooveterinaryinc.roo-cline/settings/mcp_settings.json",
-    content,
-  );
+  await dir.write(settingsRel(dir.path), content);
 }
 
 describe("roo-code diffConfig()", () => {

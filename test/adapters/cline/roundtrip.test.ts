@@ -1,21 +1,15 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { join } from "node:path";
+import { join, relative } from "node:path";
+import { getGlobalStoragePath } from "@/adapters/cline/detect.ts";
 import { diffConfig } from "@/adapters/cline/diff.ts";
 import { exportConfig } from "@/adapters/cline/export.ts";
 import { importConfig } from "@/adapters/cline/import.ts";
 import type { ResolvedConfig, ResolvedServer } from "@/adapters/types.ts";
 import { type TestDir, createTestDir } from "../../helpers/tmp.ts";
 
-const SETTINGS_REL = join(
-  "Library",
-  "Application Support",
-  "Code",
-  "User",
-  "globalStorage",
-  "saoudrizwan.claude-dev",
-  "settings",
-  "cline_mcp_settings.json",
-);
+function settingsRel(home: string): string {
+  return join(relative(home, getGlobalStoragePath(home)), "settings", "cline_mcp_settings.json");
+}
 
 describe("Cline adapter roundtrip", () => {
   let dir: TestDir;
@@ -29,7 +23,7 @@ describe("Cline adapter roundtrip", () => {
 
     // 1. Write sample native config
     await dir.write(
-      SETTINGS_REL,
+      settingsRel(dir.path),
       JSON.stringify({
         mcpServers: {
           fetch: {
@@ -104,7 +98,7 @@ describe("Cline adapter roundtrip", () => {
     dir = await createTestDir("am-cline-roundtrip-");
 
     await dir.write(
-      SETTINGS_REL,
+      settingsRel(dir.path),
       JSON.stringify({
         mcpServers: {
           server1: {
@@ -174,7 +168,7 @@ describe("Cline adapter roundtrip", () => {
 
     // Write MCP settings and project rules
     await dir.write(
-      SETTINGS_REL,
+      settingsRel(dir.path),
       JSON.stringify({
         mcpServers: {
           fetch: { command: "uvx", args: ["mcp-server-fetch"] },

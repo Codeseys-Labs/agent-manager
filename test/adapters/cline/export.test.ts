@@ -1,19 +1,13 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { join } from "node:path";
+import { join, relative } from "node:path";
+import { getGlobalStoragePath } from "@/adapters/cline/detect.ts";
 import { exportConfig } from "@/adapters/cline/export.ts";
 import type { ResolvedConfig, ResolvedServer } from "@/adapters/types.ts";
 import { type TestDir, createTestDir } from "../../helpers/tmp.ts";
 
-const SETTINGS_REL = join(
-  "Library",
-  "Application Support",
-  "Code",
-  "User",
-  "globalStorage",
-  "saoudrizwan.claude-dev",
-  "settings",
-  "cline_mcp_settings.json",
-);
+function settingsRel(home: string): string {
+  return join(relative(home, getGlobalStoragePath(home)), "settings", "cline_mcp_settings.json");
+}
 
 /** Helper to build a minimal ResolvedServer. */
 function server(overrides: Partial<ResolvedServer> & { command: string }): ResolvedServer {
@@ -225,15 +219,15 @@ describe("cline exportConfig()", () => {
     const result = exportConfig(cfg, {}, dir.path);
     const settingsFile = result.files.find((f) => f.path.endsWith("cline_mcp_settings.json"));
     expect(settingsFile?.written).toBe(true);
-    expect(await dir.exists(SETTINGS_REL)).toBe(true);
-    const content = JSON.parse(await dir.read(SETTINGS_REL));
+    expect(await dir.exists(settingsRel(dir.path))).toBe(true);
+    const content = JSON.parse(await dir.read(settingsRel(dir.path)));
     expect(content.mcpServers.fetch.command).toBe("uvx");
   });
 
   test("preserves existing non-MCP fields", async () => {
     dir = await createTestDir("am-cline-export-");
     await dir.write(
-      SETTINGS_REL,
+      settingsRel(dir.path),
       JSON.stringify({
         customField: "preserved",
         mcpServers: { old: { command: "old-mcp" } },
