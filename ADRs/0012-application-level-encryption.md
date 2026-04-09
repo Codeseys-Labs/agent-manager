@@ -125,6 +125,22 @@ async function decrypt(encrypted: string, key: CryptoKey): Promise<string> {
 }
 ```
 
+```mermaid
+sequenceDiagram
+    participant User
+    participant AM as am secret set
+    participant TOML as config.toml
+    participant Apply as am apply
+    participant IDE as Native IDE Config
+
+    User->>AM: plaintext secret
+    AM->>AM: AES-256-GCM encrypt
+    AM->>TOML: enc:v1:nonce:ciphertext
+    TOML-->>Apply: read encrypted value
+    Apply->>Apply: AES-256-GCM decrypt
+    Apply->>IDE: plaintext in native config
+```
+
 ## Consequences
 
 ### Positive

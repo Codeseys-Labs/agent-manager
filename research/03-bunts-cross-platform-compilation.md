@@ -703,7 +703,7 @@ flowchart TD
     C --> D5[bun-windows-x64]
 
     D1 & D2 & D3 & D4 & D5 --> E[bun install]
-    E --> F["bun build --compile\n--minify --bytecode\n--target=TARGET"]
+    E --> F["bun build --compile<br/>--minify --bytecode<br/>--target=TARGET"]
     F --> G[Upload Artifact]
 
     G --> H[Release Job]

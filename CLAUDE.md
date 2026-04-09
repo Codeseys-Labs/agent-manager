@@ -86,7 +86,7 @@ test/                                # 106 test files, 982 tests, 2604 assertion
   helpers/                           # Test utilities (tmp dirs, config builders)
   integration/                       # End-to-end tests
 
-ADRs/                                # 16 architectural decision records
+ADRs/                                # 17 architectural decision records
 docs/                                # Design specs and guides
 scripts/
   build.ts                           # Cross-platform build (5 targets via Bun.spawn)
@@ -300,6 +300,7 @@ bun run deploy:web                # Deploy to Cloudflare Workers
 | [0014](ADRs/0014-workspace-profile-import.md) | Workspace-to-Profile Import -- import from existing workspace configs |
 | [0015](ADRs/0015-stateless-web-ui.md) | Stateless Web UI -- git-backed, independently deployable, encrypted cookies |
 | [0016](ADRs/0016-session-harvest.md) | Session Harvest -- cross-tool conversation export via SessionReader interface |
+| [0017](ADRs/0017-agent-communication-protocol.md) | Multi-Protocol Agent Integration -- MCP, A2A, and ACP protocol landscape |
 
 ## Git Commit Style
 

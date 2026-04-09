@@ -53,6 +53,16 @@ Exposed MCP tools:
 All 14 tools return structured JSON responses with success/error status, making them
 parseable by any AI agent.
 
+```mermaid
+graph LR
+    Agent["AI Agent<br/>(Claude Code, Cursor, etc.)"]
+    MCP["am mcp-serve<br/>(stdio transport)"]
+    Agent -- "MCP tool call" --> MCP
+    MCP --> RO["Read-Only Tools<br/>list, status, config_show"]
+    MCP --> WL["Write-Local Tools<br/>add, remove, use, apply"]
+    MCP --> WR["Write-Remote Tools<br/>sync_push, sync_pull"]
+```
+
 ## Consequences
 
 ### Positive

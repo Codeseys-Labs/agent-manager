@@ -570,7 +570,7 @@ When two machines edit the same config file:
 ```mermaid
 graph LR
     A[Pull remote] --> B{Conflicts?}
-    B -->|No| C[Auto-merge & push]
+    B -->|No| C["Auto-merge &amp; push"]
     B -->|Yes| D[Show diff UI]
     D --> E[User picks: theirs / mine / manual merge]
     E --> F[Commit resolved version]
@@ -727,22 +727,23 @@ volume for SQLite and cloned repos.
 
 The agent-manager philosophy aligns with local-first:
 
-```
-┌─────────────────────────────────────────────────┐
-│                  Local Machine                    │
-│                                                   │
-│  agent-manager CLI ←──→ agent-manager Server      │
-│       ↑                        ↑                  │
-│       │ (reads/writes)         │ (serves UI)      │
-│       ↓                        ↓                  │
-│  ~/.config/agent-manager/   localhost:3456        │
-│       ↑                        ↑                  │
-│       │ (git sync)             │ (git sync)       │
-│       ↓                        ↓                  │
-│  ┌─────────── Git Remote ───────────┐            │
-│  │  github.com/user/dotconfigs      │            │
-│  └──────────────────────────────────┘            │
-└─────────────────────────────────────────────────┘
+```mermaid
+graph TB
+    subgraph "Local Machine"
+        CLI["agent-manager CLI"]
+        Server["agent-manager Server"]
+        Config["~/.config/agent-manager/"]
+        Localhost["localhost:3456"]
+
+        CLI <-->|"reads/writes"| Config
+        Server <-->|"serves UI"| Localhost
+        CLI <--> Server
+    end
+
+    Remote["Git Remote<br/>github.com/user/dotconfigs"]
+
+    Config <-->|"git sync"| Remote
+    Localhost <-->|"git sync"| Remote
 ```
 
 - **Pure local:** CLI + server run locally, config in `~/.config/agent-manager/`

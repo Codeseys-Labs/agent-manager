@@ -50,6 +50,24 @@ The `[entity.adapters.<name>]` subtable follows the Cargo `[package.metadata]`
 pattern — the core preserves but does not validate adapter sections, leaving
 validation to the adapter itself.
 
+```mermaid
+graph TD
+    TOML["TOML Config<br/>(servers, instructions, skills, profiles)"]
+    Core["Core Engine<br/>(Zod validation, profile resolution, merge)"]
+    TOML --> Core
+    Core --> A1["Claude Code Adapter"]
+    Core --> A2["Cursor Adapter"]
+    Core --> A3["Windsurf Adapter"]
+    Core --> A4["... other adapters"]
+    A1 --> N1[".claude.json / CLAUDE.md"]
+    A2 --> N2[".cursor/mcp.json / .mdc rules"]
+    A3 --> N3[".windsurf/mcp.json"]
+    A4 --> N4["native config files"]
+
+    style Core fill:#f9f,stroke:#333
+    style TOML fill:#bbf,stroke:#333
+```
+
 ## Consequences
 
 ### Positive

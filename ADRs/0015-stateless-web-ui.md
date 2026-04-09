@@ -29,29 +29,23 @@ independently. Neither depends on the other.
 
 ### Architecture
 
-```
-┌──────────────────────────────────────────────────────────────┐
-│                    Web UI (deployed)                          │
-│                                                              │
-│  Browser ──► Hono API Server ──► isomorphic-git (HTTP)       │
-│                    │                    │                     │
-│              GitHub/GitLab        User's config              │
-│              OAuth                repo (remote)              │
-│                    │                                         │
-│              No local             Read TOML, edit,           │
-│              filesystem           commit, push               │
-└──────────────────────────────────────────────────────────────┘
+```mermaid
+graph TD
+    subgraph WebUI["Web UI (deployed)"]
+        Browser --> Hono["Hono API Server"]
+        Hono --> isoHTTP["isomorphic-git (HTTP)"]
+        Hono --> OAuth["GitHub/GitLab OAuth"]
+        isoHTTP --> RemoteRepo["User's config repo<br/>(remote)"]
+    end
 
-┌──────────────────────────────────────────────────────────────┐
-│                    CLI + TUI (local)                          │
-│                                                              │
-│  Terminal ──► Core Engine ──► isomorphic-git (local)         │
-│                    │                    │                     │
-│              Local config         IDE config files            │
-│              directory            (~/.claude.json, etc.)      │
-│                    │                                         │
-│              am pull ──► am apply ──► native configs          │
-└──────────────────────────────────────────────────────────────┘
+    subgraph Local["CLI + TUI (local)"]
+        Terminal --> CoreEng["Core Engine"]
+        CoreEng --> isoLocal["isomorphic-git (local)"]
+        isoLocal --> LocalConfig["Local config directory"]
+        CoreEng --> IDEFiles["IDE config files<br/>(~/.claude.json, etc.)"]
+        Pull["am pull"] --> Apply["am apply"]
+        Apply --> NativeConfigs["Native configs"]
+    end
 ```
 
 ### Web UI Flow

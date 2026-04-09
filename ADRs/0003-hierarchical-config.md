@@ -52,6 +52,19 @@ CLI flags → ENV vars → project-local → project → global-local → global
 - `.agent-manager.local.toml` is always gitignored (personal project overrides)
 - `--global` and `--project` flags on CLI commands scope writes to the right file
 
+```mermaid
+graph TD
+    D["Defaults"] --> G["config.toml<br/>(global, git-synced)"]
+    G --> GL["config.local.toml<br/>(global-local, gitignored)"]
+    GL --> P[".agent-manager.toml<br/>(project, git-synced)"]
+    P --> PL[".agent-manager.local.toml<br/>(project-local, gitignored)"]
+    PL --> E["ENV vars"]
+    E --> F["CLI flags"]
+    F --> R["Resolved Config"]
+
+    style R fill:#f9f,stroke:#333
+```
+
 ## Consequences
 
 ### Positive

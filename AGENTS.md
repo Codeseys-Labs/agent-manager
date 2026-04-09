@@ -21,10 +21,10 @@ five entity types:
 Each entity supports `[entity.adapters.<tool>]` subtables for tool-specific extensions
 that core preserves but does not validate (two-phase validation, ADR-0007).
 
-**8 IDE adapters** bridge the universal TOML to native formats: Claude Code, Codex CLI,
-ForgeCode, Cursor, Kiro, Kilo Code, Windsurf, GitHub Copilot. Each implements
-`detect() | import() | export() | diff()`. All ship in the binary with lazy factory
-instantiation (ADR-0011).
+**13 IDE adapters** bridge the universal TOML to native formats: Claude Code, Codex CLI,
+Cursor, GitHub Copilot, Windsurf, ForgeCode, Kilo Code, Kiro, Gemini CLI, Cline,
+Roo Code, Amazon Q, Continue.dev. Each implements `detect() | import() | export() | diff()`.
+All ship in the binary with lazy factory instantiation (ADR-0011).
 
 **3 platform adapters** handle git remote operations: GitHub, GitLab, bare git. Detection
 is URL-based, ordered by specificity (ADR-0013).
@@ -46,48 +46,54 @@ in TOML, decrypted at apply time.
 | Config | [@iarna/toml](https://github.com/iarna/iarna-toml) |
 | Git | [isomorphic-git](https://isomorphic-git.org) |
 | Web | [Hono](https://hono.dev) (local + Cloudflare Workers) |
-| TUI | [Ink](https://github.com/vadimdemedes/ink) + React |
+| TUI | [Silvery](https://silvery.dev) + React |
 | Encryption | Web Crypto API (AES-256-GCM) |
 
 ## Directory Structure
 
 ```
 src/
-  cli.ts                    # Entry point -- 20 subcommands via citty
-  commands/                 # One file per CLI command
+  cli.ts                    # Entry point -- 21 subcommands via citty
+  commands/                 # One file per CLI command (includes session.ts)
   core/
     schema.ts               # Zod schemas (Server, Instruction, Skill, AgentProfile, Profile, Config)
-    config.ts               # TOML read/write, 4-layer hierarchical merge
+    config.ts               # TOML read/write, 4-layer hierarchical merge, buildResolvedConfig
     resolver.ts             # Profile resolution: inheritance, tag activation, merge
     git.ts                  # Git operations (isomorphic-git)
     secrets.ts              # AES-256-GCM encryption + ${VAR} interpolation
     instructions.ts         # Shared instruction generation for all formats
+    session.ts              # Cross-tool session harvest: types, reader interface, filter/format
   adapters/
     types.ts                # Adapter interface + all type definitions
-    registry.ts             # Lazy factory adapter registry (8 adapters)
-    claude-code/            # Claude Code (808 lines)
-    codex-cli/              # Codex CLI (781 lines)
-    copilot/                # GitHub Copilot (726 lines)
-    cursor/                 # Cursor (886 lines)
-    forgecode/              # ForgeCode (717 lines)
-    kilo-code/              # Kilo Code (1280 lines, includes JSONC parser)
-    kiro/                   # Kiro (938 lines)
-    windsurf/               # Windsurf (673 lines)
+    registry.ts             # Lazy factory adapter registry (13 adapters)
+    claude-code/            # Claude Code
+    codex-cli/              # Codex CLI
+    copilot/                # GitHub Copilot
+    cursor/                 # Cursor
+    forgecode/              # ForgeCode
+    kilo-code/              # Kilo Code (includes JSONC parser)
+    kiro/                   # Kiro
+    windsurf/               # Windsurf
+    gemini-cli/             # Gemini CLI
+    cline/                  # Cline (VS Code extension)
+    roo-code/               # Roo Code (VS Code extension, modes)
+    amazon-q/               # Amazon Q
+    continue/               # Continue.dev
   platforms/
     types.ts                # GitPlatformAdapter interface
     registry.ts             # Platform detection (GitHub > GitLab > bare)
     github.ts, gitlab.ts, bare.ts
   mcp/
-    server.ts               # MCP server: JSON-RPC 2.0, 10 tools, 3 permission tiers
+    server.ts               # MCP server: JSON-RPC 2.0, 14 tools, 3 permission tiers
   tui/
-    index.tsx, App.tsx      # Ink/React terminal UI with dashboard, status, profiles
+    index.tsx, App.tsx      # Silvery/React terminal UI with dashboard, status, profiles
   web/
     server.ts               # Local Hono server (REST API + SSE)
     worker.ts               # Cloudflare Workers (stateless, GitHub OAuth)
     public/                 # Static HTML
-  lib/                      # Shared utilities
-test/                       # 67 files, 647 tests, 1569 assertions
-ADRs/                       # 15 architectural decision records
+  lib/                      # Shared utilities (errors.ts, output.ts)
+test/                       # 106 files, 982 tests, 2604 assertions
+ADRs/                       # 17 architectural decision records
 scripts/
   build.ts                  # Cross-platform build (5 targets)
   install.sh                # curl-based installer
@@ -115,7 +121,8 @@ scripts/
 | `am adapter list` | Show registered adapters with install status |
 | `am version` | Print version |
 | `am mcp-serve` | Run as MCP server (JSON-RPC over stdio) |
-| `am tui` | Interactive terminal dashboard (Ink/React) |
+| `am session list/export/search` | Cross-tool session harvest |
+| `am tui` | Interactive terminal dashboard (Silvery/React) |
 | `am serve` | Local web UI server (Hono) |
 
 Global flags: `--profile <name>`, `--json`, `--verbose`, `--quiet`
@@ -133,7 +140,7 @@ Ephemeral state (active profile) lives in gitignored `state.toml`.
 Adapter sections use `z.record(z.string(), z.unknown())` passthrough -- preserved by
 core, validated by each adapter's own schema.
 
-**Built-in adapters (ADR-0011):** All 8 adapters ship in the binary. Lazy factory
+**Built-in adapters (ADR-0011):** All 13 adapters ship in the binary. Lazy factory
 instantiation -- only detected tools are activated.
 
 **Drift detection over overwrite (ADR-0006):** `am status` uses structural comparison
@@ -152,7 +159,7 @@ cookies, no persistent storage. Config accessed via GitHub API.
 
 ```bash
 bun install              # Install dependencies
-bun test                 # Run all 647 tests
+bun test                 # Run all 982 tests
 bun test --watch         # Watch mode
 bun run dev              # Run CLI in dev mode
 bun run build            # Single binary (macOS arm64)

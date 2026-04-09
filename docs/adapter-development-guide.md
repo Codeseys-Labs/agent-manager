@@ -24,18 +24,23 @@ adapter-specific TOML fields).
 
 ## Current Adapters
 
-All 8 adapters are fully implemented with detect, import, export, and diff:
+All 13 adapters are fully implemented with detect, import, export, and diff:
 
-| Adapter | Tool | Lines | Files | Key Complexity |
-|---------|------|-------|-------|----------------|
-| `claude-code` | Claude Code | 808 | 7 | Reference impl; identity.ts for server dedup |
-| `codex-cli` | Codex CLI | 781 | 6 | YAML config format |
-| `copilot` | GitHub Copilot | 726 | 6 | Multi-file instructions (.instructions.md) |
-| `cursor` | Cursor | 886 | 6 | .mdc frontmatter for scoped rules |
-| `forgecode` | ForgeCode | 717 | 6 | Similar to Kilo Code format |
-| `kilo-code` | Kilo Code | 1280 | 8 | JSONC parsing (comments + trailing commas), identity.ts |
-| `kiro` | Kiro | 938 | 7 | Steering files with YAML frontmatter, identity.ts |
-| `windsurf` | Windsurf | 673 | 7 | Trigger-based rule frontmatter |
+| Adapter | Tool | Key Complexity |
+|---------|------|----------------|
+| `claude-code` | Claude Code | Reference impl; identity.ts for server dedup, SessionReader |
+| `codex-cli` | Codex CLI | YAML config format, AGENTS.md instructions, SessionReader |
+| `copilot` | GitHub Copilot | Multi-file instructions (.instructions.md) |
+| `cursor` | Cursor | .mdc frontmatter for scoped rules |
+| `forgecode` | ForgeCode | Similar to Kilo Code format |
+| `kilo-code` | Kilo Code | JSONC parsing (comments + trailing commas), identity.ts, modes |
+| `kiro` | Kiro | Steering files with YAML frontmatter, identity.ts, specs |
+| `windsurf` | Windsurf | Trigger-based rule frontmatter |
+| `gemini-cli` | Gemini CLI | Simple JSON config, GEMINI.md instructions |
+| `cline` | Cline | VS Code globalStorage paths, .clinerules |
+| `roo-code` | Roo Code | VS Code globalStorage paths, modes support |
+| `amazon-q` | Amazon Q | ~/.aws/amazonq/mcp.json |
+| `continue` | Continue.dev | ~/.continue/config.json |
 
 ## The Adapter Interface
 
@@ -365,18 +370,23 @@ In diff, normalize both sides before comparing:
 - Treat `[]` and missing as equivalent for arrays
 - Resolve `~` in paths
 
-## Reference: Adapter Sizes
+## Reference: Adapter Patterns
 
-| Adapter | Lines | Files | Notable Features |
-|---------|-------|-------|------------------|
-| `claude-code` | 808 | 7 | Reference impl, identity.ts for server dedup |
-| `codex-cli` | 781 | 6 | YAML config, AGENTS.md instructions |
-| `copilot` | 726 | 6 | Multi-file .instructions.md with applyTo frontmatter |
-| `cursor` | 886 | 6 | .mdc frontmatter rules, scoped instructions |
-| `forgecode` | 717 | 6 | Similar structure to Kilo Code |
-| `kilo-code` | 1280 | 8 | JSONC parser, identity.ts, modes support |
-| `kiro` | 938 | 7 | Steering files, identity.ts, spec awareness |
-| `windsurf` | 673 | 7 | Simplest adapter, good template for new ones |
-
-Study these before writing a new adapter. Most adapters follow the same structure
+Study these adapters before writing a new one. Most follow the same structure
 with different file paths and format-specific parsing.
+
+| Adapter | Notable Features |
+|---------|------------------|
+| `claude-code` | Reference impl, identity.ts for server dedup, SessionReader |
+| `codex-cli` | YAML config, AGENTS.md instructions, SessionReader |
+| `copilot` | Multi-file .instructions.md with applyTo frontmatter |
+| `cursor` | .mdc frontmatter rules, scoped instructions |
+| `forgecode` | Similar structure to Kilo Code |
+| `kilo-code` | JSONC parser, identity.ts, modes support |
+| `kiro` | Steering files, identity.ts, spec awareness |
+| `windsurf` | Simple adapter, good template for new ones |
+| `gemini-cli` | Simple JSON config, GEMINI.md |
+| `cline` | VS Code globalStorage paths, .clinerules |
+| `roo-code` | VS Code globalStorage paths, modes |
+| `amazon-q` | AWS-specific config paths |
+| `continue` | ~/.continue/config.json |

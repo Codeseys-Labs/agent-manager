@@ -35,7 +35,7 @@ supports profile-based subsets for context switching.
 
 ## 2. Architecture Overview
 
-### Core Principles (from ADRs 0001-0011)
+### Core Principles (from ADRs 0001-0017)
 
 | Principle | ADR | Summary |
 |-----------|-----|---------|
@@ -50,33 +50,54 @@ supports profile-based subsets for context switching.
 | MCP server mode | 0009 | AI agents as first-class users |
 | BunTS single binary | 0010 | Zero runtime deps, cross-platform |
 | Built-in adapters | 0011 | All adapters in binary, lazy factory, subprocess escape hatch |
+| Application-level encryption | 0012 | AES-256-GCM, platform-agnostic key storage |
+| Git platform adapters | 0013 | GitHub, GitLab, bare git with URL-based detection |
+| Workspace-to-profile import | 0014 | Import from existing workspace configs |
+| Stateless web UI | 0015 | Git-backed, independently deployable, encrypted cookies |
+| Session harvest | 0016 | Cross-tool conversation export and analysis |
+| Multi-protocol agent integration | 0017 | MCP, A2A, and ACP protocol landscape |
 
 ### System Architecture
 
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                        Interfaces                                │
-│  CLI (citty + @clack)  │  MCP Server (am mcp-serve)            │
-│  TUI (Silvery, later)  │  Web UI (Hono + Preact, later)        │
-├─────────────────────────────────────────────────────────────────┤
-│                        Core Engine                               │
-│  Config Store ──► Profile Resolver ──► Diff Engine              │
-│  (TOML r/w)       (inheritance,        (drift detection)        │
-│                    merge, tags)                                   │
-│                        │                                         │
-│                   Resolved Config                                │
-│                        │                                         │
-├────────────┬───────────┼───────────┬────────────────────────────┤
-│            │           │           │         Adapters            │
-│ Claude Code│  Cursor   │ Windsurf  │ Copilot │ Cline │ ...     │
-│  import()  │ import()  │ import()  │ import()│import()│         │
-│  export()  │ export()  │ export()  │ export()│export()│         │
-│  diff()    │ diff()    │ diff()    │ diff()  │ diff() │         │
-├────────────┴───────────┴───────────┴─────────┴────────┴─────────┤
-│                        Storage                                   │
-│  ~/.config/agent-manager/ (git repo)  │  state.toml (local)     │
-│  config.toml + instructions/ + skills/│  Active profile, cache  │
-└─────────────────────────────────────────────────────────────────┘
+```mermaid
+graph TD
+    subgraph Interfaces
+        CLI["CLI<br/>(citty + @clack)"]
+        MCPS["MCP Server<br/>(am mcp-serve)"]
+        TUI_IF["TUI (Silvery + React)"]
+        WebUI["Web UI<br/>(Hono + Cloudflare Workers)"]
+    end
+
+    subgraph Core["Core Engine"]
+        Config["Config Store<br/>(TOML r/w)"]
+        Resolver["Profile Resolver<br/>(inheritance, merge, tags)"]
+        Diff["Diff Engine<br/>(drift detection)"]
+        Resolved["Resolved Config"]
+
+        Config --> Resolver --> Diff
+        Resolver --> Resolved
+    end
+
+    subgraph Adapters["IDE Adapters (13)"]
+        CC["Claude Code"]
+        CU["Cursor"]
+        WS["Windsurf"]
+        CP["Copilot"]
+        More["Cline, Kiro,<br/>Kilo Code, ..."]
+    end
+
+    subgraph Storage
+        GitRepo["~/.config/agent-manager/<br/>(git repo)<br/>config.toml + instructions/ + skills/"]
+        State["state.toml (local)<br/>Active profile, cache"]
+    end
+
+    CLI --> Core
+    MCPS --> Core
+    TUI_IF --> Core
+    WebUI --> Core
+
+    Resolved --> Adapters
+    Core --> Storage
 ```
 
 ---
@@ -252,9 +273,8 @@ AWS_PROFILE = "work-sso"
   config.local.toml        # Machine-specific (gitignored)
   instructions/            # Instruction markdown files
   skills/                  # Skill definitions
-  secrets.age              # Encrypted secrets (git-tracked)
   .agent-manager/
-    key.txt                # age identity (gitignored)
+    key.txt                # AES-256-GCM encryption key (gitignored)
     state.toml             # active profile, last-apply time (gitignored)
 
 <repo>/
@@ -264,14 +284,14 @@ AWS_PROFILE = "work-sso"
 
 ### Resolution Order (highest wins)
 
-```
-CLI flags (--profile, --config key=val)
-  <- ENV vars (AM_PROFILE, etc.)
-    <- .agent-manager.local.toml   (project-local)
-      <- .agent-manager.toml       (project, team-shared)
-        <- config.local.toml       (user-local)
-          <- config.toml           (user global)
-            <- Built-in defaults
+```mermaid
+graph TD
+    Defaults["Built-in defaults"] --> ConfigToml["config.toml<br/>(user global)"]
+    ConfigToml --> ConfigLocal["config.local.toml<br/>(user-local)"]
+    ConfigLocal --> ProjectToml[".agent-manager.toml<br/>(project, team-shared)"]
+    ProjectToml --> ProjectLocal[".agent-manager.local.toml<br/>(project-local)"]
+    ProjectLocal --> Env["ENV vars<br/>(AM_PROFILE, etc.)"]
+    Env --> CLI["CLI flags<br/>(--profile, --config key=val)"]
 ```
 
 ### Composition Rules
@@ -310,7 +330,7 @@ Resolution order (highest priority wins):
 1. CLI flags (--config key=value)
 2. Environment variables (process env at am apply time)
 3. config.local.toml values
-4. secrets.age decrypted values (Phase 2)
+4. AES-256-GCM decrypted `enc:v1:` values
 5. Profile [env] section values
 6. config.toml literal values
 7. .agent-manager.local.toml values
@@ -394,8 +414,8 @@ am clone <url>          # clone config repo + auto-apply
 | Git-tracked | Gitignored |
 |-------------|------------|
 | `config.toml` | `config.local.toml` |
-| `instructions/`, `skills/` | `.agent-manager/key.txt` (age key) |
-| `secrets.age` (encrypted) | `.agent-manager/state.toml` |
+| `instructions/`, `skills/` | `.agent-manager/key.txt` (AES key) |
+| Encrypted `enc:v1:` values in config.toml | `.agent-manager/state.toml` |
 | `.agent-manager.toml` (project) | `.agent-manager.local.toml` |
 
 ---
@@ -429,38 +449,43 @@ type Capability =
 
 ### Built-In Adapters (ADR-0011)
 
-All adapters ship in the binary with lazy factory instantiation:
+All 13 adapters ship in the binary with lazy factory instantiation:
 
-| Adapter | Priority | Capabilities |
-|---------|----------|-------------|
-| `claude-code` | P0 (MVP) | mcp, instructions, permissions, models, skills, plugins, agents, hooks |
-| `cursor` | P0 (MVP) | mcp, instructions, permissions, models |
-| `windsurf` | P1 | mcp, instructions, permissions, models |
-| `copilot` | P1 | mcp, instructions |
-| `cline` | P1 | mcp, instructions, permissions |
-| `roo-code` | P1 | mcp, instructions, modes |
-| `continue` | P2 | mcp, instructions, models |
-| `gemini-cli` | P2 | mcp, instructions, models |
-| `codex-cli` | P2 | mcp, instructions, permissions |
-| `amazon-q` | P2 | mcp, instructions |
+| Adapter | Capabilities |
+|---------|-------------|
+| `claude-code` | mcp, instructions, permissions, models, skills, plugins, agents, hooks |
+| `codex-cli` | mcp, instructions, agents |
+| `cursor` | mcp, instructions, permissions, models |
+| `copilot` | mcp, instructions, models |
+| `windsurf` | mcp, instructions, models |
+| `forgecode` | mcp, instructions, permissions |
+| `kilo-code` | mcp, instructions, modes |
+| `kiro` | mcp, instructions, specs |
+| `gemini-cli` | mcp, instructions |
+| `cline` | mcp, instructions |
+| `roo-code` | mcp, instructions, modes |
+| `amazon-q` | mcp, instructions |
+| `continue` | mcp, instructions |
 
 Auto-detection: each adapter's `detect()` checks if the tool is installed.
 Only detected tools are active unless overridden in config.
 
 ### Bidirectional Flow
 
-```
-IMPORT (brownfield)          EXPORT (greenfield + ongoing)
-native config files          resolved TOML config
-       |                            |
-  adapter.import()            adapter.export()
-       |                            |
-       v                            v
-  core config.toml           native config files
+```mermaid
+graph TD
+    subgraph Import["IMPORT (brownfield)"]
+        NativeIn["Native config files"] -->|"adapter.import()"| CoreToml["core config.toml"]
+    end
 
-          DIFF (drift detection)
-          adapter.diff()
-          compares resolved vs native
+    subgraph Export["EXPORT (greenfield + ongoing)"]
+        ResolvedToml["Resolved TOML config"] -->|"adapter.export()"| NativeOut["Native config files"]
+    end
+
+    subgraph Diff["DIFF (drift detection)"]
+        direction LR
+        Resolved2["Resolved config"] ---|"adapter.diff()"| Native2["Native config"]
+    end
 ```
 
 ### Server Identity Resolution (Import)
@@ -589,13 +614,13 @@ MCP server mode (ADR-0009):
 }
 ```
 
-**MCP Server Permission Model:**
+**MCP Server Permission Model (14 tools):**
 
 | Tier | Tools | Default |
 |------|-------|---------|
-| Read-only | am_list_servers, am_list_profiles, am_status, am_config_show | Always available |
-| Write-local | am_add_server, am_remove_server, am_use_profile, am_import | Available (undoable) |
-| Write-remote | am_apply, am_sync_push | Requires opt-in via config |
+| Read-only | am_list_servers, am_list_profiles, am_status, am_config_show, am_session_list, am_session_export, am_session_search | Always available |
+| Write-local | am_add_server, am_remove_server, am_use_profile, am_import, am_apply | Available (undoable) |
+| Write-remote | am_sync_push, am_sync_pull | Requires opt-in via config |
 
 ```toml
 [settings.mcp_serve]
@@ -696,8 +721,8 @@ Two-phase Zod validation:
 | Runtime/Bundler | Bun (`bun build --compile`) |
 | CLI framework | citty (command routing) + @clack/prompts (wizards) |
 | Config | @iarna/toml (parser) + Zod (validation) |
-| Git | isomorphic-git (default) + simple-git (when system git available) |
-| Encryption | age-encryption (Phase 2) |
+| Git | isomorphic-git (pure JS, no system git dependency) |
+| Encryption | Web Crypto API (AES-256-GCM) |
 | State | Flat TOML file (.agent-manager/state.toml) |
 
 ### Build Targets
@@ -766,13 +791,13 @@ Binary: `agent-manager` with `am` as symlink/alias.
 | `--json` on all commands | Structured output for agents |
 | Homebrew tap + npm package | Distribution channels |
 
-**Deliverable:** Full 10-adapter coverage, MCP server mode, distribution
+**Deliverable:** Full 13-adapter coverage, MCP server mode, distribution
 
 ### Phase 4: TUI (Future)
 
 | Component | Description |
 |-----------|-------------|
-| Silvery/Ink TUI | Dashboard, server list, profile switcher, sync status |
+| Silvery + React TUI | Dashboard, server list, profile switcher, sync status |
 | `am tui` command | Interactive terminal dashboard |
 
 ### Phase 5: Web UI (Future)
@@ -780,7 +805,7 @@ Binary: `agent-manager` with `am` as symlink/alias.
 | Component | Description |
 |-----------|-------------|
 | Hono API server | REST API + SSE for real-time |
-| Preact SPA | Visual config management |
+| Static HTML dashboard | Visual config management |
 | GitHub/GitLab OAuth | Device flow + PKCE |
 | `am serve` command | Launch web dashboard |
 
@@ -807,7 +832,7 @@ agent-manager/
 │   │   ├── resolver.ts           # Profile resolution + merge
 │   │   ├── diff.ts               # Drift detection
 │   │   ├── git.ts                # Git operations (isomorphic-git)
-│   │   ├── secrets.ts            # age encryption
+│   │   ├── secrets.ts            # AES-256-GCM encryption + ${VAR} interpolation
 │   │   └── schema.ts             # Core Zod schemas
 │   ├── adapters/                 # Built-in adapters
 │   │   ├── registry.ts           # Lazy factory registry
@@ -840,5 +865,5 @@ agent-manager/
 ## References
 
 - [Research Index](../research/agent-manager-research-index.md) — 12 research documents
-- [ADR Index](../ADRs/README.md) — 11 architectural decisions
+- [ADR Index](../ADRs/README.md) — 17 architectural decisions
 - [GitHub Repository](https://github.com/baladithyab/agent-manager)

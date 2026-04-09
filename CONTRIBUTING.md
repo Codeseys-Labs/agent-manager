@@ -73,7 +73,7 @@ agent-manager/
     fixtures/               # Sample config files for testing
     helpers/                # Test utilities (temp dirs, mock configs)
     integration/            # End-to-end tests
-  ADRs/                     # 16 architectural decision records
+  ADRs/                     # 17 architectural decision records
   docs/                     # Design specs and guides
   scripts/
     build.ts                # Cross-platform build script (5 targets)
@@ -185,12 +185,14 @@ See `docs/adapter-development-guide.md` for the full walkthrough. Summary:
 2. Register the lazy factory in `src/adapters/registry.ts`
 3. Add tests in `test/adapters/<name>/`
 
-Study the existing adapters for patterns:
+Study the existing adapters for patterns (all 13 are in `src/adapters/`):
 - **Claude Code** -- reference implementation, includes SessionReader
-- **Kilo Code** -- most complex, includes JSONC parser
+- **Kilo Code** -- most complex, includes JSONC parser and modes
 - **Windsurf** -- simplest, good starting point
 - **Cline / Roo Code** -- VS Code extension adapters with globalStorage paths
 - **Gemini CLI** -- simple adapter for Google's CLI tool
+- **Continue** -- simple adapter for Continue.dev
+- **Amazon Q** -- AWS-specific config paths
 
 ### Add a Platform Adapter
 
@@ -228,7 +230,7 @@ To add an adapter-specific field, update only that adapter's `schema.ts`.
 
 ## Architecture Decisions
 
-Design decisions are recorded in [16 ADRs](ADRs/README.md). Before proposing a change
+Design decisions are recorded in [17 ADRs](ADRs/README.md). Before proposing a change
 that conflicts with an existing ADR, read it first. To propose a new direction, create
 a new ADR using `ADRs/template.md`.
 

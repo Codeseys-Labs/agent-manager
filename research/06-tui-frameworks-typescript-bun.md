@@ -35,20 +35,14 @@ Cross-references: [[03-bunts-cross-platform-compilation]], [[08-agent-manager-ar
 
 TUI frameworks for TypeScript fall into four tiers:
 
-```
-┌─────────────────────────────────────────────────────────┐
-│  Tier 1: Full TUI Frameworks (dashboard-capable)        │
-│  Ink, Silvery, blessed/neo-blessed, terminal-kit        │
-├─────────────────────────────────────────────────────────┤
-│  Tier 2: Prompt Libraries (wizard/form-capable)         │
-│  @clack/prompts, @inquirer/prompts, prompts, enquirer   │
-├─────────────────────────────────────────────────────────┤
-│  Tier 3: CLI Frameworks (command routing)               │
-│  oclif, Commander.js, yargs, citty                      │
-├─────────────────────────────────────────────────────────┤
-│  Tier 4: Low-Level Primitives                           │
-│  chalk, ansi-escapes, strip-ansi, cli-cursor            │
-└─────────────────────────────────────────────────────────┘
+```mermaid
+graph TD
+    T1["<b>Tier 1: Full TUI Frameworks</b><br/>(dashboard-capable)<br/>Ink, Silvery, blessed/neo-blessed, terminal-kit"]
+    T2["<b>Tier 2: Prompt Libraries</b><br/>(wizard/form-capable)<br/>@clack/prompts, @inquirer/prompts, prompts, enquirer"]
+    T3["<b>Tier 3: CLI Frameworks</b><br/>(command routing)<br/>oclif, Commander.js, yargs, citty"]
+    T4["<b>Tier 4: Low-Level Primitives</b><br/>chalk, ansi-escapes, strip-ansi, cli-cursor"]
+
+    T1 --- T2 --- T3 --- T4
 ```
 
 For agent-manager, we need **Tier 1 + Tier 3** — a full TUI framework for the
@@ -209,11 +203,9 @@ for complex UIs), and the fix grew into a complete framework.
 Silvery inverts Ink's pipeline — **layout runs first, then React renders** with
 actual dimensions available:
 
-```
-┌────────────┐    ┌────────────┐    ┌────────────┐    ┌────────────┐    ┌────────────┐
-│  Measure   │───▸│   Layout   │───▸│  Content   │───▸│    Diff    │───▸│   Output   │
-│ (Flexily)  │    │ (positions)│    │ (render)   │    │ (changed)  │    │ (ANSI)     │
-└────────────┘    └────────────┘    └────────────┘    └────────────┘    └────────────┘
+```mermaid
+flowchart LR
+    M["Measure<br/>(Flexily)"] --> L["Layout<br/>(positions)"] --> C["Content<br/>(render)"] --> D["Diff<br/>(changed)"] --> O["Output<br/>(ANSI)"]
 ```
 
 1. **Measure** — Flexily (Yoga-compatible pure-TS layout engine) calculates sizes
@@ -719,16 +711,11 @@ preferred for new TypeScript projects.
 
 **The Elm Architecture (MVU):**
 
-```
-┌──────────┐     ┌──────────┐     ┌──────────┐
-│  Model   │────▶│   View   │────▶│ Terminal  │
-│ (state)  │     │ (render) │     │ (output)  │
-└──────────┘     └──────────┘     └──────────┘
-      ▲                                 │
-      │          ┌──────────┐           │
-      └──────────│  Update  │◀──────────┘
-                 │ (reduce) │   (messages/events)
-                 └──────────┘
+```mermaid
+flowchart LR
+    Model["Model<br/>(state)"] --> View["View<br/>(render)"] --> Terminal["Terminal<br/>(output)"]
+    Terminal -->|"messages/events"| Update["Update<br/>(reduce)"]
+    Update --> Model
 ```
 
 1. **Model** — immutable state struct
@@ -1099,20 +1086,14 @@ The agent-manager TUI should have these primary views:
 
 **For the agent-manager TUI, the recommended architecture is:**
 
-```
-┌─────────────────────────────────────────────────┐
-│  CLI Layer: citty                               │
-│  Command routing, arg parsing, help generation  │
-├─────────────────────────────────────────────────┤
-│  TUI Layer: Silvery                             │
-│  Dashboard, tables, tabs, modals, scroll        │
-│  (Fallback: Ink + ink-ui if Silvery stalls)     │
-├─────────────────────────────────────────────────┤
-│  Wizard Layer: @clack/prompts                   │
-│  Setup wizard, interactive prompts              │
-├─────────────────────────────────────────────────┤
-│  Primitives: chalk (styling), Bun APIs          │
-└─────────────────────────────────────────────────┘
+```mermaid
+graph TD
+    CLI["<b>CLI Layer: citty</b><br/>Command routing, arg parsing, help generation"]
+    TUI["<b>TUI Layer: Silvery</b><br/>Dashboard, tables, tabs, modals, scroll<br/>(Fallback: Ink + ink-ui if Silvery stalls)"]
+    Wizard["<b>Wizard Layer: @clack/prompts</b><br/>Setup wizard, interactive prompts"]
+    Primitives["<b>Primitives:</b> chalk (styling), Bun APIs"]
+
+    CLI --- TUI --- Wizard --- Primitives
 ```
 
 ### Rationale

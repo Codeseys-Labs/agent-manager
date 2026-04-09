@@ -56,6 +56,17 @@ profile that explicitly lists everything.
 **Independent validation:** OpenAI Codex CLI adopted the identical `[profiles.<name>]`
 TOML pattern in 2025, providing strong independent validation of this design.
 
+```mermaid
+graph TD
+    Base["profiles.base<br/>servers: fetch, context7"]
+    Work["profiles.work<br/>server_tags: ['work']<br/>servers: tavily, exa"]
+    Research["profiles.research<br/>server_tags: ['search', 'research']"]
+    Base -- "inherits" --> Work
+    Base -- "inherits" --> Research
+    Work --> RW["Resolved: fetch, context7,<br/>tavily, exa + tagged 'work'"]
+    Research --> RR["Resolved: fetch, context7<br/>+ tagged 'search'/'research'"]
+```
+
 ## Consequences
 
 ### Positive

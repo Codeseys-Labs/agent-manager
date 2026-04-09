@@ -89,21 +89,21 @@ Three possible roles for am with ACP:
 
 ### Where Each Protocol Fits in am's Architecture
 
-```
-                        am-cli (the central layer)
-                     /          |           \
-                    /           |            \
-              MCP (done)    A2A (new)     ACP (config only)
-              |               |               |
-     "am configures     "am IS a          "am configures
-      which tools        participant        which agents
-      agents use"        in the agent       IDEs connect to"
-                         network"
-              |               |               |
-         [servers]      [agents] ->       [agents] ->
-         in TOML        AgentCards        ACP registrations
-                        A2A server        in IDE configs
-                        Discovery hub
+```mermaid
+graph TD
+    AM["am-cli<br/>(the central layer)"]
+    AM --> MCP_P["MCP (done)"]
+    AM --> A2A_P["A2A (new)"]
+    AM --> ACP_P["ACP (config only)"]
+
+    MCP_P --> MCP_R["am configures which<br/>tools agents use"]
+    MCP_R --> MCP_D["[servers] in TOML"]
+
+    A2A_P --> A2A_R["am IS a participant<br/>in the agent network"]
+    A2A_R --> A2A_D["[agents] -> AgentCards<br/>A2A server / Discovery hub"]
+
+    ACP_P --> ACP_R["am configures which<br/>agents IDEs connect to"]
+    ACP_R --> ACP_D["[agents] -> ACP registrations<br/>in IDE configs"]
 ```
 
 The critical distinction:
@@ -298,28 +298,25 @@ visibility becomes a runtime capability.
 
 #### 3a. Architecture: am at the Center
 
-```
-  Gemini CLI           Claude Code          Cursor
-  (A2A client)         (via MCP bridge)     (via MCP bridge)
-       |                     |                    |
-       |                     |                    |
-       +----------+----------+----------+---------+
-                  |
-            am a2a serve (port 8080)
-            The Agent Network Coordinator
-                  |
-    +-------------+-------------+
-    |             |             |
-  /.well-known/   /agents/     A2A JSON-RPC
-  agent.json      :name/.a2a   Handler
-  (composite      (per-agent   (message/send
-   AgentCard)     AgentCards)   message/stream)
-                  |
-    Route to agent profile definition
-                  |
-    Execute via MCP tools (reuse existing infrastructure)
-                  |
-    Return A2A Task with Artifacts
+```mermaid
+graph TD
+    Gemini["Gemini CLI<br/>(A2A client)"]
+    CC["Claude Code<br/>(via MCP bridge)"]
+    CU["Cursor<br/>(via MCP bridge)"]
+
+    Gemini --> Hub
+    CC --> Hub
+    CU --> Hub
+
+    Hub["am a2a serve (port 8080)<br/>The Agent Network Coordinator"]
+
+    Hub --> WK["/.well-known/agent.json<br/>(composite AgentCard)"]
+    Hub --> Agents["/agents/:name/.a2a<br/>(per-agent AgentCards)"]
+    Hub --> RPC["A2A JSON-RPC Handler<br/>(message/send, message/stream)"]
+
+    RPC --> Route["Route to agent profile definition"]
+    Route --> Exec["Execute via MCP tools<br/>(reuse existing infrastructure)"]
+    Exec --> Return["Return A2A Task with Artifacts"]
 ```
 
 am is uniquely positioned here because:
@@ -363,17 +360,13 @@ discover and delegate to other agents via A2A.
 
 am already runs as an MCP server. Phase 3 adds A2A. These are complementary:
 
-```
-  Any IDE Agent                          Any A2A Agent
-  (Claude Code, Cursor, etc.)            (Gemini CLI, etc.)
-       |                                      |
-       | MCP (stdio)                          | A2A (HTTP)
-       |                                      |
-       +------ am-cli (the hub) -------------+
-               |
-               | Manages agents, tools, configs
-               | Routes requests to the right agent
-               | Knows about ALL agents across ALL tools
+```mermaid
+graph TD
+    IDE["Any IDE Agent<br/>(Claude Code, Cursor, etc.)"]
+    A2AAgent["Any A2A Agent<br/>(Gemini CLI, etc.)"]
+
+    IDE -->|"MCP (stdio)"| Hub["am-cli (the hub)<br/>Manages agents, tools, configs<br/>Routes requests to the right agent<br/>Knows about ALL agents across ALL tools"]
+    A2AAgent -->|"A2A (HTTP)"| Hub
 ```
 
 - IDEs that support MCP reach am via `am mcp-serve` (stdio, embedded)
@@ -406,20 +399,17 @@ communicate with coding agents and MCP for tool access, bridging agents to
 
 This changes the assessment of ACP for am:
 
-```
-IDE (Zed/JetBrains/Kiro) ──ACP──► Coding Agent (Claude Code, Codex, etc.)
-                                        ▲
-ACPX CLI ──────────────────ACP─────────┘
-                                        ▲
-OpenClaw Gateway ──────────ACP─────────┘
-     │
-     ├── 23+ messaging channels
-     └── MCP tools
-                                        ▲
-am-cli (potential) ────────ACP─────────┘
-     │
-     ├── A2A (agent-to-agent discovery/delegation)
-     └── MCP (tool access, already done)
+```mermaid
+graph LR
+    Agent["Coding Agent<br/>(Claude Code, Codex, etc.)"]
+    IDE["IDE<br/>(Zed/JetBrains/Kiro)"] -->|ACP| Agent
+    ACPX["ACPX CLI"] -->|ACP| Agent
+    OC["OpenClaw Gateway"] -->|ACP| Agent
+    OC --> Msg["23+ messaging channels"]
+    OC --> MCPTools["MCP tools"]
+    AMCLI["am-cli (potential)"] -->|ACP| Agent
+    AMCLI --> A2A_Link["A2A<br/>(agent discovery/delegation)"]
+    AMCLI --> MCP_Link["MCP<br/>(tool access, already done)"]
 ```
 
 **Revised ACP role for am:**

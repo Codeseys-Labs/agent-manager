@@ -825,21 +825,14 @@ Based on [[06-tui-frameworks-typescript-bun]], the TUI uses a three-layer archit
 
 ### Stack
 
-```
-┌─────────────────────────────────────────────────┐
-│  CLI Layer: citty                               │
-│  Command routing, arg parsing, help generation  │
-│  (lazy-loads TUI only for `am tui` command)     │
-├─────────────────────────────────────────────────┤
-│  TUI Layer: Silvery (Ink fallback)              │
-│  Dashboard, tables, tabs, modals, scroll        │
-│  45+ components, 122x faster interactive updates│
-├─────────────────────────────────────────────────┤
-│  Wizard Layer: @clack/prompts                   │
-│  Setup wizard, interactive prompts              │
-├─────────────────────────────────────────────────┤
-│  Primitives: chalk (styling), Bun APIs          │
-└─────────────────────────────────────────────────┘
+```mermaid
+graph TD
+    CLI["<b>CLI Layer: citty</b><br/>Command routing, arg parsing, help generation<br/>(lazy-loads TUI only for am tui command)"]
+    TUI["<b>TUI Layer: Silvery</b> (Ink fallback)<br/>Dashboard, tables, tabs, modals, scroll<br/>45+ components, 122x faster interactive updates"]
+    Wizard["<b>Wizard Layer: @clack/prompts</b><br/>Setup wizard, interactive prompts"]
+    Primitives["<b>Primitives:</b> chalk (styling), Bun APIs"]
+
+    CLI --- TUI --- Wizard --- Primitives
 ```
 
 ### Why Silvery Over Ink

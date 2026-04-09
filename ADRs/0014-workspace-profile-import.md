@@ -158,15 +158,22 @@ pointing to the original files. This means:
 
 ### Relationship to Global vs Project Config
 
-```
-Global config.toml          .agent-manager.toml           Result
-───────────────             ───────────────────           ──────
-profiles.work:              profile = "work"              Active profile: work
-  servers: [tavily, exa]    servers:                      Active servers:
-                              wiki, postgres, redis         tavily, exa (global)
-                                                            + wiki, postgres, redis (project)
-                            instructions:                 Instructions:
-                              project-rules (CLAUDE.md)     global + project combined
+```mermaid
+graph LR
+    subgraph Global["Global config.toml"]
+        GP["profiles.work:<br/>servers: [tavily, exa]"]
+    end
+
+    subgraph Project[".agent-manager.toml"]
+        PP["profile = 'work'<br/>servers: wiki, postgres, redis<br/>instructions: project-rules"]
+    end
+
+    subgraph Result["Resolved Result"]
+        RP["Active profile: work<br/>Servers: tavily, exa (global)<br/>+ wiki, postgres, redis (project)<br/>Instructions: global + project combined"]
+    end
+
+    Global --> Result
+    Project --> Result
 ```
 
 The workspace import creates an **additive layer** on top of the user's global

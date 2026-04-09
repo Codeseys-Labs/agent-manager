@@ -48,6 +48,15 @@ Import includes **smart deduplication**: when importing from multiple tools, the
 importer matches servers by command (not name), detects duplicates, and prompts users
 to reconcile version or naming differences.
 
+```mermaid
+graph LR
+    Native["Native IDE Config<br/>(.claude.json, .cursor/mcp.json)"]
+    Core["Core TOML Config<br/>(config.toml)"]
+    Native -- "import<br/>(am import)" --> Core
+    Core -- "export<br/>(am apply)" --> Native
+    Core -- "diff<br/>(am status)" --> Drift["Drift Report"]
+```
+
 ## Consequences
 
 ### Positive

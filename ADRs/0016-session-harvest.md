@@ -92,6 +92,20 @@ Adapters that support session reading implement `SessionReader`. The core engine
 
 A Claude Code plugin prototype exists at [baladithyab/session-harvest](https://github.com/baladithyab/session-harvest) implementing the adapter pattern in Python (stdlib only). The `agent-manager` implementation will port this to TypeScript and integrate with the existing adapter infrastructure.
 
+```mermaid
+flowchart LR
+    CC["Claude Code<br/>JSONL sessions"]
+    KC["Kilo Code<br/>JSON sessions"]
+    CX["Codex CLI<br/>JSONL sessions"]
+    CC --> SR["SessionReader<br/>adapters"]
+    KC --> SR
+    CX --> SR
+    SR --> Core["Unified Session Model"]
+    Core --> List["am session list"]
+    Core --> Export["am session export"]
+    Core --> Search["am session search"]
+```
+
 ## Consequences
 
 ### Positive

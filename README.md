@@ -324,14 +324,14 @@ Cross-tool AI coding session discovery, export, and search.
 | `am session export <id>` | Export a session (markdown or JSON) |
 | `am session search <query>` | Full-text search across session messages |
 
-Session harvest reads conversation data from Claude Code, Cursor, Cline, Kilo Code, Roo Code, and other tools that store session history locally. Export sessions to review what your agents did, search across tools for past conversations, or archive session data.
+Session harvest currently reads conversation data from Claude Code and Codex CLI (the two adapters with SessionReader implementations). Export sessions to review what your agents did, search across tools for past conversations, or archive session data.
 
 ### Interfaces
 
 | Command | Description |
 |---------|-------------|
 | `am mcp-serve` | Run as MCP server (JSON-RPC over stdio) |
-| `am tui` | Interactive terminal dashboard (Ink/React) |
+| `am tui` | Interactive terminal dashboard (Silvery/React) |
 | `am serve` | Local web UI server (Hono on Bun) |
 
 ### Global Flags
@@ -430,20 +430,18 @@ bun run deploy:web
 
 ## Architecture
 
-```
-CLI (citty)  -->  Core Engine   -->  IDE Adapters (13)  -->  Native Config Files
-                  (TOML + Zod       (detect/import/         (~/.claude.json,
-                   + Git)            export/diff)            .cursor/mcp.json, ...)
-                      |
-                      +----------->  Platform Adapters  -->  Git Remotes
-                      |              (GitHub, GitLab,        (push/pull/auth)
-                      |               bare git)
-MCP Server   -->  Same Core
-(JSON-RPC)
-                      |
-TUI (Ink)    -->  Same Core
-                      |
-Web UI       -->  Hono (local) / Cloudflare Workers (cloud)
+```mermaid
+graph LR
+    CLI["CLI (citty)"] --> Core["Core Engine<br/>(TOML + Zod + Git)"]
+    MCP["MCP Server<br/>(JSON-RPC)"] --> Core
+    TUI["TUI (Silvery)"] --> Core
+    Web["Web UI"] --> Hono["Hono (local) /<br/>Cloudflare Workers"]
+
+    Core --> IDE["IDE Adapters (13)<br/>detect / import /<br/>export / diff"]
+    Core --> Platform["Platform Adapters<br/>(GitHub, GitLab, bare)"]
+
+    IDE --> Native["Native Config Files<br/>(~/.claude.json,<br/>.cursor/mcp.json, ...)"]
+    Platform --> Remote["Git Remotes<br/>(push / pull / auth)"]
 ```
 
 **Core engine** -- TOML config store, Zod validation, profile resolver with inheritance, structural diff engine, isomorphic-git operations, AES-256-GCM encryption, shared instruction generation.
@@ -454,7 +452,7 @@ Web UI       -->  Hono (local) / Cloudflare Workers (cloud)
 
 **Two-phase validation** (ADR-0007) -- core validates core fields strictly; adapter sections are passthrough at the core level, then each adapter validates its own section with its Zod schema.
 
-Design decisions are documented in [16 ADRs](ADRs/README.md). The full design spec is at [docs/2026-04-07-agent-manager-design-spec.md](docs/2026-04-07-agent-manager-design-spec.md).
+Design decisions are documented in [17 ADRs](ADRs/README.md). The full design spec is at [docs/2026-04-07-agent-manager-design-spec.md](docs/2026-04-07-agent-manager-design-spec.md).
 
 ---
 
@@ -506,7 +504,7 @@ Single binary via `bun build --compile`. Five targets:
 | Platform adapters | 3 |
 | CLI commands | 21 |
 | MCP tools | 14 |
-| ADRs | 16 |
+| ADRs | 17 |
 
 ### Tech Stack
 
@@ -518,7 +516,7 @@ Single binary via `bun build --compile`. Five targets:
 | Config | @iarna/toml + Zod |
 | Git | isomorphic-git (pure JS, no system git dependency) |
 | Web | Hono (local server + Cloudflare Workers) |
-| TUI | Ink + React |
+| TUI | Silvery + React |
 | Encryption | Web Crypto API (AES-256-GCM) |
 | Testing | bun:test |
 | Linting | Biome |
