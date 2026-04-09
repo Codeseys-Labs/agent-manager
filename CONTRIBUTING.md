@@ -32,7 +32,7 @@ If all 966 tests pass, you're ready.
 agent-manager/
   src/
     cli.ts                  # Entry point (citty, 21 subcommands)
-    commands/               # CLI command handlers (21 files, includes session)
+    commands/               # CLI command handlers (22 files, includes session)
     core/                   # Config engine (TOML, resolver, git, schema, secrets, instructions, session)
       schema.ts             # Zod schemas (Server, Instruction, Skill, AgentProfile, Profile, Config)
       config.ts             # TOML read/write, hierarchical 4-layer merge, buildResolvedConfig
@@ -63,7 +63,7 @@ agent-manager/
       github.ts, gitlab.ts, bare.ts
     mcp/                    # MCP server mode (JSON-RPC over stdio)
       server.ts             # 14 tools across 3 permission tiers
-    tui/                    # Terminal UI (Ink + React)
+    tui/                    # Terminal UI (Silvery + React)
     web/                    # Web UI (Hono local + Cloudflare Workers)
     lib/                    # Shared utilities (output.ts)
   test/
@@ -73,7 +73,7 @@ agent-manager/
     fixtures/               # Sample config files for testing
     helpers/                # Test utilities (temp dirs, mock configs)
     integration/            # End-to-end tests
-  ADRs/                     # 15 architectural decision records
+  ADRs/                     # 16 architectural decision records
   docs/                     # Design specs and guides
   scripts/
     build.ts                # Cross-platform build script (5 targets)

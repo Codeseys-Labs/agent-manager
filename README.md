@@ -59,7 +59,7 @@ am status
 - **Drift detection** -- `am status` uses structural comparison to detect direct IDE edits without false positives
 - **Bidirectional adapters** -- import existing configs with `am import`, export with `am apply`, detect drift with `am status`
 - **MCP server mode** -- `am mcp-serve` exposes agent-manager as an MCP server so AI agents can manage their own config
-- **Terminal UI** -- `am tui` launches an interactive Ink-based dashboard with profile switching and status monitoring
+- **Terminal UI** -- `am tui` launches an interactive Silvery-based dashboard with profile switching and status monitoring
 - **Web UI** -- `am serve` for local browser dashboard; Cloudflare Workers deployment for remote access
 - **AES-256-GCM encryption** -- secrets in TOML are encrypted at rest with `am secret set`, decrypted at apply time
 - **Instructions engine** -- shared instruction generation for CLAUDE.md, AGENTS.md, .cursor/rules, .windsurf/rules, .kiro/steering, Copilot .instructions.md

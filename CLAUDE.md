@@ -29,7 +29,7 @@ src/                                 # 136 TypeScript files
     init.ts, add.ts, list.ts, use.ts, apply.ts, status.ts,
     config.ts, profile.ts, doctor.ts, import.ts, push.ts, pull.ts,
     undo.ts, log.ts, secret.ts, version.ts, adapter.ts,
-    mcp-serve.ts, serve.ts, tui.ts, session.ts
+    mcp-serve.ts, serve.ts, tui.ts, session.ts, init-project.ts
   core/                              # Core engine -- config, resolution, git, validation, encryption
     schema.ts                        # Zod schemas: Server, Instruction, Skill, AgentProfile, Profile, Config, ProjectConfig
     config.ts                        # TOML read/write, hierarchical merge (4 layers), project config, buildResolvedConfig

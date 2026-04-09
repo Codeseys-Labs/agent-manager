@@ -46,8 +46,11 @@ Exposed MCP tools:
 | `am_sync_push` | Push to git remote |
 | `am_sync_pull` | Pull from git remote |
 | `am_config_show` | Show resolved config |
+| `am_session_list` | List AI coding sessions across tools (see [ADR-0016](0016-session-harvest.md)) |
+| `am_session_export` | Export a session by ID (see [ADR-0016](0016-session-harvest.md)) |
+| `am_session_search` | Search session messages (see [ADR-0016](0016-session-harvest.md)) |
 
-All tools return structured JSON responses with success/error status, making them
+All 14 tools return structured JSON responses with success/error status, making them
 parseable by any AI agent.
 
 ## Consequences
