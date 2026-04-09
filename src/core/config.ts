@@ -1,13 +1,9 @@
 import { readFile, writeFile } from "node:fs/promises";
-import { join, dirname, parse as parsePath } from "node:path";
 import { homedir } from "node:os";
+import { dirname, join, parse as parsePath } from "node:path";
 import * as TOML from "@iarna/toml";
-import {
-  ConfigSchema,
-  ProjectConfigSchema,
-  type Config,
-  type ProjectConfig,
-} from "./schema";
+import type { ResolvedConfig, ResolvedServer } from "../adapters/types";
+import { type Config, ConfigSchema, type ProjectConfig, ProjectConfigSchema } from "./schema";
 
 /** Return the agent-manager config directory. */
 export function resolveConfigDir(): string {
@@ -91,6 +87,26 @@ export async function writeConfig(path: string, config: Config): Promise<void> {
 }
 
 /**
+ * Write a ProjectConfig to TOML with ordered sections:
+ * profile → project → servers → instructions → adapters
+ */
+export async function writeProjectConfig(path: string, config: ProjectConfig): Promise<void> {
+  const ordered: Record<string, unknown> = {};
+
+  if (config.profile) ordered.profile = config.profile;
+  if (config.project) ordered.project = config.project;
+  if (config.servers) ordered.servers = config.servers;
+  if (config.skills) ordered.skills = config.skills;
+  if (config.agents) ordered.agents = config.agents;
+  if (config.instructions) ordered.instructions = config.instructions;
+  if (config.env) ordered.env = config.env;
+  if (config.adapters) ordered.adapters = config.adapters;
+
+  const toml = TOML.stringify(ordered as any);
+  await writeFile(path, toml, "utf-8");
+}
+
+/**
  * Merge two configs. `b` has higher precedence than `a`.
  *
  * - Servers/Skills/Instructions: union (spread), same-name key in b wins
@@ -99,24 +115,13 @@ export async function writeConfig(path: string, config: Config): Promise<void> {
  */
 export function mergeConfigs(a: Config, b: Config): Config {
   return {
-    settings: a.settings || b.settings
-      ? { ...a.settings, ...b.settings }
-      : undefined,
-    servers: a.servers || b.servers
-      ? { ...a.servers, ...b.servers }
-      : undefined,
-    skills: a.skills || b.skills
-      ? { ...a.skills, ...b.skills }
-      : undefined,
-    instructions: a.instructions || b.instructions
-      ? { ...a.instructions, ...b.instructions }
-      : undefined,
-    profiles: a.profiles || b.profiles
-      ? { ...a.profiles, ...b.profiles }
-      : undefined,
-    adapters: a.adapters || b.adapters
-      ? { ...a.adapters, ...b.adapters }
-      : undefined,
+    settings: a.settings || b.settings ? { ...a.settings, ...b.settings } : undefined,
+    servers: a.servers || b.servers ? { ...a.servers, ...b.servers } : undefined,
+    skills: a.skills || b.skills ? { ...a.skills, ...b.skills } : undefined,
+    instructions:
+      a.instructions || b.instructions ? { ...a.instructions, ...b.instructions } : undefined,
+    profiles: a.profiles || b.profiles ? { ...a.profiles, ...b.profiles } : undefined,
+    adapters: a.adapters || b.adapters ? { ...a.adapters, ...b.adapters } : undefined,
   };
 }
 
@@ -126,6 +131,7 @@ export function projectToConfig(proj: ProjectConfig): Config {
     servers: proj.servers,
     skills: proj.skills,
     instructions: proj.instructions,
+    agents: proj.agents,
     adapters: proj.adapters,
   };
 }
@@ -173,4 +179,35 @@ export async function loadResolvedConfig(opts: LoadResolvedConfigOpts = {}): Pro
   }
 
   return resolved;
+}
+
+/**
+ * Build a ResolvedConfig from a merged Config and profile name.
+ *
+ * Converts the raw Config servers, instructions, skills, and agents
+ * into fully resolved types suitable for adapter export/diff.
+ */
+export function buildResolvedConfig(config: Config, profileName: string): ResolvedConfig {
+  const servers: Record<string, ResolvedServer> = {};
+  for (const [name, srv] of Object.entries(config.servers ?? {})) {
+    servers[name] = {
+      name,
+      command: srv.command,
+      args: srv.args ?? [],
+      env: srv.env ?? {},
+      transport: srv.transport ?? "stdio",
+      description: srv.description ?? "",
+      tags: srv.tags ?? [],
+      enabled: srv.enabled ?? true,
+      adapters: (srv.adapters as Record<string, Record<string, unknown>>) ?? {},
+    };
+  }
+  return {
+    servers,
+    instructions: {},
+    skills: {},
+    agents: {},
+    profile: profileName,
+    adapters: (config.adapters as Record<string, Record<string, unknown>>) ?? {},
+  };
 }
