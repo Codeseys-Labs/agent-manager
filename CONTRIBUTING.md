@@ -24,7 +24,7 @@ bun install
 bun test
 ```
 
-If all 966 tests pass, you're ready.
+If all 982 tests pass, you're ready.
 
 ## Project Structure
 
@@ -65,7 +65,7 @@ agent-manager/
       server.ts             # 14 tools across 3 permission tiers
     tui/                    # Terminal UI (Silvery + React)
     web/                    # Web UI (Hono local + Cloudflare Workers)
-    lib/                    # Shared utilities (output.ts)
+    lib/                    # Shared utilities (errors.ts, output.ts)
   test/
     core/                   # Core engine tests
     adapters/               # Adapter tests (mirror src/adapters structure)
@@ -115,7 +115,7 @@ Keep changes focused. One feature or fix per PR.
 ### 5. Validate
 
 ```bash
-bun test            # All 966 tests pass
+bun test            # All 982 tests pass
 bun run lint        # Biome linting + formatting
 bun run typecheck   # TypeScript type checking
 ```

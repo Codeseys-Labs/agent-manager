@@ -17,7 +17,7 @@ every AI coding tool.
 | TUI | Silvery + React (terminal dashboard) |
 | Encryption | Web Crypto API (AES-256-GCM) |
 | Output | chalk (colors), @clack/prompts (interactive) |
-| Testing | bun:test (966 tests across 106 files) |
+| Testing | bun:test (982 tests across 106 files) |
 | Linting | Biome |
 
 ## Directory Layout
@@ -75,9 +75,10 @@ src/                                 # 136 TypeScript files
     worker.ts                        # Cloudflare Workers: stateless, GitHub OAuth, encrypted cookies, GitHub API
     public/                          # Static HTML (index.html, login.html)
   lib/                               # Shared utilities
+    errors.ts                        # Shared error types (AmError) and formatting
     output.ts                        # JSON/text output helpers (--json, --quiet, --verbose)
 
-test/                                # 106 test files, 966 tests, 2556 assertions
+test/                                # 106 test files, 982 tests, 2604 assertions
   core/                              # Unit tests for core modules
   adapters/                          # Adapter-specific tests (per-adapter directories)
   commands/                          # CLI command integration tests
@@ -248,7 +249,7 @@ All git operations use **isomorphic-git** (pure JS). No dependency on system `gi
 ## Testing
 
 ```bash
-bun test                          # Run all 966 tests
+bun test                          # Run all 982 tests
 bun test:unit                     # Core + adapter unit tests only
 bun test:integration              # Integration tests only
 bun test --watch                  # Watch mode
