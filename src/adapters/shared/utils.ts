@@ -1,0 +1,127 @@
+/**
+ * Shared adapter utilities — reduces duplication across all 13 adapters.
+ *
+ * Common helpers for diff comparison, file I/O, and marker-based content splicing.
+ */
+
+import type { ResolvedServer } from "../types.ts";
+
+// ── Marker constants ────────────────────────────────────────────
+
+export const AM_BEGIN = "<!-- am:begin -->";
+export const AM_END = "<!-- am:end -->";
+
+// ── Sort / Normalize ────────────────────────────────────────────
+
+/** Sort keys of an object for deterministic comparison. */
+export function sortKeys<T extends Record<string, unknown>>(obj: T): T {
+  const sorted: Record<string, unknown> = {};
+  for (const key of Object.keys(obj).sort()) {
+    sorted[key] = obj[key];
+  }
+  return sorted as T;
+}
+
+/** Normalize a value for comparison (deep sort for objects/arrays). */
+export function normalize(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(normalize);
+  if (value && typeof value === "object") return sortKeys(value as Record<string, unknown>);
+  return value;
+}
+
+// ── Server field comparison ─────────────────────────────────────
+
+interface NativeServerLike {
+  command?: string;
+  args?: string[];
+  env?: Record<string, string>;
+  [key: string]: unknown;
+}
+
+/** Compare a resolved server against a native server object, returning field-level diffs. */
+export function compareServerFields(
+  expected: ResolvedServer,
+  native: NativeServerLike,
+): { field: string; expected: unknown; actual: unknown }[] {
+  const diffs: { field: string; expected: unknown; actual: unknown }[] = [];
+
+  // Compare command
+  if (expected.command !== (native.command ?? "")) {
+    diffs.push({
+      field: "command",
+      expected: expected.command,
+      actual: native.command ?? "",
+    });
+  }
+
+  // Compare args (normalize: treat missing as [])
+  const expectedArgs = expected.args ?? [];
+  const nativeArgs = native.args ?? [];
+  if (JSON.stringify(normalize(expectedArgs)) !== JSON.stringify(normalize(nativeArgs))) {
+    diffs.push({
+      field: "args",
+      expected: expectedArgs,
+      actual: nativeArgs,
+    });
+  }
+
+  // Compare env (normalize: treat missing as {})
+  const expectedEnv = expected.env ?? {};
+  const nativeEnv = native.env ?? {};
+  if (JSON.stringify(sortKeys(expectedEnv)) !== JSON.stringify(sortKeys(nativeEnv))) {
+    diffs.push({
+      field: "env",
+      expected: expectedEnv,
+      actual: nativeEnv,
+    });
+  }
+
+  return diffs;
+}
+
+// ── File I/O helpers ────────────────────────────────────────────
+
+/** Check if a file exists synchronously. */
+export function fileExistsSync(path: string): boolean {
+  try {
+    require("node:fs").accessSync(path);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** Read and parse a JSON file, returning null if missing or unparseable. */
+export function readJsonFile(path: string): unknown | null {
+  try {
+    const fs = require("node:fs");
+    const text = fs.readFileSync(path, "utf-8");
+    return JSON.parse(text);
+  } catch {
+    return null;
+  }
+}
+
+// ── Marker-based content splicing ───────────────────────────────
+
+/**
+ * Splice a managed block into existing content, preserving content outside markers.
+ * If no existing content, returns the block alone. If existing content has markers,
+ * replaces the managed section. Otherwise appends.
+ */
+export function spliceMarkerBlock(block: string, existingContent?: string): string {
+  if (!existingContent) {
+    return `${block}\n`;
+  }
+
+  const beginIdx = existingContent.indexOf(AM_BEGIN);
+  const endIdx = existingContent.indexOf(AM_END);
+  if (beginIdx !== -1 && endIdx !== -1) {
+    const before = existingContent.slice(0, beginIdx);
+    const after = existingContent.slice(endIdx + AM_END.length);
+    return before + block + after;
+  }
+
+  // No existing markers — append
+  return `${existingContent.trimEnd()}\n\n${block}\n`;
+}
