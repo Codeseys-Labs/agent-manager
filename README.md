@@ -5,7 +5,7 @@ and agent profiles once in TOML, sync via git, and generate native configs for
 every AI coding tool.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Tests: 647 pass](https://img.shields.io/badge/tests-647%20pass-green.svg)](#development)
+[![Tests: 966 pass](https://img.shields.io/badge/tests-966%20pass-green.svg)](#development)
 [![Version](https://img.shields.io/badge/version-0.1.0-orange.svg)](package.json)
 [![Bun](https://img.shields.io/badge/runtime-Bun-f9f1e1.svg)](https://bun.sh)
 
@@ -51,8 +51,9 @@ am status
 ## Features
 
 - **Single TOML source of truth** -- one file defines servers, instructions, skills, agent profiles, and config profiles for all tools
-- **8 IDE adapters** -- Claude Code, Codex CLI, ForgeCode, Cursor, Kiro, Kilo Code, Windsurf, GitHub Copilot
+- **13 IDE adapters** -- Claude Code, Codex CLI, ForgeCode, Cursor, Kiro, Kilo Code, Windsurf, GitHub Copilot, Gemini CLI, Cline, Roo Code, Amazon Q, Continue.dev
 - **3 platform adapters** -- GitHub, GitLab, bare git for push/pull operations
+- **Session harvest** -- `am session list/export/search` reads AI coding sessions across tools
 - **Git-backed everything** -- every `am add` / `am import` is an automatic commit; git IS the sync protocol
 - **Profile-based subsets with inheritance** -- `work` inherits from `base`, activate with `am use work`
 - **Drift detection** -- `am status` uses structural comparison to detect direct IDE edits without false positives
@@ -79,8 +80,13 @@ am status
 | Kilo Code | `kilo-code` | MCP servers, instructions, modes, JSONC parsing |
 | Windsurf | `windsurf` | MCP servers, instructions (rules), models |
 | GitHub Copilot | `copilot` | MCP servers, instructions (`.instructions.md`), models |
+| Gemini CLI | `gemini-cli` | MCP servers, instructions |
+| Cline | `cline` | MCP servers, instructions |
+| Roo Code | `roo-code` | MCP servers, instructions, modes |
+| Amazon Q | `amazon-q` | MCP servers, instructions |
+| Continue.dev | `continue` | MCP servers, instructions |
 
-All 8 adapters are fully implemented with detect, import, export, and diff support.
+All 13 adapters are fully implemented with detect, import, export, and diff support.
 
 ## Example Workflow
 
@@ -210,6 +216,15 @@ CLI flags  <-  ENV vars  <-  .agent-manager.local.toml  <-  .agent-manager.toml
 | `am apply` | Generate native config files from the resolved TOML config |
 | `am status` | Drift detection across all tools + git sync state |
 | `am import <adapter>` | Import native config from a specific tool into config.toml |
+| `am init --project` | Initialize a project-level `.agent-manager.toml` in the current repo |
+
+### Session Commands
+
+| Command | Description |
+|---------|-------------|
+| `am session list` | List AI coding sessions across all detected tools |
+| `am session export <id>` | Export a session by ID (markdown or JSON) |
+| `am session search <query>` | Search session messages for a query string |
 
 ### Git Sync Commands
 
@@ -262,9 +277,9 @@ Three permission tiers control what tools are available (ADR-0009):
 
 | Tier | Tools | Default |
 |------|-------|---------|
-| Read-only | `am_list_servers`, `am_list_profiles`, `am_status`, `am_config_show` | Always available |
-| Write-local | `am_add_server`, `am_remove_server`, `am_use_profile`, `am_import` | Available by default |
-| Write-remote | `am_apply`, `am_sync_push`, `am_sync_pull` | Requires opt-in via `settings.mcp_serve` |
+| Read-only | `am_list_servers`, `am_list_profiles`, `am_status`, `am_config_show`, `am_session_list`, `am_session_export`, `am_session_search` | Always available |
+| Write-local | `am_add_server`, `am_remove_server`, `am_use_profile`, `am_import`, `am_apply` | Available by default |
+| Write-remote | `am_sync_push`, `am_sync_pull` | Requires opt-in via `settings.mcp_serve` |
 
 Add to your tool's MCP config:
 
@@ -323,7 +338,7 @@ agent-manager follows a **layered core + dual-axis adapter** architecture:
 
 ```
 CLI (citty)  ->  Core Engine   ->  IDE Adapters     ->  Native Config Files
-                 (TOML + Git)      (8 adapters)         (~/.claude.json, etc.)
+                 (TOML + Git)      (13 adapters)        (~/.claude.json, etc.)
                       |
                       +---------->  Platform Adapters ->  Git Remotes
                       |             (GitHub, GitLab)      (push/pull/auth)
@@ -343,7 +358,7 @@ Web UI       ->  Hono Server   ->  Same Core (local)
 - **5 entity types** -- Servers, Instructions, Skills, Agent Profiles, Config Profiles
 - **Built-in adapters** -- all adapters ship in the binary with lazy factory instantiation
 
-Design decisions are documented in [15 ADRs](ADRs/README.md). The full design
+Design decisions are documented in [16 ADRs](ADRs/README.md). The full design
 specification is at [docs/2026-04-07-agent-manager-design-spec.md](docs/2026-04-07-agent-manager-design-spec.md).
 
 ## Development
@@ -352,7 +367,7 @@ specification is at [docs/2026-04-07-agent-manager-design-spec.md](docs/2026-04-
 # Install dependencies
 bun install
 
-# Run tests (647 tests across 67 test files)
+# Run tests (966 tests across 106 test files)
 bun test
 
 # Run tests in watch mode
@@ -389,34 +404,40 @@ bun run deploy:web
 ### Project Structure
 
 ```
-src/                            # 99 TypeScript files
-  cli.ts                        # Entry point (citty, 20 subcommands)
-  commands/                     # CLI command handlers (20 files)
+src/                            # 136 TypeScript files
+  cli.ts                        # Entry point (citty, 21 subcommands)
+  commands/                     # CLI command handlers (21 files, includes session)
   core/                         # Config engine
     schema.ts                   # Zod schemas (Server, Instruction, Skill, AgentProfile, Profile, Config)
-    config.ts                   # TOML read/write, hierarchical merge, project config
+    config.ts                   # TOML read/write, hierarchical merge, project config, buildResolvedConfig
     resolver.ts                 # Profile resolution: inheritance, tag activation, merge
     git.ts                      # Git operations via isomorphic-git
     secrets.ts                  # AES-256-GCM encryption + ${VAR} interpolation
     instructions.ts             # Shared instruction generation (CLAUDE.md, .mdc, steering, etc.)
-  adapters/                     # 8 IDE adapters (~6,800 lines total)
-    types.ts                    # Adapter interface
+    session.ts                  # Cross-tool session harvest: types, reader interface, filter/format
+  adapters/                     # 13 IDE adapters
+    types.ts                    # Adapter interface + SessionReader
     registry.ts                 # Lazy factory registry
-    claude-code/                # 808 lines, 7 files
-    codex-cli/                  # 781 lines, 6 files
-    copilot/                    # 726 lines, 6 files
-    cursor/                     # 886 lines, 6 files
-    forgecode/                  # 717 lines, 6 files
-    kilo-code/                  # 1280 lines, 8 files (includes JSONC parser)
-    kiro/                       # 938 lines, 7 files
-    windsurf/                   # 673 lines, 7 files
+    claude-code/                # 1121 lines, 8 files
+    codex-cli/                  # 1162 lines, 7 files
+    copilot/                    # 651 lines, 6 files
+    cursor/                     # 823 lines, 6 files
+    forgecode/                  # 659 lines, 6 files
+    kilo-code/                  # 1202 lines, 8 files (includes JSONC parser)
+    kiro/                       # 898 lines, 7 files
+    windsurf/                   # 627 lines, 7 files
+    gemini-cli/                 # 597 lines, 6 files
+    cline/                      # 583 lines, 6 files
+    roo-code/                   # 757 lines, 6 files
+    amazon-q/                   # 516 lines, 7 files
+    continue/                   # 556 lines, 7 files
   platforms/                    # 3 git platform adapters
     types.ts                    # Platform adapter interface
     registry.ts                 # Platform detection from remote URL
     github.ts, gitlab.ts, bare.ts
   mcp/                          # MCP server mode (JSON-RPC over stdio)
-    server.ts                   # 10 tools across 3 permission tiers
-  tui/                          # Terminal UI (Ink + React)
+    server.ts                   # 14 tools across 3 permission tiers
+  tui/                          # Terminal UI (Silvery + React)
     index.tsx, App.tsx, Dashboard.tsx, StatusView.tsx,
     ProfileSwitcher.tsx, HelpView.tsx, data.ts
   web/                          # Web UI
@@ -424,8 +445,8 @@ src/                            # 99 TypeScript files
     worker.ts                   # Cloudflare Workers (stateless, GitHub OAuth)
     public/                     # Static HTML (index.html, login.html)
   lib/                          # Shared utilities (output.ts)
-test/                           # 67 test files, 647 tests, 1569 expect() calls
-ADRs/                           # 15 architectural decision records
+test/                           # 106 test files, 966 tests, 2556 expect() calls
+ADRs/                           # 16 architectural decision records
 docs/                           # Design specifications and guides
 scripts/
   build.ts                      # Cross-platform build (5 targets)
@@ -436,15 +457,15 @@ scripts/
 
 | Metric | Count |
 |--------|-------|
-| Source files | 99 |
-| Test files | 67 |
-| Tests | 647 |
-| Assertions | 1,569 |
-| IDE adapters | 8 |
+| Source files | 136 |
+| Test files | 106 |
+| Tests | 966 |
+| Assertions | 2,556 |
+| IDE adapters | 13 |
 | Platform adapters | 3 |
-| CLI commands | 20 |
-| ADRs | 15 |
-| Commits | 59 |
+| CLI commands | 21 |
+| MCP tools | 14 |
+| ADRs | 16 |
 
 ## License
 

@@ -24,39 +24,45 @@ bun install
 bun test
 ```
 
-If all 647 tests pass, you're ready.
+If all 966 tests pass, you're ready.
 
 ## Project Structure
 
 ```
 agent-manager/
   src/
-    cli.ts                  # Entry point (citty, 20 subcommands)
-    commands/               # CLI command handlers (20 files)
-    core/                   # Config engine (TOML, resolver, git, schema, secrets, instructions)
+    cli.ts                  # Entry point (citty, 21 subcommands)
+    commands/               # CLI command handlers (21 files, includes session)
+    core/                   # Config engine (TOML, resolver, git, schema, secrets, instructions, session)
       schema.ts             # Zod schemas (Server, Instruction, Skill, AgentProfile, Profile, Config)
-      config.ts             # TOML read/write, hierarchical 4-layer merge
+      config.ts             # TOML read/write, hierarchical 4-layer merge, buildResolvedConfig
       resolver.ts           # Profile resolution with inheritance chains
       git.ts                # Git operations (isomorphic-git)
       secrets.ts            # AES-256-GCM encryption + ${VAR} interpolation
       instructions.ts       # Shared instruction generation for all output formats
-    adapters/               # 8 built-in IDE adapters
-      types.ts              # Adapter interface -- start here for adapter work
+      session.ts            # Cross-tool session harvest: types, reader interface, filter/format
+    adapters/               # 13 built-in IDE adapters
+      types.ts              # Adapter interface + SessionReader -- start here for adapter work
       registry.ts           # Lazy factory registry for all adapters
-      claude-code/          # Reference adapter (808 lines, 7 files)
-      codex-cli/            # Codex CLI adapter (781 lines)
-      copilot/              # GitHub Copilot adapter (726 lines)
-      cursor/               # Cursor adapter (886 lines)
-      forgecode/            # ForgeCode adapter (717 lines)
-      kilo-code/            # Kilo Code adapter (1280 lines, includes JSONC parser)
-      kiro/                 # Kiro adapter (938 lines)
-      windsurf/             # Windsurf adapter (673 lines)
+      claude-code/          # Reference adapter, includes SessionReader
+      codex-cli/            # Codex CLI adapter, includes SessionReader
+      copilot/              # GitHub Copilot adapter
+      cursor/               # Cursor adapter
+      forgecode/            # ForgeCode adapter
+      kilo-code/            # Kilo Code adapter (includes JSONC parser)
+      kiro/                 # Kiro adapter
+      windsurf/             # Windsurf adapter
+      gemini-cli/           # Gemini CLI adapter
+      cline/                # Cline adapter (VS Code extension)
+      roo-code/             # Roo Code adapter (VS Code extension, modes)
+      amazon-q/             # Amazon Q adapter
+      continue/             # Continue.dev adapter
     platforms/              # 3 git platform adapters
       types.ts              # GitPlatformAdapter interface
       registry.ts           # Platform detection from remote URL
       github.ts, gitlab.ts, bare.ts
     mcp/                    # MCP server mode (JSON-RPC over stdio)
-      server.ts             # 10 tools across 3 permission tiers
+      server.ts             # 14 tools across 3 permission tiers
     tui/                    # Terminal UI (Ink + React)
     web/                    # Web UI (Hono local + Cloudflare Workers)
     lib/                    # Shared utilities (output.ts)
@@ -109,7 +115,7 @@ Keep changes focused. One feature or fix per PR.
 ### 5. Validate
 
 ```bash
-bun test            # All 647 tests pass
+bun test            # All 966 tests pass
 bun run lint        # Biome linting + formatting
 bun run typecheck   # TypeScript type checking
 ```
@@ -180,9 +186,11 @@ See `docs/adapter-development-guide.md` for the full walkthrough. Summary:
 3. Add tests in `test/adapters/<name>/`
 
 Study the existing adapters for patterns:
-- **Claude Code** (808 lines) -- reference implementation, 7 files
-- **Kilo Code** (1280 lines) -- most complex, includes JSONC parser
-- **Windsurf** (673 lines) -- simplest, good starting point
+- **Claude Code** -- reference implementation, includes SessionReader
+- **Kilo Code** -- most complex, includes JSONC parser
+- **Windsurf** -- simplest, good starting point
+- **Cline / Roo Code** -- VS Code extension adapters with globalStorage paths
+- **Gemini CLI** -- simple adapter for Google's CLI tool
 
 ### Add a Platform Adapter
 
@@ -220,7 +228,7 @@ To add an adapter-specific field, update only that adapter's `schema.ts`.
 
 ## Architecture Decisions
 
-Design decisions are recorded in [15 ADRs](ADRs/README.md). Before proposing a change
+Design decisions are recorded in [16 ADRs](ADRs/README.md). Before proposing a change
 that conflicts with an existing ADR, read it first. To propose a new direction, create
 a new ADR using `ADRs/template.md`.
 

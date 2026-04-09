@@ -14,40 +14,46 @@ every AI coding tool.
 | Config | @iarna/toml (parser) + Zod (validation) |
 | Git | isomorphic-git (pure JS, no system git dependency) |
 | Web framework | Hono (local server + Cloudflare Workers) |
-| TUI | Ink + React (terminal dashboard) |
+| TUI | Silvery + React (terminal dashboard) |
 | Encryption | Web Crypto API (AES-256-GCM) |
 | Output | chalk (colors), @clack/prompts (interactive) |
-| Testing | bun:test (647 tests across 67 files) |
+| Testing | bun:test (966 tests across 106 files) |
 | Linting | Biome |
 
 ## Directory Layout
 
 ```
-src/                                 # 99 TypeScript files
-  cli.ts                             # Entry point -- citty command routing with 20 lazy subcommands
+src/                                 # 136 TypeScript files
+  cli.ts                             # Entry point -- citty command routing with 21 lazy subcommands
   commands/                          # CLI command handlers (one file per command)
     init.ts, add.ts, list.ts, use.ts, apply.ts, status.ts,
     config.ts, profile.ts, doctor.ts, import.ts, push.ts, pull.ts,
     undo.ts, log.ts, secret.ts, version.ts, adapter.ts,
-    mcp-serve.ts, serve.ts, tui.ts
+    mcp-serve.ts, serve.ts, tui.ts, session.ts
   core/                              # Core engine -- config, resolution, git, validation, encryption
     schema.ts                        # Zod schemas: Server, Instruction, Skill, AgentProfile, Profile, Config, ProjectConfig
-    config.ts                        # TOML read/write, hierarchical merge (4 layers), project config resolution
+    config.ts                        # TOML read/write, hierarchical merge (4 layers), project config, buildResolvedConfig
     resolver.ts                      # Profile resolution: inheritance chains, tag activation, server/skill/agent/instruction merge
     git.ts                           # Git operations via isomorphic-git (init, commit, push, pull, revert, status, log)
     secrets.ts                       # AES-256-GCM encryption + ${VAR} interpolation + async decrypt walk
     instructions.ts                  # Shared instruction generation: CLAUDE.md, AGENTS.md, .mdc, steering, .windsurf rules, copilot
-  adapters/                          # 8 built-in IDE adapters (~6,800 lines)
-    types.ts                         # Adapter interface: detect/import/export/diff + all type definitions
+    session.ts                       # Cross-tool session harvest: types, SessionReader interface, filter/format/estimation
+  adapters/                          # 13 built-in IDE adapters
+    types.ts                         # Adapter interface: detect/import/export/diff + SessionReader + all type definitions
     registry.ts                      # Lazy factory registry (ADAPTER_FACTORIES map + cache)
-    claude-code/                     # Claude Code: ~/.claude.json, .mcp.json, CLAUDE.md (808 lines, 7 files)
-    codex-cli/                       # Codex CLI: ~/.codex/config.yaml, AGENTS.md (781 lines, 6 files)
-    copilot/                         # GitHub Copilot: .vscode/mcp.json, .github/instructions/*.md (726 lines, 6 files)
-    cursor/                          # Cursor: ~/.cursor/mcp.json, .cursor/rules/*.mdc (886 lines, 6 files)
-    forgecode/                       # ForgeCode: ~/.forgecode/mcp_settings.json (717 lines, 6 files)
-    kilo-code/                       # Kilo Code: ~/.kilo-code/mcp_settings.json, JSONC parsing (1280 lines, 8 files)
-    kiro/                            # Kiro: .kiro/mcp.json, .kiro/steering/*.md (938 lines, 7 files)
-    windsurf/                        # Windsurf: ~/.windsurf/mcp.json, .windsurf/rules/*.md (673 lines, 7 files)
+    claude-code/                     # Claude Code: ~/.claude.json, .mcp.json, CLAUDE.md
+    codex-cli/                       # Codex CLI: ~/.codex/config.yaml, AGENTS.md
+    copilot/                         # GitHub Copilot: .vscode/mcp.json, .github/instructions/*.md
+    cursor/                          # Cursor: ~/.cursor/mcp.json, .cursor/rules/*.mdc
+    forgecode/                       # ForgeCode: ~/.forgecode/mcp_settings.json
+    kilo-code/                       # Kilo Code: ~/.kilo-code/mcp_settings.json, JSONC parsing
+    kiro/                            # Kiro: .kiro/mcp.json, .kiro/steering/*.md
+    windsurf/                        # Windsurf: ~/.windsurf/mcp.json, .windsurf/rules/*.md
+    gemini-cli/                      # Gemini CLI: ~/.gemini/settings.json, GEMINI.md
+    cline/                           # Cline: VS Code globalStorage, cline_mcp_settings.json, .clinerules
+    roo-code/                        # Roo Code: VS Code globalStorage, roo_mcp_settings.json, .roo/rules
+    amazon-q/                        # Amazon Q: ~/.aws/amazonq/mcp.json
+    continue/                        # Continue.dev: ~/.continue/config.json
   platforms/                         # 3 git platform adapters
     types.ts                         # GitPlatformAdapter interface (detect, pushUrl, pullUrl, auth)
     registry.ts                      # Platform detection from remote URL (ordered by specificity)
@@ -55,8 +61,8 @@ src/                                 # 99 TypeScript files
     gitlab.ts                        # GitLab platform adapter
     bare.ts                          # Bare git fallback
   mcp/                               # MCP server mode
-    server.ts                        # JSON-RPC 2.0 over stdio, 10 tools, 3 permission tiers (ADR-0009)
-  tui/                               # Terminal UI (Ink + React)
+    server.ts                        # JSON-RPC 2.0 over stdio, 14 tools, 3 permission tiers (ADR-0009)
+  tui/                               # Terminal UI (Silvery + React)
     index.tsx                        # TUI launcher
     App.tsx                          # Root component with tab navigation
     Dashboard.tsx                    # Main dashboard view
@@ -71,7 +77,7 @@ src/                                 # 99 TypeScript files
   lib/                               # Shared utilities
     output.ts                        # JSON/text output helpers (--json, --quiet, --verbose)
 
-test/                                # 67 test files, 647 tests, 1569 assertions
+test/                                # 106 test files, 966 tests, 2556 assertions
   core/                              # Unit tests for core modules
   adapters/                          # Adapter-specific tests (per-adapter directories)
   commands/                          # CLI command integration tests
@@ -79,7 +85,7 @@ test/                                # 67 test files, 647 tests, 1569 assertions
   helpers/                           # Test utilities (tmp dirs, config builders)
   integration/                       # End-to-end tests
 
-ADRs/                                # 15 architectural decision records
+ADRs/                                # 16 architectural decision records
 docs/                                # Design specs and guides
 scripts/
   build.ts                           # Cross-platform build (5 targets via Bun.spawn)
@@ -91,7 +97,7 @@ scripts/
 **Layered Core + Dual-Axis Adapter Extensions** (ADR-0001, ADR-0013):
 
 1. **Core** owns the universal schema (servers, instructions, skills, agent profiles, config profiles) and validates it with Zod
-2. **IDE adapters** (8) bridge core TOML to each tool's native format: detect, import, export, diff
+2. **IDE adapters** (13) bridge core TOML to each tool's native format: detect, import, export, diff
 3. **Platform adapters** (3) handle git remote URL detection and auth: GitHub, GitLab, bare
 4. **Two-phase validation** (ADR-0007): Core validates core fields strictly; adapter sections are `z.record(z.string(), z.unknown())` at the core level, then each adapter validates its own section
 5. **MCP server mode** (ADR-0009): agent-manager as an MCP tool server with 3 permission tiers
@@ -128,7 +134,7 @@ Every command supports `--json` for structured output. Use the helpers in `src/l
 
 ### Adapter Interface
 
-All 8 IDE adapters implement the `Adapter` interface from `src/adapters/types.ts`:
+All 13 IDE adapters implement the `Adapter` interface from `src/adapters/types.ts`:
 
 ```typescript
 interface Adapter {
@@ -242,7 +248,7 @@ All git operations use **isomorphic-git** (pure JS). No dependency on system `gi
 ## Testing
 
 ```bash
-bun test                          # Run all 647 tests
+bun test                          # Run all 966 tests
 bun test:unit                     # Core + adapter unit tests only
 bun test:integration              # Integration tests only
 bun test --watch                  # Watch mode
@@ -292,6 +298,7 @@ bun run deploy:web                # Deploy to Cloudflare Workers
 | [0013](ADRs/0013-git-platform-adapters.md) | Git Platform Adapters -- GitHub, GitLab, bare git with URL-based detection |
 | [0014](ADRs/0014-workspace-profile-import.md) | Workspace-to-Profile Import -- import from existing workspace configs |
 | [0015](ADRs/0015-stateless-web-ui.md) | Stateless Web UI -- git-backed, independently deployable, encrypted cookies |
+| [0016](ADRs/0016-session-harvest.md) | Session Harvest -- cross-tool conversation export via SessionReader interface |
 
 ## Git Commit Style
 
