@@ -41,6 +41,12 @@ const main = defineCommand({
     serve: () => import("./commands/serve").then((m) => m.serveCommand),
     tui: () => import("./commands/tui").then((m) => m.tuiCommand),
     session: () => import("./commands/session").then((m) => m.sessionCommand),
+    search: () => import("./commands/search").then((m) => m.searchCommand),
+    install: () => import("./commands/install").then((m) => m.installCommand),
+    uninstall: () => import("./commands/uninstall").then((m) => m.uninstallCommand),
+    update: () => import("./commands/update").then((m) => m.updateCommand),
+    wiki: () => import("./commands/wiki").then((m) => m.wikiCommand),
+    agents: () => import("./commands/agents").then((m) => m.agentsCommand),
   },
 });
 
