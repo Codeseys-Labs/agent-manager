@@ -47,7 +47,8 @@ describe("MCP server", () => {
     });
   });
 
-  test("tools/list returns all tools", async () => {
+  test("tools/list returns only core tools by default (ADR-0021)", async () => {
+    await setupConfig({});
     const server = new McpServer();
     const resp = await server.handleRequest({
       jsonrpc: "2.0",
@@ -59,6 +60,7 @@ describe("MCP server", () => {
     expect(Array.isArray(tools)).toBe(true);
 
     const names = tools.map((t: { name: string }) => t.name);
+    // Core tools should be present
     expect(names).toContain("am_list_servers");
     expect(names).toContain("am_list_profiles");
     expect(names).toContain("am_status");
@@ -73,6 +75,29 @@ describe("MCP server", () => {
     expect(names).toContain("am_session_list");
     expect(names).toContain("am_session_export");
     expect(names).toContain("am_session_search");
+    expect(names.length).toBe(14);
+    // Non-core tools should NOT be present by default
+    expect(names).not.toContain("am_registry_search");
+    expect(names).not.toContain("am_wiki_search");
+    expect(names).not.toContain("am_agent_discover");
+  });
+
+  test("tools/list returns all groups when configured (ADR-0021)", async () => {
+    await setupConfig({
+      settings: {
+        mcp_serve: { tools: ["core", "registry", "a2a", "wiki"] },
+      },
+    });
+    const server = new McpServer();
+    const resp = await server.handleRequest({
+      jsonrpc: "2.0",
+      id: 2,
+      method: "tools/list",
+    });
+    expect(resp).not.toBeNull();
+    const tools = (resp?.result as JsonRpcResult).tools;
+    const names = tools.map((t: { name: string }) => t.name);
+    expect(names).toContain("am_list_servers");
     expect(names).toContain("am_registry_search");
     expect(names).toContain("am_registry_install");
     expect(names).toContain("am_registry_list_installed");
@@ -88,6 +113,29 @@ describe("MCP server", () => {
     expect(names).toContain("am_agent_delegate");
     expect(names).toContain("am_agent_task_status");
     expect(names.length).toBe(26);
+  });
+
+  test("tools/list respects selective group configuration (ADR-0021)", async () => {
+    await setupConfig({
+      settings: {
+        mcp_serve: { tools: ["core", "wiki"] },
+      },
+    });
+    const server = new McpServer();
+    const resp = await server.handleRequest({
+      jsonrpc: "2.0",
+      id: 2,
+      method: "tools/list",
+    });
+    expect(resp).not.toBeNull();
+    const tools = (resp?.result as JsonRpcResult).tools;
+    const names = tools.map((t: { name: string }) => t.name);
+    // Core + wiki = 14 + 5 = 19
+    expect(names.length).toBe(19);
+    expect(names).toContain("am_list_servers");
+    expect(names).toContain("am_wiki_search");
+    expect(names).not.toContain("am_registry_search");
+    expect(names).not.toContain("am_agent_discover");
   });
 
   test("am_list_servers returns servers from config", async () => {
