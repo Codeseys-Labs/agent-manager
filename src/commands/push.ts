@@ -1,7 +1,7 @@
 import { defineCommand } from "citty";
 import { resolveConfigDir } from "../core/config";
-import { push, getStatus } from "../core/git";
-import { output, info, error } from "../lib/output";
+import { getStatus, push } from "../core/git";
+import { error, info, output } from "../lib/output";
 
 export const pushCommand = defineCommand({
   meta: { name: "push", description: "Push config changes to remote" },
@@ -25,13 +25,15 @@ export const pushCommand = defineCommand({
 
     if (status.remotes.length === 0) {
       if (args.json) {
-        console.error(JSON.stringify({
-          error: "No remote configured",
-          suggestion: "Run `am remote add <url>` to set up sync",
-        }));
+        console.error(
+          JSON.stringify({
+            error: "No remote configured",
+            suggestion: "Add a remote URL to your config repo",
+          }),
+        );
       } else {
         console.error("error: No remote configured");
-        console.error("  suggestion: Run `am remote add <url>` to set up sync");
+        console.error("  suggestion: Add a remote URL to your config repo");
       }
       process.exitCode = 1;
       return;

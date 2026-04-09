@@ -1,42 +1,9 @@
 import { defineCommand } from "citty";
-import { join } from "node:path";
-import {
-  resolveConfigDir,
-  loadResolvedConfig,
-  resolveProjectConfig,
-} from "../core/config";
-import { getStatus } from "../core/git";
-import { readActiveProfile } from "./use";
 import { getDetectedAdapters } from "../adapters/registry";
-import { output, info, error, debug } from "../lib/output";
-import type { ResolvedConfig, ResolvedServer } from "../adapters/types";
-
-function buildResolvedConfig(
-  config: Awaited<ReturnType<typeof loadResolvedConfig>>,
-  profileName: string,
-): ResolvedConfig {
-  const servers: Record<string, ResolvedServer> = {};
-  for (const [name, srv] of Object.entries(config.servers ?? {})) {
-    servers[name] = {
-      name,
-      command: srv.command,
-      args: srv.args ?? [],
-      env: srv.env ?? {},
-      transport: srv.transport ?? "stdio",
-      description: srv.description ?? "",
-      tags: srv.tags ?? [],
-      enabled: srv.enabled ?? true,
-      adapters: (srv.adapters as Record<string, Record<string, unknown>>) ?? {},
-    };
-  }
-  return {
-    servers,
-    instructions: {},
-    skills: {},
-    profile: profileName,
-    adapters: (config.adapters as Record<string, Record<string, unknown>>) ?? {},
-  };
-}
+import { buildResolvedConfig, loadResolvedConfig, resolveConfigDir, resolveProjectConfig } from "../core/config";
+import { getStatus } from "../core/git";
+import { debug, error, info, output } from "../lib/output";
+import { readActiveProfile } from "./use";
 
 export const statusCommand = defineCommand({
   meta: { name: "status", description: "Show config and drift status" },
@@ -60,9 +27,7 @@ export const statusCommand = defineCommand({
     }
 
     const profileName =
-      (await readActiveProfile(configDir)) ??
-      config.settings?.default_profile ??
-      "default";
+      (await readActiveProfile(configDir)) ?? config.settings?.default_profile ?? "default";
 
     // Git status
     let gitStatus;
@@ -97,38 +62,45 @@ export const statusCommand = defineCommand({
     }
 
     if (args.json) {
-      output({
-        profile: profileName,
-        servers: serverCount,
-        git: {
-          branch: gitStatus.branch,
-          clean: gitStatus.clean,
-          dirty: gitStatus.dirty,
-          remotes: gitStatus.remotes,
+      output(
+        {
+          profile: profileName,
+          servers: serverCount,
+          git: {
+            branch: gitStatus.branch,
+            clean: gitStatus.clean,
+            dirty: gitStatus.dirty,
+            remotes: gitStatus.remotes,
+          },
+          tools: toolStatuses,
         },
-        tools: toolStatuses,
-      }, opts);
+        opts,
+      );
       return;
     }
 
     info(`Profile: ${profileName}`, opts);
     info(`Servers: ${serverCount}`, opts);
-    info(`Git: ${gitStatus.branch} (${gitStatus.clean ? "clean" : gitStatus.dirty.length + " dirty"})`, opts);
+    info(
+      `Git: ${gitStatus.branch} (${gitStatus.clean ? "clean" : `${gitStatus.dirty.length} dirty`})`,
+      opts,
+    );
 
     if (gitStatus.remotes.length > 0) {
       info(`Remote: ${gitStatus.remotes[0].url}`, opts);
     } else {
-      info(`Remote: none (run \`am remote add <url>\` to set up sync)`, opts);
+      info("Remote: none (add a remote URL to your config repo to set up sync)", opts);
     }
 
     if (toolStatuses.length > 0) {
-      info(`\nTool Status:`, opts);
+      info("\nTool Status:", opts);
       for (const t of toolStatuses) {
-        const statusStr = t.status === "in-sync"
-          ? "in sync"
-          : t.status === "drifted"
-            ? `drift detected (${t.changes} change${t.changes !== 1 ? "s" : ""})`
-            : t.status;
+        const statusStr =
+          t.status === "in-sync"
+            ? "in sync"
+            : t.status === "drifted"
+              ? `drift detected (${t.changes} change${t.changes !== 1 ? "s" : ""})`
+              : t.status;
         info(`  ${t.name.padEnd(20)} ${statusStr}`, opts);
       }
     }

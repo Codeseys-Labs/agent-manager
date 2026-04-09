@@ -12,11 +12,10 @@ const IV_LENGTH = 12;
 
 /** Generate a 256-bit AES key, return as base64 string. */
 export async function generateKey(): Promise<string> {
-  const key = await crypto.subtle.generateKey(
-    { name: ALGO, length: KEY_LENGTH },
-    true,
-    ["encrypt", "decrypt"],
-  );
+  const key = await crypto.subtle.generateKey({ name: ALGO, length: KEY_LENGTH }, true, [
+    "encrypt",
+    "decrypt",
+  ]);
   const raw = await crypto.subtle.exportKey("raw", key);
   return btoa(String.fromCharCode(...new Uint8Array(raw)));
 }
@@ -24,16 +23,11 @@ export async function generateKey(): Promise<string> {
 /** Import a base64 string as a CryptoKey. */
 export async function importKey(base64: string): Promise<CryptoKey> {
   const raw = Uint8Array.from(atob(base64), (c) => c.charCodeAt(0));
-  return crypto.subtle.importKey("raw", raw, { name: ALGO }, true, [
-    "encrypt",
-    "decrypt",
-  ]);
+  return crypto.subtle.importKey("raw", raw, { name: ALGO }, true, ["encrypt", "decrypt"]);
 }
 
 /** Load the encryption key from AM_ENCRYPTION_KEY env var or .agent-manager/key.txt file. */
-export async function loadKey(
-  configDir: string,
-): Promise<CryptoKey | null> {
+export async function loadKey(configDir: string): Promise<CryptoKey | null> {
   // Priority: env var > file
   const envKey = process.env.AM_ENCRYPTION_KEY;
   if (envKey) {
@@ -50,36 +44,23 @@ export async function loadKey(
 }
 
 /** Write base64 key to .agent-manager/key.txt. */
-export async function saveKey(
-  configDir: string,
-  base64Key: string,
-): Promise<void> {
+export async function saveKey(configDir: string, base64Key: string): Promise<void> {
   const keyPath = join(configDir, ".agent-manager", "key.txt");
-  await writeFile(keyPath, base64Key + "\n", "utf-8");
+  await writeFile(keyPath, `${base64Key}\n`, { encoding: "utf-8", mode: 0o600 });
 }
 
 /** AES-256-GCM encrypt a plaintext string. Returns "enc:v1:nonce_b64:ciphertext_b64". */
-export async function encryptValue(
-  plaintext: string,
-  key: CryptoKey,
-): Promise<string> {
+export async function encryptValue(plaintext: string, key: CryptoKey): Promise<string> {
   const iv = crypto.getRandomValues(new Uint8Array(IV_LENGTH));
   const encoded = new TextEncoder().encode(plaintext);
-  const ciphertext = await crypto.subtle.encrypt(
-    { name: ALGO, iv },
-    key,
-    encoded,
-  );
+  const ciphertext = await crypto.subtle.encrypt({ name: ALGO, iv }, key, encoded);
   const ivB64 = btoa(String.fromCharCode(...iv));
   const ctB64 = btoa(String.fromCharCode(...new Uint8Array(ciphertext)));
   return `${PREFIX}${ivB64}:${ctB64}`;
 }
 
 /** Decrypt an "enc:v1:..." value. Passes through non-encrypted strings unchanged. */
-export async function decryptValue(
-  encrypted: string,
-  key: CryptoKey,
-): Promise<string> {
+export async function decryptValue(encrypted: string, key: CryptoKey): Promise<string> {
   if (!isEncrypted(encrypted)) return encrypted;
   const payload = encrypted.slice(PREFIX.length);
   const colonIdx = payload.indexOf(":");
@@ -87,11 +68,7 @@ export async function decryptValue(
   const ctB64 = payload.slice(colonIdx + 1);
   const iv = Uint8Array.from(atob(ivB64), (c) => c.charCodeAt(0));
   const ct = Uint8Array.from(atob(ctB64), (c) => c.charCodeAt(0));
-  const plaintext = await crypto.subtle.decrypt(
-    { name: ALGO, iv },
-    key,
-    ct,
-  );
+  const plaintext = await crypto.subtle.decrypt({ name: ALGO, iv }, key, ct);
   return new TextDecoder().decode(plaintext);
 }
 

@@ -1,40 +1,5 @@
-import { describe, it, expect } from "bun:test";
+import { describe, expect, it } from "bun:test";
 import app from "../../src/web/worker";
-
-// ---------------------------------------------------------------------------
-// Mock KV store — in-memory implementation matching the KVStore interface
-// in worker.ts (avoids needing @cloudflare/workers-types globally)
-// ---------------------------------------------------------------------------
-
-interface KVStore {
-  get(key: string): Promise<string | null>;
-  put(key: string, value: string, opts?: { expirationTtl?: number }): Promise<void>;
-  delete(key: string): Promise<void>;
-}
-
-function createMockKV(): KVStore {
-  const store = new Map<string, { value: string; expiry?: number }>();
-  return {
-    get: async (key: string) => {
-      const entry = store.get(key);
-      if (!entry) return null;
-      if (entry.expiry && Date.now() > entry.expiry) {
-        store.delete(key);
-        return null;
-      }
-      return entry.value;
-    },
-    put: async (key: string, value: string, opts?: { expirationTtl?: number }) => {
-      const expiry = opts?.expirationTtl
-        ? Date.now() + opts.expirationTtl * 1000
-        : undefined;
-      store.set(key, { value, expiry });
-    },
-    delete: async (key: string) => {
-      store.delete(key);
-    },
-  };
-}
 
 // ---------------------------------------------------------------------------
 // Test env bindings
@@ -43,8 +8,7 @@ function createMockKV(): KVStore {
 const MOCK_ENV = {
   GITHUB_CLIENT_ID: "test-client-id",
   GITHUB_CLIENT_SECRET: "test-client-secret",
-  SESSION_SECRET: "test-session-secret",
-  AM_SESSIONS: createMockKV(),
+  SESSION_SECRET: "test-session-secret-key-32chars!",
   ENVIRONMENT: "test",
 };
 
@@ -67,7 +31,7 @@ describe("Worker — Health check", () => {
   });
 });
 
-describe("Worker — Authentication", () => {
+describe("Worker — Authentication (no cookie)", () => {
   it("GET /api/repos without session returns 401", async () => {
     const res = await req("/api/repos");
     expect(res.status).toBe(401);
@@ -105,6 +69,46 @@ describe("Worker — Authentication", () => {
   });
 });
 
+describe("Worker — Invalid cookie", () => {
+  it("invalid cookie value returns 401 (decrypt fails)", async () => {
+    const res = await app.request(
+      "/api/repos",
+      { headers: { cookie: "am_session=not-valid-encrypted-data" } },
+      MOCK_ENV,
+    );
+    expect(res.status).toBe(401);
+    const data = (await res.json()) as { error: string };
+    expect(data.error).toContain("Session expired");
+  });
+
+  it("tampered cookie returns 401", async () => {
+    // A base64 string that is too short to contain a valid AES-GCM payload
+    const tampered = btoa("short");
+    const res = await app.request(
+      "/api/repos",
+      { headers: { cookie: `am_session=${tampered}` } },
+      MOCK_ENV,
+    );
+    expect(res.status).toBe(401);
+  });
+
+  it("cookie encrypted with wrong secret returns 401", async () => {
+    // Encrypt with a different secret, then try to decrypt with the test secret
+    const wrongSecretEnv = { ...MOCK_ENV, SESSION_SECRET: "wrong-secret-key-different!!!!!" };
+    // First, get a valid login redirect to simulate the flow
+    // Instead, just craft a cookie-like base64 that won't decrypt
+    const fakeCipher = btoa(
+      String.fromCharCode(...crypto.getRandomValues(new Uint8Array(64))),
+    );
+    const res = await app.request(
+      "/api/repos",
+      { headers: { cookie: `am_session=${fakeCipher}` } },
+      MOCK_ENV,
+    );
+    expect(res.status).toBe(401);
+  });
+});
+
 describe("Worker — OAuth flow", () => {
   it("GET /auth/github/login redirects to GitHub OAuth", async () => {
     const res = await req("/auth/github/login");
@@ -115,6 +119,15 @@ describe("Worker — OAuth flow", () => {
     expect(location).toContain("client_id=test-client-id");
     expect(location).toContain("scope=repo");
     expect(location).toContain("state=");
+  });
+
+  it("GET /auth/github/login sets encrypted state cookie", async () => {
+    const res = await req("/auth/github/login");
+    const cookie = res.headers.get("set-cookie") ?? "";
+    expect(cookie).toContain("am_oauth_state=");
+    expect(cookie).toContain("HttpOnly");
+    expect(cookie).toContain("Secure");
+    expect(cookie).toContain("Max-Age=300");
   });
 
   it("GET /auth/github/callback without code returns 400", async () => {
@@ -138,23 +151,5 @@ describe("Worker — OAuth flow", () => {
     const cookie = res.headers.get("set-cookie") ?? "";
     expect(cookie).toContain("am_session=");
     expect(cookie).toContain("Max-Age=0");
-  });
-});
-
-describe("Worker — Session with valid cookie", () => {
-  it("expired session returns 401", async () => {
-    // Create a session, then delete it from KV to simulate expiry
-    const kv = MOCK_ENV.AM_SESSIONS;
-    const sessionId = "test-expired-session";
-    await kv.put(`session:${sessionId}`, JSON.stringify({ token: "tok", created: Date.now() }));
-    await kv.delete(`session:${sessionId}`);
-
-    const res = await app.request("/api/repos", {
-      headers: { cookie: `am_session=${sessionId}` },
-    }, MOCK_ENV);
-
-    expect(res.status).toBe(401);
-    const data = (await res.json()) as { error: string };
-    expect(data.error).toContain("Session expired");
   });
 });

@@ -28,18 +28,11 @@ type Variables = {
 // Cookie-based session helpers (no persistent storage)
 // ---------------------------------------------------------------------------
 
-async function encryptSession(
-  data: Record<string, unknown>,
-  secret: string,
-): Promise<string> {
+async function encryptSession(data: Record<string, unknown>, secret: string): Promise<string> {
   const key = await deriveKey(secret);
   const iv = crypto.getRandomValues(new Uint8Array(12));
   const encoded = new TextEncoder().encode(JSON.stringify(data));
-  const ciphertext = await crypto.subtle.encrypt(
-    { name: "AES-GCM", iv },
-    key,
-    encoded,
-  );
+  const ciphertext = await crypto.subtle.encrypt({ name: "AES-GCM", iv }, key, encoded);
   const combined = new Uint8Array(iv.length + new Uint8Array(ciphertext).length);
   combined.set(iv);
   combined.set(new Uint8Array(ciphertext), iv.length);
@@ -55,11 +48,7 @@ async function decryptSession(
     const combined = Uint8Array.from(atob(encrypted), (c) => c.charCodeAt(0));
     const iv = combined.slice(0, 12);
     const ciphertext = combined.slice(12);
-    const plaintext = await crypto.subtle.decrypt(
-      { name: "AES-GCM", iv },
-      key,
-      ciphertext,
-    );
+    const plaintext = await crypto.subtle.decrypt({ name: "AES-GCM", iv }, key, ciphertext);
     return JSON.parse(new TextDecoder().decode(plaintext));
   } catch {
     return null;
@@ -67,11 +56,26 @@ async function decryptSession(
 }
 
 async function deriveKey(secret: string): Promise<CryptoKey> {
-  const raw = new TextEncoder().encode(secret.padEnd(32, "0").slice(0, 32));
-  return crypto.subtle.importKey("raw", raw, "AES-GCM", false, [
-    "encrypt",
-    "decrypt",
-  ]);
+  const encoder = new TextEncoder();
+  const keyMaterial = await crypto.subtle.importKey(
+    "raw",
+    encoder.encode(secret),
+    "HKDF",
+    false,
+    ["deriveKey"],
+  );
+  return crypto.subtle.deriveKey(
+    {
+      name: "HKDF",
+      hash: "SHA-256",
+      salt: encoder.encode("agent-manager-session"),
+      info: encoder.encode("aes-gcm-key"),
+    },
+    keyMaterial,
+    { name: "AES-GCM", length: 256 },
+    false,
+    ["encrypt", "decrypt"],
+  );
 }
 
 function getSessionCookie(c: {
@@ -92,7 +96,12 @@ function sessionCookie(value: string, maxAge = 86400): string {
 
 const app = new Hono<{ Bindings: Bindings; Variables: Variables }>();
 
-app.use("/api/*", cors());
+app.use(
+  "/api/*",
+  cors({
+    origin: (origin) => origin ?? "",
+  }),
+);
 
 // ---------------------------------------------------------------------------
 // Health check (unauthenticated)
@@ -112,10 +121,7 @@ app.get("/auth/github/login", async (c) => {
   const state = crypto.randomUUID();
 
   // Store CSRF state in a short-lived encrypted cookie (5 min)
-  const stateCookie = await encryptSession(
-    { state, ts: Date.now() },
-    c.env.SESSION_SECRET,
-  );
+  const stateCookie = await encryptSession({ state, ts: Date.now() }, c.env.SESSION_SECRET);
 
   const params = new URLSearchParams({
     client_id: clientId,
@@ -158,21 +164,18 @@ app.get("/auth/github/callback", async (c) => {
   }
 
   // Exchange code for access token
-  const tokenRes = await fetch(
-    "https://github.com/login/oauth/access_token",
-    {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Accept: "application/json",
-      },
-      body: JSON.stringify({
-        client_id: c.env.GITHUB_CLIENT_ID,
-        client_secret: c.env.GITHUB_CLIENT_SECRET,
-        code,
-      }),
+  const tokenRes = await fetch("https://github.com/login/oauth/access_token", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Accept: "application/json",
     },
-  );
+    body: JSON.stringify({
+      client_id: c.env.GITHUB_CLIENT_ID,
+      client_secret: c.env.GITHUB_CLIENT_SECRET,
+      code,
+    }),
+  });
 
   const tokenData = (await tokenRes.json()) as {
     access_token?: string;
@@ -180,10 +183,7 @@ app.get("/auth/github/callback", async (c) => {
   };
 
   if (!tokenData.access_token) {
-    return c.json(
-      { error: tokenData.error ?? "Token exchange failed" },
-      400,
-    );
+    return c.json({ error: tokenData.error ?? "Token exchange failed" }, 400);
   }
 
   // Create encrypted session cookie (no server-side storage)
@@ -256,18 +256,12 @@ app.use("/api/*", async (c, next) => {
 
   const encrypted = getSessionCookie(c);
   if (!encrypted) {
-    return c.json(
-      { error: "Not authenticated", login: "/auth/github/login" },
-      401,
-    );
+    return c.json({ error: "Not authenticated", login: "/auth/github/login" }, 401);
   }
 
   const session = await decryptSession(encrypted, c.env.SESSION_SECRET);
   if (!session?.token) {
-    return c.json(
-      { error: "Session expired", login: "/auth/github/login" },
-      401,
-    );
+    return c.json({ error: "Session expired", login: "/auth/github/login" }, 401);
   }
 
   c.set("githubToken", session.token as string);
@@ -280,15 +274,12 @@ app.use("/api/*", async (c, next) => {
 
 app.get("/api/repos", async (c) => {
   const token = c.get("githubToken");
-  const res = await fetch(
-    "https://api.github.com/user/repos?per_page=100&sort=updated",
-    {
-      headers: {
-        Authorization: `Bearer ${token}`,
-        "User-Agent": "agent-manager",
-      },
+  const res = await fetch("https://api.github.com/user/repos?per_page=100&sort=updated", {
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "User-Agent": "agent-manager",
     },
-  );
+  });
 
   if (!res.ok) {
     return c.json({ error: "Failed to fetch repos" }, res.status as any);
@@ -319,16 +310,13 @@ app.get("/api/config/:owner/:repo", async (c) => {
   const token = c.get("githubToken");
   const { owner, repo } = c.req.param();
 
-  const res = await fetch(
-    `https://api.github.com/repos/${owner}/${repo}/contents/config.toml`,
-    {
-      headers: {
-        Authorization: `Bearer ${token}`,
-        "User-Agent": "agent-manager",
-        Accept: "application/vnd.github.v3.raw",
-      },
+  const res = await fetch(`https://api.github.com/repos/${owner}/${repo}/contents/config.toml`, {
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "User-Agent": "agent-manager",
+      Accept: "application/vnd.github.v3.raw",
     },
-  );
+  });
 
   if (!res.ok) {
     return c.json({ error: "Config not found", status: res.status }, 404);
@@ -357,16 +345,13 @@ app.get("/api/servers/:owner/:repo", async (c) => {
   const token = c.get("githubToken");
   const { owner, repo } = c.req.param();
 
-  const res = await fetch(
-    `https://api.github.com/repos/${owner}/${repo}/contents/config.toml`,
-    {
-      headers: {
-        Authorization: `Bearer ${token}`,
-        "User-Agent": "agent-manager",
-        Accept: "application/vnd.github.v3.raw",
-      },
+  const res = await fetch(`https://api.github.com/repos/${owner}/${repo}/contents/config.toml`, {
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "User-Agent": "agent-manager",
+      Accept: "application/vnd.github.v3.raw",
     },
-  );
+  });
 
   if (!res.ok) return c.json({ error: "Config not found" }, 404);
 
@@ -374,21 +359,16 @@ app.get("/api/servers/:owner/:repo", async (c) => {
   try {
     const TOML = await import("@iarna/toml");
     const config = TOML.parse(content) as Record<string, any>;
-    const servers = Object.entries(config.servers ?? {}).map(
-      ([name, s]: [string, any]) => ({
-        name,
-        command: s.command,
-        args: s.args,
-        tags: s.tags,
-        enabled: s.enabled ?? true,
-      }),
-    );
+    const servers = Object.entries(config.servers ?? {}).map(([name, s]: [string, any]) => ({
+      name,
+      command: s.command,
+      args: s.args,
+      tags: s.tags,
+      enabled: s.enabled ?? true,
+    }));
     return c.json({ servers });
   } catch (e) {
-    return c.json(
-      { error: "Failed to parse config", detail: String(e) },
-      500,
-    );
+    return c.json({ error: "Failed to parse config", detail: String(e) }, 500);
   }
 });
 
@@ -405,15 +385,12 @@ app.post("/api/config/:owner/:repo", async (c) => {
     return c.json({ error: "Missing content field" }, 400);
   }
 
-  const getRes = await fetch(
-    `https://api.github.com/repos/${owner}/${repo}/contents/config.toml`,
-    {
-      headers: {
-        Authorization: `Bearer ${token}`,
-        "User-Agent": "agent-manager",
-      },
+  const getRes = await fetch(`https://api.github.com/repos/${owner}/${repo}/contents/config.toml`, {
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "User-Agent": "agent-manager",
     },
-  );
+  });
 
   if (!getRes.ok) return c.json({ error: "Config not found" }, 404);
 

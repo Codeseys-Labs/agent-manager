@@ -1,7 +1,7 @@
 import { defineCommand } from "citty";
 import { resolveConfigDir } from "../core/config";
-import { pull, getStatus } from "../core/git";
-import { output, info, error } from "../lib/output";
+import { getStatus, pull } from "../core/git";
+import { error, info, output } from "../lib/output";
 
 export const pullCommand = defineCommand({
   meta: { name: "pull", description: "Pull config changes from remote and auto-apply" },
@@ -25,13 +25,15 @@ export const pullCommand = defineCommand({
 
     if (status.remotes.length === 0) {
       if (args.json) {
-        console.error(JSON.stringify({
-          error: "No remote configured",
-          suggestion: "Run `am remote add <url>` to set up sync",
-        }));
+        console.error(
+          JSON.stringify({
+            error: "No remote configured",
+            suggestion: "Add a remote URL to your config repo",
+          }),
+        );
       } else {
         console.error("error: No remote configured");
-        console.error("  suggestion: Run `am remote add <url>` to set up sync");
+        console.error("  suggestion: Add a remote URL to your config repo");
       }
       process.exitCode = 1;
       return;
@@ -40,7 +42,7 @@ export const pullCommand = defineCommand({
     try {
       await pull(configDir);
       info(`Pulled from ${status.remotes[0].url}`, opts);
-      info(`Run \`am apply\` to regenerate native configs`, opts);
+      info("Run `am apply` to regenerate native configs", opts);
       if (args.json) {
         output({ action: "pull", remote: status.remotes[0].url, branch: status.branch }, opts);
       }
