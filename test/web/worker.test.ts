@@ -115,7 +115,7 @@ describe("Worker — OAuth flow", () => {
     expect(location).toBeTruthy();
     expect(location).toContain("github.com/login/oauth/authorize");
     expect(location).toContain("client_id=test-client-id");
-    expect(location).toContain("scope=repo");
+    expect(location).toContain("scope=contents");
     expect(location).toContain("state=");
   });
 

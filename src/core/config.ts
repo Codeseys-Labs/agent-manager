@@ -85,6 +85,7 @@ export async function writeConfig(path: string, config: Config): Promise<void> {
   if (config.settings) ordered.settings = config.settings;
   if (config.servers) ordered.servers = config.servers;
   if (config.skills) ordered.skills = config.skills;
+  if (config.agents) ordered.agents = config.agents;
   if (config.instructions) ordered.instructions = config.instructions;
   if (config.profiles) ordered.profiles = config.profiles;
   if (config.adapters) ordered.adapters = config.adapters;

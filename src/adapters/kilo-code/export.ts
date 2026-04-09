@@ -116,7 +116,7 @@ function generateKiloConfig(
         url: server.command,
       };
       if (Object.keys(server.env).length > 0) {
-        entry.headers = server.env;
+        entry.env = server.env;
       }
       mcp[name] = entry;
     } else {

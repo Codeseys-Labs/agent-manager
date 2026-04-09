@@ -1,3 +1,4 @@
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { Hono } from "hono";
 import { serveStatic } from "hono/bun";
@@ -12,8 +13,89 @@ import {
 import { getStatus, pull as gitPull, push as gitPush } from "../core/git";
 import { interpolateEnvAsync, loadKey } from "../core/secrets";
 
+// ── Token-based authentication for local web server ─────────────
+
+const TOKEN_FILENAME = "web-token.txt";
+
+/**
+ * Generate or read the localhost authentication token.
+ * Token is a 32-byte cryptographically random hex string stored
+ * in the agent-manager config directory with mode 0600.
+ */
+export function ensureAuthToken(configDir: string): string {
+  const tokenPath = join(configDir, TOKEN_FILENAME);
+  try {
+    if (existsSync(tokenPath)) {
+      return readFileSync(tokenPath, "utf-8").trim();
+    }
+  } catch {
+    // File unreadable, regenerate
+  }
+
+  // Generate a 32-byte random token
+  const bytes = crypto.getRandomValues(new Uint8Array(32));
+  const token = Array.from(bytes)
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
+
+  mkdirSync(configDir, { recursive: true });
+  writeFileSync(tokenPath, `${token}\n`, { encoding: "utf-8", mode: 0o600 });
+  return token;
+}
+
+/**
+ * Returns the path where the auth token is stored, for display to the user.
+ */
+export function getTokenPath(configDir: string): string {
+  return join(configDir, TOKEN_FILENAME);
+}
+
+// ── Redact encrypted secrets from config responses ──────────────
+
+function redactSecrets(obj: unknown): unknown {
+  if (typeof obj === "string" && obj.startsWith("enc:v1:")) return "[encrypted]";
+  if (Array.isArray(obj)) return obj.map(redactSecrets);
+  if (obj && typeof obj === "object") {
+    const result: Record<string, unknown> = {};
+    for (const [key, value] of Object.entries(obj)) {
+      result[key] = redactSecrets(value);
+    }
+    return result;
+  }
+  return obj;
+}
+
 export function createApp() {
   const app = new Hono();
+  const configDir = resolveConfigDir();
+  const authToken = ensureAuthToken(configDir);
+
+  // ── Auth middleware — require Bearer token on all non-health endpoints ──
+  app.use("*", async (c, next) => {
+    // Allow health check without auth
+    if (c.req.path === "/api/health") return next();
+
+    // Allow static assets without auth
+    if (!c.req.path.startsWith("/api/")) return next();
+
+    const authHeader = c.req.header("authorization");
+    if (!authHeader) {
+      return c.json(
+        {
+          error: "Authentication required",
+          hint: `Provide Bearer token from ${getTokenPath(configDir)}`,
+        },
+        401,
+      );
+    }
+
+    const [scheme, token] = authHeader.split(" ", 2);
+    if (scheme?.toLowerCase() !== "bearer" || token !== authToken) {
+      return c.json({ error: "Invalid authentication token" }, 401);
+    }
+
+    return next();
+  });
 
   async function getConfigAndProfile() {
     const configDir = resolveConfigDir();
@@ -33,7 +115,7 @@ export function createApp() {
   app.get("/api/config", async (c) => {
     try {
       const { config, profileName } = await getConfigAndProfile();
-      return c.json({ profile: profileName, config });
+      return c.json({ profile: profileName, config: redactSecrets(config) });
     } catch {
       return c.json({ error: "Config not found. Run `am init` first." }, 500);
     }
@@ -271,6 +353,35 @@ export function createApp() {
         Connection: "keep-alive",
       },
     });
+  });
+
+  // ── A2A Agent Card endpoint ────────────────────────────────────
+  app.get("/.well-known/agent.json", async (c) => {
+    try {
+      const { config, configDir, profileName } = await getConfigAndProfile();
+      const resolved = buildResolvedConfig(config, profileName, configDir);
+
+      // Read provider settings from settings.a2a.publish passthrough
+      const a2aSettings = (config.settings as Record<string, unknown> | undefined)?.a2a as
+        | Record<string, unknown>
+        | undefined;
+      const publishSettings = a2aSettings?.publish as Record<string, unknown> | undefined;
+
+      const { generateAgentCard } = await import("../protocols/a2a/generate-card");
+      const card = generateAgentCard(resolved, {
+        baseUrl: `http://localhost:${c.req.header("host")?.split(":")[1] ?? "3000"}`,
+        provider: publishSettings
+          ? {
+              name: publishSettings.name as string | undefined,
+              description: publishSettings.description as string | undefined,
+              organization: publishSettings.provider as string | undefined,
+            }
+          : undefined,
+      });
+      return c.json(card);
+    } catch {
+      return c.json({ error: "Failed to generate Agent Card" }, 500);
+    }
   });
 
   // Serve static dashboard — must be after API routes

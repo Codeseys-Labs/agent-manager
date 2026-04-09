@@ -59,6 +59,7 @@ export const AgentProfileSchema = z
   .object({
     name: z.string(),
     description: z.string().optional(),
+    subagent_type: z.string().optional(),
     prompt: z.string().optional(),
     prompt_file: z.string().optional(),
     model: z.string().optional(),

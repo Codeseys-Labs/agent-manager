@@ -1,12 +1,10 @@
 import * as fs from "node:fs";
-import { readFile } from "node:fs/promises";
 import { join } from "node:path";
-import * as TOML from "@iarna/toml";
 import { defineCommand } from "citty";
+import { ZodError } from "zod";
 import { getAdapter, listAdapters } from "../adapters/registry";
-import { resolveConfigDir, resolveProjectConfig } from "../core/config";
+import { resolveConfigDir, resolveProjectConfig, tryReadConfig } from "../core/config";
 import { getStatus } from "../core/git";
-import { ConfigSchema } from "../core/schema";
 import { error, info, output } from "../lib/output";
 
 interface Check {
@@ -50,24 +48,25 @@ export const doctorCommand = defineCommand({
     // 3. config.toml is valid
     const configPath = join(configDir, "config.toml");
     try {
-      const raw = await readFile(configPath, "utf-8");
-      const parsed = TOML.parse(raw);
-      const result = ConfigSchema.safeParse(parsed);
-      if (result.success) {
-        checks.push({ name: "config.toml", status: "ok", message: "Valid" });
+      const config = await tryReadConfig(configPath);
+      if (config === null) {
+        checks.push({ name: "config.toml", status: "fail", message: "Not found" });
       } else {
-        const issues = result.error.issues
-          .map((i) => `${i.path.join(".")}: ${i.message}`)
+        checks.push({ name: "config.toml", status: "ok", message: "Valid" });
+      }
+    } catch (err: any) {
+      if (err instanceof ZodError) {
+        const issues = err.issues
+          .map(
+            (i: { path: (string | number)[]; message: string }) =>
+              `${i.path.join(".")}: ${i.message}`,
+          )
           .join("; ");
         checks.push({
           name: "config.toml",
           status: "fail",
           message: `Validation errors: ${issues}`,
         });
-      }
-    } catch (err: any) {
-      if (err?.code === "ENOENT") {
-        checks.push({ name: "config.toml", status: "fail", message: "Not found" });
       } else {
         checks.push({
           name: "config.toml",

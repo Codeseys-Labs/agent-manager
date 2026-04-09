@@ -3,9 +3,10 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import * as TOML from "@iarna/toml";
-import { createApp } from "../../src/web/server";
+import { createApp, ensureAuthToken } from "../../src/web/server";
 
 let tmpDir: string;
+let authToken: string;
 
 // Set up a temp config directory so API routes work without a real config
 beforeAll(async () => {
@@ -46,6 +47,9 @@ beforeAll(async () => {
 
   // Point agent-manager at the temp dir
   process.env.AM_CONFIG_DIR = tmpDir;
+
+  // Generate auth token for test requests
+  authToken = ensureAuthToken(tmpDir);
 });
 
 afterAll(async () => {
@@ -54,11 +58,22 @@ afterAll(async () => {
 });
 
 function request(app: ReturnType<typeof createApp>, path: string, init?: RequestInit) {
-  return app.request(path, init);
+  // Inject auth header for API routes (except health which is unauthenticated)
+  const headers = new Headers(init?.headers);
+  if (!headers.has("authorization") && path.startsWith("/api/") && path !== "/api/health") {
+    headers.set("authorization", `Bearer ${authToken}`);
+  }
+  return app.request(path, { ...init, headers });
 }
 
 describe("Web API", () => {
-  const app = createApp();
+  let app: ReturnType<typeof createApp>;
+
+  beforeAll(() => {
+    // createApp() must be called AFTER AM_CONFIG_DIR is set so the auth
+    // token is generated in the test temp directory.
+    app = createApp();
+  });
 
   it("GET /api/health returns 200 with version", async () => {
     const res = await request(app, "/api/health");

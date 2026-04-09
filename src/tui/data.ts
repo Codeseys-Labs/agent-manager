@@ -3,7 +3,12 @@ import { readActiveProfile } from "../commands/use.ts";
 /**
  * Data loading for TUI — bridges core config/resolver/git to TUI state.
  */
-import { loadResolvedConfig, resolveConfigDir, resolveProjectConfig } from "../core/config.ts";
+import {
+  buildResolvedConfig,
+  loadResolvedConfig,
+  resolveConfigDir,
+  resolveProjectConfig,
+} from "../core/config.ts";
 import { type StatusResult, getStatus } from "../core/git.ts";
 import { resolveActiveServers, resolveProfile } from "../core/resolver.ts";
 import type { Config, Server } from "../core/schema.ts";
@@ -82,29 +87,8 @@ export async function loadTuiData(): Promise<TuiData> {
   const detected = await getDetectedAdapters();
   const adapters: AdapterDrift[] = [];
 
-  // Build resolved config for drift detection
-  const resolvedServers: Record<string, any> = {};
-  for (const [name, srv] of Object.entries(config.servers ?? {})) {
-    resolvedServers[name] = {
-      name,
-      command: srv.command,
-      args: srv.args ?? [],
-      env: srv.env ?? {},
-      transport: srv.transport ?? "stdio",
-      description: srv.description ?? "",
-      tags: srv.tags ?? [],
-      enabled: srv.enabled ?? true,
-      adapters: (srv.adapters as Record<string, Record<string, unknown>>) ?? {},
-    };
-  }
-  const resolvedConfig = {
-    servers: resolvedServers,
-    instructions: {},
-    skills: {},
-    agents: {},
-    profile: profileName,
-    adapters: (config.adapters as Record<string, Record<string, unknown>>) ?? {},
-  };
+  // Build resolved config for drift detection using the core resolution path
+  const resolvedConfig = buildResolvedConfig(config, profileName, configDir);
 
   for (const adapter of detected) {
     try {

@@ -140,6 +140,7 @@ export interface ResolvedSkill {
 export interface ResolvedAgent {
   name: string;
   description: string;
+  subagent_type: string;
   prompt: string;
   prompt_file: string;
   model: string;

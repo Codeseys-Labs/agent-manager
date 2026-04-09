@@ -88,7 +88,7 @@ describe("exportConfig()", () => {
     const mcp = parsed.mcp as Record<string, Record<string, unknown>>;
     expect(mcp.api.type).toBe("remote");
     expect(mcp.api.url).toBe("https://example.com/mcp");
-    expect(mcp.api.headers).toEqual({ Authorization: "Bearer token" });
+    expect(mcp.api.env).toEqual({ Authorization: "Bearer token" });
   });
 
   test("generates AGENTS.md with am markers", async () => {

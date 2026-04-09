@@ -114,7 +114,9 @@ app.get("/auth/github/login", async (c) => {
   const params = new URLSearchParams({
     client_id: clientId,
     redirect_uri: redirectUri,
-    scope: "repo",
+    // Minimal OAuth scopes: contents:read for pull, contents:write for push.
+    // Avoids overly broad 'repo' scope that grants access to all repo settings.
+    scope: "contents:read contents:write",
     state,
   });
 
