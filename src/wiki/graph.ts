@@ -1,7 +1,7 @@
 /**
- * Knowledge graph management (ADR-0020).
+ * Knowledge graph management (ADR-0020, ADR-0022).
  *
- * Stores the graph as a JSON adjacency list at ~/.config/agent-manager/wiki/graph.json.
+ * Stores the graph as a JSON adjacency list at the resolved wiki directory's graph.json.
  * Nodes correspond to wiki pages, edges represent wikilinks, backlinks, entity mentions,
  * and "related" connections.
  */
@@ -9,21 +9,21 @@
 import { readFile, rename, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { entityToSlug, extractEntities } from "./ner";
-import { ensureWikiDirs, getWikiDir } from "./storage";
+import { ensureWikiDirs, resolveWikiDir } from "./storage";
 import type { GraphEdge, KnowledgeGraph, WikiPage, WikiPageType } from "./types";
 
 // ── Paths ───────────────────────────────────────────────────────
 
-function graphPath(): string {
-  return join(getWikiDir(), "graph.json");
+export function graphPath(wikiDir?: string): string {
+  return join(wikiDir ?? resolveWikiDir(), "graph.json");
 }
 
 // ── Load / Save ─────────────────────────────────────────────────
 
 /** Load graph from disk or return empty graph */
-export async function loadGraph(): Promise<KnowledgeGraph> {
+export async function loadGraph(wikiDir?: string): Promise<KnowledgeGraph> {
   try {
-    const raw = await readFile(graphPath(), "utf-8");
+    const raw = await readFile(graphPath(wikiDir), "utf-8");
     return JSON.parse(raw) as KnowledgeGraph;
   } catch (err: any) {
     if (err?.code === "ENOENT") {
@@ -34,11 +34,11 @@ export async function loadGraph(): Promise<KnowledgeGraph> {
 }
 
 /** Save graph to disk */
-export async function saveGraph(graph: KnowledgeGraph): Promise<void> {
-  await ensureWikiDirs();
+export async function saveGraph(graph: KnowledgeGraph, wikiDir?: string): Promise<void> {
+  await ensureWikiDirs(wikiDir);
   graph.updated = new Date().toISOString();
 
-  const filePath = graphPath();
+  const filePath = graphPath(wikiDir);
   const tmp = `${filePath}.${Date.now()}.tmp`;
   await writeFile(tmp, JSON.stringify(graph, null, 2), "utf-8");
   await rename(tmp, filePath);

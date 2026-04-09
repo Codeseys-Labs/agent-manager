@@ -1,25 +1,27 @@
 /**
  * Markdown-file-based knowledge storage with MiniSearch BM25 indexing (ADR-0020).
  *
- * Stores wiki pages at ~/.config/agent-manager/wiki/ as individual .md files
- * with YAML frontmatter. Replaces the flat JSON storage.
+ * Stores wiki pages as individual .md files with YAML frontmatter.
  *
- * Layout:
- *   wiki/
- *     entities/       — entity pages
- *     concepts/       — concept pages
- *     summaries/      — summary pages
- *     synthesis/      — synthesis pages
- *     decisions/      — decision pages
- *     raw/            — imported raw content
- *     index.json      — serialized MiniSearch index
- *     graph.json      — knowledge graph
+ * Layout (ADR-0022 — dual wiki location strategy):
+ *   ~/.config/agent-manager/wiki/
+ *     global/            — cross-project knowledge
+ *       entities/
+ *       concepts/
+ *       ...
+ *     projects/<name>/   — per-project knowledge
+ *       entities/
+ *       concepts/
+ *       ...
+ *
+ *   ~/code/my-app/.agent-manager/wiki -> ~/.../wiki/projects/my-app  (symlink)
  */
 
+import { existsSync, lstatSync, readFileSync, readlinkSync, rmSync, symlinkSync } from "node:fs";
 import { mkdir, readFile, readdir, rename, rm, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import MiniSearch from "minisearch";
-import { resolveConfigDir } from "../core/config";
+import { resolveConfigDir, resolveProjectConfig } from "../core/config";
 import type {
   EntityType,
   KnowledgeEntry,
@@ -41,31 +43,122 @@ const PAGE_SUBDIRS: Record<WikiPageType, string> = {
   decision: "decisions",
 };
 
-/** Returns the wiki directory path */
+/** Resolve the wiki directory based on context (project vs global). (ADR-0022) */
+export function resolveWikiDir(opts?: { global?: boolean }): string {
+  const configDir = resolveConfigDir();
+
+  if (opts?.global) {
+    return join(configDir, "wiki", "global");
+  }
+
+  // Check if we're in a project with a wiki symlink
+  const projectFile = resolveProjectConfig(process.cwd());
+  if (projectFile) {
+    const projectDir = dirname(projectFile);
+    const wikiLink = join(projectDir, ".agent-manager", "wiki");
+    if (existsSync(wikiLink)) return wikiLink; // follows symlink transparently
+  }
+
+  // Fall back to global wiki
+  return join(configDir, "wiki", "global");
+}
+
+/** Returns the wiki directory path (delegates to resolveWikiDir). */
 export function getWikiDir(): string {
-  return join(resolveConfigDir(), "wiki");
+  return resolveWikiDir();
 }
 
-function searchIndexPath(): string {
-  return join(getWikiDir(), "index.json");
+/** Resolve the project name from git remote or directory name. (ADR-0022) */
+export function resolveProjectName(projectDir: string): string {
+  // Try to read git remote
+  try {
+    const gitConfigPath = join(projectDir, ".git", "config");
+    const gitConfig = readFileSync(gitConfigPath, "utf-8");
+    const remoteMatch = gitConfig.match(/url\s*=\s*.*[/:]([^/\s]+?)(?:\.git)?$/m);
+    if (remoteMatch?.[1]) return remoteMatch[1];
+  } catch {
+    /* no git or no remote */
+  }
+
+  // Fall back to directory basename
+  return basename(projectDir);
 }
 
-function pageDir(type: WikiPageType): string {
-  return join(getWikiDir(), PAGE_SUBDIRS[type]);
+/** Get the wiki directory for a specific project (in the central AM repo). (ADR-0022) */
+export function getProjectWikiDir(projectName: string): string {
+  return join(resolveConfigDir(), "wiki", "projects", projectName);
 }
 
-function pagePath(slug: string, type: WikiPageType): string {
-  return join(pageDir(type), `${slug}.md`);
+/** Create the symlink from project to central AM wiki. (ADR-0022) */
+export function createProjectWikiLink(projectDir: string, projectName: string): void {
+  const amDir = join(projectDir, ".agent-manager");
+  const wikiLink = join(amDir, "wiki");
+  const target = getProjectWikiDir(projectName);
+
+  // Ensure the target directory exists in the central AM repo
+  require("node:fs").mkdirSync(target, { recursive: true });
+
+  // Ensure .agent-manager dir exists in the project
+  require("node:fs").mkdirSync(amDir, { recursive: true });
+
+  // Create symlink (skip if exists and points to right target)
+  if (existsSync(wikiLink)) {
+    try {
+      const stat = lstatSync(wikiLink);
+      if (stat.isSymbolicLink()) {
+        const existingTarget = readlinkSync(wikiLink);
+        if (existingTarget === target) return; // already correct
+      }
+    } catch {
+      /* can't read, recreate */
+    }
+    // Remove existing
+    rmSync(wikiLink, { recursive: true, force: true });
+  }
+
+  symlinkSync(target, wikiLink);
+}
+
+/** Ensure .agent-manager/wiki is in the project's .gitignore. (ADR-0022) */
+export function ensureWikiGitignore(projectDir: string): void {
+  const gitignorePath = join(projectDir, ".gitignore");
+  const entry = ".agent-manager/wiki";
+
+  try {
+    if (existsSync(gitignorePath)) {
+      const content = readFileSync(gitignorePath, "utf-8");
+      if (content.includes(entry)) return; // already there
+      // Append
+      const separator = content.endsWith("\n") ? "" : "\n";
+      require("node:fs").appendFileSync(gitignorePath, `${separator}${entry}\n`);
+    } else {
+      require("node:fs").writeFileSync(gitignorePath, `${entry}\n`);
+    }
+  } catch {
+    /* best effort */
+  }
+}
+
+function searchIndexPath(baseDir?: string): string {
+  return join(baseDir ?? getWikiDir(), "index.json");
+}
+
+function pageDir(type: WikiPageType, baseDir?: string): string {
+  return join(baseDir ?? getWikiDir(), PAGE_SUBDIRS[type]);
+}
+
+function pagePath(slug: string, type: WikiPageType, baseDir?: string): string {
+  return join(pageDir(type, baseDir), `${slug}.md`);
 }
 
 // ── Directory setup ─────────────────────────────────────────────
 
-/** Create wiki subdirectories if missing */
-export async function ensureWikiDirs(): Promise<void> {
-  const base = getWikiDir();
-  await mkdir(base, { recursive: true });
+/** Create wiki subdirectories if missing. Accepts optional base directory. */
+export async function ensureWikiDirs(baseDir?: string): Promise<void> {
+  const wikiDir = baseDir ?? getWikiDir();
+  await mkdir(wikiDir, { recursive: true });
   for (const sub of [...Object.values(PAGE_SUBDIRS), "raw"]) {
-    await mkdir(join(base, sub), { recursive: true });
+    await mkdir(join(wikiDir, sub), { recursive: true });
   }
 }
 
@@ -221,8 +314,8 @@ function quoteYamlIfNeeded(s: string): string {
 // ── Page CRUD ───────────────────────────────────────────────────
 
 /** Write a wiki page to disk as a markdown file with frontmatter */
-export async function writePage(page: WikiPage): Promise<void> {
-  await ensureWikiDirs();
+export async function writePage(page: WikiPage, wikiDir?: string): Promise<void> {
+  await ensureWikiDirs(wikiDir);
 
   const metadata: Record<string, unknown> = {
     title: page.title,
@@ -239,7 +332,7 @@ export async function writePage(page: WikiPage): Promise<void> {
   }
 
   const content = serializeFrontmatter(metadata, page.content);
-  const filePath = pagePath(page.slug, page.type);
+  const filePath = pagePath(page.slug, page.type, wikiDir);
 
   // Atomic write
   const tmp = `${filePath}.${Date.now()}.tmp`;
@@ -248,9 +341,9 @@ export async function writePage(page: WikiPage): Promise<void> {
 }
 
 /** Read a wiki page by slug. Searches all type subdirectories. */
-export async function readPage(slug: string): Promise<WikiPage | null> {
+export async function readPage(slug: string, wikiDir?: string): Promise<WikiPage | null> {
   for (const type of Object.keys(PAGE_SUBDIRS) as WikiPageType[]) {
-    const filePath = pagePath(slug, type);
+    const filePath = pagePath(slug, type, wikiDir);
     try {
       const raw = await readFile(filePath, "utf-8");
       return parseWikiPage(raw, slug);
@@ -263,9 +356,9 @@ export async function readPage(slug: string): Promise<WikiPage | null> {
 }
 
 /** Delete a wiki page by slug. Returns true if found and deleted. */
-export async function deletePage(slug: string): Promise<boolean> {
+export async function deletePage(slug: string, wikiDir?: string): Promise<boolean> {
   for (const type of Object.keys(PAGE_SUBDIRS) as WikiPageType[]) {
-    const filePath = pagePath(slug, type);
+    const filePath = pagePath(slug, type, wikiDir);
     try {
       await rm(filePath);
       return true;
@@ -281,12 +374,13 @@ export async function deletePage(slug: string): Promise<boolean> {
 export async function listPages(filter?: {
   type?: WikiPageType;
   tag?: string;
+  wikiDir?: string;
 }): Promise<WikiPage[]> {
   const pages: WikiPage[] = [];
   const types = filter?.type ? [filter.type] : (Object.keys(PAGE_SUBDIRS) as WikiPageType[]);
 
   for (const type of types) {
-    const dir = pageDir(type);
+    const dir = pageDir(type, filter?.wikiDir);
     let files: string[];
     try {
       files = await readdir(dir);
@@ -368,17 +462,18 @@ function createMiniSearchInstance(): MiniSearch<WikiPage> {
 export async function searchPages(
   query: string,
   limit = 20,
+  wikiDir?: string,
 ): Promise<Array<{ page: WikiPage; score: number }>> {
   if (!query.trim()) return [];
 
-  const index = await loadSearchIndex();
+  const index = await loadSearchIndex(wikiDir);
   const allResults = index.search(query);
   const results = allResults.slice(0, limit);
 
   // Load full pages for each result
   const out: Array<{ page: WikiPage; score: number }> = [];
   for (const result of results) {
-    const page = await readPage(result.id as string);
+    const page = await readPage(result.id as string, wikiDir);
     if (page) {
       out.push({ page, score: result.score });
     }
@@ -387,17 +482,17 @@ export async function searchPages(
 }
 
 /** Rebuild the MiniSearch index from all pages on disk */
-export async function rebuildSearchIndex(): Promise<void> {
-  const pages = await listPages();
+export async function rebuildSearchIndex(wikiDir?: string): Promise<void> {
+  const pages = await listPages({ wikiDir });
   const index = createMiniSearchInstance();
   index.addAll(pages);
-  await saveSearchIndex(index);
+  await saveSearchIndex(index, wikiDir);
 }
 
 /** Load the serialized MiniSearch index, or rebuild if missing */
-export async function loadSearchIndex(): Promise<MiniSearch<WikiPage>> {
+export async function loadSearchIndex(wikiDir?: string): Promise<MiniSearch<WikiPage>> {
   try {
-    const raw = await readFile(searchIndexPath(), "utf-8");
+    const raw = await readFile(searchIndexPath(wikiDir), "utf-8");
     const data = JSON.parse(raw);
     return MiniSearch.loadJSON<WikiPage>(JSON.stringify(data), {
       fields: ["title", "content", "tags_joined"],
@@ -417,10 +512,10 @@ export async function loadSearchIndex(): Promise<MiniSearch<WikiPage>> {
     });
   } catch {
     // Index doesn't exist or is corrupt — rebuild
-    await rebuildSearchIndex();
+    await rebuildSearchIndex(wikiDir);
     // Try loading again after rebuild
     try {
-      const raw = await readFile(searchIndexPath(), "utf-8");
+      const raw = await readFile(searchIndexPath(wikiDir), "utf-8");
       const data = JSON.parse(raw);
       return MiniSearch.loadJSON<WikiPage>(JSON.stringify(data), {
         fields: ["title", "content", "tags_joined"],
@@ -446,18 +541,21 @@ export async function loadSearchIndex(): Promise<MiniSearch<WikiPage>> {
 }
 
 /** Save the MiniSearch index to disk */
-export async function saveSearchIndex(index: MiniSearch<WikiPage>): Promise<void> {
-  await ensureWikiDirs();
+export async function saveSearchIndex(
+  index: MiniSearch<WikiPage>,
+  wikiDir?: string,
+): Promise<void> {
+  await ensureWikiDirs(wikiDir);
   const data = index.toJSON();
-  const filePath = searchIndexPath();
+  const filePath = searchIndexPath(wikiDir);
   const tmp = `${filePath}.${Date.now()}.tmp`;
   await writeFile(tmp, JSON.stringify(data, null, 2), "utf-8");
   await rename(tmp, filePath);
 }
 
 /** Update the search index after adding/modifying a page */
-async function updateSearchIndex(page: WikiPage): Promise<void> {
-  const index = await loadSearchIndex();
+async function updateSearchIndex(page: WikiPage, wikiDir?: string): Promise<void> {
+  const index = await loadSearchIndex(wikiDir);
   try {
     index.discard(page.slug);
   } catch {
@@ -466,16 +564,16 @@ async function updateSearchIndex(page: WikiPage): Promise<void> {
   // Need to vacuum after discard to reclaim space
   index.vacuum();
   index.add(page);
-  await saveSearchIndex(index);
+  await saveSearchIndex(index, wikiDir);
 }
 
 /** Remove a page from the search index */
-async function removeFromSearchIndex(slug: string): Promise<void> {
-  const index = await loadSearchIndex();
+async function removeFromSearchIndex(slug: string, wikiDir?: string): Promise<void> {
+  const index = await loadSearchIndex(wikiDir);
   try {
     index.discard(slug);
     index.vacuum();
-    await saveSearchIndex(index);
+    await saveSearchIndex(index, wikiDir);
   } catch {
     // Page wasn't in index
   }
@@ -652,8 +750,8 @@ export async function searchEntries(query: string): Promise<KnowledgeEntry[]> {
 }
 
 /** Rebuild the wiki index from all entries (legacy compat) */
-export async function rebuildIndex(): Promise<WikiIndex> {
-  const pages = await listPages();
+export async function rebuildIndex(wikiDir?: string): Promise<WikiIndex> {
+  const pages = await listPages({ wikiDir });
   const entries = pages.map(pageToEntry);
 
   const tags: Record<string, number> = {};
@@ -686,18 +784,18 @@ export async function rebuildIndex(): Promise<WikiIndex> {
   };
 
   // Also rebuild the MiniSearch index
-  await rebuildSearchIndex();
+  await rebuildSearchIndex(wikiDir);
 
   return index;
 }
 
 /** Get the current wiki index */
-export async function getIndex(): Promise<WikiIndex> {
-  return rebuildIndex();
+export async function getIndex(wikiDir?: string): Promise<WikiIndex> {
+  return rebuildIndex(wikiDir);
 }
 
 /** Get all entries */
-export async function getAllEntries(): Promise<KnowledgeEntry[]> {
-  const pages = await listPages();
+export async function getAllEntries(wikiDir?: string): Promise<KnowledgeEntry[]> {
+  const pages = await listPages({ wikiDir });
   return pages.map(pageToEntry);
 }

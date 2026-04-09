@@ -16,21 +16,29 @@
  */
 
 import { readFile } from "node:fs/promises";
+import { dirname, join } from "node:path";
 import { defineCommand } from "citty";
 import { getAdapter, listAdapters } from "../adapters/registry";
+import { resolveProjectConfig } from "../core/config";
 import { error, info, output } from "../lib/output";
 import { exportGraphForViz, findOrphans, loadGraph } from "../wiki/graph";
 import { harvestSession, harvestSessionAsPages } from "../wiki/harvester";
 import {
   addEntry,
+  createProjectWikiLink,
   deleteEntry,
   deletePage,
+  ensureWikiDirs,
+  ensureWikiGitignore,
   getAllEntries,
   getEntry,
   getIndex,
+  getProjectWikiDir,
   listPages,
   readPage,
   rebuildSearchIndex,
+  resolveProjectName,
+  resolveWikiDir,
   searchEntries,
   searchPages,
   writePage,
@@ -54,13 +62,15 @@ const searchSubcommand = defineCommand({
     quiet: { type: "boolean", alias: "q", default: false },
     verbose: { type: "boolean", alias: "v", default: false },
     limit: { type: "string", description: "Max results", default: "20" },
+    global: { type: "boolean", description: "Use global wiki", default: false },
   },
   async run({ args }) {
     const opts = { json: args.json, quiet: args.quiet, verbose: args.verbose };
     const query = args.query as string;
     const limit = Number.parseInt(args.limit, 10) || 20;
+    const wikiDir = args.global ? resolveWikiDir({ global: true }) : undefined;
 
-    const results = await searchPages(query, limit);
+    const results = await searchPages(query, limit, wikiDir);
 
     if (args.json) {
       output(
@@ -106,6 +116,7 @@ const addSubcommand = defineCommand({
     json: { type: "boolean", description: "JSON output", default: false },
     quiet: { type: "boolean", alias: "q", default: false },
     verbose: { type: "boolean", alias: "v", default: false },
+    global: { type: "boolean", description: "Use global wiki", default: false },
     type: {
       type: "string",
       description: "Entity type: fact, procedure, preference, relationship, capability",
@@ -191,13 +202,15 @@ const showSubcommand = defineCommand({
     json: { type: "boolean", description: "JSON output", default: false },
     quiet: { type: "boolean", alias: "q", default: false },
     verbose: { type: "boolean", alias: "v", default: false },
+    global: { type: "boolean", description: "Use global wiki", default: false },
   },
   async run({ args }) {
     const opts = { json: args.json, quiet: args.quiet, verbose: args.verbose };
     const slug = args.slug as string;
+    const wikiDir = args.global ? resolveWikiDir({ global: true }) : undefined;
 
     // Try reading as a wiki page first, fall back to legacy entry by ID
-    const page = await readPage(slug);
+    const page = await readPage(slug, wikiDir);
     if (page) {
       if (args.json) {
         output(page, opts);
@@ -267,13 +280,15 @@ const deleteSubcommand = defineCommand({
     quiet: { type: "boolean", alias: "q", default: false },
     verbose: { type: "boolean", alias: "v", default: false },
     force: { type: "boolean", alias: "f", description: "Skip confirmation", default: false },
+    global: { type: "boolean", description: "Use global wiki", default: false },
   },
   async run({ args }) {
     const opts = { json: args.json, quiet: args.quiet, verbose: args.verbose };
     const slug = args.slug as string;
+    const wikiDir = args.global ? resolveWikiDir({ global: true }) : undefined;
 
     // Try as wiki page first
-    const page = await readPage(slug);
+    const page = await readPage(slug, wikiDir);
     if (page) {
       if (!args.force && !args.json) {
         info(`About to delete: ${page.type} - ${page.title.slice(0, 60)}`, opts);
@@ -281,7 +296,7 @@ const deleteSubcommand = defineCommand({
         return;
       }
 
-      await deletePage(slug);
+      await deletePage(slug, wikiDir);
 
       if (args.json) {
         output({ action: "delete", slug }, opts);
@@ -327,6 +342,7 @@ const ingestSubcommand = defineCommand({
     verbose: { type: "boolean", alias: "v", default: false },
     adapter: { type: "string", description: "Filter to one adapter" },
     limit: { type: "string", description: "Max sessions to process", default: "10" },
+    global: { type: "boolean", description: "Use global wiki", default: false },
   },
   async run({ args }) {
     const opts = { json: args.json, quiet: args.quiet, verbose: args.verbose };
@@ -434,6 +450,7 @@ const harvestSubcommand = defineCommand({
     verbose: { type: "boolean", alias: "v", default: false },
     adapter: { type: "string", description: "Filter to one adapter" },
     limit: { type: "string", description: "Max sessions to process", default: "10" },
+    global: { type: "boolean", description: "Use global wiki", default: false },
   },
   async run({ args }) {
     const opts = { json: args.json, quiet: args.quiet, verbose: args.verbose };
@@ -541,6 +558,7 @@ const synthesizeSubcommand = defineCommand({
     json: { type: "boolean", description: "JSON output", default: false },
     quiet: { type: "boolean", alias: "q", default: false },
     verbose: { type: "boolean", alias: "v", default: false },
+    global: { type: "boolean", description: "Use global wiki", default: false },
     agent: { type: "string", description: "Filter to agent ID" },
     "top-k": { type: "string", description: "Number of entries to include", default: "10" },
   },
@@ -569,6 +587,7 @@ const briefingSubcommand = defineCommand({
     json: { type: "boolean", description: "JSON output", default: false },
     quiet: { type: "boolean", alias: "q", default: false },
     verbose: { type: "boolean", alias: "v", default: false },
+    global: { type: "boolean", description: "Use global wiki", default: false },
   },
   async run({ args }) {
     const opts = { json: args.json, quiet: args.quiet, verbose: args.verbose };
@@ -591,6 +610,7 @@ const exportSubcommand = defineCommand({
     json: { type: "boolean", description: "JSON output", default: false },
     quiet: { type: "boolean", alias: "q", default: false },
     verbose: { type: "boolean", alias: "v", default: false },
+    global: { type: "boolean", description: "Use global wiki", default: false },
     format: {
       type: "string",
       description: "Export format: json or markdown",
@@ -649,6 +669,7 @@ const importSubcommand = defineCommand({
     json: { type: "boolean", description: "JSON output", default: false },
     quiet: { type: "boolean", alias: "q", default: false },
     verbose: { type: "boolean", alias: "v", default: false },
+    global: { type: "boolean", description: "Use global wiki", default: false },
   },
   async run({ args }) {
     const opts = { json: args.json, quiet: args.quiet, verbose: args.verbose };
@@ -720,6 +741,7 @@ const lintSubcommand = defineCommand({
     json: { type: "boolean", description: "JSON output", default: false },
     quiet: { type: "boolean", alias: "q", default: false },
     verbose: { type: "boolean", alias: "v", default: false },
+    global: { type: "boolean", description: "Use global wiki", default: false },
   },
   async run({ args }) {
     const opts = { json: args.json, quiet: args.quiet, verbose: args.verbose };
@@ -822,6 +844,7 @@ const graphSubcommand = defineCommand({
     json: { type: "boolean", description: "JSON output", default: false },
     quiet: { type: "boolean", alias: "q", default: false },
     verbose: { type: "boolean", alias: "v", default: false },
+    global: { type: "boolean", description: "Use global wiki", default: false },
     format: {
       type: "string",
       description: "Format: raw (full graph) or viz (nodes+edges for visualization)",
@@ -870,11 +893,75 @@ const graphSubcommand = defineCommand({
   },
 });
 
+// ── Init Subcommand (ADR-0022) ──────────────────────────────────
+
+const initSubcommand = defineCommand({
+  meta: { name: "init", description: "Initialize wiki for current project" },
+  args: {
+    project: { type: "string", description: "Explicit project name" },
+    global: { type: "boolean", description: "Initialize global wiki only", default: false },
+    json: { type: "boolean", default: false },
+    quiet: { type: "boolean", alias: "q", default: false },
+    verbose: { type: "boolean", alias: "v", default: false },
+  },
+  async run({ args }) {
+    const opts = { json: args.json, quiet: args.quiet, verbose: args.verbose };
+
+    if (args.global) {
+      const wikiDir = resolveWikiDir({ global: true });
+      await ensureWikiDirs(wikiDir);
+      if (args.json) {
+        output({ action: "init", scope: "global", wikiDir }, opts);
+      } else {
+        info(`Global wiki initialized at ${wikiDir}`, opts);
+      }
+      return;
+    }
+
+    // Project wiki
+    const projectFile = resolveProjectConfig(process.cwd());
+    if (!projectFile) {
+      error(
+        "Not in a project directory (no .agent-manager.toml found). Use --global for the global wiki.",
+        opts,
+      );
+      process.exitCode = 1;
+      return;
+    }
+
+    const projectDir = dirname(projectFile);
+    const projectName = args.project ?? resolveProjectName(projectDir);
+    const projectWikiDir = getProjectWikiDir(projectName);
+
+    await ensureWikiDirs(projectWikiDir);
+    createProjectWikiLink(projectDir, projectName);
+    ensureWikiGitignore(projectDir);
+
+    if (args.json) {
+      output(
+        {
+          action: "init",
+          scope: "project",
+          project: projectName,
+          central: projectWikiDir,
+          symlink: join(projectDir, ".agent-manager", "wiki"),
+        },
+        opts,
+      );
+    } else {
+      info(`Project wiki "${projectName}" initialized`, opts);
+      info(`  Central: ${projectWikiDir}`, opts);
+      info(`  Symlink: ${join(projectDir, ".agent-manager", "wiki")}`, opts);
+    }
+  },
+});
+
 // ── Main Command ────────────────────────────────────────────────
 
 export const wikiCommand = defineCommand({
   meta: { name: "wiki", description: "LLM Wiki — knowledge synthesis from agent sessions" },
   subCommands: {
+    init: () => Promise.resolve(initSubcommand),
     search: () => Promise.resolve(searchSubcommand),
     add: () => Promise.resolve(addSubcommand),
     show: () => Promise.resolve(showSubcommand),
