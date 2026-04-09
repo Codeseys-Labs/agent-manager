@@ -43,8 +43,28 @@ console.log(
   `Building agent-manager v${version} (${targets.length} target${targets.length > 1 ? "s" : ""})\n`,
 );
 
-const { mkdirSync } = await import("node:fs");
+const { mkdirSync, readFileSync, writeFileSync, existsSync, copyFileSync } = await import("node:fs");
 mkdirSync("./dist", { recursive: true });
+
+// Patch Silvery's create-app.tsx to stub out the dynamic require for
+// @silvery/ag-term/buffer which can't be resolved by bun build --compile.
+// This diagnostic code only runs on render mismatch detection — safe to stub.
+const createAppPath = "./node_modules/@silvery/create/src/create-app.tsx";
+const createAppBackup = `${createAppPath}.bak`;
+if (existsSync(createAppPath)) {
+  const src = readFileSync(createAppPath, "utf8");
+  if (!existsSync(createAppBackup)) {
+    copyFileSync(createAppPath, createAppBackup);
+  }
+  const patched = src.replace(
+    /require\("@silvery\/ag-term\/buffer"\)\s*as\s*typeof\s*import\("@silvery\/ag-term\/buffer"\)/g,
+    '({ cellEquals: () => true, bufferToText: () => "" } as any)',
+  );
+  if (patched !== src) {
+    writeFileSync(createAppPath, patched);
+    console.log("  Patched @silvery/create for bun --compile compatibility");
+  }
+}
 
 for (const target of targets) {
   const outfile = `./dist/${target.artifact}`;
@@ -53,6 +73,16 @@ for (const target of targets) {
   try {
     // Bun.build() JS API does not support `compile` for standalone executables.
     // Use Bun.spawn to invoke `bun build --compile` CLI instead.
+    // Externalize optional lazy-loaded deps from Silvery that are never
+    // needed at runtime (Yoga fallback, Termless headless testing).
+    const externals = [
+      "yoga-wasm-web",
+      "yoga-wasm-web/auto",
+      "@termless/core",
+      "@termless/xtermjs",
+      "@termless/ghostty",
+    ].flatMap((pkg) => ["--external", pkg]);
+
     const proc = Bun.spawn(
       [
         "bun",
@@ -60,6 +90,7 @@ for (const target of targets) {
         "--compile",
         "--minify",
         "--sourcemap=linked",
+        ...externals,
         `--target=${target.bun}`,
         `--outfile=${outfile}`,
         "./src/cli.ts",

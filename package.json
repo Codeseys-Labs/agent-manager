@@ -8,6 +8,32 @@
     "agent-manager": "src/cli.ts",
     "am": "src/cli.ts"
   },
+  "files": [
+    "src/",
+    "LICENSE",
+    "README.md"
+  ],
+  "keywords": [
+    "ai",
+    "agent",
+    "mcp",
+    "config",
+    "claude",
+    "cursor",
+    "copilot",
+    "windsurf",
+    "gemini",
+    "toml",
+    "cli"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/baladithyab/agent-manager.git"
+  },
+  "homepage": "https://github.com/baladithyab/agent-manager",
+  "engines": {
+    "bun": ">=1.1"
+  },
   "scripts": {
     "dev": "bun run src/cli.ts",
     "build": "bun run scripts/build.ts",
@@ -17,6 +43,7 @@
     "test:integration": "bun test test/integration",
     "lint": "bunx @biomejs/biome check ./src ./test",
     "lint:fix": "bunx @biomejs/biome check --write ./src ./test",
+    "lint:fix:unsafe": "bunx @biomejs/biome check --write --unsafe ./src ./test",
     "typecheck": "bun x tsc --noEmit",
     "dev:web": "wrangler dev",
     "deploy:web": "wrangler deploy",
@@ -25,12 +52,14 @@
   "dependencies": {
     "@clack/prompts": "^0.9.1",
     "@iarna/toml": "^2.2.5",
+    "@silvery/ag-term": "^0.5.0",
+    "@silvery/ink": "^0.5.0",
     "chalk": "^5.4.1",
     "citty": "^0.1.6",
     "hono": "^4.12.12",
-    "ink": "^6.8.0",
     "isomorphic-git": "^1.27.2",
     "react": "^19.2.4",
+    "silvery": "^0.10.0",
     "zod": "^3.24.4"
   },
   "devDependencies": {
@@ -41,5 +70,8 @@
     "typescript": "^5.8.3",
     "wrangler": "^4.14.0"
   },
-  "license": "MIT"
+  "license": "MIT",
+  "overrides": {
+    "@silvery/commander": "0.8.1"
+  }
 }
