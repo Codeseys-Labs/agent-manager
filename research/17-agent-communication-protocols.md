@@ -209,12 +209,19 @@ CLI tools like Gemini CLI and Codex CLI blur the line between "IDE" and
 "standalone tool." If ACP is adopted by CLI tools as well as IDEs, am's role
 could expand beyond config management to actual protocol participation.
 
-**Research gap:** The user mentioned "OpenClaw" and "ACPX" as potential
-examples of CLI tools using ACP-related protocols. These could not be
-researched due to web access limitations during this analysis. If OpenClaw
-demonstrates that ACP/ACPX works in CLI contexts, it would change the
-assessment of whether am should implement ACP directly. This should be
-investigated in a follow-up research pass.
+**RESOLVED:** OpenClaw and ACPX research completed (see Section 9).
+
+**ACPX** (`npm: acpx`, v0.5.3) is a "headless CLI client for the Agent Client
+Protocol -- talk to coding agents from the command line." This proves ACP is
+NOT limited to IDEs. CLI tools can be ACP clients.
+
+**OpenClaw** (`npm: openclaw`, by steipete) is a "personal AI assistant you
+run on your own devices" -- a local-first gateway with 23+ messaging channel
+integrations. It depends on BOTH `@agentclientprotocol/sdk` (v0.18.0) and
+`@modelcontextprotocol/sdk` (v1.29.0), demonstrating dual-protocol usage.
+
+This changes the ACP assessment for am: ACP client integration is viable
+and should be a Phase 4 candidate (see ADR-0017).
 
 ---
 
@@ -538,19 +545,33 @@ explicitly stated otherwise.
 
 ## 9. Open Research Questions
 
-### OpenClaw and ACPX
+### OpenClaw and ACPX (RESOLVED)
 
-The user mentioned "OpenClaw" using "ACPX" as a potential example of a CLI
-tool participating in ACP-related protocols. This could not be researched due
-to web access limitations during this analysis.
+**ACPX** (`npm: acpx`, v0.5.3, by steipete and osolmaz):
+- "Headless CLI client for the Agent Client Protocol (ACP)"
+- Keywords: acp, agent-client-protocol, ai, claude-code, cli, codex, coding-agent
+- Enables talking to ACP-compatible coding agents from the command line
+- This is the **key finding**: ACP is not IDE-only. CLI tools can be ACP clients.
 
-**If OpenClaw demonstrates that ACP/ACPX works in CLI contexts (not just
-IDEs), it would change the assessment of whether am should implement ACP
-directly.** This should be investigated:
-- What is OpenClaw? Is it a CLI tool? An agent framework?
-- What is ACPX? An extension of ACP? A separate package?
-- How does OpenClaw use ACPX -- as client, server, or both?
-- Does this establish a pattern for CLI tools as ACP participants?
+**OpenClaw** (`npm: openclaw`, v2026.4.9):
+- "Multi-channel AI gateway with extensible messaging integrations"
+- A personal AI assistant running on your own devices -- local-first, single-user
+- Architecture: central Gateway at `ws://127.0.0.1:18789` connecting Pi agent,
+  CLI, WebChat, macOS/iOS/Android nodes
+- Dependencies include BOTH `@agentclientprotocol/sdk` (v0.18.0) AND
+  `@modelcontextprotocol/sdk` (v1.29.0) -- dual-protocol
+- 23+ channels: WhatsApp, Telegram, Slack, Discord, Google Chat, Signal,
+  iMessage, IRC, Teams, Matrix, Feishu, LINE, WeChat, and more
+- Features: voice, browser control (CDP), cron, webhooks, Live Canvas (A2UI)
+- Contains `vitest.acp.config.ts` and `vitest.extension-acpx*.config.ts`,
+  indicating ACP layer and ACPX extensions for agent-gateway communication
+
+**What this means for am-cli:**
+- am could use `@agentclientprotocol/sdk` to talk to coding agents via ACP
+- `am agent run claude-code --task "review"` could use ACP under the hood
+- am sits at the intersection of MCP (tools), ACP (agent control), A2A (discovery)
+- OpenClaw's dual-protocol pattern (ACP + MCP) validates this approach
+- Phase 4 of ADR-0017 should explore ACP client integration
 
 ### ACP in Non-IDE Contexts
 

@@ -391,15 +391,61 @@ am already runs as an MCP server. Phase 3 adds A2A. These are complementary:
 | **2b** | ACP | IDE config gen | Kiro adapter extension (~200 lines) | Low | Kiro ships ACP format |
 | **3** | A2A | Network coordinator | Hono server + A2A handler (~1500 lines) | Medium | A2A v1.0+ |
 
-### What am Does NOT Do
+### ACPX: ACP Beyond IDEs (OpenClaw Discovery)
 
-- **am does not implement ACP server** -- ACP is an IDE-to-agent protocol.
-  am is not an agent that IDEs connect to via ACP. am's value is managing
-  configs, not being an ACP endpoint. If am needs to be accessible to IDEs,
-  it already is via MCP (`am mcp-serve`).
+**Update:** Research into OpenClaw reveals that ACP is NOT limited to IDEs.
 
-- **am does not implement ACP client** -- am is not an IDE. It does not
-  launch or control agents via ACP. IDEs do that.
+**ACPX** (`npm: acpx`) is a "headless CLI client for the Agent Client Protocol
+-- talk to coding agents from the command line." This proves ACP works in CLI
+contexts, not just IDEs.
+
+**OpenClaw** (`npm: openclaw`) is a personal AI gateway that depends on BOTH
+`@agentclientprotocol/sdk` and `@modelcontextprotocol/sdk`. It uses ACP to
+communicate with coding agents and MCP for tool access, bridging agents to
+23+ messaging channels (WhatsApp, Telegram, Slack, Discord, etc.).
+
+This changes the assessment of ACP for am:
+
+```
+IDE (Zed/JetBrains/Kiro) ──ACP──► Coding Agent (Claude Code, Codex, etc.)
+                                        ▲
+ACPX CLI ──────────────────ACP─────────┘
+                                        ▲
+OpenClaw Gateway ──────────ACP─────────┘
+     │
+     ├── 23+ messaging channels
+     └── MCP tools
+                                        ▲
+am-cli (potential) ────────ACP─────────┘
+     │
+     ├── A2A (agent-to-agent discovery/delegation)
+     └── MCP (tool access, already done)
+```
+
+**Revised ACP role for am:**
+
+1. **am as ACP client** -- am could use ACPX/ACP SDK to talk to any
+   ACP-compatible coding agent from the command line. This would let `am`
+   orchestrate agents (tell Claude Code to review, tell Codex to implement)
+   using a standardized protocol instead of tool-specific CLIs.
+
+2. **am as ACP-aware config manager** -- am could manage ACP agent
+   registrations alongside MCP server registrations in config.toml.
+
+3. **am as protocol bridge** -- am sits at the intersection of MCP (tools),
+   ACP (agent control), and A2A (agent discovery). It could bridge between
+   all three: discover agents via A2A, control them via ACP, provide tools
+   via MCP.
+
+This is a Phase 4 consideration. The ACPX SDK is at v0.5.3 and the ACP SDK
+is at v0.18.2 -- both are actively maintained. A follow-up ADR should explore
+ACP client integration in detail once the A2A foundation (Phases 1-3) is in
+place.
+
+### What am Does NOT Do (Current Phases)
+
+- **am does not implement ACP server in Phases 1-3** -- Focus is on A2A
+  as the network coordination protocol. ACP client integration is Phase 4.
 
 - **am does not replace IDEs' ACP implementations** -- When Kiro implements
   ACP, Kiro handles the protocol. am generates the config that tells Kiro
@@ -462,15 +508,14 @@ am already runs as an MCP server. Phase 3 adds A2A. These are complementary:
 
 ## Alternatives Considered
 
-### 1. Implement am as an ACP Server
+### 1. Implement am as an ACP Client (Phase 4 Candidate)
 
-**Rejected.** ACP defines IDE-to-agent communication. am is not an agent that
-IDEs should connect to via ACP. am's value is managing configs (including ACP
-agent registrations) and being a network coordinator (via A2A). The existing
-MCP server mode (`am mcp-serve`) already makes am accessible to agents. Adding
-ACP server capability would be redundant unless ACP provides unique features
-MCP lacks (like IDE context access). If that becomes valuable, this decision
-can be revisited.
+**Deferred, not rejected.** The discovery of ACPX (headless CLI ACP client)
+and OpenClaw (ACP + MCP gateway) proves ACP works beyond IDEs. am could use
+`@agentclientprotocol/sdk` to talk to ACP-compatible coding agents from the
+command line, enabling orchestration commands like `am agent run claude-code
+--task "review PR #42"`. This is a strong Phase 4 candidate once the A2A
+foundation is in place, and warrants its own follow-up ADR.
 
 ### 2. Integrate Only A2A, Ignore ACP Entirely
 
