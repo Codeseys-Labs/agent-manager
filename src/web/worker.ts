@@ -6,7 +6,6 @@
  * See ADR-0015 for architecture.
  */
 import { Hono } from "hono";
-import { cors } from "hono/cors";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -95,13 +94,6 @@ function sessionCookie(value: string, maxAge = 86400): string {
 // ---------------------------------------------------------------------------
 
 const app = new Hono<{ Bindings: Bindings; Variables: Variables }>();
-
-app.use(
-  "/api/*",
-  cors({
-    origin: (origin) => origin ?? "",
-  }),
-);
 
 // ---------------------------------------------------------------------------
 // Health check (unauthenticated)

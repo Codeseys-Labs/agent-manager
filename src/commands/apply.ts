@@ -48,7 +48,7 @@ export const applyCommand = defineCommand({
       debug(`interpolation: ${w}`, opts);
     }
 
-    const resolved = buildResolvedConfig(interpolated, profileName);
+    const resolved = buildResolvedConfig(interpolated, profileName, configDir);
 
     // Find adapters to apply
     let adapters;

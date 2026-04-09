@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { readFile, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join, parse as parsePath } from "node:path";
@@ -188,7 +189,7 @@ export async function loadResolvedConfig(opts: LoadResolvedConfigOpts = {}): Pro
  * Converts the raw Config servers, instructions, skills, and agents
  * into fully resolved types suitable for adapter export/diff.
  */
-export function buildResolvedConfig(config: Config, profileName: string): ResolvedConfig {
+export function buildResolvedConfig(config: Config, profileName: string, configDir?: string): ResolvedConfig {
   const servers: Record<string, ResolvedServer> = {};
   for (const [name, srv] of Object.entries(config.servers ?? {})) {
     servers[name] = {
@@ -206,9 +207,17 @@ export function buildResolvedConfig(config: Config, profileName: string): Resolv
   // Map instructions
   const instructions: Record<string, ResolvedInstruction> = {};
   for (const [name, instr] of Object.entries(config.instructions ?? {})) {
+    let content = instr.content ?? "";
+    if (!content && instr.content_file && configDir) {
+      try {
+        content = readFileSync(join(configDir, instr.content_file), "utf-8");
+      } catch {
+        // If file cannot be read, leave content empty
+      }
+    }
     instructions[name] = {
       name,
-      content: instr.content ?? "",
+      content,
       scope: instr.scope ?? "always",
       description: instr.description ?? "",
       globs: instr.globs ?? [],

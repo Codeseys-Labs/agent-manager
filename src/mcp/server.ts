@@ -197,7 +197,7 @@ function defineTools(): ToolEntry[] {
         } catch {
           gitStatus = { branch: "unknown", clean: true, dirty: [], remotes: [] };
         }
-        const resolved = buildResolvedConfig(config, profileName);
+        const resolved = buildResolvedConfig(config, profileName, configDir);
         const serverCount = Object.keys(resolved.servers).length;
         const adapters = await getDetectedAdapters();
         const toolStatuses: Array<{ name: string; status: string; changes: number }> = [];
@@ -665,7 +665,7 @@ function defineTools(): ToolEntry[] {
         const { config: decrypted } = await interpolateEnvAsync(config, {
           encryptionKey: encryptionKey ?? undefined,
         });
-        const resolved = buildResolvedConfig(decrypted, profileName);
+        const resolved = buildResolvedConfig(decrypted, profileName, configDir);
         const projectFile = resolveProjectConfig(process.cwd());
 
         let adapters;

@@ -65,7 +65,7 @@ export const gitlab: GitPlatformAdapter = {
       "AM_ENCRYPTION_KEY",
       "--value",
       key,
-      "--repo",
+      "--project",
       repo,
     ]);
     if (result.code !== 0) {
@@ -78,7 +78,7 @@ export const gitlab: GitPlatformAdapter = {
     if (!repo) {
       throw new Error(`Cannot parse GitLab repo from URL: ${repoUrl}`);
     }
-    const result = await run(["glab", "variable", "get", "AM_ENCRYPTION_KEY", "--repo", repo]);
+    const result = await run(["glab", "variable", "get", "AM_ENCRYPTION_KEY", "--project", repo]);
     if (result.code !== 0) {
       return null;
     }

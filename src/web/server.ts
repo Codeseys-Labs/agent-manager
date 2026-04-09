@@ -69,7 +69,7 @@ export function createApp() {
   app.get("/api/status", async (c) => {
     try {
       const { config, configDir, profileName } = await getConfigAndProfile();
-      const resolved = buildResolvedConfig(config, profileName);
+      const resolved = buildResolvedConfig(config, profileName, configDir);
 
       // Git status
       let gitStatus;
@@ -152,8 +152,8 @@ export function createApp() {
 
   app.post("/api/apply", async (c) => {
     try {
-      const { config, profileName } = await getConfigAndProfile();
-      const resolved = buildResolvedConfig(config, profileName);
+      const { config, configDir, profileName } = await getConfigAndProfile();
+      const resolved = buildResolvedConfig(config, profileName, configDir);
 
       const adapters = await getDetectedAdapters();
       const results: Array<{

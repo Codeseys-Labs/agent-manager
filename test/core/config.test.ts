@@ -3,6 +3,7 @@ import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+  buildResolvedConfig,
   loadResolvedConfig,
   mergeConfigs,
   projectToConfig,
@@ -183,6 +184,30 @@ describe("mergeConfigs", () => {
     expect(merged.settings?.mcp_serve).toEqual({ allow_apply: true });
   });
 
+  test("merges agents as union", () => {
+    const a: Config = {
+      agents: { reviewer: { description: "Code reviewer" } },
+    };
+    const b: Config = {
+      agents: { deployer: { description: "Deploy agent" } },
+    };
+    const merged = mergeConfigs(a, b);
+    expect(merged.agents?.reviewer).toBeDefined();
+    expect(merged.agents?.deployer).toBeDefined();
+  });
+
+  test("higher precedence agent overrides same-name agent", () => {
+    const a: Config = {
+      agents: { reviewer: { description: "Old reviewer" } },
+    };
+    const b: Config = {
+      agents: { reviewer: { description: "New reviewer", model: "o3" } },
+    };
+    const merged = mergeConfigs(a, b);
+    expect(merged.agents?.reviewer.description).toBe("New reviewer");
+    expect(merged.agents?.reviewer.model).toBe("o3");
+  });
+
   test("adapters shallow merge", () => {
     const a: Config = {
       adapters: { "claude-code": { permission_mode: "allowEdits" } },
@@ -271,5 +296,126 @@ describe("projectToConfig", () => {
     const proj = { agents: { reviewer: { description: "Code reviewer" } } };
     const config = projectToConfig(proj as any);
     expect(config.agents?.reviewer).toBeDefined();
+  });
+});
+
+describe("buildResolvedConfig", () => {
+  test("maps instructions with all fields", () => {
+    const config: Config = {
+      instructions: {
+        "ts-rules": {
+          content: "Use strict mode",
+          scope: "glob",
+          description: "TypeScript rules",
+          globs: ["*.ts"],
+          targets: ["claude-code", "cursor"],
+        },
+      },
+    };
+    const resolved = buildResolvedConfig(config, "default");
+    const instr = resolved.instructions["ts-rules"];
+    expect(instr.name).toBe("ts-rules");
+    expect(instr.content).toBe("Use strict mode");
+    expect(instr.scope).toBe("glob");
+    expect(instr.description).toBe("TypeScript rules");
+    expect(instr.globs).toEqual(["*.ts"]);
+    expect(instr.targets).toEqual(["claude-code", "cursor"]);
+  });
+
+  test("maps skills with all fields", () => {
+    const config: Config = {
+      skills: {
+        research: {
+          path: "skills/research",
+          description: "Deep research skill",
+          tags: ["research", "web"],
+        },
+      },
+    };
+    const resolved = buildResolvedConfig(config, "default");
+    const skill = resolved.skills.research;
+    expect(skill.name).toBe("research");
+    expect(skill.path).toBe("skills/research");
+    expect(skill.description).toBe("Deep research skill");
+    expect(skill.tags).toEqual(["research", "web"]);
+  });
+
+  test("maps agents with all fields", () => {
+    const config: Config = {
+      agents: {
+        reviewer: {
+          description: "Code reviewer",
+          model: "o3",
+          tools: ["Read", "Grep"],
+          disallowed_tools: ["Write"],
+          mcp_servers: ["fetch"],
+          max_turns: 5,
+        },
+      },
+    };
+    const resolved = buildResolvedConfig(config, "work");
+    const agent = resolved.agents.reviewer;
+    expect(agent.name).toBe("reviewer");
+    expect(agent.description).toBe("Code reviewer");
+    expect(agent.model).toBe("o3");
+    expect(agent.tools).toEqual(["Read", "Grep"]);
+    expect(agent.disallowed_tools).toEqual(["Write"]);
+    expect(agent.mcp_servers).toEqual(["fetch"]);
+    expect(agent.max_turns).toBe(5);
+  });
+
+  test("empty config returns empty records", () => {
+    const resolved = buildResolvedConfig({}, "empty");
+    expect(Object.keys(resolved.servers)).toHaveLength(0);
+    expect(Object.keys(resolved.instructions)).toHaveLength(0);
+    expect(Object.keys(resolved.skills)).toHaveLength(0);
+    expect(Object.keys(resolved.agents)).toHaveLength(0);
+    expect(resolved.profile).toBe("empty");
+  });
+
+  test("resolves content_file to file contents when configDir is provided", async () => {
+    const { writeFileSync, mkdtempSync, rmSync } = await import("node:fs");
+    const tmpDir = mkdtempSync(join(tmpdir(), "am-content-file-"));
+    try {
+      writeFileSync(join(tmpDir, "rules.md"), "Always use semicolons", "utf-8");
+      const config: Config = {
+        instructions: {
+          "style-guide": {
+            content_file: "rules.md",
+            scope: "always",
+          },
+        },
+      };
+      const resolved = buildResolvedConfig(config, "default", tmpDir);
+      expect(resolved.instructions["style-guide"].content).toBe("Always use semicolons");
+    } finally {
+      rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  test("content_file is ignored when content is already set", async () => {
+    const config: Config = {
+      instructions: {
+        "inline-rule": {
+          content: "Inline content wins",
+          scope: "always",
+        },
+      },
+    };
+    const resolved = buildResolvedConfig(config, "default", "/nonexistent");
+    expect(resolved.instructions["inline-rule"].content).toBe("Inline content wins");
+  });
+
+  test("content_file returns empty when configDir is not provided", () => {
+    const config: Config = {
+      instructions: {
+        "no-dir": {
+          content_file: "rules.md",
+          scope: "always",
+        },
+      },
+    };
+    const resolved = buildResolvedConfig(config, "default");
+    expect(resolved.instructions["no-dir"].content).toBe("");
   });
 });

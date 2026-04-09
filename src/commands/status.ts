@@ -37,7 +37,7 @@ export const statusCommand = defineCommand({
       gitStatus = { branch: "unknown", clean: true, dirty: [], remotes: [] };
     }
 
-    const resolved = buildResolvedConfig(config, profileName);
+    const resolved = buildResolvedConfig(config, profileName, configDir);
     const serverCount = Object.keys(resolved.servers).length;
 
     // Adapter drift
