@@ -73,7 +73,21 @@ describe("MCP server", () => {
     expect(names).toContain("am_session_list");
     expect(names).toContain("am_session_export");
     expect(names).toContain("am_session_search");
-    expect(names.length).toBe(14);
+    expect(names).toContain("am_registry_search");
+    expect(names).toContain("am_registry_install");
+    expect(names).toContain("am_registry_list_installed");
+    // Wiki tools (ADR-0020)
+    expect(names).toContain("am_wiki_search");
+    expect(names).toContain("am_wiki_add");
+    expect(names).toContain("am_wiki_synthesize");
+    expect(names).toContain("am_wiki_briefing");
+    expect(names).toContain("am_wiki_harvest");
+    // A2A agent tools (ADR-0017)
+    expect(names).toContain("am_agent_discover");
+    expect(names).toContain("am_agent_list");
+    expect(names).toContain("am_agent_delegate");
+    expect(names).toContain("am_agent_task_status");
+    expect(names.length).toBe(26);
   });
 
   test("am_list_servers returns servers from config", async () => {

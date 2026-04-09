@@ -85,14 +85,6 @@ function checkPermission(
   return { allowed: true };
 }
 
-function checkPushPermission(settings?: Settings): { allowed: boolean; reason?: string } {
-  if (settings?.mcp_serve?.allow_push) return { allowed: true };
-  return {
-    allowed: false,
-    reason: "am_sync_push requires opt-in. Set settings.mcp_serve.allow_push = true in config.toml",
-  };
-}
-
 // ── Secret redaction ───────────────────────────────────────────
 
 function redactSecrets(obj: unknown): unknown {
@@ -634,6 +626,164 @@ function defineTools(): ToolEntry[] {
       },
     },
 
+    // ── Registry tools (read-only + write-local) ─────────────
+    {
+      def: {
+        name: "am_registry_search",
+        description:
+          "Search the MCP registry for server packages. Returns package names, descriptions, versions, and install status.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            query: { type: "string", description: "Search query" },
+            tag: { type: "string", description: "Filter by tag" },
+            verified: {
+              type: "boolean",
+              description: "Show only verified packages",
+            },
+            limit: {
+              type: "number",
+              description: "Max results (default: 20)",
+            },
+          },
+          required: ["query"],
+        },
+      },
+      tier: "read-only",
+      handler: async (args) => {
+        const { search } = await import("../registry/client");
+        const filters: Record<string, unknown> = {};
+        if (args.tag) filters.tag = args.tag;
+        if (args.verified) filters.verified = true;
+        if (args.limit) filters.limit = args.limit;
+        if (!filters.limit) filters.limit = 20;
+        const result = await search(args.query as string, filters as any);
+        return result;
+      },
+    },
+    {
+      def: {
+        name: "am_registry_install",
+        description:
+          "Install an MCP server package from the registry into the agent-manager config. Resolves package metadata, adds the server entry, and auto-commits.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            name: {
+              type: "string",
+              description: "Package name to install",
+            },
+            env: {
+              type: "object",
+              additionalProperties: { type: "string" },
+              description: "Environment variable values for the server (key-value pairs)",
+            },
+          },
+          required: ["name"],
+        },
+      },
+      tier: "write-local",
+      handler: async (args) => {
+        const { getPackage: getPkg } = await import("../registry/client");
+        const pkgName = args.name as string;
+        const pkg = await getPkg(pkgName);
+        if (!pkg) {
+          throw new Error(`Package "${pkgName}" not found in the registry`);
+        }
+
+        const configDir = resolveConfigDir();
+        const configPath = join(configDir, "config.toml");
+        const config = await readConfig(configPath);
+
+        if (config.servers?.[pkg.name]) {
+          throw new Error(
+            `Server "${pkg.name}" already exists. Remove it first or use am_remove_server.`,
+          );
+        }
+
+        // Build env from provided values + defaults
+        const env: Record<string, string> = {};
+        const providedEnv = (args.env as Record<string, string>) ?? {};
+        for (const envVar of pkg.server.env ?? []) {
+          if (providedEnv[envVar.name]) {
+            env[envVar.name] = providedEnv[envVar.name];
+          } else if (envVar.default) {
+            env[envVar.name] = envVar.default;
+          } else if (envVar.required) {
+            env[envVar.name] = `\${${envVar.name}}`;
+          }
+        }
+
+        if (!config.servers) config.servers = {};
+        config.servers[pkg.name] = {
+          command: pkg.server.command,
+          ...(pkg.server.args ? { args: pkg.server.args } : {}),
+          ...(Object.keys(env).length > 0 ? { env } : {}),
+          transport: pkg.server.transport ?? "stdio",
+          enabled: true,
+          description: pkg.description,
+          tags: pkg.tags,
+          _registry: {
+            source: "mcp-registry",
+            package: pkg.name,
+            version: pkg.version,
+            installed_at: new Date().toISOString(),
+          },
+        } as any;
+
+        await writeConfig(configPath, config);
+        try {
+          await commitAll(configDir, `registry install: ${pkg.name}`);
+        } catch {
+          // Nothing to commit
+        }
+        return {
+          action: "install",
+          package: pkg.name,
+          version: pkg.version,
+        };
+      },
+    },
+    {
+      def: {
+        name: "am_registry_list_installed",
+        description:
+          "List all MCP servers that were installed from the registry, including their provenance metadata (package name, version, install date).",
+        inputSchema: { type: "object", properties: {} },
+      },
+      tier: "read-only",
+      handler: async () => {
+        const { config } = await loadConfigAndProfile();
+        const servers = config.servers ?? {};
+        const installed: Array<{
+          name: string;
+          command: string;
+          package: string;
+          version: string;
+          installed_at: string;
+          enabled: boolean;
+        }> = [];
+
+        for (const [name, srv] of Object.entries(servers)) {
+          const provenance = (srv as any)._registry as
+            | { source: string; package: string; version: string; installed_at: string }
+            | undefined;
+          if (provenance?.source === "mcp-registry") {
+            installed.push({
+              name,
+              command: srv.command,
+              package: provenance.package,
+              version: provenance.version,
+              installed_at: provenance.installed_at,
+              enabled: srv.enabled ?? true,
+            });
+          }
+        }
+
+        return { servers: installed, total: installed.length };
+      },
+    },
+
     // ── Write-remote tier ─────────────────────────────────────
     {
       def: {
@@ -741,6 +891,329 @@ function defineTools(): ToolEntry[] {
         return { action: "pull", remote: status.remotes[0].url, branch: status.branch };
       },
     },
+
+    // ── A2A Agent tools (ADR-0017) ──────────────────────────────
+    {
+      def: {
+        name: "am_agent_discover",
+        description:
+          "Discover an A2A agent by fetching its Agent Card from a URL. Returns the agent's name, description, skills, and capabilities.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            url: { type: "string", description: "Base URL of the A2A agent to discover" },
+          },
+          required: ["url"],
+        },
+      },
+      tier: "read-only",
+      handler: async (args) => {
+        const { discoverFromUrl } = await import("../protocols/a2a/discovery");
+        const url = args.url as string;
+        const card = await discoverFromUrl(url);
+        if (!card) {
+          return { error: `No A2A Agent Card found at ${url}` };
+        }
+        return { card };
+      },
+    },
+    {
+      def: {
+        name: "am_agent_list",
+        description: "List all registered A2A agents from the local agent roster.",
+        inputSchema: { type: "object", properties: {} },
+      },
+      tier: "read-only",
+      handler: async () => {
+        const { loadRoster } = await import("../protocols/a2a/discovery");
+        const configDir = resolveConfigDir();
+        const roster = await loadRoster(configDir);
+        return {
+          agents: roster.map((r) => ({
+            name: r.name,
+            url: r.url,
+            description: r.description,
+            addedAt: r.addedAt,
+            lastSeen: r.lastSeen,
+          })),
+          total: roster.length,
+        };
+      },
+    },
+    {
+      def: {
+        name: "am_agent_delegate",
+        description:
+          "Send a task to a registered A2A agent. The agent must be in the local roster (use am_agent_list to see available agents).",
+        inputSchema: {
+          type: "object",
+          properties: {
+            name: { type: "string", description: "Agent name from the roster" },
+            message: { type: "string", description: "Task message to send to the agent" },
+          },
+          required: ["name", "message"],
+        },
+      },
+      tier: "write-local",
+      handler: async (args) => {
+        const { loadRoster } = await import("../protocols/a2a/discovery");
+        const { A2AClient } = await import("../protocols/a2a/client");
+        const configDir = resolveConfigDir();
+        const roster = await loadRoster(configDir);
+        const name = args.name as string;
+        const message = args.message as string;
+
+        const entry = roster.find((r) => r.name === name);
+        if (!entry) {
+          throw new Error(
+            `Agent "${name}" not found in roster. Available: ${roster.map((r) => r.name).join(", ") || "(none)"}`,
+          );
+        }
+
+        const client = new A2AClient({ timeout: 60_000 });
+        const taskId = `am-mcp-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+
+        const result = await client.sendTask(entry.url, {
+          id: taskId,
+          message: {
+            role: "user",
+            parts: [{ type: "text", text: message }],
+          },
+        });
+
+        return { agent: name, task: result };
+      },
+    },
+    {
+      def: {
+        name: "am_agent_task_status",
+        description: "Query the status of a previously delegated A2A task.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            name: { type: "string", description: "Agent name from the roster" },
+            taskId: { type: "string", description: "Task ID returned from am_agent_delegate" },
+          },
+          required: ["name", "taskId"],
+        },
+      },
+      tier: "read-only",
+      handler: async (args) => {
+        const { loadRoster } = await import("../protocols/a2a/discovery");
+        const { A2AClient } = await import("../protocols/a2a/client");
+        const configDir = resolveConfigDir();
+        const roster = await loadRoster(configDir);
+        const name = args.name as string;
+        const taskId = args.taskId as string;
+
+        const entry = roster.find((r) => r.name === name);
+        if (!entry) {
+          throw new Error(`Agent "${name}" not found in roster.`);
+        }
+
+        const client = new A2AClient({ timeout: 30_000 });
+        const result = await client.getTask(entry.url, { id: taskId });
+        return { agent: name, task: result };
+      },
+    },
+
+    // ── Wiki tools (ADR-0020) ─────────────────────────────────
+    {
+      def: {
+        name: "am_wiki_search",
+        description:
+          "Search the LLM Wiki knowledge base. Returns matching entries ranked by relevance.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            query: { type: "string", description: "Search query" },
+            limit: {
+              type: "number",
+              description: "Maximum results to return (default: 20)",
+            },
+          },
+          required: ["query"],
+        },
+      },
+      tier: "read-only",
+      handler: async (args) => {
+        const { searchEntries } = await import("../wiki/storage");
+        const query = args.query as string;
+        const limit = (args.limit as number) ?? 20;
+        const entries = await searchEntries(query);
+        return { query, results: entries.slice(0, limit), total: entries.length };
+      },
+    },
+    {
+      def: {
+        name: "am_wiki_add",
+        description:
+          "Add a knowledge entry to the LLM Wiki. Supports types: fact, procedure, preference, relationship, capability.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            type: {
+              type: "string",
+              enum: ["fact", "procedure", "preference", "relationship", "capability"],
+              description: "Entity type",
+            },
+            content: { type: "string", description: "Entry content" },
+            context: { type: "string", description: "Optional context" },
+            tags: {
+              type: "array",
+              items: { type: "string" },
+              description: "Tags for categorization",
+            },
+            confidence: {
+              type: "number",
+              description: "Confidence score 0.0-1.0 (default: 0.7)",
+            },
+          },
+          required: ["type", "content"],
+        },
+      },
+      tier: "write-local",
+      handler: async (args) => {
+        const { addEntry } = await import("../wiki/storage");
+        const now = new Date().toISOString();
+        const entry = {
+          id: crypto.randomUUID(),
+          source: { type: "manual" as const, timestamp: now },
+          extracted_at: now,
+          confidence: (args.confidence as number) ?? 0.7,
+          entity_type: args.type as
+            | "fact"
+            | "procedure"
+            | "preference"
+            | "relationship"
+            | "capability",
+          content: args.content as string,
+          context: (args.context as string) ?? "",
+          tags: (args.tags as string[]) ?? [],
+          references: [],
+          provenance: {
+            created_by: "mcp",
+            created_at: now,
+            last_modified: now,
+            modification_history: [
+              {
+                timestamp: now,
+                action: "created" as const,
+                by: "mcp",
+                details: "Added via MCP tool",
+              },
+            ],
+            verified: false,
+          },
+        };
+        await addEntry(entry);
+        return { action: "add", entry };
+      },
+    },
+    {
+      def: {
+        name: "am_wiki_synthesize",
+        description:
+          "Generate a context block from the knowledge base for a given query. Returns relevant entries formatted as markdown.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            query: { type: "string", description: "Topic or question" },
+            agent_id: { type: "string", description: "Filter to a specific agent" },
+            top_k: {
+              type: "number",
+              description: "Number of entries to include (default: 10)",
+            },
+          },
+          required: ["query"],
+        },
+      },
+      tier: "read-only",
+      handler: async (args) => {
+        const { synthesizeContext } = await import("../wiki/synthesizer");
+        const context = await synthesizeContext(args.query as string, {
+          agentId: args.agent_id as string | undefined,
+          topK: (args.top_k as number) ?? 10,
+        });
+        return { query: args.query, context };
+      },
+    },
+    {
+      def: {
+        name: "am_wiki_briefing",
+        description:
+          "Generate an agent briefing from the knowledge base. Returns a markdown document with facts, procedures, preferences, and gaps.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            agent_id: { type: "string", description: "Agent/adapter ID" },
+          },
+          required: ["agent_id"],
+        },
+      },
+      tier: "read-only",
+      handler: async (args) => {
+        const { getAllEntries } = await import("../wiki/storage");
+        const { buildAgentBriefing } = await import("../wiki/synthesizer");
+        const entries = await getAllEntries();
+        const briefing = buildAgentBriefing(entries, args.agent_id as string);
+        return { agent_id: args.agent_id, briefing };
+      },
+    },
+    {
+      def: {
+        name: "am_wiki_harvest",
+        description:
+          "Trigger knowledge extraction from a specific session. Extracts facts, procedures, preferences, and capabilities.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            adapter: {
+              type: "string",
+              description: "Adapter name (e.g., 'claude-code', 'codex-cli')",
+            },
+            session_id: { type: "string", description: "Session ID within the adapter" },
+          },
+          required: ["adapter", "session_id"],
+        },
+      },
+      tier: "write-local",
+      handler: async (args) => {
+        const adapterName = args.adapter as string;
+        const sessionId = args.session_id as string;
+
+        const adapter = await getAdapter(adapterName);
+        if (!adapter?.sessionReader) {
+          throw new Error(`Adapter "${adapterName}" does not support session reading`);
+        }
+
+        const session = await adapter.sessionReader.loadSession(sessionId);
+        if (!session) {
+          throw new Error(`Session "${sessionId}" not found in ${adapterName}`);
+        }
+
+        const { harvestSession } = await import("../wiki/harvester");
+        const { addEntry } = await import("../wiki/storage");
+        const entries = await harvestSession(session);
+        let added = 0;
+        for (const entry of entries) {
+          try {
+            await addEntry(entry);
+            added++;
+          } catch {
+            // Skip duplicates
+          }
+        }
+
+        return {
+          action: "harvest",
+          adapter: adapterName,
+          session_id: sessionId,
+          entries_extracted: entries.length,
+          entries_added: added,
+        };
+      },
+    },
   ];
 }
 
@@ -754,9 +1227,26 @@ export class McpServer {
     this.tools = defineTools();
   }
 
+  /** Re-read settings from config for fresh permission checks. */
+  private async refreshSettings(): Promise<void> {
+    try {
+      const configDir = resolveConfigDir();
+      const projectFile = resolveProjectConfig(process.cwd());
+      const config = await loadResolvedConfig({ configDir, projectFile });
+      this.settings = config.settings;
+    } catch {
+      // Keep existing settings if re-read fails
+    }
+  }
+
   /** Process a single JSON-RPC request and return a response. */
   async handleRequest(req: JsonRpcRequest): Promise<JsonRpcResponse | null> {
     const id = req.id ?? null;
+
+    // Refresh settings before handling tool calls so permission checks are never stale
+    if (req.method === "tools/call") {
+      await this.refreshSettings();
+    }
 
     switch (req.method) {
       case "initialize":

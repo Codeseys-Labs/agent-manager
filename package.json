@@ -5,14 +5,19 @@
   "type": "module",
   "main": "src/cli.ts",
   "bin": {
-    "agent-manager": "src/cli.ts",
-    "am": "src/cli.ts"
+    "agent-manager": "bin/am.js",
+    "am": "bin/am.js"
   },
   "files": [
     "src/",
+    "bin/",
+    "dist/",
     "LICENSE",
     "README.md"
   ],
+  "publishConfig": {
+    "access": "public"
+  },
   "keywords": [
     "ai",
     "agent",
@@ -32,12 +37,14 @@
   },
   "homepage": "https://github.com/baladithyab/agent-manager",
   "engines": {
+    "node": ">=18",
     "bun": ">=1.1"
   },
   "scripts": {
     "dev": "bun run src/cli.ts",
     "build": "bun run scripts/build.ts",
     "test": "bun test",
+    "test:coverage": "bun test --coverage",
     "test:watch": "bun test --watch",
     "test:unit": "bun test test/core test/adapters",
     "test:integration": "bun test test/integration",
