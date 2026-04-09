@@ -8,18 +8,20 @@
  */
 
 import { join } from "node:path";
-import {
-  resolveConfigDir,
-  readConfig,
-  writeConfig,
-  loadResolvedConfig,
-  resolveProjectConfig,
-} from "../core/config";
-import { getStatus, push, pull, commitAll } from "../core/git";
+import { getAdapter, getDetectedAdapters, listAdapters } from "../adapters/registry";
 import { readActiveProfile, writeActiveProfile } from "../commands/use";
-import { getDetectedAdapters, getAdapter, listAdapters } from "../adapters/registry";
-import type { ResolvedConfig, ResolvedServer } from "../adapters/types";
+import {
+  buildResolvedConfig,
+  loadResolvedConfig,
+  readConfig,
+  resolveConfigDir,
+  resolveProjectConfig,
+  writeConfig,
+} from "../core/config";
+import { commitAll, getStatus, pull, push } from "../core/git";
 import type { Config, Settings } from "../core/schema";
+import { filterMessages, formatJson, formatMarkdown } from "../core/session";
+import type { SessionSummary } from "../core/session";
 
 // ── JSON-RPC types ──────────────────────────────────────────────
 
@@ -84,53 +86,28 @@ function checkPermission(
   return { allowed: true };
 }
 
-function checkApplyPermission(settings?: Settings): { allowed: boolean; reason?: string } {
-  if (settings?.mcp_serve?.allow_apply) return { allowed: true };
-  return {
-    allowed: false,
-    reason:
-      "am_apply requires opt-in. Set settings.mcp_serve.allow_apply = true in config.toml",
-  };
-}
-
 function checkPushPermission(settings?: Settings): { allowed: boolean; reason?: string } {
   if (settings?.mcp_serve?.allow_push) return { allowed: true };
   return {
     allowed: false,
-    reason:
-      "am_sync_push requires opt-in. Set settings.mcp_serve.allow_push = true in config.toml",
+    reason: "am_sync_push requires opt-in. Set settings.mcp_serve.allow_push = true in config.toml",
   };
+}
+
+// ── Secret redaction ───────────────────────────────────────────
+
+function redactSecrets(obj: unknown): unknown {
+  if (typeof obj === "string" && obj.startsWith("enc:v1:")) return "[encrypted]";
+  if (Array.isArray(obj)) return obj.map(redactSecrets);
+  if (obj && typeof obj === "object") {
+    return Object.fromEntries(
+      Object.entries(obj).map(([k, v]) => [k, redactSecrets(v)]),
+    );
+  }
+  return obj;
 }
 
 // ── Helpers ─────────────────────────────────────────────────────
-
-function buildResolvedConfig(
-  config: Config,
-  profileName: string,
-): ResolvedConfig {
-  const servers: Record<string, ResolvedServer> = {};
-  for (const [name, srv] of Object.entries(config.servers ?? {})) {
-    servers[name] = {
-      name,
-      command: srv.command,
-      args: srv.args ?? [],
-      env: srv.env ?? {},
-      transport: srv.transport ?? "stdio",
-      description: srv.description ?? "",
-      tags: srv.tags ?? [],
-      enabled: srv.enabled ?? true,
-      adapters: (srv.adapters as Record<string, Record<string, unknown>>) ?? {},
-    };
-  }
-  return {
-    servers,
-    instructions: {},
-    skills: {},
-    agents: {},
-    profile: profileName,
-    adapters: (config.adapters as Record<string, Record<string, unknown>>) ?? {},
-  };
-}
 
 async function loadConfigAndProfile(): Promise<{
   config: Config;
@@ -141,9 +118,7 @@ async function loadConfigAndProfile(): Promise<{
   const projectFile = resolveProjectConfig(process.cwd());
   const config = await loadResolvedConfig({ configDir, projectFile });
   const profileName =
-    (await readActiveProfile(configDir)) ??
-    config.settings?.default_profile ??
-    "default";
+    (await readActiveProfile(configDir)) ?? config.settings?.default_profile ?? "default";
   return { config, configDir, profileName };
 }
 
@@ -155,7 +130,8 @@ function defineTools(): ToolEntry[] {
     {
       def: {
         name: "am_list_servers",
-        description: "List MCP servers in the agent-manager config. Returns name, command, args, tags, enabled status for each server.",
+        description:
+          "List MCP servers in the agent-manager config. Returns name, command, args, tags, enabled status for each server.",
         inputSchema: {
           type: "object",
           properties: {
@@ -196,9 +172,7 @@ function defineTools(): ToolEntry[] {
         const { config, configDir } = await loadConfigAndProfile();
         const profiles = config.profiles ?? {};
         const activeProfile =
-          (await readActiveProfile(configDir)) ??
-          config.settings?.default_profile ??
-          "default";
+          (await readActiveProfile(configDir)) ?? config.settings?.default_profile ?? "default";
         const entries = Object.entries(profiles).map(([name, profile]) => ({
           name,
           description: profile.description ?? "",
@@ -211,7 +185,8 @@ function defineTools(): ToolEntry[] {
     {
       def: {
         name: "am_status",
-        description: "Check drift detection and sync state. Returns profile, server count, git status, and per-tool drift status.",
+        description:
+          "Check drift detection and sync state. Returns profile, server count, git status, and per-tool drift status.",
         inputSchema: { type: "object", properties: {} },
       },
       tier: "read-only",
@@ -255,13 +230,209 @@ function defineTools(): ToolEntry[] {
     {
       def: {
         name: "am_config_show",
-        description: "Show the fully resolved agent-manager configuration (merged global + local + project configs).",
+        description:
+          "Show the fully resolved agent-manager configuration (merged global + local + project configs).",
         inputSchema: { type: "object", properties: {} },
       },
       tier: "read-only",
       handler: async () => {
         const { config, profileName } = await loadConfigAndProfile();
-        return { profile: profileName, config };
+        return { profile: profileName, config: redactSecrets(config) };
+      },
+    },
+
+    // ── Session tools (read-only) ──────────────────────────────
+    {
+      def: {
+        name: "am_session_list",
+        description:
+          "List AI coding sessions across all tools (or a specific adapter). Returns session summaries with message counts, timestamps, and token estimates.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            adapter: {
+              type: "string",
+              description: "Filter to a specific adapter (e.g., 'claude-code', 'codex-cli')",
+            },
+          },
+        },
+      },
+      tier: "read-only",
+      handler: async (args) => {
+        const adapterFilter = args.adapter as string | undefined;
+        const allSummaries: SessionSummary[] = [];
+
+        const adapterNames = adapterFilter ? [adapterFilter] : listAdapters();
+
+        for (const name of adapterNames) {
+          const adapter = await getAdapter(name);
+          if (!adapter?.sessionReader) continue;
+          if (!adapter.sessionReader.hasSessionStorage()) continue;
+
+          try {
+            const summaries = await adapter.sessionReader.listSessions();
+            allSummaries.push(...summaries);
+          } catch {
+            // Skip adapters that fail to list sessions
+          }
+        }
+
+        // Sort by most recent first
+        allSummaries.sort((a, b) => b.startedAt.getTime() - a.startedAt.getTime());
+
+        return {
+          sessions: allSummaries.map((s) => ({
+            ...s,
+            startedAt: s.startedAt.toISOString(),
+            endedAt: s.endedAt?.toISOString() ?? null,
+          })),
+          total: allSummaries.length,
+        };
+      },
+    },
+    {
+      def: {
+        name: "am_session_export",
+        description:
+          "Export an AI coding session by ID. Supports filtering by role, stripping tool/system messages, and markdown or JSON output.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            id: { type: "string", description: "Session ID to export" },
+            adapter: {
+              type: "string",
+              description: "Adapter name that owns this session (e.g., 'claude-code')",
+            },
+            role: {
+              type: "string",
+              description: "Filter to a specific role: user, assistant, system, tool",
+            },
+            noTools: {
+              type: "boolean",
+              description: "Strip tool-role messages",
+            },
+            noSystem: {
+              type: "boolean",
+              description: "Strip system-role messages",
+            },
+            format: {
+              type: "string",
+              enum: ["md", "json"],
+              description: "Output format: 'md' (markdown, default) or 'json'",
+            },
+          },
+          required: ["id", "adapter"],
+        },
+      },
+      tier: "read-only",
+      handler: async (args) => {
+        const id = args.id as string;
+        const adapterName = args.adapter as string;
+        const format = (args.format as string) ?? "md";
+
+        const adapter = await getAdapter(adapterName);
+        if (!adapter?.sessionReader) {
+          throw new Error(`Adapter "${adapterName}" does not support session reading`);
+        }
+
+        const session = await adapter.sessionReader.loadSession(id);
+        if (!session) {
+          throw new Error(`Session "${id}" not found in ${adapterName}`);
+        }
+
+        const filter = {
+          ...(args.role ? { roles: [args.role as "user" | "assistant" | "system" | "tool"] } : {}),
+          ...(args.noTools ? { noTools: true } : {}),
+          ...(args.noSystem ? { noSystem: true } : {}),
+        };
+
+        if (format === "json") {
+          return formatJson(session, Object.keys(filter).length > 0 ? filter : undefined);
+        }
+        return {
+          content: formatMarkdown(session, Object.keys(filter).length > 0 ? filter : undefined),
+        };
+      },
+    },
+    {
+      def: {
+        name: "am_session_search",
+        description:
+          "Search AI coding sessions for a query string. Returns matching sessions with message snippets containing the query.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            query: { type: "string", description: "Text to search for in session messages" },
+            adapter: {
+              type: "string",
+              description: "Filter to a specific adapter",
+            },
+            role: {
+              type: "string",
+              description: "Filter to a specific message role",
+            },
+          },
+          required: ["query"],
+        },
+      },
+      tier: "read-only",
+      handler: async (args) => {
+        const query = args.query as string;
+        const adapterFilter = args.adapter as string | undefined;
+        const roleFilter = args.role as string | undefined;
+
+        const adapterNames = adapterFilter ? [adapterFilter] : listAdapters();
+        const results: Array<{
+          sessionId: string;
+          adapter: string;
+          project: string | null;
+          matches: Array<{ role: string; snippet: string }>;
+        }> = [];
+
+        for (const name of adapterNames) {
+          const adapter = await getAdapter(name);
+          if (!adapter?.sessionReader) continue;
+          if (!adapter.sessionReader.hasSessionStorage()) continue;
+
+          let summaries;
+          try {
+            summaries = await adapter.sessionReader.listSessions();
+          } catch {
+            continue;
+          }
+
+          for (const summary of summaries) {
+            let session;
+            try {
+              session = await adapter.sessionReader.loadSession(summary.id);
+            } catch {
+              continue;
+            }
+            if (!session) continue;
+
+            const filter = {
+              query,
+              ...(roleFilter
+                ? { roles: [roleFilter as "user" | "assistant" | "system" | "tool"] }
+                : {}),
+            };
+            const matched = filterMessages(session.messages, filter);
+
+            if (matched.length > 0) {
+              results.push({
+                sessionId: summary.id,
+                adapter: name,
+                project: session.project ?? null,
+                matches: matched.slice(0, 5).map((m) => ({
+                  role: m.role,
+                  snippet: m.content.length > 200 ? `${m.content.slice(0, 200)}...` : m.content,
+                })),
+              });
+            }
+          }
+        }
+
+        return { query, results, total: results.length };
       },
     },
 
@@ -486,12 +657,9 @@ function defineTools(): ToolEntry[] {
           },
         },
       },
-      tier: "write-remote",
+      tier: "write-local",
       handler: async (args) => {
         const { config, configDir, profileName } = await loadConfigAndProfile();
-        const settings = config.settings;
-        const perm = checkApplyPermission(settings);
-        if (!perm.allowed) throw new Error(perm.reason);
 
         const resolved = buildResolvedConfig(config, profileName);
         const projectFile = resolveProjectConfig(process.cwd());
@@ -548,7 +716,7 @@ function defineTools(): ToolEntry[] {
 
         const status = await getStatus(configDir);
         if (status.remotes.length === 0) {
-          throw new Error("No remote configured. Run `am remote add <url>` first.");
+          throw new Error("No remote configured. Add a remote URL to your config repo.");
         }
 
         await push(configDir);
@@ -563,14 +731,11 @@ function defineTools(): ToolEntry[] {
       },
       tier: "write-remote",
       handler: async () => {
-        const { config, configDir } = await loadConfigAndProfile();
-        const settings = config.settings;
-        const perm = checkPushPermission(settings);
-        if (!perm.allowed) throw new Error(perm.reason);
+        const { configDir } = await loadConfigAndProfile();
 
         const status = await getStatus(configDir);
         if (status.remotes.length === 0) {
-          throw new Error("No remote configured. Run `am remote add <url>` first.");
+          throw new Error("No remote configured. Add a remote URL to your config repo.");
         }
 
         await pull(configDir);
@@ -726,13 +891,13 @@ export class McpServer {
             id: null,
             error: { code: -32700, message: "Parse error" },
           };
-          process.stdout.write(JSON.stringify(errResp) + "\n");
+          process.stdout.write(`${JSON.stringify(errResp)}\n`);
           continue;
         }
 
         const resp = await this.handleRequest(req);
         if (resp) {
-          process.stdout.write(JSON.stringify(resp) + "\n");
+          process.stdout.write(`${JSON.stringify(resp)}\n`);
         }
       }
     }

@@ -1,25 +1,21 @@
 import type {
   Adapter,
   Capability,
-  ImportOptions,
-  ImportResult,
+  DiffResult,
   ExportOptions,
   ExportResult,
+  ImportOptions,
+  ImportResult,
   ResolvedConfig,
-  DiffResult,
 } from "../types.ts";
 import { detect } from "./detect.ts";
-import { importConfig } from "./import.ts";
-import { exportConfig } from "./export.ts";
 import { diffConfig } from "./diff.ts";
+import { exportConfig } from "./export.ts";
+import { importConfig } from "./import.ts";
 import { codexCliSchema } from "./schema.ts";
+import { createCodexSessionReader } from "./session.ts";
 
-const CAPABILITIES: Capability[] = [
-  "mcp",
-  "instructions",
-  "permissions",
-  "agents",
-];
+const CAPABILITIES: Capability[] = ["mcp", "instructions", "permissions", "agents"];
 
 export const codexCliAdapter: Adapter = {
   meta: {
@@ -46,4 +42,6 @@ export const codexCliAdapter: Adapter = {
   },
 
   schema: codexCliSchema,
+
+  sessionReader: createCodexSessionReader(),
 };

@@ -1,4 +1,5 @@
 import type { z } from "zod";
+import type { SessionReader } from "../core/session.ts";
 
 // ── Capabilities ─────────────────────────────────────────────────
 
@@ -175,4 +176,5 @@ export interface Adapter {
   export(config: ResolvedConfig, options: ExportOptions): ExportResult;
   diff(config: ResolvedConfig): DiffResult;
   schema: AdapterSchema;
+  sessionReader?: SessionReader;
 }

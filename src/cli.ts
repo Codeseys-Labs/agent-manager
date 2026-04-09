@@ -5,13 +5,19 @@ const main = defineCommand({
   meta: {
     name: "am",
     version: "0.1.0",
-    description: "chezmoi for AI agent configs — define once in TOML, sync via git, generate native configs for every tool",
+    description:
+      "chezmoi for AI agent configs — define once in TOML, sync via git, generate native configs for every tool",
   },
   args: {
     profile: { type: "string", description: "Override active profile" },
     json: { type: "boolean", description: "JSON output for scripting/agents", default: false },
     verbose: { type: "boolean", alias: "v", description: "Increase log verbosity", default: false },
-    quiet: { type: "boolean", alias: "q", description: "Suppress non-essential output", default: false },
+    quiet: {
+      type: "boolean",
+      alias: "q",
+      description: "Suppress non-essential output",
+      default: false,
+    },
   },
   subCommands: {
     init: () => import("./commands/init").then((m) => m.initCommand),
@@ -34,6 +40,7 @@ const main = defineCommand({
     "mcp-serve": () => import("./commands/mcp-serve").then((m) => m.mcpServeCommand),
     serve: () => import("./commands/serve").then((m) => m.serveCommand),
     tui: () => import("./commands/tui").then((m) => m.tuiCommand),
+    session: () => import("./commands/session").then((m) => m.sessionCommand),
   },
 });
 

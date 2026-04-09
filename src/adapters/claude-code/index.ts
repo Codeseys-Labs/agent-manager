@@ -1,18 +1,19 @@
 import type {
   Adapter,
   Capability,
-  ImportOptions,
-  ImportResult,
+  DiffResult,
   ExportOptions,
   ExportResult,
+  ImportOptions,
+  ImportResult,
   ResolvedConfig,
-  DiffResult,
 } from "../types.ts";
 import { detect } from "./detect.ts";
-import { importConfig } from "./import.ts";
-import { exportConfig } from "./export.ts";
 import { diffConfig } from "./diff.ts";
+import { exportConfig } from "./export.ts";
+import { importConfig } from "./import.ts";
 import { claudeCodeSchema } from "./schema.ts";
+import { createClaudeCodeSessionReader } from "./session.ts";
 
 const CAPABILITIES: Capability[] = [
   "mcp",
@@ -50,4 +51,6 @@ export const claudeCodeAdapter: Adapter = {
   },
 
   schema: claudeCodeSchema,
+
+  sessionReader: createClaudeCodeSessionReader(),
 };
