@@ -18,9 +18,9 @@ import {
   resolveProjectConfig,
   writeConfig,
 } from "../core/config";
-import { interpolateEnvAsync, loadKey } from "../core/secrets";
 import { commitAll, getStatus, pull, push } from "../core/git";
 import type { Config, Settings } from "../core/schema";
+import { interpolateEnvAsync, loadKey } from "../core/secrets";
 import { filterMessages, formatJson, formatMarkdown } from "../core/session";
 import type { SessionSummary } from "../core/session";
 
@@ -99,9 +99,7 @@ function redactSecrets(obj: unknown): unknown {
   if (typeof obj === "string" && obj.startsWith("enc:v1:")) return "[encrypted]";
   if (Array.isArray(obj)) return obj.map(redactSecrets);
   if (obj && typeof obj === "object") {
-    return Object.fromEntries(
-      Object.entries(obj).map(([k, v]) => [k, redactSecrets(v)]),
-    );
+    return Object.fromEntries(Object.entries(obj).map(([k, v]) => [k, redactSecrets(v)]));
   }
   return obj;
 }
@@ -879,8 +877,8 @@ export class McpServer {
     for await (const chunk of Bun.stdin.stream()) {
       buffer += decoder.decode(chunk, { stream: true });
 
-      let newlineIdx: number;
-      while ((newlineIdx = buffer.indexOf("\n")) !== -1) {
+      let newlineIdx: number = buffer.indexOf("\n");
+      while (newlineIdx !== -1) {
         const line = buffer.substring(0, newlineIdx).trim();
         buffer = buffer.substring(newlineIdx + 1);
 
@@ -903,6 +901,7 @@ export class McpServer {
         if (resp) {
           process.stdout.write(`${JSON.stringify(resp)}\n`);
         }
+        newlineIdx = buffer.indexOf("\n");
       }
     }
   }

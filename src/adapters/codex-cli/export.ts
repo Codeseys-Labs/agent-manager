@@ -128,7 +128,7 @@ function generateConfigToml(
   }
 
   const output = { ...existing, mcp_servers: mcpServers };
-  return stringifyTOML(output as any);
+  return stringifyTOML(output as Record<string, unknown>);
 }
 
 /** Concatenate all instructions into a single markdown block. */

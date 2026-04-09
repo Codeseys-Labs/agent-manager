@@ -1,7 +1,7 @@
 import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
-import { defineCommand } from "citty";
 import * as clack from "@clack/prompts";
+import { defineCommand } from "citty";
 import { getDetectedAdapters } from "../adapters/registry";
 import { resolveConfigDir, tryReadConfig, writeConfig } from "../core/config";
 import { initRepo } from "../core/git";

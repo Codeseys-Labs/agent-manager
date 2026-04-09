@@ -132,13 +132,13 @@ function readServersFromFile(
 
     const server: ImportedServer = {
       name,
-      command: isStdio ? entry.command! : entry.url!,
+      command: isStdio ? (entry.command ?? "") : (entry.url ?? ""),
       scope,
       transport: isHttp ? "streamable-http" : "stdio",
       ...(entry.args && { args: entry.args }),
       ...(entry.env && { env: entry.env }),
       enabled: entry.disabled !== true,
-      packageId: isStdio ? extractPackageId(entry.command!, entry.args) : undefined,
+      packageId: isStdio ? extractPackageId(entry.command ?? "", entry.args) : undefined,
       ...(Object.keys(adapterExtras).length > 0 && { adapterExtras }),
     };
 

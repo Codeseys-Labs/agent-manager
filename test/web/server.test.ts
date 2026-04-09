@@ -42,7 +42,7 @@ beforeAll(async () => {
     },
   };
 
-  await writeFile(join(tmpDir, "config.toml"), TOML.stringify(config as any));
+  await writeFile(join(tmpDir, "config.toml"), TOML.stringify(config as TOML.JsonMap));
 
   // Point agent-manager at the temp dir
   process.env.AM_CONFIG_DIR = tmpDir;
@@ -84,12 +84,12 @@ describe("Web API", () => {
     expect(Array.isArray(data.servers)).toBe(true);
     expect(data.servers.length).toBe(2);
 
-    const fetch = data.servers.find((s: any) => s.name === "fetch");
+    const fetch = data.servers.find((s: { name: string }) => s.name === "fetch");
     expect(fetch).toBeDefined();
     expect(fetch.command).toBe("uvx");
     expect(fetch.enabled).toBe(true);
 
-    const slack = data.servers.find((s: any) => s.name === "slack");
+    const slack = data.servers.find((s: { name: string }) => s.name === "slack");
     expect(slack).toBeDefined();
     expect(slack.enabled).toBe(false);
   });
@@ -102,10 +102,10 @@ describe("Web API", () => {
     expect(data.profiles.length).toBe(2);
     expect(data.active).toBe("default");
 
-    const defaultProfile = data.profiles.find((p: any) => p.name === "default");
+    const defaultProfile = data.profiles.find((p: { name: string }) => p.name === "default");
     expect(defaultProfile.active).toBe(true);
 
-    const workProfile = data.profiles.find((p: any) => p.name === "work");
+    const workProfile = data.profiles.find((p: { name: string }) => p.name === "work");
     expect(workProfile.active).toBe(false);
     expect(workProfile.inherits).toBe("default");
   });

@@ -97,9 +97,7 @@ describe("Worker — Invalid cookie", () => {
     const wrongSecretEnv = { ...MOCK_ENV, SESSION_SECRET: "wrong-secret-key-different!!!!!" };
     // First, get a valid login redirect to simulate the flow
     // Instead, just craft a cookie-like base64 that won't decrypt
-    const fakeCipher = btoa(
-      String.fromCharCode(...crypto.getRandomValues(new Uint8Array(64))),
-    );
+    const fakeCipher = btoa(String.fromCharCode(...crypto.getRandomValues(new Uint8Array(64))));
     const res = await app.request(
       "/api/repos",
       { headers: { cookie: `am_session=${fakeCipher}` } },

@@ -1,7 +1,12 @@
 import { join } from "node:path";
 import { defineCommand } from "citty";
 import { getAdapter, getDetectedAdapters, listAdapters } from "../adapters/registry";
-import { buildResolvedConfig, loadResolvedConfig, resolveConfigDir, resolveProjectConfig } from "../core/config";
+import {
+  buildResolvedConfig,
+  loadResolvedConfig,
+  resolveConfigDir,
+  resolveProjectConfig,
+} from "../core/config";
 import { interpolateEnvAsync, loadKey } from "../core/secrets";
 import { debug, error, info, output } from "../lib/output";
 import { readActiveProfile } from "./use";

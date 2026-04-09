@@ -186,10 +186,10 @@ describe("mergeConfigs", () => {
 
   test("merges agents as union", () => {
     const a: Config = {
-      agents: { reviewer: { description: "Code reviewer" } },
+      agents: { reviewer: { name: "reviewer", description: "Code reviewer" } },
     };
     const b: Config = {
-      agents: { deployer: { description: "Deploy agent" } },
+      agents: { deployer: { name: "deployer", description: "Deploy agent" } },
     };
     const merged = mergeConfigs(a, b);
     expect(merged.agents?.reviewer).toBeDefined();
@@ -198,10 +198,10 @@ describe("mergeConfigs", () => {
 
   test("higher precedence agent overrides same-name agent", () => {
     const a: Config = {
-      agents: { reviewer: { description: "Old reviewer" } },
+      agents: { reviewer: { name: "reviewer", description: "Old reviewer" } },
     };
     const b: Config = {
-      agents: { reviewer: { description: "New reviewer", model: "o3" } },
+      agents: { reviewer: { name: "reviewer", description: "New reviewer", model: "o3" } },
     };
     const merged = mergeConfigs(a, b);
     expect(merged.agents?.reviewer.description).toBe("New reviewer");
@@ -293,7 +293,7 @@ describe("loadResolvedConfig", () => {
 
 describe("projectToConfig", () => {
   test("projectToConfig preserves agents", () => {
-    const proj = { agents: { reviewer: { description: "Code reviewer" } } };
+    const proj = { agents: { reviewer: { name: "reviewer", description: "Code reviewer" } } };
     const config = projectToConfig(proj as any);
     expect(config.agents?.reviewer).toBeDefined();
   });
@@ -344,6 +344,7 @@ describe("buildResolvedConfig", () => {
     const config: Config = {
       agents: {
         reviewer: {
+          name: "reviewer",
           description: "Code reviewer",
           model: "o3",
           tools: ["Read", "Grep"],

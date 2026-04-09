@@ -1,5 +1,5 @@
-import { Box, Text } from "silvery";
 import React from "react";
+import { Box, Text } from "silvery";
 import type { TuiData } from "./data.ts";
 
 interface Props {

@@ -1,21 +1,23 @@
-import { describe, test, expect, afterEach } from "bun:test";
-import { join } from "node:path";
+import { afterEach, describe, expect, test } from "bun:test";
 import { mkdir } from "node:fs/promises";
-import { createTestDir, type TestDir } from "../helpers/tmp";
+import { join } from "node:path";
 import { readConfig, writeConfig } from "../../src/core/config";
 import { initRepo } from "../../src/core/git";
+import type { Config } from "../../src/core/schema";
 import {
+  decryptValue,
   generateKey,
   importKey,
-  saveKey,
-  loadKey,
-  decryptValue,
   isEncrypted,
+  loadKey,
+  saveKey,
 } from "../../src/core/secrets";
-import type { Config } from "../../src/core/schema";
+import { type TestDir, createTestDir } from "../helpers/tmp";
 
 // Helper: set up a test config dir with init + key
-async function setupConfigDir(dir: TestDir): Promise<{ configDir: string; configPath: string; base64Key: string }> {
+async function setupConfigDir(
+  dir: TestDir,
+): Promise<{ configDir: string; configPath: string; base64Key: string }> {
   const configDir = dir.path;
   await initRepo(configDir);
   const configPath = join(configDir, "config.toml");
@@ -89,7 +91,7 @@ describe("am secret", () => {
       // Create a source key file
       const base64 = await generateKey();
       const sourcePath = join(dir.path, "external-key.txt");
-      await Bun.write(sourcePath, base64 + "\n");
+      await Bun.write(sourcePath, `${base64}\n`);
 
       // Import by copying
       const { copyFile } = await import("node:fs/promises");
@@ -120,10 +122,7 @@ describe("am secret", () => {
       expect(isEncrypted(config.servers!.tavily.env!.TAVILY_API_KEY)).toBe(true);
 
       // Decrypt (simulate `am secret get`)
-      const decrypted = await decryptValue(
-        config.servers!.tavily.env!.TAVILY_API_KEY,
-        key,
-      );
+      const decrypted = await decryptValue(config.servers!.tavily.env!.TAVILY_API_KEY, key);
       expect(decrypted).toBe("sk-live-supersecret");
     });
 

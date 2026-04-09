@@ -140,7 +140,7 @@ function readServersFromToml(
 
     const server: ImportedServer = {
       name,
-      command: isStdio ? entry.command! : entry.url!,
+      command: isStdio ? (entry.command ?? "") : (entry.url ?? ""),
       scope,
       transport: isHttp ? "streamable-http" : "stdio",
       ...(entry.args && { args: entry.args }),

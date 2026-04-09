@@ -118,7 +118,7 @@ function readServersFromFile(
 
     const server: ImportedServer = {
       name,
-      command: entry.command ?? entry.url!,
+      command: entry.command ?? entry.url ?? "",
       scope,
       ...(entry.args && { args: entry.args }),
       ...(entry.env && { env: entry.env }),

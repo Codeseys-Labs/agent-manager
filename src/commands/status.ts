@@ -1,6 +1,11 @@
 import { defineCommand } from "citty";
 import { getDetectedAdapters } from "../adapters/registry";
-import { buildResolvedConfig, loadResolvedConfig, resolveConfigDir, resolveProjectConfig } from "../core/config";
+import {
+  buildResolvedConfig,
+  loadResolvedConfig,
+  resolveConfigDir,
+  resolveProjectConfig,
+} from "../core/config";
 import { getStatus } from "../core/git";
 import { debug, error, info, output } from "../lib/output";
 import { readActiveProfile } from "./use";

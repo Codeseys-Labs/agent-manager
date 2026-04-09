@@ -3,7 +3,12 @@ import { Hono } from "hono";
 import { serveStatic } from "hono/bun";
 import { getAdapter, getDetectedAdapters, listAdapters } from "../adapters/registry";
 import { readActiveProfile, writeActiveProfile } from "../commands/use";
-import { buildResolvedConfig, loadResolvedConfig, resolveConfigDir, resolveProjectConfig } from "../core/config";
+import {
+  buildResolvedConfig,
+  loadResolvedConfig,
+  resolveConfigDir,
+  resolveProjectConfig,
+} from "../core/config";
 import { getStatus, pull as gitPull, push as gitPush } from "../core/git";
 
 export function createApp() {

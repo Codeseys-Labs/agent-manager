@@ -1,5 +1,5 @@
-import { render } from "silvery";
 import React from "react";
+import { render } from "silvery";
 import { getDetectedAdapters } from "../adapters/registry.ts";
 import type { ResolvedConfig, ResolvedServer } from "../adapters/types.ts";
 import { readActiveProfile, writeActiveProfile } from "../commands/use.ts";

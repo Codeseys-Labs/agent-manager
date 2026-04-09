@@ -1,5 +1,5 @@
-import { Box, Text, useInput } from "silvery";
 import React, { useState } from "react";
+import { Box, Text, useInput } from "silvery";
 
 interface Props {
   profiles: string[];

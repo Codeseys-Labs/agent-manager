@@ -3,7 +3,13 @@ import { readFile, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join, parse as parsePath } from "node:path";
 import * as TOML from "@iarna/toml";
-import type { ResolvedAgent, ResolvedConfig, ResolvedInstruction, ResolvedServer, ResolvedSkill } from "../adapters/types";
+import type {
+  ResolvedAgent,
+  ResolvedConfig,
+  ResolvedInstruction,
+  ResolvedServer,
+  ResolvedSkill,
+} from "../adapters/types";
 import { type Config, ConfigSchema, type ProjectConfig, ProjectConfigSchema } from "./schema";
 
 /** Return the agent-manager config directory. */
@@ -189,7 +195,11 @@ export async function loadResolvedConfig(opts: LoadResolvedConfigOpts = {}): Pro
  * Converts the raw Config servers, instructions, skills, and agents
  * into fully resolved types suitable for adapter export/diff.
  */
-export function buildResolvedConfig(config: Config, profileName: string, configDir?: string): ResolvedConfig {
+export function buildResolvedConfig(
+  config: Config,
+  profileName: string,
+  configDir?: string,
+): ResolvedConfig {
   const servers: Record<string, ResolvedServer> = {};
   for (const [name, srv] of Object.entries(config.servers ?? {})) {
     servers[name] = {

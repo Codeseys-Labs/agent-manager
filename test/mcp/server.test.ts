@@ -6,6 +6,8 @@ import type { Config } from "../../src/core/schema";
 import { McpServer } from "../../src/mcp/server";
 import { type TestDir, createTestDir } from "../helpers/tmp";
 
+type JsonRpcResult = Record<string, any>;
+
 describe("MCP server", () => {
   let dir: TestDir;
   const originalEnv = process.env.AM_CONFIG_DIR;
@@ -52,10 +54,10 @@ describe("MCP server", () => {
       method: "tools/list",
     });
     expect(resp).not.toBeNull();
-    const tools = (resp?.result as any).tools;
+    const tools = (resp?.result as JsonRpcResult).tools;
     expect(Array.isArray(tools)).toBe(true);
 
-    const names = tools.map((t: any) => t.name);
+    const names = tools.map((t: { name: string }) => t.name);
     expect(names).toContain("am_list_servers");
     expect(names).toContain("am_list_profiles");
     expect(names).toContain("am_status");
@@ -103,10 +105,10 @@ describe("MCP server", () => {
     });
 
     expect(resp).not.toBeNull();
-    const content = JSON.parse((resp?.result as any).content[0].text);
+    const content = JSON.parse((resp?.result as JsonRpcResult).content[0].text);
     expect(content.servers.length).toBe(3);
 
-    const names = content.servers.map((s: any) => s.name);
+    const names = content.servers.map((s: { name: string }) => s.name);
     expect(names).toContain("fetch");
     expect(names).toContain("tavily");
     expect(names).toContain("disabled");
@@ -128,7 +130,7 @@ describe("MCP server", () => {
       params: { name: "am_list_servers", arguments: { active: true } },
     });
 
-    const content = JSON.parse((resp?.result as any).content[0].text);
+    const content = JSON.parse((resp?.result as JsonRpcResult).content[0].text);
     expect(content.servers.length).toBe(1);
     expect(content.servers[0].name).toBe("fetch");
   });
@@ -148,7 +150,7 @@ describe("MCP server", () => {
       params: { name: "am_status", arguments: {} },
     });
 
-    const content = JSON.parse((resp?.result as any).content[0].text);
+    const content = JSON.parse((resp?.result as JsonRpcResult).content[0].text);
     expect(content.profile).toBe("default");
     expect(content.servers).toBe(1);
     expect(content.git).toBeDefined();
@@ -173,7 +175,7 @@ describe("MCP server", () => {
       params: { name: "am_config_show", arguments: {} },
     });
 
-    const content = JSON.parse((resp?.result as any).content[0].text);
+    const content = JSON.parse((resp?.result as JsonRpcResult).content[0].text);
     expect(content.config).toBeDefined();
     expect(content.config.servers).toBeDefined();
     expect(content.config.servers.fetch).toBeDefined();
@@ -198,7 +200,7 @@ describe("MCP server", () => {
       },
     });
 
-    const content = JSON.parse((resp?.result as any).content[0].text);
+    const content = JSON.parse((resp?.result as JsonRpcResult).content[0].text);
     expect(content.action).toBe("add");
     expect(content.server).toBe("tavily");
 
@@ -209,8 +211,8 @@ describe("MCP server", () => {
       method: "tools/call",
       params: { name: "am_list_servers", arguments: {} },
     });
-    const listContent = JSON.parse((listResp?.result as any).content[0].text);
-    expect(listContent.servers.some((s: any) => s.name === "tavily")).toBe(true);
+    const listContent = JSON.parse((listResp?.result as JsonRpcResult).content[0].text);
+    expect(listContent.servers.some((s: { name: string }) => s.name === "tavily")).toBe(true);
   });
 
   test("am_remove_server removes a server", async () => {
@@ -229,7 +231,7 @@ describe("MCP server", () => {
       params: { name: "am_remove_server", arguments: { name: "tavily" } },
     });
 
-    const content = JSON.parse((resp?.result as any).content[0].text);
+    const content = JSON.parse((resp?.result as JsonRpcResult).content[0].text);
     expect(content.action).toBe("remove");
     expect(content.server).toBe("tavily");
   });
@@ -252,7 +254,7 @@ describe("MCP server", () => {
     });
 
     expect(resp).not.toBeNull();
-    const result = resp?.result as any;
+    const result = resp?.result as JsonRpcResult;
     expect(result.isError).toBe(true);
     const content = JSON.parse(result.content[0].text);
     expect(content.error).toContain("opt-in");
@@ -275,7 +277,7 @@ describe("MCP server", () => {
     });
 
     expect(resp).not.toBeNull();
-    const result = resp?.result as any;
+    const result = resp?.result as JsonRpcResult;
     // Should not be a permission error — am_apply is write-local
     if (result.isError) {
       const content = JSON.parse(result.content[0].text);
@@ -303,7 +305,7 @@ describe("MCP server", () => {
     });
 
     expect(resp).not.toBeNull();
-    const result = resp?.result as any;
+    const result = resp?.result as JsonRpcResult;
     expect(result.isError).toBe(true);
     const content = JSON.parse(result.content[0].text);
     expect(content.error).toContain("opt-in");
@@ -361,7 +363,7 @@ describe("MCP server", () => {
     });
 
     expect(resp).not.toBeNull();
-    const result = resp?.result as any;
+    const result = resp?.result as JsonRpcResult;
     expect(result.isError).toBeUndefined();
     const content = JSON.parse(result.content[0].text);
     expect(Array.isArray(content.sessions)).toBe(true);
@@ -380,7 +382,7 @@ describe("MCP server", () => {
     });
 
     expect(resp).not.toBeNull();
-    const result = resp?.result as any;
+    const result = resp?.result as JsonRpcResult;
     expect(result.isError).toBeUndefined();
     const content = JSON.parse(result.content[0].text);
     expect(Array.isArray(content.sessions)).toBe(true);
@@ -400,7 +402,7 @@ describe("MCP server", () => {
     });
 
     expect(resp).not.toBeNull();
-    const result = resp?.result as any;
+    const result = resp?.result as JsonRpcResult;
     expect(result.isError).toBe(true);
     const content = JSON.parse(result.content[0].text);
     expect(content.error).toContain("does not support session reading");
@@ -419,7 +421,7 @@ describe("MCP server", () => {
     });
 
     expect(resp).not.toBeNull();
-    const result = resp?.result as any;
+    const result = resp?.result as JsonRpcResult;
     expect(result.isError).toBe(true);
     const content = JSON.parse(result.content[0].text);
     expect(content.error).toContain("not found");
@@ -438,7 +440,7 @@ describe("MCP server", () => {
     });
 
     expect(resp).not.toBeNull();
-    const result = resp?.result as any;
+    const result = resp?.result as JsonRpcResult;
     expect(result.isError).toBe(true);
   });
 
@@ -456,7 +458,7 @@ describe("MCP server", () => {
     });
 
     expect(resp).not.toBeNull();
-    const result = resp?.result as any;
+    const result = resp?.result as JsonRpcResult;
     expect(result.isError).toBeUndefined();
     const content = JSON.parse(result.content[0].text);
     expect(content.query).toBe("test");
@@ -477,7 +479,7 @@ describe("MCP server", () => {
     });
 
     expect(resp).not.toBeNull();
-    const result = resp?.result as any;
+    const result = resp?.result as JsonRpcResult;
     expect(result.isError).toBeUndefined();
   });
 
@@ -494,7 +496,7 @@ describe("MCP server", () => {
       params: { name: "am_session_list", arguments: { adapter: "gemini-cli" } },
     });
     expect(listResp).not.toBeNull();
-    const listResult = listResp?.result as any;
+    const listResult = listResp?.result as JsonRpcResult;
     if (listResult.isError) {
       const content = JSON.parse(listResult.content[0].text);
       expect(content.error).not.toContain("opt-in");
@@ -508,7 +510,7 @@ describe("MCP server", () => {
       params: { name: "am_session_search", arguments: { query: "test", adapter: "gemini-cli" } },
     });
     expect(searchResp).not.toBeNull();
-    const searchResult = searchResp?.result as any;
+    const searchResult = searchResp?.result as JsonRpcResult;
     if (searchResult.isError) {
       const content = JSON.parse(searchResult.content[0].text);
       expect(content.error).not.toContain("opt-in");

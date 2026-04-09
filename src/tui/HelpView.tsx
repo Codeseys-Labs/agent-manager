@@ -1,5 +1,5 @@
-import { Box, Text } from "silvery";
 import React from "react";
+import { Box, Text } from "silvery";
 
 interface Props {
   onBack: () => void;
@@ -30,6 +30,7 @@ export function HelpView({ onBack }: Props) {
       <Box flexDirection="column" marginTop={1}>
         {SHORTCUTS.map((s, i) =>
           s.key === "" ? (
+            // biome-ignore lint/suspicious/noArrayIndexKey: spacer elements have no stable key
             <Box key={`spacer-${i}`}>
               <Text> </Text>
             </Box>

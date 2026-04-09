@@ -272,10 +272,7 @@ describe("continue exportConfig()", () => {
 
     // Verify the file is on disk at the project path
     const fs = require("node:fs");
-    const onDisk = fs.readFileSync(
-      join(projectPath, ".continue", "rules", "my-rule.md"),
-      "utf-8",
-    );
+    const onDisk = fs.readFileSync(join(projectPath, ".continue", "rules", "my-rule.md"), "utf-8");
     expect(onDisk).toContain("Follow the conventions.");
   });
 

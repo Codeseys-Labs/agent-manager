@@ -1,5 +1,5 @@
-import { Box, Text, useApp, useInput } from "silvery";
 import React, { useState, useCallback } from "react";
+import { Box, Text, useApp, useInput } from "silvery";
 import { Dashboard } from "./Dashboard.tsx";
 import { HelpView } from "./HelpView.tsx";
 import { ProfileSwitcher } from "./ProfileSwitcher.tsx";
