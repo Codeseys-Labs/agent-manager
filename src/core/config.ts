@@ -2,7 +2,7 @@ import { readFile, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join, parse as parsePath } from "node:path";
 import * as TOML from "@iarna/toml";
-import type { ResolvedConfig, ResolvedServer } from "../adapters/types";
+import type { ResolvedAgent, ResolvedConfig, ResolvedInstruction, ResolvedServer, ResolvedSkill } from "../adapters/types";
 import { type Config, ConfigSchema, type ProjectConfig, ProjectConfigSchema } from "./schema";
 
 /** Return the agent-manager config directory. */
@@ -120,6 +120,7 @@ export function mergeConfigs(a: Config, b: Config): Config {
     skills: a.skills || b.skills ? { ...a.skills, ...b.skills } : undefined,
     instructions:
       a.instructions || b.instructions ? { ...a.instructions, ...b.instructions } : undefined,
+    agents: a.agents || b.agents ? { ...a.agents, ...b.agents } : undefined,
     profiles: a.profiles || b.profiles ? { ...a.profiles, ...b.profiles } : undefined,
     adapters: a.adapters || b.adapters ? { ...a.adapters, ...b.adapters } : undefined,
   };
@@ -202,11 +203,55 @@ export function buildResolvedConfig(config: Config, profileName: string): Resolv
       adapters: (srv.adapters as Record<string, Record<string, unknown>>) ?? {},
     };
   }
+  // Map instructions
+  const instructions: Record<string, ResolvedInstruction> = {};
+  for (const [name, instr] of Object.entries(config.instructions ?? {})) {
+    instructions[name] = {
+      name,
+      content: instr.content ?? "",
+      scope: instr.scope ?? "always",
+      description: instr.description ?? "",
+      globs: instr.globs ?? [],
+      targets: instr.targets ?? [],
+      adapters: (instr.adapters as Record<string, Record<string, unknown>>) ?? {},
+    };
+  }
+
+  // Map skills
+  const skills: Record<string, ResolvedSkill> = {};
+  for (const [name, skill] of Object.entries(config.skills ?? {})) {
+    skills[name] = {
+      name,
+      path: skill.path ?? "",
+      description: skill.description ?? "",
+      tags: skill.tags ?? [],
+      adapters: (skill.adapters as Record<string, Record<string, unknown>>) ?? {},
+    };
+  }
+
+  // Map agents
+  const agents: Record<string, ResolvedAgent> = {};
+  for (const [name, agent] of Object.entries(config.agents ?? {})) {
+    agents[name] = {
+      name,
+      description: agent.description ?? "",
+      subagent_type: agent.subagent_type ?? "",
+      prompt: agent.prompt ?? "",
+      prompt_file: agent.prompt_file ?? "",
+      model: agent.model ?? "",
+      tools: agent.tools ?? [],
+      disallowed_tools: agent.disallowed_tools ?? [],
+      mcp_servers: agent.mcp_servers ?? [],
+      max_turns: agent.max_turns,
+      adapters: (agent.adapters as Record<string, Record<string, unknown>>) ?? {},
+    };
+  }
+
   return {
     servers,
-    instructions: {},
-    skills: {},
-    agents: {},
+    instructions,
+    skills,
+    agents,
     profile: profileName,
     adapters: (config.adapters as Record<string, Record<string, unknown>>) ?? {},
   };

@@ -72,16 +72,14 @@ function checkPermission(
   // write-remote requires explicit opt-in
   const mcpServe = settings?.mcp_serve;
   if (tier === "write-remote") {
-    // Check specific permission based on the tool
-    // For apply: allow_apply, for push: allow_push
-    // Generic check: at least one remote permission must be true
-    if (mcpServe?.allow_apply || mcpServe?.allow_push) {
+    // Only allow_push gates write-remote (am_sync_push, am_sync_pull)
+    if (mcpServe?.allow_push) {
       return { allowed: true };
     }
     return {
       allowed: false,
       reason:
-        "Write-remote tools require opt-in. Set settings.mcp_serve.allow_apply or settings.mcp_serve.allow_push in config.toml",
+        "Write-remote tools require opt-in. Set settings.mcp_serve.allow_push = true in config.toml",
     };
   }
   return { allowed: true };

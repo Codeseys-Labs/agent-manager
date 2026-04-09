@@ -192,16 +192,11 @@ app.get("/auth/github/callback", async (c) => {
     c.env.SESSION_SECRET,
   );
 
-  return new Response(null, {
-    status: 302,
-    headers: {
-      Location: "/",
-      "Set-Cookie": [
-        sessionCookie(sessionCookieValue),
-        "am_oauth_state=; Path=/; HttpOnly; Secure; Max-Age=0", // clear state cookie
-      ].join(", "),
-    },
-  });
+  const headers = new Headers();
+  headers.set("Location", "/");
+  headers.append("Set-Cookie", sessionCookie(sessionCookieValue));
+  headers.append("Set-Cookie", "am_oauth_state=; Path=/; HttpOnly; Secure; Max-Age=0");
+  return new Response(null, { status: 302, headers });
 });
 
 // Logout — just clear the cookie
