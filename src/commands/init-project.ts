@@ -160,16 +160,25 @@ async function scanAdapters(projectPath: string, opts: OutputOptions): Promise<S
       continue;
     }
 
-    // Only include if we found something project-relevant
+    // Filter to project-scoped content only — exclude global configs
     const projectServers = imported.servers.filter((s) => s.scope === "project");
-    const hasContent = projectServers.length > 0 || imported.instructions.length > 0;
+    const projectInstructions = imported.instructions.filter((i) => {
+      // Include instructions with a sourcePath inside the project
+      if (i.sourcePath?.startsWith(projectPath)) return true;
+      // Exclude instructions from global paths (home dir, ~/.config, etc.)
+      if (i.sourcePath) return false;
+      // No sourcePath — include only if we also found project servers
+      // (implies this adapter has project-level presence)
+      return projectServers.length > 0;
+    });
+    const hasContent = projectServers.length > 0 || projectInstructions.length > 0;
 
     if (hasContent) {
       results.push({
         adapter: name,
         displayName: adapter.meta.displayName,
         servers: projectServers,
-        instructions: imported.instructions,
+        instructions: projectInstructions,
       });
     }
   }
