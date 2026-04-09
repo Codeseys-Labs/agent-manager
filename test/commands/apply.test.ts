@@ -4,6 +4,7 @@ import type { ResolvedConfig, ResolvedServer } from "../../src/adapters/types";
 import { loadResolvedConfig, writeConfig } from "../../src/core/config";
 import { initRepo } from "../../src/core/git";
 import type { Config } from "../../src/core/schema";
+import { encryptValue, generateKey, importKey, interpolateEnvAsync } from "../../src/core/secrets";
 import { type TestDir, createTestDir } from "../helpers/tmp";
 
 function buildResolvedConfig(
@@ -74,6 +75,27 @@ describe("am apply", () => {
     expect(resolved.servers.fetch.args).toEqual(["mcp-server-fetch"]);
     expect(resolved.servers.tavily.tags).toEqual(["search"]);
     expect(resolved.profile).toBe("default");
+  });
+
+  test("encrypted env vars are decrypted through interpolateEnvAsync", async () => {
+    const keyBase64 = await generateKey();
+    const cryptoKey = await importKey(keyBase64);
+    const encrypted = await encryptValue("super-secret-token", cryptoKey);
+
+    const config: Config = {
+      servers: {
+        api: {
+          command: "api-server",
+          env: { API_TOKEN: encrypted },
+          transport: "stdio",
+          enabled: true,
+        },
+      },
+    };
+
+    const result = await interpolateEnvAsync(config, { encryptionKey: cryptoKey });
+    expect(result.config.servers?.api.env?.API_TOKEN).toBe("super-secret-token");
+    expect(result.warnings).toHaveLength(0);
   });
 
   test("resolved config includes env and adapters", async () => {

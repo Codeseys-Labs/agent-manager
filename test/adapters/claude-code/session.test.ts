@@ -377,6 +377,15 @@ describe("loadSession()", () => {
     expect(await reader.loadSession("..")).toBeNull();
   });
 
+  test("rejects path traversal with null bytes", async () => {
+    dir = await createTestDir("am-cc-session-");
+    await dir.write(".claude/projects/Users-test-proj/.keep", "");
+
+    const reader = createClaudeCodeSessionReader(dir.path);
+    expect(await reader.loadSession("foo\0bar")).toBeNull();
+    expect(await reader.loadSession("\0")).toBeNull();
+  });
+
   test("rejects path traversal with slashes", async () => {
     dir = await createTestDir("am-cc-session-");
     await dir.write(".claude/projects/Users-test-proj/.keep", "");
@@ -440,6 +449,35 @@ describe("loadSession()", () => {
     expect(session?.startedAt).toEqual(new Date("2026-04-08T10:00:00.000Z"));
     expect(session?.endedAt).toEqual(new Date("2026-04-08T10:05:00.000Z"));
     expect(session?.messages[0].timestamp).toEqual(new Date("2026-04-08T10:00:00.000Z"));
+  });
+
+  test("parses user messages with array content (multimodal/tool results)", async () => {
+    dir = await createTestDir("am-cc-session-");
+    await dir.write(
+      ".claude/projects/Users-test-proj/array-user.jsonl",
+      jsonl(
+        {
+          type: "user",
+          message: {
+            role: "user",
+            content: [
+              { type: "text", text: "Here is my question" },
+              { type: "tool_result", tool_use_id: "t1", content: "tool output" },
+              { type: "text", text: "And some more context" },
+            ],
+          },
+          timestamp: "2026-04-08T10:00:00.000Z",
+          cwd: "/Users/test/my-project",
+        },
+        assistantTextRecord("Got it!"),
+      ),
+    );
+
+    const reader = createClaudeCodeSessionReader(dir.path);
+    const session = await reader.loadSession("array-user");
+    expect(session).not.toBeNull();
+    expect(session?.messages[0].role).toBe("user");
+    expect(session?.messages[0].content).toBe("Here is my question\nAnd some more context");
   });
 
   test("handles assistant record with mixed text and tool_use blocks", async () => {

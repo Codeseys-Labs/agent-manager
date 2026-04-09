@@ -126,7 +126,7 @@ export function createClaudeCodeSessionReader(homeDir?: string): SessionReader {
 
       // Sanitize session ID to prevent path traversal
       const safeId = id.replace(/\.jsonl$/, "");
-      if (/[/\\]|\.\./.test(safeId)) {
+      if (/[/\\\0]|\.\./.test(safeId)) {
         return null;
       }
 
@@ -266,7 +266,17 @@ function parseSessionFile(filePath: string, projectDirName: string): Session | n
     }
 
     if (record.type === "user") {
-      const content = typeof record.message?.content === "string" ? record.message.content : "";
+      let content: string;
+      if (typeof record.message?.content === "string") {
+        content = record.message.content;
+      } else if (Array.isArray(record.message?.content)) {
+        content = record.message.content
+          .filter((b: ContentBlock) => b.type === "text")
+          .map((b: ContentBlock) => b.text)
+          .join("\n");
+      } else {
+        content = "";
+      }
       messages.push({ role: "user", content, timestamp: ts });
     } else if (record.type === "assistant") {
       const msg = parseAssistantRecord(record, ts);

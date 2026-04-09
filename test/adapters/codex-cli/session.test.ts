@@ -168,6 +168,14 @@ describe("Codex CLI session reader", () => {
     expect(await reader.loadSession("..")).toBeNull();
   });
 
+  test("loadSession rejects path traversal with null bytes", async () => {
+    dir = await createTestDir("am-codex-session-");
+    await dir.write(".codex/sessions/.keep", "");
+    const reader = createCodexSessionReader(dir.path);
+    expect(await reader.loadSession("foo\0bar")).toBeNull();
+    expect(await reader.loadSession("\0")).toBeNull();
+  });
+
   test("loadSession rejects path traversal with slashes", async () => {
     dir = await createTestDir("am-codex-session-");
     await dir.write(".codex/sessions/.keep", "");

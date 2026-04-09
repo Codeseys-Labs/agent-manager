@@ -110,7 +110,7 @@ export function createCodexSessionReader(homeDir?: string): SessionReader {
     async loadSession(id: string): Promise<Session | null> {
       // Sanitize session ID to prevent path traversal
       const safeId = id.replace(/\.jsonl$/, "");
-      if (/[/\\]|\.\./.test(safeId)) {
+      if (/[/\\\0]|\.\./.test(safeId)) {
         return null;
       }
 
