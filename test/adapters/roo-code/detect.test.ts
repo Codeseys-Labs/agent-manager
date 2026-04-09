@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { detect } from "@/adapters/roo-code/detect.ts";
+import { detect, getGlobalStoragePath } from "@/adapters/roo-code/detect.ts";
 
 describe("roo-code detect()", () => {
   let tempHome: string;
@@ -16,15 +16,7 @@ describe("roo-code detect()", () => {
   });
 
   test("detects when globalStorage directory exists", async () => {
-    const storagePath = join(
-      tempHome,
-      "Library",
-      "Application Support",
-      "Code",
-      "User",
-      "globalStorage",
-      "rooveterinaryinc.roo-cline",
-    );
+    const storagePath = getGlobalStoragePath(tempHome);
     await mkdir(storagePath, { recursive: true });
 
     const result = detect(tempHome);
@@ -33,16 +25,7 @@ describe("roo-code detect()", () => {
   });
 
   test("detects mcp_settings.json", async () => {
-    const settingsDir = join(
-      tempHome,
-      "Library",
-      "Application Support",
-      "Code",
-      "User",
-      "globalStorage",
-      "rooveterinaryinc.roo-cline",
-      "settings",
-    );
+    const settingsDir = join(getGlobalStoragePath(tempHome), "settings");
     await mkdir(settingsDir, { recursive: true });
     await writeFile(join(settingsDir, "mcp_settings.json"), '{"mcpServers":{}}');
 
