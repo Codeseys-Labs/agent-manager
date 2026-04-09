@@ -2,6 +2,7 @@ import { join } from "node:path";
 import { defineCommand } from "citty";
 import { getAdapter, getDetectedAdapters, listAdapters } from "../adapters/registry";
 import { buildResolvedConfig, loadResolvedConfig, resolveConfigDir, resolveProjectConfig } from "../core/config";
+import { interpolateEnvAsync, loadKey } from "../core/secrets";
 import { debug, error, info, output } from "../lib/output";
 import { readActiveProfile } from "./use";
 
@@ -38,7 +39,16 @@ export const applyCommand = defineCommand({
       config.settings?.default_profile ??
       "default";
 
-    const resolved = buildResolvedConfig(config, profileName);
+    // Decrypt encrypted values before building resolved config
+    const encryptionKey = await loadKey(configDir);
+    const { config: interpolated, warnings: interpWarnings } = await interpolateEnvAsync(config, {
+      encryptionKey: encryptionKey ?? undefined,
+    });
+    for (const w of interpWarnings) {
+      debug(`interpolation: ${w}`, opts);
+    }
+
+    const resolved = buildResolvedConfig(interpolated, profileName);
 
     // Find adapters to apply
     let adapters;

@@ -18,6 +18,7 @@ import {
   resolveProjectConfig,
   writeConfig,
 } from "../core/config";
+import { interpolateEnvAsync, loadKey } from "../core/secrets";
 import { commitAll, getStatus, pull, push } from "../core/git";
 import type { Config, Settings } from "../core/schema";
 import { filterMessages, formatJson, formatMarkdown } from "../core/session";
@@ -661,7 +662,12 @@ function defineTools(): ToolEntry[] {
       handler: async (args) => {
         const { config, configDir, profileName } = await loadConfigAndProfile();
 
-        const resolved = buildResolvedConfig(config, profileName);
+        // Decrypt encrypted values before applying
+        const encryptionKey = await loadKey(configDir);
+        const { config: decrypted } = await interpolateEnvAsync(config, {
+          encryptionKey: encryptionKey ?? undefined,
+        });
+        const resolved = buildResolvedConfig(decrypted, profileName);
         const projectFile = resolveProjectConfig(process.cwd());
 
         let adapters;

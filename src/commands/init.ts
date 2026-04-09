@@ -1,10 +1,12 @@
 import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import { defineCommand } from "citty";
+import * as clack from "@clack/prompts";
 import { getDetectedAdapters } from "../adapters/registry";
 import { resolveConfigDir, tryReadConfig, writeConfig } from "../core/config";
 import { initRepo } from "../core/git";
 import type { Config } from "../core/schema";
+import { generateKey, saveKey } from "../core/secrets";
 import { error, info, output } from "../lib/output";
 import { initProject } from "./init-project";
 
@@ -72,6 +74,24 @@ export const initCommand = defineCommand({
     const detected = await getDetectedAdapters();
     const detectedNames = detected.map((a) => a.meta.displayName);
 
+    // Offer encryption key generation (interactive only, not in JSON/quiet mode)
+    let keyGenerated = false;
+    if (!args.json && !args.quiet && process.stdin.isTTY) {
+      const setupKey = await clack.confirm({
+        message: "Generate an encryption key for secrets?",
+        initialValue: true,
+      });
+      if (!clack.isCancel(setupKey) && setupKey) {
+        const keyDir = join(configDir, ".agent-manager");
+        await mkdir(keyDir, { recursive: true });
+        const base64Key = await generateKey();
+        await saveKey(configDir, base64Key);
+        keyGenerated = true;
+        info("Encryption key saved to .agent-manager/key.txt (gitignored)", opts);
+        info("Use `am secret set <name> <value>` to encrypt secrets", opts);
+      }
+    }
+
     info(`Initialized agent-manager at ${configDir}`, opts);
     if (detectedNames.length > 0) {
       info(`Detected tools: ${detectedNames.join(", ")}`, opts);
@@ -85,6 +105,7 @@ export const initCommand = defineCommand({
           configDir,
           configPath,
           detectedTools: detectedNames,
+          keyGenerated,
         },
         opts,
       );

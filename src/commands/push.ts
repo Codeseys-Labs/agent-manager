@@ -1,7 +1,9 @@
 import { defineCommand } from "citty";
 import { resolveConfigDir } from "../core/config";
 import { getStatus, push } from "../core/git";
+import { loadKey } from "../core/secrets";
 import { error, info, output } from "../lib/output";
+import { detectPlatform } from "../platforms/registry";
 
 export const pushCommand = defineCommand({
   meta: { name: "push", description: "Push config changes to remote" },
@@ -42,8 +44,26 @@ export const pushCommand = defineCommand({
     try {
       await push(configDir);
       info(`Pushed to ${status.remotes[0].url}`, opts);
+
+      // Offer to store encryption key in platform secrets (first push only)
+      const remoteUrl = status.remotes[0].url;
+      const platform = detectPlatform(remoteUrl);
+      if (platform.storeKey) {
+        const key = await loadKey(configDir);
+        if (key) {
+          try {
+            const raw = await crypto.subtle.exportKey("raw", key);
+            const b64 = btoa(String.fromCharCode(...new Uint8Array(raw)));
+            await platform.storeKey(remoteUrl, b64);
+            info(`Encryption key stored in ${platform.meta.displayName} secrets`, opts);
+          } catch {
+            // Non-fatal — platform CLI may not be installed or authenticated
+          }
+        }
+      }
+
       if (args.json) {
-        output({ action: "push", remote: status.remotes[0].url, branch: status.branch }, opts);
+        output({ action: "push", remote: remoteUrl, branch: status.branch }, opts);
       }
     } catch (e: any) {
       error(`Push failed: ${e?.message ?? "unknown error"}`, opts);
