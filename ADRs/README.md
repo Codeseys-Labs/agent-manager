@@ -23,6 +23,8 @@ This folder contains the architectural decisions for agent-manager.
 | [0015](0015-stateless-web-ui.md) | Stateless Web UI — Git-Backed, Independently Deployable | Accepted | 2026-04-08 |
 | [0016](0016-session-harvest.md) | Session Harvest — Cross-Tool Conversation Export and Analysis | Proposed | 2026-04-08 |
 | [0017](0017-agent-communication-protocol.md) | Multi-Protocol Agent Integration — MCP, A2A, and ACP | Proposed | 2026-04-08 |
+| [0018](0018-tui-framework-silvery.md) | Terminal UI Framework — Ink to Silvery Migration | Accepted | 2026-04-08 |
+| [0019](0019-security-hardening.md) | Security Hardening — Threat Model and Fixes | Accepted | 2026-04-08 |
 
 ## Template
 

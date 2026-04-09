@@ -98,6 +98,14 @@ graph TD
   instruction activation across tools would cause lossy translation or require
   an ever-growing core schema to capture every variant.
 
+## Implementation Status
+
+As of 2026-04-08, this architecture is fully implemented:
+
+- **Config resolution pipeline complete:** `buildResolvedConfig` populates all entity types (servers, instructions, skills, agents) through hierarchical merge and profile inheritance.
+- **`mergeConfigs` handles all entity types** including agents, which were added after the initial implementation.
+- **13 adapters implemented:** The original 8 (Claude Code, Codex CLI, Copilot, Cursor, ForgeCode, Kilo Code, Kiro, Windsurf) plus 5 additional adapters, all following the `Adapter` interface from `src/adapters/types.ts`.
+
 ## References
 
 - [09-adapter-architecture-patterns.md](../research/09-adapter-architecture-patterns.md) — Terraform, VS Code, ESLint, Grafana, Home Assistant patterns
