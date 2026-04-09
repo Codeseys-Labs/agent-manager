@@ -1,0 +1,12 @@
+test/
+docs/
+research/
+ADRs/
+dist/
+scripts/
+.github/
+.claude/
+wrangler.toml
+biome.json
+tsconfig.json
+*.test.ts

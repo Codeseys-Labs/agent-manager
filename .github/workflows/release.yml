@@ -53,3 +53,21 @@ jobs:
         with:
           files: ./artifacts/*
           generate_release_notes: true
+
+  publish-npm:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+      - run: bun install --frozen-lockfile
+      - name: Set version from tag
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          bun -e "const pkg = await Bun.file('package.json').json(); pkg.version = '$VERSION'; await Bun.write('package.json', JSON.stringify(pkg, null, 2) + '\n');"
+      - name: Publish to npm
+        run: bunx npm publish --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
