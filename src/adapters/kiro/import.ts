@@ -6,16 +6,16 @@
  * Missing files produce warnings, not errors.
  */
 
-import { join } from "node:path";
 import { homedir } from "node:os";
-import { extractPackageId } from "./identity.ts";
+import { join } from "node:path";
 import type {
   ImportOptions,
   ImportResult,
-  ImportedServer,
   ImportedInstruction,
+  ImportedServer,
   ImportedSkill,
 } from "../types.ts";
+import { extractPackageId } from "./identity.ts";
 
 interface KiroMcpServer {
   command?: string;
@@ -37,21 +37,12 @@ interface KiroMcpJson {
 }
 
 /** Core fields mapped directly to ImportedServer — everything else goes to adapterExtras. */
-const CORE_FIELDS = new Set([
-  "command",
-  "args",
-  "env",
-  "disabled",
-  "url",
-]);
+const CORE_FIELDS = new Set(["command", "args", "env", "disabled", "url"]);
 
 /**
  * Import Kiro native configs into core format.
  */
-export function importConfig(
-  options: ImportOptions = {},
-  homeDir?: string,
-): ImportResult {
+export function importConfig(options: ImportOptions = {}, homeDir?: string): ImportResult {
   const home = homeDir ?? homedir();
   const entities = options.entities ?? ["servers", "instructions", "skills"];
   const warnings: string[] = [];
@@ -161,9 +152,11 @@ function readServersFromFile(
  * Parse steering file frontmatter to extract inclusion mode.
  * Steering files use YAML frontmatter with an `inclusion` field.
  */
-function parseSteeringFrontmatter(
-  content: string,
-): { mode: ImportedInstruction["scope"]; description?: string; body: string } {
+function parseSteeringFrontmatter(content: string): {
+  mode: ImportedInstruction["scope"];
+  description?: string;
+  body: string;
+} {
   const fmMatch = content.match(/^---\s*\n([\s\S]*?)\n---\s*\n([\s\S]*)$/);
   if (!fmMatch) {
     return { mode: "always", body: content };
@@ -206,10 +199,7 @@ function parseSteeringFrontmatter(
   return { mode, description, body };
 }
 
-function readSteeringDir(
-  dirPath: string,
-  scope: "global" | "project",
-): ImportedInstruction[] {
+function readSteeringDir(dirPath: string, scope: "global" | "project"): ImportedInstruction[] {
   const fs = require("node:fs");
   const path = require("node:path");
 

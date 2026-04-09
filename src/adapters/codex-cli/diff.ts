@@ -5,15 +5,10 @@
  * Returns a DiffResult with status and per-entity changes.
  */
 
-import { join } from "node:path";
 import { homedir } from "node:os";
+import { join } from "node:path";
 import { parse as parseTOML } from "@iarna/toml";
-import type {
-  DiffChange,
-  DiffResult,
-  ResolvedConfig,
-  ResolvedServer,
-} from "../types.ts";
+import type { DiffChange, DiffResult, ResolvedConfig, ResolvedServer } from "../types.ts";
 
 interface NativeServer {
   command?: string;
@@ -100,9 +95,7 @@ export function diffConfig(
 }
 
 /** Read mcp_servers from a TOML config file, returning null if file doesn't exist. */
-function readNativeServers(
-  filePath: string,
-): Record<string, NativeServer> | null {
+function readNativeServers(filePath: string): Record<string, NativeServer> | null {
   try {
     const fs = require("node:fs");
     const text = fs.readFileSync(filePath, "utf-8");
@@ -154,10 +147,7 @@ function compareServer(
   // Compare env (normalize: treat missing as {})
   const expectedEnv = expected.env ?? {};
   const nativeEnv = native.env ?? {};
-  if (
-    JSON.stringify(sortKeys(expectedEnv)) !==
-    JSON.stringify(sortKeys(nativeEnv))
-  ) {
+  if (JSON.stringify(sortKeys(expectedEnv)) !== JSON.stringify(sortKeys(nativeEnv))) {
     diffs.push({
       field: "env",
       expected: expectedEnv,

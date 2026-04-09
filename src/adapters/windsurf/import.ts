@@ -5,15 +5,10 @@
  * and .windsurf/rules/*.md (project instructions with frontmatter).
  */
 
-import { join } from "node:path";
 import { homedir } from "node:os";
+import { join } from "node:path";
+import type { ImportOptions, ImportResult, ImportedInstruction, ImportedServer } from "../types.ts";
 import { extractPackageId } from "./identity.ts";
-import type {
-  ImportOptions,
-  ImportResult,
-  ImportedServer,
-  ImportedInstruction,
-} from "../types.ts";
 
 interface WindsurfServer {
   command: string;
@@ -31,10 +26,7 @@ interface WindsurfMcpConfig {
 /**
  * Import Windsurf native configs into core format.
  */
-export function importConfig(
-  options: ImportOptions = {},
-  homeDir?: string,
-): ImportResult {
+export function importConfig(options: ImportOptions = {}, homeDir?: string): ImportResult {
   const home = homeDir ?? homedir();
   const entities = options.entities ?? ["servers", "instructions"];
   const warnings: string[] = [];
@@ -63,10 +55,7 @@ export function importConfig(
 
 const CORE_FIELDS = new Set(["command", "args", "env", "disabled"]);
 
-function readServersFromFile(
-  filePath: string,
-  warnings: string[],
-): ImportedServer[] {
+function readServersFromFile(filePath: string, warnings: string[]): ImportedServer[] {
   const fs = require("node:fs");
 
   if (!fileExistsSync(filePath)) {
@@ -153,9 +142,7 @@ function parseFrontmatter(content: string): {
 }
 
 /** Map Windsurf trigger values to our scope enum. */
-function triggerToScope(
-  trigger?: string,
-): "always" | "glob" | "agent-decision" | "manual" {
+function triggerToScope(trigger?: string): "always" | "glob" | "agent-decision" | "manual" {
   switch (trigger) {
     case "always_on":
       return "always";
@@ -170,10 +157,7 @@ function triggerToScope(
   }
 }
 
-function readRulesDir(
-  projectPath: string,
-  warnings: string[],
-): ImportedInstruction[] {
+function readRulesDir(projectPath: string, warnings: string[]): ImportedInstruction[] {
   const fs = require("node:fs");
   const rulesDir = join(projectPath, ".windsurf", "rules");
 
@@ -213,10 +197,7 @@ function readRulesDir(
   return instructions;
 }
 
-function readLegacyRules(
-  projectPath: string,
-  warnings: string[],
-): ImportedInstruction | null {
+function readLegacyRules(projectPath: string, warnings: string[]): ImportedInstruction | null {
   const fs = require("node:fs");
   const legacyPath = join(projectPath, ".windsurfrules");
 

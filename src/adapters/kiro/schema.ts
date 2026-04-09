@@ -7,22 +7,10 @@ import type { AdapterSchema } from "../types.ts";
  */
 export const kiroServerSchema = z
   .object({
-    autoApprove: z
-      .array(z.string())
-      .optional()
-      .describe("Tools auto-approved without prompting"),
-    disabledTools: z
-      .array(z.string())
-      .optional()
-      .describe("Tools to omit from this server"),
-    timeout: z
-      .number()
-      .optional()
-      .describe("Request timeout in milliseconds"),
-    headers: z
-      .record(z.string())
-      .optional()
-      .describe("HTTP headers for remote servers"),
+    autoApprove: z.array(z.string()).optional().describe("Tools auto-approved without prompting"),
+    disabledTools: z.array(z.string()).optional().describe("Tools to omit from this server"),
+    timeout: z.number().optional().describe("Request timeout in milliseconds"),
+    headers: z.record(z.string()).optional().describe("HTTP headers for remote servers"),
     oauth: z
       .object({
         redirectUri: z.string().optional(),

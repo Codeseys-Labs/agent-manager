@@ -1,16 +1,9 @@
-import { describe, test, expect } from "bun:test";
-import {
-  resolveProfile,
-  resolveServerTags,
-  resolveActiveServers,
-} from "../../src/core/resolver";
+import { describe, expect, test } from "bun:test";
+import { resolveActiveServers, resolveProfile, resolveServerTags } from "../../src/core/resolver";
 import type { Config } from "../../src/core/schema";
 
 /** Minimal server helper */
-function srv(
-  command: string,
-  opts: { tags?: string[]; enabled?: boolean } = {},
-) {
+function srv(command: string, opts: { tags?: string[]; enabled?: boolean } = {}) {
   return {
     command,
     transport: "stdio" as const,
@@ -117,9 +110,7 @@ describe("resolveProfile", () => {
         b: { inherits: "a" },
       },
     };
-    expect(() => resolveProfile("a", circular)).toThrow(
-      "Circular inheritance detected",
-    );
+    expect(() => resolveProfile("a", circular)).toThrow("Circular inheritance detected");
   });
 
   test("unions server_tags from parent and child", () => {

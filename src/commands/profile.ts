@@ -1,17 +1,17 @@
-import { defineCommand } from "citty";
 import { join } from "node:path";
+import { defineCommand } from "citty";
 import {
-  resolveConfigDir,
-  readConfig,
-  writeConfig,
   loadResolvedConfig,
+  readConfig,
+  resolveConfigDir,
   resolveProjectConfig,
+  writeConfig,
 } from "../core/config";
-import { resolveProfile } from "../core/resolver";
 import { commitAll } from "../core/git";
-import { readActiveProfile } from "./use";
-import { output, info, error } from "../lib/output";
+import { resolveProfile } from "../core/resolver";
 import type { Config, Profile } from "../core/schema";
+import { error, info, output } from "../lib/output";
+import { readActiveProfile } from "./use";
 
 export const profileCommand = defineCommand({
   meta: { name: "profile", description: "Manage profiles" },
@@ -45,9 +45,7 @@ export const profileListCommand = defineCommand({
 
     const profiles = config.profiles ?? {};
     const activeProfile =
-      (await readActiveProfile(configDir)) ??
-      config.settings?.default_profile ??
-      "default";
+      (await readActiveProfile(configDir)) ?? config.settings?.default_profile ?? "default";
 
     const entries = Object.entries(profiles).map(([name, profile]) => ({
       name,
@@ -116,11 +114,14 @@ export const profileShowCommand = defineCommand({
     info(`Profile: ${resolved.name}`, opts);
     info(`Servers: ${resolved.servers.length > 0 ? resolved.servers.join(", ") : "none"}`, opts);
     info(`Skills: ${resolved.skills.length > 0 ? resolved.skills.join(", ") : "none"}`, opts);
-    info(`Instructions: ${resolved.instructions.length > 0 ? resolved.instructions.join(", ") : "none"}`, opts);
+    info(
+      `Instructions: ${resolved.instructions.length > 0 ? resolved.instructions.join(", ") : "none"}`,
+      opts,
+    );
 
     const envEntries = Object.entries(resolved.env);
     if (envEntries.length > 0) {
-      info(`Env:`, opts);
+      info("Env:", opts);
       for (const [k, v] of envEntries) {
         info(`  ${k}=${v}`, opts);
       }

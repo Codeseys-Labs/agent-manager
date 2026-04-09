@@ -1,16 +1,12 @@
+import { render } from "silvery";
 import React from "react";
-import { render } from "ink";
-import { App } from "./App.tsx";
-import { loadTuiData } from "./data.ts";
-import {
-  resolveConfigDir,
-  loadResolvedConfig,
-  resolveProjectConfig,
-} from "../core/config.ts";
-import { writeActiveProfile, readActiveProfile } from "../commands/use.ts";
-import { pull } from "../core/git.ts";
 import { getDetectedAdapters } from "../adapters/registry.ts";
 import type { ResolvedConfig, ResolvedServer } from "../adapters/types.ts";
+import { readActiveProfile, writeActiveProfile } from "../commands/use.ts";
+import { loadResolvedConfig, resolveConfigDir, resolveProjectConfig } from "../core/config.ts";
+import { pull } from "../core/git.ts";
+import { App } from "./App.tsx";
+import { loadTuiData } from "./data.ts";
 
 export async function launchTui(): Promise<void> {
   // Workaround for Bun + Ink TTY issues: resume stdin before render
@@ -42,9 +38,7 @@ export async function launchTui(): Promise<void> {
     const projectFile = resolveProjectConfig(process.cwd());
     const config = await loadResolvedConfig({ configDir, projectFile });
     const profileName =
-      (await readActiveProfile(configDir)) ??
-      config.settings?.default_profile ??
-      "default";
+      (await readActiveProfile(configDir)) ?? config.settings?.default_profile ?? "default";
 
     const servers: Record<string, ResolvedServer> = {};
     for (const [name, srv] of Object.entries(config.servers ?? {})) {
@@ -57,8 +51,7 @@ export async function launchTui(): Promise<void> {
         description: srv.description ?? "",
         tags: srv.tags ?? [],
         enabled: srv.enabled ?? true,
-        adapters:
-          (srv.adapters as Record<string, Record<string, unknown>>) ?? {},
+        adapters: (srv.adapters as Record<string, Record<string, unknown>>) ?? {},
       };
     }
     const resolved: ResolvedConfig = {
@@ -67,16 +60,13 @@ export async function launchTui(): Promise<void> {
       skills: {},
       agents: {},
       profile: profileName,
-      adapters:
-        (config.adapters as Record<string, Record<string, unknown>>) ?? {},
+      adapters: (config.adapters as Record<string, Record<string, unknown>>) ?? {},
     };
 
     const adapters = await getDetectedAdapters();
     for (const adapter of adapters) {
       adapter.export(resolved, {
-        projectPath: projectFile
-          ? projectFile.replace(/[/\\][^/\\]+$/, "")
-          : undefined,
+        projectPath: projectFile ? projectFile.replace(/[/\\][^/\\]+$/, "") : undefined,
       });
     }
   };

@@ -39,7 +39,10 @@ export function formatError(err: unknown, json: boolean): string {
 /**
  * Require that config.toml exists. Throws AmError if not found.
  */
-export function requireConfig<T>(config: T | null | undefined, action = "this command"): asserts config is T {
+export function requireConfig<T>(
+  config: T | null | undefined,
+  action = "this command",
+): asserts config is T {
   if (config == null) {
     throw new AmError(
       "Config not found",

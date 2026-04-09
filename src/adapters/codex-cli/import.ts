@@ -6,14 +6,14 @@
  * Missing files are warned, not fatal.
  */
 
-import { join } from "node:path";
 import { homedir } from "node:os";
+import { join } from "node:path";
 import { parse as parseTOML } from "@iarna/toml";
 import type {
   ImportOptions,
   ImportResult,
-  ImportedServer,
   ImportedInstruction,
+  ImportedServer,
   ImportedSkill,
 } from "../types.ts";
 
@@ -47,21 +47,12 @@ interface CodexConfig {
 }
 
 /** Core fields mapped directly to ImportedServer — everything else goes to adapterExtras. */
-const CORE_FIELDS = new Set([
-  "command",
-  "args",
-  "env",
-  "url",
-  "enabled",
-]);
+const CORE_FIELDS = new Set(["command", "args", "env", "url", "enabled"]);
 
 /**
  * Import Codex CLI native configs into core format.
  */
-export function importConfig(
-  options: ImportOptions = {},
-  homeDir?: string,
-): ImportResult {
+export function importConfig(options: ImportOptions = {}, homeDir?: string): ImportResult {
   const home = homeDir ?? homedir();
   const entities = options.entities ?? ["servers", "instructions"];
   const warnings: string[] = [];
@@ -164,10 +155,7 @@ function readServersFromToml(
   return results;
 }
 
-function readAgentsMd(
-  filePath: string,
-  scope: "global" | "project",
-): ImportedInstruction | null {
+function readAgentsMd(filePath: string, scope: "global" | "project"): ImportedInstruction | null {
   try {
     const fs = require("node:fs");
     const content = fs.readFileSync(filePath, "utf-8");

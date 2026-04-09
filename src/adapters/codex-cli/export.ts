@@ -5,8 +5,8 @@
  * am:begin/am:end markers).
  */
 
-import { join } from "node:path";
 import { homedir } from "node:os";
+import { join } from "node:path";
 import { parse as parseTOML, stringify as stringifyTOML } from "@iarna/toml";
 import type {
   ExportOptions,
@@ -47,11 +47,7 @@ export function exportConfig(
 
   // 1. Generate ~/.codex/config.toml
   const globalPath = join(home, ".codex", "config.toml");
-  const globalContent = generateConfigToml(
-    globalServers,
-    globalPath,
-    warnings,
-  );
+  const globalContent = generateConfigToml(globalServers, globalPath, warnings);
   files.push({ path: globalPath, content: globalContent, written: false });
 
   // 2. Generate .codex/config.toml (project-scoped servers)
@@ -66,11 +62,7 @@ export function exportConfig(
     const instructionContent = generateInstructionBlock(config);
     if (instructionContent) {
       const agentsMdPath = join(options.projectPath, "AGENTS.md");
-      const agentsMdContent = generateAgentsMd(
-        agentsMdPath,
-        instructionContent,
-        warnings,
-      );
+      const agentsMdContent = generateAgentsMd(agentsMdPath, instructionContent, warnings);
       files.push({ path: agentsMdPath, content: agentsMdContent, written: false });
     }
   }
@@ -166,7 +158,7 @@ function generateAgentsMd(
     existingContent = fs.readFileSync(existingPath, "utf-8");
   } catch {
     // No existing file — just return the managed block
-    return block + "\n";
+    return `${block}\n`;
   }
 
   // Replace existing managed section if present
@@ -179,5 +171,5 @@ function generateAgentsMd(
   }
 
   // Append managed section to existing content
-  return existingContent.trimEnd() + "\n\n" + block + "\n";
+  return `${existingContent.trimEnd()}\n\n${block}\n`;
 }

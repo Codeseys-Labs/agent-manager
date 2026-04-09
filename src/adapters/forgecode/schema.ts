@@ -7,14 +7,8 @@ import type { AdapterSchema } from "../types.ts";
  */
 export const forgeCodeServerSchema = z
   .object({
-    disable: z
-      .boolean()
-      .optional()
-      .describe("Whether the server is disabled"),
-    url: z
-      .string()
-      .optional()
-      .describe("URL for remote SSE/streamable HTTP servers"),
+    disable: z.boolean().optional().describe("Whether the server is disabled"),
+    url: z.string().optional().describe("URL for remote SSE/streamable HTTP servers"),
   })
   .passthrough();
 

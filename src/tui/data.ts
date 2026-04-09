@@ -1,15 +1,11 @@
+import { getDetectedAdapters, listAdapters } from "../adapters/registry.ts";
+import { readActiveProfile } from "../commands/use.ts";
 /**
  * Data loading for TUI — bridges core config/resolver/git to TUI state.
  */
-import {
-  resolveConfigDir,
-  loadResolvedConfig,
-  resolveProjectConfig,
-} from "../core/config.ts";
-import { getStatus, type StatusResult } from "../core/git.ts";
-import { readActiveProfile } from "../commands/use.ts";
-import { getDetectedAdapters, listAdapters } from "../adapters/registry.ts";
-import { resolveProfile, resolveActiveServers } from "../core/resolver.ts";
+import { loadResolvedConfig, resolveConfigDir, resolveProjectConfig } from "../core/config.ts";
+import { type StatusResult, getStatus } from "../core/git.ts";
+import { resolveActiveServers, resolveProfile } from "../core/resolver.ts";
 import type { Config, Server } from "../core/schema.ts";
 
 export interface ServerEntry {
@@ -46,9 +42,7 @@ export async function loadTuiData(): Promise<TuiData> {
   const config = await loadResolvedConfig({ configDir, projectFile });
 
   const profileName =
-    (await readActiveProfile(configDir)) ??
-    config.settings?.default_profile ??
-    "default";
+    (await readActiveProfile(configDir)) ?? config.settings?.default_profile ?? "default";
 
   // Profile list
   const profiles = Object.keys(config.profiles ?? {});
@@ -58,16 +52,14 @@ export async function loadTuiData(): Promise<TuiData> {
   }
 
   // Servers
-  const servers: ServerEntry[] = Object.entries(config.servers ?? {}).map(
-    ([name, srv]) => ({
-      name,
-      command: srv.command,
-      tags: srv.tags ?? [],
-      enabled: srv.enabled ?? true,
-      description: srv.description ?? "",
-      transport: srv.transport ?? "stdio",
-    }),
-  );
+  const servers: ServerEntry[] = Object.entries(config.servers ?? {}).map(([name, srv]) => ({
+    name,
+    command: srv.command,
+    tags: srv.tags ?? [],
+    enabled: srv.enabled ?? true,
+    description: srv.description ?? "",
+    transport: srv.transport ?? "stdio",
+  }));
 
   // Active servers from resolved profile
   let activeServerNames: string[] = [];
@@ -111,8 +103,7 @@ export async function loadTuiData(): Promise<TuiData> {
     skills: {},
     agents: {},
     profile: profileName,
-    adapters:
-      (config.adapters as Record<string, Record<string, unknown>>) ?? {},
+    adapters: (config.adapters as Record<string, Record<string, unknown>>) ?? {},
   };
 
   for (const adapter of detected) {

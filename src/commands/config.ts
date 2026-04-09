@@ -1,15 +1,11 @@
-import { defineCommand } from "citty";
-import { join } from "node:path";
 import { readFile } from "node:fs/promises";
+import { join } from "node:path";
 import * as TOML from "@iarna/toml";
-import {
-  resolveConfigDir,
-  loadResolvedConfig,
-  resolveProjectConfig,
-} from "../core/config";
-import { ConfigSchema } from "../core/schema";
+import { defineCommand } from "citty";
 import { listAdapters } from "../adapters/registry";
-import { output, info, error } from "../lib/output";
+import { loadResolvedConfig, resolveConfigDir, resolveProjectConfig } from "../core/config";
+import { ConfigSchema } from "../core/schema";
+import { error, info, output } from "../lib/output";
 
 export const configCommand = defineCommand({
   meta: { name: "config", description: "Manage agent-manager configuration" },
@@ -122,7 +118,11 @@ export const validateCommand = defineCommand({
 export const showCommand = defineCommand({
   meta: { name: "show", description: "Show configuration" },
   args: {
-    resolved: { type: "boolean", description: "Show fully resolved config after merge + profile resolution", default: false },
+    resolved: {
+      type: "boolean",
+      description: "Show fully resolved config after merge + profile resolution",
+      default: false,
+    },
     json: { type: "boolean", description: "JSON output", default: false },
     quiet: { type: "boolean", alias: "q", default: false },
     verbose: { type: "boolean", alias: "v", default: false },

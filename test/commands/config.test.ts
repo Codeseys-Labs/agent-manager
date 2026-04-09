@@ -1,12 +1,12 @@
-import { describe, test, expect, afterEach } from "bun:test";
-import { join } from "node:path";
+import { afterEach, describe, expect, test } from "bun:test";
 import { readFile } from "node:fs/promises";
+import { join } from "node:path";
 import * as TOML from "@iarna/toml";
-import { createTestDir, type TestDir } from "../helpers/tmp";
-import { writeConfig, loadResolvedConfig } from "../../src/core/config";
+import { loadResolvedConfig, writeConfig } from "../../src/core/config";
 import { initRepo } from "../../src/core/git";
 import { ConfigSchema } from "../../src/core/schema";
 import type { Config } from "../../src/core/schema";
+import { type TestDir, createTestDir } from "../helpers/tmp";
 
 describe("am config validate", () => {
   let dir: TestDir;
@@ -45,10 +45,13 @@ describe("am config validate", () => {
     await initRepo(configDir);
 
     // Write invalid TOML (server missing required `command` field)
-    await dir.write("config.toml", `
+    await dir.write(
+      "config.toml",
+      `
 [servers.bad]
 transport = "stdio"
-`);
+`,
+    );
 
     const raw = await readFile(join(configDir, "config.toml"), "utf-8");
     const parsed = TOML.parse(raw);
@@ -66,12 +69,15 @@ transport = "stdio"
     await initRepo(configDir);
 
     // Both content and content_file set
-    await dir.write("config.toml", `
+    await dir.write(
+      "config.toml",
+      `
 [instructions.bad]
 content = "hello"
 content_file = "file.md"
 scope = "always"
-`);
+`,
+    );
 
     const raw = await readFile(join(configDir, "config.toml"), "utf-8");
     const parsed = TOML.parse(raw);
@@ -120,10 +126,13 @@ describe("am config show", () => {
     await writeConfig(join(configDir, "config.toml"), config);
 
     // Write a local override
-    await dir.write("config.local.toml", `
+    await dir.write(
+      "config.local.toml",
+      `
 [servers.local-only]
 command = "local-cmd"
-`);
+`,
+    );
 
     const resolved = await loadResolvedConfig({ configDir, configFile: "config.toml" });
 

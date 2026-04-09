@@ -5,14 +5,9 @@
  * .github/copilot-instructions.md, and .github/instructions/*.instructions.md.
  */
 
-import { join } from "node:path";
 import { homedir } from "node:os";
-import type {
-  ExportOptions,
-  ExportResult,
-  ResolvedConfig,
-  WrittenFile,
-} from "../types.ts";
+import { join } from "node:path";
+import type { ExportOptions, ExportResult, ResolvedConfig, WrittenFile } from "../types.ts";
 
 /**
  * Export resolved config to Copilot native files.
@@ -35,11 +30,7 @@ export function exportConfig(
     // 2. Generate .github/copilot-instructions.md (always-scoped instructions)
     const globalInstr = generateGlobalInstructions(config);
     if (globalInstr) {
-      const instrPath = join(
-        options.projectPath,
-        ".github",
-        "copilot-instructions.md",
-      );
+      const instrPath = join(options.projectPath, ".github", "copilot-instructions.md");
       files.push({ path: instrPath, content: globalInstr, written: false });
     }
 
@@ -69,11 +60,7 @@ export function exportConfig(
 }
 
 /** Generate .vscode/mcp.json, preserving existing non-server fields. */
-function generateMcpJson(
-  config: ResolvedConfig,
-  existingPath: string,
-  warnings: string[],
-): string {
+function generateMcpJson(config: ResolvedConfig, existingPath: string, warnings: string[]): string {
   const fs = require("node:fs");
 
   let existing: Record<string, unknown> = {};
@@ -88,7 +75,7 @@ function generateMcpJson(
   for (const [name, server] of Object.entries(config.servers)) {
     if (!server.enabled) continue;
 
-    const cpExtras = server.adapters?.["copilot"] ?? {};
+    const cpExtras = server.adapters?.copilot ?? {};
     const serverType = (cpExtras.type as string) ?? "stdio";
 
     if (server.transport === "streamable-http" || serverType === "http") {
@@ -116,7 +103,7 @@ function generateMcpJson(
 
   // Use "servers" key (NOT "mcpServers")
   const output = { ...existing, servers };
-  return JSON.stringify(output, null, 2) + "\n";
+  return `${JSON.stringify(output, null, 2)}\n`;
 }
 
 /** Collect always-scoped instructions into a single copilot-instructions.md. */
@@ -130,14 +117,11 @@ function generateGlobalInstructions(config: ResolvedConfig): string | null {
     parts.push(instr.content);
   }
   if (parts.length === 0) return null;
-  return parts.join("\n\n") + "\n";
+  return `${parts.join("\n\n")}\n`;
 }
 
 /** Generate .github/instructions/*.instructions.md for glob-scoped instructions. */
-function generateScopedInstructions(
-  config: ResolvedConfig,
-  projectPath: string,
-): WrittenFile[] {
+function generateScopedInstructions(config: ResolvedConfig, projectPath: string): WrittenFile[] {
   const files: WrittenFile[] = [];
 
   for (const [name, instr] of Object.entries(config.instructions)) {
@@ -148,12 +132,7 @@ function generateScopedInstructions(
 
     const applyTo = instr.globs.join(",");
     const content = `---\napplyTo: "${applyTo}"\n---\n\n${instr.content}\n`;
-    const filePath = join(
-      projectPath,
-      ".github",
-      "instructions",
-      `${name}.instructions.md`,
-    );
+    const filePath = join(projectPath, ".github", "instructions", `${name}.instructions.md`);
     files.push({ path: filePath, content, written: false });
   }
 

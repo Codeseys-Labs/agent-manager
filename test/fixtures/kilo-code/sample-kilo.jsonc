@@ -44,7 +44,5 @@
   },
 
   // Custom instructions
-  "instructions": [
-    "./docs/coding-standards.md",
-  ],
+  "instructions": ["./docs/coding-standards.md"]
 }

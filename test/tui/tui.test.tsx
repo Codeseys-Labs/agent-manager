@@ -1,14 +1,13 @@
-import { describe, test, expect } from "bun:test";
+import { describe, expect, test } from "bun:test";
 
 describe("TUI", () => {
-  test("Ink and React load correctly", async () => {
-    const ink = await import("ink");
+  test("Silvery and React load correctly", async () => {
+    const silvery = await import("silvery");
     const React = await import("react");
 
-    expect(typeof ink.render).toBe("function");
-    // Box and Text are React forwardRef objects, not plain functions
-    expect(ink.Box).toBeDefined();
-    expect(ink.Text).toBeDefined();
+    expect(typeof silvery.render).toBe("function");
+    expect(silvery.Box).toBeDefined();
+    expect(silvery.Text).toBeDefined();
     expect(typeof React.useState).toBe("function");
   });
 
@@ -90,7 +89,12 @@ describe("TUI data types", () => {
         { name: "Claude Code", status: "in-sync", changes: 0 },
         { name: "Cursor", status: "drifted", changes: 2 },
       ],
-      git: { branch: "main", clean: false, dirty: ["config.toml"], remotes: [{ remote: "origin", url: "git@example.com:repo.git" }] },
+      git: {
+        branch: "main",
+        clean: false,
+        dirty: ["config.toml"],
+        remotes: [{ remote: "origin", url: "git@example.com:repo.git" }],
+      },
       allAdapterNames: ["claude-code", "cursor"],
       config: {},
     };

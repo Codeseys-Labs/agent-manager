@@ -5,8 +5,8 @@
  * and CLAUDE.md (instructions with am:begin/am:end markers).
  */
 
-import { join } from "node:path";
 import { homedir } from "node:os";
+import { join } from "node:path";
 import type {
   ExportOptions,
   ExportResult,
@@ -46,12 +46,7 @@ export function exportConfig(
 
   // 1. Generate ~/.claude.json
   const globalPath = join(home, ".claude.json");
-  const globalContent = generateClaudeJson(
-    globalServers,
-    config,
-    globalPath,
-    warnings,
-  );
+  const globalContent = generateClaudeJson(globalServers, config, globalPath, warnings);
   files.push({
     path: globalPath,
     content: globalContent,
@@ -70,11 +65,7 @@ export function exportConfig(
     const instructionContent = generateInstructionBlock(config);
     if (instructionContent) {
       const claudeMdPath = join(options.projectPath, "CLAUDE.md");
-      const claudeMdContent = generateClaudeMd(
-        claudeMdPath,
-        instructionContent,
-        warnings,
-      );
+      const claudeMdContent = generateClaudeMd(claudeMdPath, instructionContent, warnings);
       files.push({
         path: claudeMdPath,
         content: claudeMdContent,
@@ -142,7 +133,7 @@ function generateClaudeJson(
   }
 
   const output = { ...existing, mcpServers };
-  return JSON.stringify(output, null, 2) + "\n";
+  return `${JSON.stringify(output, null, 2)}\n`;
 }
 
 /** Build .mcp.json for project-scoped servers. */
@@ -154,7 +145,7 @@ function generateMcpJson(servers: Record<string, ResolvedServer>): string {
     if (Object.keys(server.env).length > 0) entry.env = server.env;
     mcpServers[name] = entry;
   }
-  return JSON.stringify({ mcpServers }, null, 2) + "\n";
+  return `${JSON.stringify({ mcpServers }, null, 2)}\n`;
 }
 
 /** Concatenate all instructions into a single markdown block. */
@@ -184,7 +175,7 @@ function generateClaudeMd(
     existingContent = fs.readFileSync(existingPath, "utf-8");
   } catch {
     // No existing file — just return the managed block
-    return block + "\n";
+    return `${block}\n`;
   }
 
   // Replace existing managed section if present
@@ -197,5 +188,5 @@ function generateClaudeMd(
   }
 
   // Append managed section to existing content
-  return existingContent.trimEnd() + "\n\n" + block + "\n";
+  return `${existingContent.trimEnd()}\n\n${block}\n`;
 }

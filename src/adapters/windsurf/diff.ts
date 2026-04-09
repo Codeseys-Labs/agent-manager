@@ -4,14 +4,9 @@
  * Reads current native mcp_config.json and compares against resolved config.
  */
 
-import { join } from "node:path";
 import { homedir } from "node:os";
-import type {
-  DiffChange,
-  DiffResult,
-  ResolvedConfig,
-  ResolvedServer,
-} from "../types.ts";
+import { join } from "node:path";
+import type { DiffChange, DiffResult, ResolvedConfig, ResolvedServer } from "../types.ts";
 
 interface NativeServer {
   command: string;
@@ -32,9 +27,7 @@ export function diffConfig(
   const home = homeDir ?? homedir();
   const changes: DiffChange[] = [];
 
-  const nativeServers = readNativeServers(
-    join(home, ".codeium", "windsurf", "mcp_config.json"),
-  );
+  const nativeServers = readNativeServers(join(home, ".codeium", "windsurf", "mcp_config.json"));
   if (nativeServers === null) {
     return { status: "unmanaged", changes: [] };
   }
@@ -80,9 +73,7 @@ export function diffConfig(
   };
 }
 
-function readNativeServers(
-  filePath: string,
-): Record<string, NativeServer> | null {
+function readNativeServers(filePath: string): Record<string, NativeServer> | null {
   try {
     const fs = require("node:fs");
     const text = fs.readFileSync(filePath, "utf-8");
@@ -109,19 +100,13 @@ function compareServer(
 
   const expectedArgs = expected.args ?? [];
   const nativeArgs = native.args ?? [];
-  if (
-    JSON.stringify(normalize(expectedArgs)) !==
-    JSON.stringify(normalize(nativeArgs))
-  ) {
+  if (JSON.stringify(normalize(expectedArgs)) !== JSON.stringify(normalize(nativeArgs))) {
     diffs.push({ field: "args", expected: expectedArgs, actual: nativeArgs });
   }
 
   const expectedEnv = expected.env ?? {};
   const nativeEnv = native.env ?? {};
-  if (
-    JSON.stringify(sortKeys(expectedEnv)) !==
-    JSON.stringify(sortKeys(nativeEnv))
-  ) {
+  if (JSON.stringify(sortKeys(expectedEnv)) !== JSON.stringify(sortKeys(nativeEnv))) {
     diffs.push({ field: "env", expected: expectedEnv, actual: nativeEnv });
   }
 
@@ -138,7 +123,6 @@ function sortKeys<T extends Record<string, unknown>>(obj: T): T {
 
 function normalize(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(normalize);
-  if (value && typeof value === "object")
-    return sortKeys(value as Record<string, unknown>);
+  if (value && typeof value === "object") return sortKeys(value as Record<string, unknown>);
   return value;
 }

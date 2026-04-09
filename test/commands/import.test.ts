@@ -1,4 +1,4 @@
-import { describe, test, expect } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { extractServerIdentity } from "../../src/commands/import";
 
 describe("extractServerIdentity", () => {
@@ -34,7 +34,9 @@ describe("extractServerIdentity", () => {
 
   test("handles scoped package with @version", () => {
     // "@upstash/context7-mcp@latest" — the last @ is the version separator
-    expect(extractServerIdentity("bunx", ["@upstash/context7-mcp@latest"])).toBe("@upstash/context7-mcp");
+    expect(extractServerIdentity("bunx", ["@upstash/context7-mcp@latest"])).toBe(
+      "@upstash/context7-mcp",
+    );
   });
 
   test("deduplicates identical servers", () => {

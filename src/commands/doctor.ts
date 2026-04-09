@@ -1,16 +1,13 @@
-import { defineCommand } from "citty";
-import { join } from "node:path";
-import { readFile } from "node:fs/promises";
 import * as fs from "node:fs";
+import { readFile } from "node:fs/promises";
+import { join } from "node:path";
 import * as TOML from "@iarna/toml";
-import {
-  resolveConfigDir,
-  resolveProjectConfig,
-} from "../core/config";
-import { ConfigSchema } from "../core/schema";
+import { defineCommand } from "citty";
+import { getAdapter, listAdapters } from "../adapters/registry";
+import { resolveConfigDir, resolveProjectConfig } from "../core/config";
 import { getStatus } from "../core/git";
-import { listAdapters, getAdapter } from "../adapters/registry";
-import { output, info, error } from "../lib/output";
+import { ConfigSchema } from "../core/schema";
+import { error, info, output } from "../lib/output";
 
 interface Check {
   name: string;
@@ -43,7 +40,11 @@ export const doctorCommand = defineCommand({
       fs.accessSync(join(configDir, ".git"));
       checks.push({ name: "Git repository", status: "ok", message: "Initialized" });
     } catch {
-      checks.push({ name: "Git repository", status: "fail", message: "Not a git repo. Run `am init`." });
+      checks.push({
+        name: "Git repository",
+        status: "fail",
+        message: "Not a git repo. Run `am init`.",
+      });
     }
 
     // 3. config.toml is valid
@@ -55,14 +56,24 @@ export const doctorCommand = defineCommand({
       if (result.success) {
         checks.push({ name: "config.toml", status: "ok", message: "Valid" });
       } else {
-        const issues = result.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join("; ");
-        checks.push({ name: "config.toml", status: "fail", message: `Validation errors: ${issues}` });
+        const issues = result.error.issues
+          .map((i) => `${i.path.join(".")}: ${i.message}`)
+          .join("; ");
+        checks.push({
+          name: "config.toml",
+          status: "fail",
+          message: `Validation errors: ${issues}`,
+        });
       }
     } catch (err: any) {
       if (err?.code === "ENOENT") {
         checks.push({ name: "config.toml", status: "fail", message: "Not found" });
       } else {
-        checks.push({ name: "config.toml", status: "fail", message: `Parse error: ${err.message}` });
+        checks.push({
+          name: "config.toml",
+          status: "fail",
+          message: `Parse error: ${err.message}`,
+        });
       }
     }
 
@@ -122,7 +133,11 @@ export const doctorCommand = defineCommand({
       fs.accessSync(keyPath);
       checks.push({ name: "Encryption key", status: "ok", message: "Present" });
     } catch {
-      checks.push({ name: "Encryption key", status: "warn", message: "Not found (secrets will not be encrypted)" });
+      checks.push({
+        name: "Encryption key",
+        status: "warn",
+        message: "Not found (secrets will not be encrypted)",
+      });
     }
 
     // 7. Project config in cwd
@@ -130,7 +145,11 @@ export const doctorCommand = defineCommand({
     if (projectFile) {
       checks.push({ name: "Project config", status: "ok", message: projectFile });
     } else {
-      checks.push({ name: "Project config", status: "warn", message: "No .agent-manager.toml in current directory tree" });
+      checks.push({
+        name: "Project config",
+        status: "warn",
+        message: "No .agent-manager.toml in current directory tree",
+      });
     }
 
     // 8. Enterprise/managed config files
@@ -142,7 +161,11 @@ export const doctorCommand = defineCommand({
       try {
         fs.accessSync(mp);
         const name = mp.split("/").pop()!;
-        checks.push({ name: `Managed config`, status: "warn", message: `${name} detected — may override local settings` });
+        checks.push({
+          name: "Managed config",
+          status: "warn",
+          message: `${name} detected — may override local settings`,
+        });
       } catch {
         // Not present, fine
       }

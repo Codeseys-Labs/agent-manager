@@ -1,5 +1,5 @@
+import { Box, Text } from "silvery";
 import React from "react";
-import { Box, Text } from "ink";
 import type { TuiData } from "./data.ts";
 
 interface Props {
@@ -27,8 +27,14 @@ export function Dashboard({ data, onSync, onApply }: Props) {
       {/* Header info */}
       <Box marginBottom={1}>
         <Text>
-          Profile: <Text bold color="cyan">{profileName}</Text>
-          {"  "}Servers: <Text bold>{activeCount}/{totalCount}</Text>
+          Profile:{" "}
+          <Text bold color="cyan">
+            {profileName}
+          </Text>
+          {"  "}Servers:{" "}
+          <Text bold>
+            {activeCount}/{totalCount}
+          </Text>
           {"  "}Git: <Text bold>{git.branch}</Text>{" "}
           <Text color={git.clean ? "green" : "yellow"}>
             ({git.clean ? "clean" : `${git.dirty.length} dirty`})
@@ -40,17 +46,25 @@ export function Dashboard({ data, onSync, onApply }: Props) {
       <Box flexDirection="column">
         <Box>
           <Text bold>
-            {"  "}{"Name".padEnd(24)}{"Command".padEnd(30)}{"Tags".padEnd(20)}{"Status"}
+            {"  "}
+            {"Name".padEnd(24)}
+            {"Command".padEnd(30)}
+            {"Tags".padEnd(20)}
+            {"Status"}
           </Text>
         </Box>
         <Box>
           <Text dimColor>
-            {"  "}{"─".repeat(24)}{"─".repeat(30)}{"─".repeat(20)}{"─".repeat(10)}
+            {"  "}
+            {"─".repeat(24)}
+            {"─".repeat(30)}
+            {"─".repeat(20)}
+            {"─".repeat(10)}
           </Text>
         </Box>
         {servers.length === 0 ? (
           <Box>
-            <Text dimColor>  No servers configured. Run `am add` to add one.</Text>
+            <Text dimColor> No servers configured. Run `am add` to add one.</Text>
           </Box>
         ) : (
           servers.map((s) => (
@@ -73,19 +87,14 @@ export function Dashboard({ data, onSync, onApply }: Props) {
       {/* Adapter drift */}
       {adapters.length > 0 && (
         <Box flexDirection="column" marginTop={1}>
-          <Text bold>  Tool Sync Status</Text>
+          <Text bold> Tool Sync Status</Text>
           <Box>
-            <Text dimColor>  {"─".repeat(50)}</Text>
+            <Text dimColor> {"─".repeat(50)}</Text>
           </Box>
           {adapters.map((a) => {
-            const icon =
-              a.status === "in-sync" ? "●" : a.status === "drifted" ? "⚠" : "○";
+            const icon = a.status === "in-sync" ? "●" : a.status === "drifted" ? "⚠" : "○";
             const color =
-              a.status === "in-sync"
-                ? "green"
-                : a.status === "drifted"
-                  ? "yellow"
-                  : "gray";
+              a.status === "in-sync" ? "green" : a.status === "drifted" ? "yellow" : "gray";
             const label =
               a.status === "in-sync"
                 ? "in sync"
@@ -108,9 +117,7 @@ export function Dashboard({ data, onSync, onApply }: Props) {
 
       {/* Footer */}
       <Box marginTop={1}>
-        <Text dimColor>
-          {"  "}[s]ync  [a]pply  [p]rofiles  [t]status  [q]uit  [?]help
-        </Text>
+        <Text dimColor>{"  "}[s]ync [a]pply [p]rofiles [t]status [q]uit [?]help</Text>
       </Box>
     </Box>
   );

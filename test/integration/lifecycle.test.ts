@@ -1,12 +1,10 @@
-import { describe, test, expect, beforeEach, afterEach } from "bun:test";
-import { createTestDir, type TestDir } from "../helpers/tmp";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { join } from "node:path";
+import { type TestDir, createTestDir } from "../helpers/tmp";
 
 let testDir: TestDir;
 
-async function runAM(
-  ...args: string[]
-): Promise<{ stdout: string; stderr: string; code: number }> {
+async function runAM(...args: string[]): Promise<{ stdout: string; stderr: string; code: number }> {
   const proc = Bun.spawn(["bun", "run", "src/cli.ts", ...args], {
     cwd: join(import.meta.dir, "../.."),
     env: { ...process.env, AM_CONFIG_DIR: testDir.path },
@@ -75,7 +73,16 @@ describe("lifecycle integration tests", () => {
 
   test("am list servers shows added server", async () => {
     await runAM("init");
-    await runAM("add", "fetch", "--command", "uvx", "--args", "mcp-server-fetch", "--tags", "utility");
+    await runAM(
+      "add",
+      "fetch",
+      "--command",
+      "uvx",
+      "--args",
+      "mcp-server-fetch",
+      "--tags",
+      "utility",
+    );
 
     const { stdout, code } = await runAM("list");
     expect(code).toBe(0);
@@ -85,7 +92,16 @@ describe("lifecycle integration tests", () => {
 
   test("am list servers --json returns valid JSON", async () => {
     await runAM("init");
-    await runAM("add", "fetch", "--command", "uvx", "--args", "mcp-server-fetch", "--tags", "utility");
+    await runAM(
+      "add",
+      "fetch",
+      "--command",
+      "uvx",
+      "--args",
+      "mcp-server-fetch",
+      "--tags",
+      "utility",
+    );
 
     const { stdout, code } = await runAM("list", "--json");
     expect(code).toBe(0);
@@ -176,10 +192,28 @@ describe("lifecycle integration tests", () => {
     expect(result.code).toBe(0);
 
     // 2. Add two servers
-    result = await runAM("add", "fetch", "--command", "uvx", "--args", "mcp-server-fetch", "--tags", "utility");
+    result = await runAM(
+      "add",
+      "fetch",
+      "--command",
+      "uvx",
+      "--args",
+      "mcp-server-fetch",
+      "--tags",
+      "utility",
+    );
     expect(result.code).toBe(0);
 
-    result = await runAM("add", "tavily", "--command", "bunx", "--args", "tavily-mcp@latest", "--tags", "search,web");
+    result = await runAM(
+      "add",
+      "tavily",
+      "--command",
+      "bunx",
+      "--args",
+      "tavily-mcp@latest",
+      "--tags",
+      "search,web",
+    );
     expect(result.code).toBe(0);
 
     // 3. List — should show 2 servers

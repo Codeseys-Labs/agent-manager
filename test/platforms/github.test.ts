@@ -49,7 +49,7 @@ describe("github adapter", () => {
     });
 
     it("retrieveKey always returns null (GitHub Secrets are write-only)", async () => {
-      const result = await github.retrieveKey!("https://github.com/user/repo");
+      const result = await github.retrieveKey?.("https://github.com/user/repo");
       expect(result).toBeNull();
     });
 

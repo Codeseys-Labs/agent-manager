@@ -1,12 +1,12 @@
-import { describe, test, expect, afterEach } from "bun:test";
-import { join } from "node:path";
+import { afterEach, describe, expect, test } from "bun:test";
 import * as fs from "node:fs";
-import { createTestDir, type TestDir } from "../helpers/tmp";
+import { join } from "node:path";
+import { getAdapter, listAdapters } from "../../src/adapters/registry";
 import { writeConfig } from "../../src/core/config";
-import { initRepo, getStatus } from "../../src/core/git";
+import { getStatus, initRepo } from "../../src/core/git";
 import { ConfigSchema } from "../../src/core/schema";
-import { listAdapters, getAdapter } from "../../src/adapters/registry";
 import type { Config } from "../../src/core/schema";
+import { type TestDir, createTestDir } from "../helpers/tmp";
 
 describe("am doctor", () => {
   let dir: TestDir;
@@ -52,7 +52,7 @@ describe("am doctor", () => {
   });
 
   test("reports missing config directory", async () => {
-    const missingDir = "/tmp/am-doctor-nonexistent-" + Date.now();
+    const missingDir = `/tmp/am-doctor-nonexistent-${Date.now()}`;
     expect(fs.existsSync(missingDir)).toBe(false);
   });
 
@@ -72,7 +72,7 @@ describe("am doctor", () => {
 
     const adapter = await getAdapter("claude-code");
     expect(adapter).toBeDefined();
-    expect(adapter!.meta.displayName).toBeTruthy();
+    expect(adapter?.meta.displayName).toBeTruthy();
   });
 
   test("checks encryption key presence", async () => {

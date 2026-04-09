@@ -1,10 +1,10 @@
-import { describe, test, expect, afterEach } from "bun:test";
+import { afterEach, describe, expect, test } from "bun:test";
 import { join } from "node:path";
-import { createTestDir, type TestDir } from "../helpers/tmp";
-import { writeConfig, loadResolvedConfig } from "../../src/core/config";
+import type { ResolvedConfig, ResolvedServer } from "../../src/adapters/types";
+import { loadResolvedConfig, writeConfig } from "../../src/core/config";
 import { initRepo } from "../../src/core/git";
 import type { Config } from "../../src/core/schema";
-import type { ResolvedConfig, ResolvedServer } from "../../src/adapters/types";
+import { type TestDir, createTestDir } from "../helpers/tmp";
 
 function buildResolvedConfig(
   config: Awaited<ReturnType<typeof loadResolvedConfig>>,
@@ -48,8 +48,20 @@ describe("am apply", () => {
     const config: Config = {
       settings: { default_profile: "default" },
       servers: {
-        fetch: { command: "uvx", args: ["mcp-server-fetch"], tags: ["utility"], transport: "stdio", enabled: true },
-        tavily: { command: "bunx", args: ["tavily-mcp@latest"], tags: ["search"], transport: "stdio", enabled: true },
+        fetch: {
+          command: "uvx",
+          args: ["mcp-server-fetch"],
+          tags: ["utility"],
+          transport: "stdio",
+          enabled: true,
+        },
+        tavily: {
+          command: "bunx",
+          args: ["tavily-mcp@latest"],
+          tags: ["search"],
+          transport: "stdio",
+          enabled: true,
+        },
       },
     };
     await writeConfig(join(configDir, "config.toml"), config);
@@ -87,7 +99,9 @@ describe("am apply", () => {
     const resolved = buildResolvedConfig(loaded, "work");
 
     expect(resolved.servers.outlook.env).toEqual({ MIDWAY_AUTH: "true" });
-    expect(resolved.servers.outlook.adapters["claude-code"]).toEqual({ always_allow: ["email_search"] });
+    expect(resolved.servers.outlook.adapters["claude-code"]).toEqual({
+      always_allow: ["email_search"],
+    });
     expect(resolved.adapters["claude-code"]).toEqual({ permission_mode: "allowEdits" });
   });
 });

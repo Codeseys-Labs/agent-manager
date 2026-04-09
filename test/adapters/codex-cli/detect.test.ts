@@ -1,7 +1,7 @@
-import { describe, expect, test, beforeEach, afterEach } from "bun:test";
-import { mkdtemp, rm, mkdir, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { detect } from "@/adapters/codex-cli/detect.ts";
 
 describe("codex-cli detect()", () => {
@@ -17,7 +17,7 @@ describe("codex-cli detect()", () => {
 
   test("detects when ~/.codex/config.toml exists", async () => {
     await mkdir(join(tempHome, ".codex"), { recursive: true });
-    await writeFile(join(tempHome, ".codex", "config.toml"), "model = \"gpt-5.4\"");
+    await writeFile(join(tempHome, ".codex", "config.toml"), 'model = "gpt-5.4"');
     const result = detect(tempHome);
     expect(result.installed).toBe(true);
     expect(result.paths.userConfig).toBe(join(tempHome, ".codex", "config.toml"));

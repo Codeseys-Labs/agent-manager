@@ -1,7 +1,7 @@
-import { describe, expect, test, beforeEach, afterEach } from "bun:test";
-import { mkdtemp, rm, mkdir, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { detect } from "@/adapters/cursor/detect.ts";
 
 describe("cursor detect()", () => {
@@ -24,15 +24,10 @@ describe("cursor detect()", () => {
 
   test("detects global mcp.json", async () => {
     await mkdir(join(tempHome, ".cursor"), { recursive: true });
-    await writeFile(
-      join(tempHome, ".cursor", "mcp.json"),
-      JSON.stringify({ mcpServers: {} }),
-    );
+    await writeFile(join(tempHome, ".cursor", "mcp.json"), JSON.stringify({ mcpServers: {} }));
     const result = detect(tempHome);
     expect(result.installed).toBe(true);
-    expect(result.paths.globalMcpConfig).toBe(
-      join(tempHome, ".cursor", "mcp.json"),
-    );
+    expect(result.paths.globalMcpConfig).toBe(join(tempHome, ".cursor", "mcp.json"));
   });
 
   test("returns installed:false when nothing exists", () => {
@@ -45,15 +40,10 @@ describe("cursor detect()", () => {
     await mkdir(join(tempHome, ".cursor"));
     const projectDir = join(tempHome, "my-project");
     await mkdir(join(projectDir, ".cursor"), { recursive: true });
-    await writeFile(
-      join(projectDir, ".cursor", "mcp.json"),
-      JSON.stringify({ mcpServers: {} }),
-    );
+    await writeFile(join(projectDir, ".cursor", "mcp.json"), JSON.stringify({ mcpServers: {} }));
 
     const result = detect(tempHome, projectDir);
-    expect(result.paths.projectMcpConfig).toBe(
-      join(projectDir, ".cursor", "mcp.json"),
-    );
+    expect(result.paths.projectMcpConfig).toBe(join(projectDir, ".cursor", "mcp.json"));
   });
 
   test("includes .cursor/rules/ path when present", async () => {
@@ -62,9 +52,7 @@ describe("cursor detect()", () => {
     await mkdir(join(projectDir, ".cursor", "rules"), { recursive: true });
 
     const result = detect(tempHome, projectDir);
-    expect(result.paths.rulesDir).toBe(
-      join(projectDir, ".cursor", "rules"),
-    );
+    expect(result.paths.rulesDir).toBe(join(projectDir, ".cursor", "rules"));
   });
 
   test("includes .cursorrules path when present", async () => {
@@ -83,9 +71,7 @@ describe("cursor detect()", () => {
     await mkdir(join(projectDir, ".cursor", "agents"), { recursive: true });
 
     const result = detect(tempHome, projectDir);
-    expect(result.paths.agentsDir).toBe(
-      join(projectDir, ".cursor", "agents"),
-    );
+    expect(result.paths.agentsDir).toBe(join(projectDir, ".cursor", "agents"));
   });
 
   test("does not include project paths when projectPath not provided", async () => {

@@ -6,15 +6,10 @@
  * and .cursor/agents/*.md (agents). Missing files are warned, not fatal.
  */
 
-import { join } from "node:path";
 import { homedir } from "node:os";
+import { join } from "node:path";
 import { extractPackageId } from "../claude-code/identity.ts";
-import type {
-  ImportOptions,
-  ImportResult,
-  ImportedServer,
-  ImportedInstruction,
-} from "../types.ts";
+import type { ImportOptions, ImportResult, ImportedInstruction, ImportedServer } from "../types.ts";
 
 interface CursorMcpServer {
   command?: string;
@@ -40,10 +35,7 @@ interface MdcFrontmatter {
 /**
  * Import Cursor native configs into core format.
  */
-export function importConfig(
-  options: ImportOptions = {},
-  homeDir?: string,
-): ImportResult {
+export function importConfig(options: ImportOptions = {}, homeDir?: string): ImportResult {
   const home = homeDir ?? homedir();
   const entities = options.entities ?? ["servers", "instructions"];
   const warnings: string[] = [];
@@ -79,14 +71,7 @@ export function importConfig(
   return { servers, instructions, skills: [], warnings };
 }
 
-const CORE_FIELDS = new Set([
-  "command",
-  "args",
-  "env",
-  "url",
-  "headers",
-  "disabled",
-]);
+const CORE_FIELDS = new Set(["command", "args", "env", "url", "headers", "disabled"]);
 
 function readServersFromFile(
   filePath: string,
@@ -141,9 +126,7 @@ function readServersFromFile(
       }
     }
 
-    const transport: "stdio" | "streamable-http" | "sse" = entry.url
-      ? "streamable-http"
-      : "stdio";
+    const transport: "stdio" | "streamable-http" | "sse" = entry.url ? "streamable-http" : "stdio";
 
     const server: ImportedServer = {
       name,
@@ -153,9 +136,7 @@ function readServersFromFile(
       ...(entry.args && { args: entry.args }),
       ...(entry.env && { env: entry.env }),
       enabled: entry.disabled !== true,
-      packageId: entry.command
-        ? extractPackageId(entry.command, entry.args)
-        : undefined,
+      packageId: entry.command ? extractPackageId(entry.command, entry.args) : undefined,
       ...(Object.keys(adapterExtras).length > 0 && { adapterExtras }),
     };
 
@@ -170,10 +151,7 @@ function readServersFromFile(
  *
  * .mdc format: YAML frontmatter (description, globs, alwaysApply) + markdown body.
  */
-function readMdcRules(
-  projectPath: string,
-  warnings: string[],
-): ImportedInstruction[] {
+function readMdcRules(projectPath: string, warnings: string[]): ImportedInstruction[] {
   const rulesDir = join(projectPath, ".cursor", "rules");
   const fs = require("node:fs");
 
@@ -197,10 +175,7 @@ function readMdcRules(
       let scope: ImportedInstruction["scope"];
       if (parsed.frontmatter.alwaysApply) {
         scope = "always";
-      } else if (
-        parsed.frontmatter.globs &&
-        parsed.frontmatter.globs.length > 0
-      ) {
+      } else if (parsed.frontmatter.globs && parsed.frontmatter.globs.length > 0) {
         scope = "glob";
       } else if (parsed.frontmatter.description) {
         scope = "agent-decision";
@@ -226,10 +201,7 @@ function readMdcRules(
 /**
  * Read legacy .cursorrules file as a single instruction.
  */
-function readLegacyRules(
-  projectPath: string,
-  warnings: string[],
-): ImportedInstruction | null {
+function readLegacyRules(projectPath: string, warnings: string[]): ImportedInstruction | null {
   const filePath = join(projectPath, ".cursorrules");
   if (!fileExistsSync(filePath)) return null;
 

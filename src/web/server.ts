@@ -1,63 +1,20 @@
+import { join } from "node:path";
 import { Hono } from "hono";
 import { serveStatic } from "hono/bun";
-import { join } from "node:path";
-import {
-  resolveConfigDir,
-  loadResolvedConfig,
-  resolveProjectConfig,
-} from "../core/config";
-import { getStatus, push as gitPush, pull as gitPull } from "../core/git";
+import { getAdapter, getDetectedAdapters, listAdapters } from "../adapters/registry";
 import { readActiveProfile, writeActiveProfile } from "../commands/use";
-import {
-  getDetectedAdapters,
-  getAdapter,
-  listAdapters,
-} from "../adapters/registry";
-import type { ResolvedConfig, ResolvedServer } from "../adapters/types";
+import { buildResolvedConfig, loadResolvedConfig, resolveConfigDir, resolveProjectConfig } from "../core/config";
+import { getStatus, pull as gitPull, push as gitPush } from "../core/git";
 
 export function createApp() {
   const app = new Hono();
-
-  // --- Helpers ---
-
-  function buildResolvedConfig(
-    config: Awaited<ReturnType<typeof loadResolvedConfig>>,
-    profileName: string,
-  ): ResolvedConfig {
-    const servers: Record<string, ResolvedServer> = {};
-    for (const [name, srv] of Object.entries(config.servers ?? {})) {
-      servers[name] = {
-        name,
-        command: srv.command,
-        args: srv.args ?? [],
-        env: srv.env ?? {},
-        transport: srv.transport ?? "stdio",
-        description: srv.description ?? "",
-        tags: srv.tags ?? [],
-        enabled: srv.enabled ?? true,
-        adapters:
-          (srv.adapters as Record<string, Record<string, unknown>>) ?? {},
-      };
-    }
-    return {
-      servers,
-      instructions: {},
-      skills: {},
-      agents: {},
-      profile: profileName,
-      adapters:
-        (config.adapters as Record<string, Record<string, unknown>>) ?? {},
-    };
-  }
 
   async function getConfigAndProfile() {
     const configDir = resolveConfigDir();
     const projectFile = resolveProjectConfig(process.cwd());
     const config = await loadResolvedConfig({ configDir, projectFile });
     const profileName =
-      (await readActiveProfile(configDir)) ??
-      config.settings?.default_profile ??
-      "default";
+      (await readActiveProfile(configDir)) ?? config.settings?.default_profile ?? "default";
     return { configDir, config, profileName };
   }
 
@@ -79,17 +36,15 @@ export function createApp() {
   app.get("/api/servers", async (c) => {
     try {
       const { config } = await getConfigAndProfile();
-      const servers = Object.entries(config.servers ?? {}).map(
-        ([name, srv]) => ({
-          name,
-          command: srv.command,
-          args: srv.args ?? [],
-          tags: srv.tags ?? [],
-          enabled: srv.enabled ?? true,
-          description: srv.description ?? "",
-          transport: srv.transport ?? "stdio",
-        }),
-      );
+      const servers = Object.entries(config.servers ?? {}).map(([name, srv]) => ({
+        name,
+        command: srv.command,
+        args: srv.args ?? [],
+        tags: srv.tags ?? [],
+        enabled: srv.enabled ?? true,
+        description: srv.description ?? "",
+        transport: srv.transport ?? "stdio",
+      }));
       return c.json({ servers });
     } catch {
       return c.json({ error: "Config not found" }, 500);
@@ -99,14 +54,12 @@ export function createApp() {
   app.get("/api/profiles", async (c) => {
     try {
       const { config, profileName } = await getConfigAndProfile();
-      const profiles = Object.entries(config.profiles ?? {}).map(
-        ([name, profile]) => ({
-          name,
-          description: profile.description ?? "",
-          inherits: profile.inherits ?? null,
-          active: name === profileName,
-        }),
-      );
+      const profiles = Object.entries(config.profiles ?? {}).map(([name, profile]) => ({
+        name,
+        description: profile.description ?? "",
+        inherits: profile.inherits ?? null,
+        active: name === profileName,
+      }));
       return c.json({ profiles, active: profileName });
     } catch {
       return c.json({ error: "Config not found" }, 500);
@@ -266,9 +219,7 @@ export function createApp() {
       start(controller) {
         const encoder = new TextEncoder();
         const send = (event: string, data: unknown) => {
-          controller.enqueue(
-            encoder.encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`),
-          );
+          controller.enqueue(encoder.encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`));
         };
 
         // Send initial status

@@ -1,11 +1,9 @@
-import { describe, expect, test, afterEach } from "bun:test";
-import { createTestDir, type TestDir } from "../../helpers/tmp.ts";
+import { afterEach, describe, expect, test } from "bun:test";
 import { exportConfig } from "@/adapters/copilot/export.ts";
 import type { ResolvedConfig, ResolvedServer } from "@/adapters/types.ts";
+import { type TestDir, createTestDir } from "../../helpers/tmp.ts";
 
-function server(
-  overrides: Partial<ResolvedServer> & { command: string },
-): ResolvedServer {
+function server(overrides: Partial<ResolvedServer> & { command: string }): ResolvedServer {
   return {
     name: "test",
     args: [],
@@ -39,7 +37,7 @@ describe("copilot exportConfig()", () => {
 
   test("generates .vscode/mcp.json with 'servers' key (not mcpServers)", async () => {
     dir = await createTestDir("am-cp-export-");
-    const projectDir = dir.path + "/project";
+    const projectDir = `${dir.path}/project`;
     const cfg = config({
       servers: {
         fetch: server({
@@ -60,7 +58,7 @@ describe("copilot exportConfig()", () => {
     const mcpFile = result.files.find((f) => f.path.endsWith("mcp.json"));
     expect(mcpFile).toBeDefined();
 
-    const parsed = JSON.parse(mcpFile!.content);
+    const parsed = JSON.parse(mcpFile?.content);
     // Must use "servers" key
     expect(parsed.servers).toBeDefined();
     expect(parsed.mcpServers).toBeUndefined();
@@ -71,7 +69,7 @@ describe("copilot exportConfig()", () => {
 
   test("generates copilot-instructions.md for always-scoped instructions", async () => {
     dir = await createTestDir("am-cp-export-");
-    const projectDir = dir.path + "/project";
+    const projectDir = `${dir.path}/project`;
     const cfg = config({
       instructions: {
         "ts-rules": {
@@ -87,16 +85,14 @@ describe("copilot exportConfig()", () => {
     });
 
     const result = exportConfig(cfg, { projectPath: projectDir, dryRun: true }, dir.path);
-    const instrFile = result.files.find((f) =>
-      f.path.endsWith("copilot-instructions.md"),
-    );
+    const instrFile = result.files.find((f) => f.path.endsWith("copilot-instructions.md"));
     expect(instrFile).toBeDefined();
-    expect(instrFile!.content).toContain("Use strict TypeScript.");
+    expect(instrFile?.content).toContain("Use strict TypeScript.");
   });
 
   test("generates scoped .instructions.md with applyTo frontmatter", async () => {
     dir = await createTestDir("am-cp-export-");
-    const projectDir = dir.path + "/project";
+    const projectDir = `${dir.path}/project`;
     const cfg = config({
       instructions: {
         testing: {
@@ -112,17 +108,15 @@ describe("copilot exportConfig()", () => {
     });
 
     const result = exportConfig(cfg, { projectPath: projectDir, dryRun: true }, dir.path);
-    const instrFile = result.files.find((f) =>
-      f.path.endsWith("testing.instructions.md"),
-    );
+    const instrFile = result.files.find((f) => f.path.endsWith("testing.instructions.md"));
     expect(instrFile).toBeDefined();
-    expect(instrFile!.content).toContain('applyTo: "**/*.test.ts"');
-    expect(instrFile!.content).toContain("Use describe/test blocks.");
+    expect(instrFile?.content).toContain('applyTo: "**/*.test.ts"');
+    expect(instrFile?.content).toContain("Use describe/test blocks.");
   });
 
   test("skips disabled servers", async () => {
     dir = await createTestDir("am-cp-export-");
-    const projectDir = dir.path + "/project";
+    const projectDir = `${dir.path}/project`;
     const cfg = config({
       servers: {
         enabled_one: server({ name: "enabled_one", command: "enabled-mcp" }),
@@ -136,14 +130,14 @@ describe("copilot exportConfig()", () => {
 
     const result = exportConfig(cfg, { projectPath: projectDir, dryRun: true }, dir.path);
     const mcpFile = result.files.find((f) => f.path.endsWith("mcp.json"));
-    const parsed = JSON.parse(mcpFile!.content);
+    const parsed = JSON.parse(mcpFile?.content);
     expect(parsed.servers.enabled_one).toBeDefined();
     expect(parsed.servers.disabled_one).toBeUndefined();
   });
 
   test("skips instructions not targeting copilot", async () => {
     dir = await createTestDir("am-cp-export-");
-    const projectDir = dir.path + "/project";
+    const projectDir = `${dir.path}/project`;
     const cfg = config({
       instructions: {
         "claude-only": {
@@ -160,16 +154,14 @@ describe("copilot exportConfig()", () => {
 
     const result = exportConfig(cfg, { projectPath: projectDir, dryRun: true }, dir.path);
     const instrFiles = result.files.filter(
-      (f) =>
-        f.path.endsWith("copilot-instructions.md") ||
-        f.path.includes(".github/instructions"),
+      (f) => f.path.endsWith("copilot-instructions.md") || f.path.includes(".github/instructions"),
     );
     expect(instrFiles).toHaveLength(0);
   });
 
   test("dry run doesn't write files", async () => {
     dir = await createTestDir("am-cp-export-");
-    const projectDir = dir.path + "/project";
+    const projectDir = `${dir.path}/project`;
     const cfg = config({
       servers: {
         fetch: server({
@@ -188,7 +180,7 @@ describe("copilot exportConfig()", () => {
 
   test("actual write creates files on disk", async () => {
     dir = await createTestDir("am-cp-export-");
-    const projectDir = dir.path + "/project";
+    const projectDir = `${dir.path}/project`;
     const cfg = config({
       servers: {
         fetch: server({
@@ -201,16 +193,14 @@ describe("copilot exportConfig()", () => {
 
     const result = exportConfig(cfg, { projectPath: projectDir }, dir.path);
     const mcpFile = result.files.find((f) => f.path.endsWith("mcp.json"));
-    expect(mcpFile!.written).toBe(true);
-    const content = JSON.parse(
-      await dir.read("project/.vscode/mcp.json"),
-    );
+    expect(mcpFile?.written).toBe(true);
+    const content = JSON.parse(await dir.read("project/.vscode/mcp.json"));
     expect(content.servers.fetch.command).toBe("uvx");
   });
 
   test("preserves existing non-server fields in mcp.json", async () => {
     dir = await createTestDir("am-cp-export-");
-    const projectDir = dir.path + "/project";
+    const projectDir = `${dir.path}/project`;
     await dir.write(
       "project/.vscode/mcp.json",
       JSON.stringify({
@@ -231,7 +221,7 @@ describe("copilot exportConfig()", () => {
 
     const result = exportConfig(cfg, { projectPath: projectDir }, dir.path);
     const mcpFile = result.files.find((f) => f.path.endsWith("mcp.json"));
-    const parsed = JSON.parse(mcpFile!.content);
+    const parsed = JSON.parse(mcpFile?.content);
     expect(parsed.someOtherSetting).toBe(true);
     expect(parsed.servers.old).toBeUndefined();
     expect(parsed.servers.fetch).toBeDefined();
@@ -239,7 +229,7 @@ describe("copilot exportConfig()", () => {
 
   test("exports HTTP servers with type and url", async () => {
     dir = await createTestDir("am-cp-export-");
-    const projectDir = dir.path + "/project";
+    const projectDir = `${dir.path}/project`;
     const cfg = config({
       servers: {
         github: server({
@@ -258,11 +248,9 @@ describe("copilot exportConfig()", () => {
 
     const result = exportConfig(cfg, { projectPath: projectDir, dryRun: true }, dir.path);
     const mcpFile = result.files.find((f) => f.path.endsWith("mcp.json"));
-    const parsed = JSON.parse(mcpFile!.content);
+    const parsed = JSON.parse(mcpFile?.content);
     expect(parsed.servers.github.type).toBe("http");
-    expect(parsed.servers.github.url).toBe(
-      "https://api.githubcopilot.com/mcp/",
-    );
+    expect(parsed.servers.github.url).toBe("https://api.githubcopilot.com/mcp/");
     expect(parsed.servers.github.command).toBeUndefined();
   });
 });

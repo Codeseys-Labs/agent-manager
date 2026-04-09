@@ -1,11 +1,7 @@
-import { defineCommand } from "citty";
 import { join } from "node:path";
-import {
-  resolveConfigDir,
-  loadResolvedConfig,
-  resolveProjectConfig,
-} from "../core/config";
-import { output, info, error } from "../lib/output";
+import { defineCommand } from "citty";
+import { loadResolvedConfig, resolveConfigDir, resolveProjectConfig } from "../core/config";
+import { error, info, output } from "../lib/output";
 
 export const listCommand = defineCommand({
   meta: { name: "list", description: "List servers in the config" },

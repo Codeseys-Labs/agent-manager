@@ -1,7 +1,7 @@
 import { defineCommand } from "citty";
 import { resolveConfigDir } from "../core/config";
-import { revertHead, log as gitLog } from "../core/git";
-import { output, info, error } from "../lib/output";
+import { log as gitLog, revertHead } from "../core/git";
+import { error, info, output } from "../lib/output";
 
 export const undoCommand = defineCommand({
   meta: { name: "undo", description: "Revert the last config change" },
@@ -35,7 +35,7 @@ export const undoCommand = defineCommand({
     try {
       const oid = await revertHead(configDir);
       info(`Reverted: "${headMsg}"`, opts);
-      info(`Run \`am apply\` to regenerate native configs`, opts);
+      info("Run `am apply` to regenerate native configs", opts);
       if (args.json) {
         output({ action: "undo", reverted: headMsg, oid }, opts);
       }

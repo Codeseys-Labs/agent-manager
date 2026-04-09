@@ -1,41 +1,9 @@
-import { defineCommand } from "citty";
 import { join } from "node:path";
-import {
-  resolveConfigDir,
-  loadResolvedConfig,
-  resolveProjectConfig,
-} from "../core/config";
+import { defineCommand } from "citty";
+import { getAdapter, getDetectedAdapters, listAdapters } from "../adapters/registry";
+import { buildResolvedConfig, loadResolvedConfig, resolveConfigDir, resolveProjectConfig } from "../core/config";
+import { debug, error, info, output } from "../lib/output";
 import { readActiveProfile } from "./use";
-import { getDetectedAdapters, getAdapter, listAdapters } from "../adapters/registry";
-import { output, info, error, debug } from "../lib/output";
-import type { ResolvedConfig, ResolvedServer } from "../adapters/types";
-
-function buildResolvedConfig(
-  config: Awaited<ReturnType<typeof loadResolvedConfig>>,
-  profileName: string,
-): ResolvedConfig {
-  const servers: Record<string, ResolvedServer> = {};
-  for (const [name, srv] of Object.entries(config.servers ?? {})) {
-    servers[name] = {
-      name,
-      command: srv.command,
-      args: srv.args ?? [],
-      env: srv.env ?? {},
-      transport: srv.transport ?? "stdio",
-      description: srv.description ?? "",
-      tags: srv.tags ?? [],
-      enabled: srv.enabled ?? true,
-      adapters: (srv.adapters as Record<string, Record<string, unknown>>) ?? {},
-    };
-  }
-  return {
-    servers,
-    instructions: {},
-    skills: {},
-    profile: profileName,
-    adapters: (config.adapters as Record<string, Record<string, unknown>>) ?? {},
-  };
-}
 
 export const applyCommand = defineCommand({
   meta: { name: "apply", description: "Generate native configs for detected tools" },
@@ -79,10 +47,12 @@ export const applyCommand = defineCommand({
       if (!adapter) {
         const available = listAdapters();
         if (args.json) {
-          console.error(JSON.stringify({
-            error: `Adapter "${args.target}" not found`,
-            suggestion: `Available adapters: ${available.join(", ")}`,
-          }));
+          console.error(
+            JSON.stringify({
+              error: `Adapter "${args.target}" not found`,
+              suggestion: `Available adapters: ${available.join(", ")}`,
+            }),
+          );
         } else {
           console.error(`error: Adapter "${args.target}" not found`);
           console.error(`  available: ${available.join(", ")}`);
@@ -100,7 +70,11 @@ export const applyCommand = defineCommand({
       return;
     }
 
-    const results: Array<{ adapter: string; files: Array<{ path: string; written: boolean }>; warnings: string[] }> = [];
+    const results: Array<{
+      adapter: string;
+      files: Array<{ path: string; written: boolean }>;
+      warnings: string[];
+    }> = [];
 
     for (const adapter of adapters) {
       debug(`Applying to ${adapter.meta.displayName}...`, opts);
@@ -134,7 +108,10 @@ export const applyCommand = defineCommand({
         });
 
         if (!args["dry-run"]) {
-          info(`${adapter.meta.displayName}: wrote ${result.files.filter((f) => f.written).length} file(s)`, opts);
+          info(
+            `${adapter.meta.displayName}: wrote ${result.files.filter((f) => f.written).length} file(s)`,
+            opts,
+          );
         } else {
           info(`${adapter.meta.displayName}: would write ${result.files.length} file(s)`, opts);
           for (const f of result.files) {

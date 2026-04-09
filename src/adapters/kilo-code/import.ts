@@ -8,17 +8,17 @@
  * Cline/Roo-compatible format (`mcpServers` key).
  */
 
-import { join } from "node:path";
 import { homedir } from "node:os";
-import { parseJsonc } from "./jsonc.ts";
-import { extractPackageId } from "./identity.ts";
+import { join } from "node:path";
 import type {
   ImportOptions,
   ImportResult,
-  ImportedServer,
   ImportedInstruction,
+  ImportedServer,
   ImportedSkill,
 } from "../types.ts";
+import { extractPackageId } from "./identity.ts";
+import { parseJsonc } from "./jsonc.ts";
 
 // ── New CLI-native MCP format ───────────────────────────────────
 
@@ -68,10 +68,7 @@ interface KiloAgentEntry {
 /**
  * Import Kilo Code native configs into core format.
  */
-export function importConfig(
-  options: ImportOptions = {},
-  homeDir?: string,
-): ImportResult {
+export function importConfig(options: ImportOptions = {}, homeDir?: string): ImportResult {
   const home = homeDir ?? homedir();
   const entities = options.entities ?? ["servers", "instructions", "skills"];
   const warnings: string[] = [];
@@ -125,12 +122,7 @@ export function importConfig(
 
     if (options.projectPath) {
       // Project AGENTS.md (and fallbacks)
-      for (const name of [
-        "AGENTS.md",
-        "AGENT.md",
-        "CLAUDE.md",
-        "CONTEXT.md",
-      ]) {
+      for (const name of ["AGENTS.md", "AGENT.md", "CLAUDE.md", "CONTEXT.md"]) {
         const p = join(options.projectPath, name);
         const instr = readMarkdownInstruction(
           p,
@@ -145,9 +137,7 @@ export function importConfig(
 
       // Project custom rules: .kilocode/rules/
       const projectRulesDir = join(options.projectPath, ".kilocode", "rules");
-      instructions.push(
-        ...readRulesDir(projectRulesDir, "project", warnings),
-      );
+      instructions.push(...readRulesDir(projectRulesDir, "project", warnings));
 
       // Project config instructions
       if (projectConfig?.instructions) {
@@ -186,10 +176,7 @@ const GLOBAL_CONFIG_NAMES = [
   "opencode.json",
 ];
 
-function loadGlobalConfig(
-  home: string,
-  warnings: string[],
-): KiloConfig | null {
+function loadGlobalConfig(home: string, warnings: string[]): KiloConfig | null {
   const configDir = join(home, ".config", "kilo");
   for (const name of GLOBAL_CONFIG_NAMES) {
     const configPath = join(configDir, name);
@@ -200,10 +187,7 @@ function loadGlobalConfig(
   return null;
 }
 
-function loadProjectConfig(
-  projectPath: string,
-  warnings: string[],
-): KiloConfig | null {
+function loadProjectConfig(projectPath: string, warnings: string[]): KiloConfig | null {
   // .kilo/kilo.jsonc takes priority over kilo.jsonc
   const dotKiloConfig = join(projectPath, ".kilo", "kilo.jsonc");
   const dotKiloResult = readJsoncFile(dotKiloConfig, []);
@@ -217,10 +201,7 @@ function loadProjectConfig(
   return null;
 }
 
-function readJsoncFile(
-  filePath: string,
-  warnings: string[],
-): unknown | null {
+function readJsoncFile(filePath: string, warnings: string[]): unknown | null {
   const fs = require("node:fs");
   try {
     fs.accessSync(filePath);
@@ -266,10 +247,7 @@ const LEGACY_CORE_FIELDS = new Set([
   "timeout",
 ]);
 
-function extractServers(
-  config: KiloConfig,
-  scope: "global" | "project",
-): ImportedServer[] {
+function extractServers(config: KiloConfig, scope: "global" | "project"): ImportedServer[] {
   const servers: ImportedServer[] = [];
 
   // New format: `mcp` key
@@ -407,10 +385,7 @@ function readRulesDir(
 
 // ── Skills ──────────────────────────────────────────────────────
 
-function readSkillsDir(
-  dirPath: string,
-  warnings: string[],
-): ImportedSkill[] {
+function readSkillsDir(dirPath: string, warnings: string[]): ImportedSkill[] {
   const fs = require("node:fs");
   const results: ImportedSkill[] = [];
 
@@ -449,16 +424,15 @@ function readSkillsDir(
 }
 
 function extractSkillDescription(content: string): string | undefined {
-  const match = content.match(
-    /^---\s*\n([\s\S]*?)\n---/,
-  );
+  const match = content.match(/^---\s*\n([\s\S]*?)\n---/);
   if (!match) return undefined;
   const frontmatter = match[1];
-  const descLine = frontmatter
-    .split("\n")
-    .find((l) => l.startsWith("description:"));
+  const descLine = frontmatter.split("\n").find((l) => l.startsWith("description:"));
   if (!descLine) return undefined;
-  return descLine.replace("description:", "").trim().replace(/^["']|["']$/g, "");
+  return descLine
+    .replace("description:", "")
+    .trim()
+    .replace(/^["']|["']$/g, "");
 }
 
 function basename(path: string): string {

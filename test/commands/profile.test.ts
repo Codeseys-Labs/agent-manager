@@ -1,10 +1,10 @@
-import { describe, test, expect, afterEach } from "bun:test";
+import { afterEach, describe, expect, test } from "bun:test";
 import { join } from "node:path";
-import { createTestDir, type TestDir } from "../helpers/tmp";
-import { writeConfig, readConfig } from "../../src/core/config";
-import { initRepo, commitAll } from "../../src/core/git";
+import { readConfig, writeConfig } from "../../src/core/config";
+import { commitAll, initRepo } from "../../src/core/git";
 import { resolveProfile } from "../../src/core/resolver";
 import type { Config } from "../../src/core/schema";
+import { type TestDir, createTestDir } from "../helpers/tmp";
 
 describe("am profile list", () => {
   let dir: TestDir;
@@ -134,7 +134,7 @@ describe("am profile create", () => {
     // Simulate profile creation
     const loaded = await readConfig(configPath);
     if (!loaded.profiles) loaded.profiles = {};
-    loaded.profiles["staging"] = {
+    loaded.profiles.staging = {
       description: "Staging environment",
       inherits: "default",
     };
@@ -189,7 +189,7 @@ describe("am profile delete", () => {
 
     // Simulate deletion
     const loaded = await readConfig(configPath);
-    delete loaded.profiles!["staging"];
+    loaded.profiles!.staging = undefined;
     await writeConfig(configPath, loaded);
     await commitAll(configDir, "delete profile: staging");
 

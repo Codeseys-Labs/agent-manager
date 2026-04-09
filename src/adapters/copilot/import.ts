@@ -6,15 +6,10 @@
  * and .github/instructions/*.instructions.md (scoped instructions with applyTo frontmatter).
  */
 
-import { join } from "node:path";
 import { homedir } from "node:os";
+import { join } from "node:path";
 import { extractPackageId } from "../claude-code/identity.ts";
-import type {
-  ImportOptions,
-  ImportResult,
-  ImportedServer,
-  ImportedInstruction,
-} from "../types.ts";
+import type { ImportOptions, ImportResult, ImportedInstruction, ImportedServer } from "../types.ts";
 
 interface CopilotServer {
   type?: string;
@@ -33,10 +28,7 @@ interface CopilotMcpJson {
 /**
  * Import Copilot native configs into core format.
  */
-export function importConfig(
-  options: ImportOptions = {},
-  homeDir?: string,
-): ImportResult {
+export function importConfig(options: ImportOptions = {}, homeDir?: string): ImportResult {
   const home = homeDir ?? homedir();
   const entities = options.entities ?? ["servers", "instructions"];
   const warnings: string[] = [];
@@ -136,9 +128,7 @@ function readServersFromFile(
       ...(entry.env && { env: entry.env }),
       ...(transport && { transport }),
       enabled: true,
-      packageId: entry.command
-        ? extractPackageId(entry.command, entry.args)
-        : undefined,
+      packageId: entry.command ? extractPackageId(entry.command, entry.args) : undefined,
       ...(Object.keys(adapterExtras).length > 0 && { adapterExtras }),
     };
 
@@ -189,17 +179,13 @@ function parseFrontmatter(content: string): {
   let applyTo: string | undefined;
   for (const line of frontmatter.split("\n")) {
     const applyToMatch = line.match(/^applyTo:\s*(.+)$/);
-    if (applyToMatch)
-      applyTo = applyToMatch[1].trim().replace(/^["']|["']$/g, "");
+    if (applyToMatch) applyTo = applyToMatch[1].trim().replace(/^["']|["']$/g, "");
   }
 
   return { body, applyTo };
 }
 
-function readScopedInstructions(
-  projectPath: string,
-  warnings: string[],
-): ImportedInstruction[] {
+function readScopedInstructions(projectPath: string, warnings: string[]): ImportedInstruction[] {
   const fs = require("node:fs");
   const instrDir = join(projectPath, ".github", "instructions");
 

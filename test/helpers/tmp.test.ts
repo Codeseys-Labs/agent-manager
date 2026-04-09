@@ -1,5 +1,5 @@
-import { describe, test, expect, afterEach } from "bun:test";
-import { createTestDir, type TestDir } from "./tmp";
+import { afterEach, describe, expect, test } from "bun:test";
+import { type TestDir, createTestDir } from "./tmp";
 
 describe("TestDir helper", () => {
   let dir: TestDir;
@@ -25,6 +25,6 @@ describe("TestDir helper", () => {
     const p = dir.path;
     await dir.write("file.txt", "data");
     await dir.cleanup();
-    expect(await Bun.file(p + "/file.txt").exists()).toBe(false);
+    expect(await Bun.file(`${p}/file.txt`).exists()).toBe(false);
   });
 });

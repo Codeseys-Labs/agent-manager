@@ -1,9 +1,9 @@
-import { describe, expect, test, afterEach } from "bun:test";
-import { createTestDir, type TestDir } from "../../helpers/tmp.ts";
-import { importConfig } from "@/adapters/copilot/import.ts";
-import { exportConfig } from "@/adapters/copilot/export.ts";
+import { afterEach, describe, expect, test } from "bun:test";
 import { diffConfig } from "@/adapters/copilot/diff.ts";
+import { exportConfig } from "@/adapters/copilot/export.ts";
+import { importConfig } from "@/adapters/copilot/import.ts";
 import type { ResolvedConfig, ResolvedServer } from "@/adapters/types.ts";
+import { type TestDir, createTestDir } from "../../helpers/tmp.ts";
 
 describe("Copilot adapter roundtrip", () => {
   let dir: TestDir;
@@ -14,7 +14,7 @@ describe("Copilot adapter roundtrip", () => {
 
   test("import -> transform -> export -> diff shows in-sync", async () => {
     dir = await createTestDir("am-cp-roundtrip-");
-    const projectDir = dir.path + "/project";
+    const projectDir = `${dir.path}/project`;
 
     // 1. Write sample native config (note: "servers" key, not "mcpServers")
     await dir.write(
@@ -68,10 +68,10 @@ describe("Copilot adapter roundtrip", () => {
     expect(exported.warnings).toHaveLength(0);
     const mcpFile = exported.files.find((f) => f.path.endsWith("mcp.json"));
     expect(mcpFile).toBeDefined();
-    expect(mcpFile!.written).toBe(true);
+    expect(mcpFile?.written).toBe(true);
 
     // 5. Verify output uses "servers" key
-    const outputJson = JSON.parse(mcpFile!.content);
+    const outputJson = JSON.parse(mcpFile?.content);
     expect(outputJson.servers).toBeDefined();
     expect(outputJson.mcpServers).toBeUndefined();
     expect(outputJson.servers["local-server"].command).toBe("npx");

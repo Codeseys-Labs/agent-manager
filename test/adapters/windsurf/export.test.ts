@@ -1,11 +1,9 @@
-import { describe, expect, test, afterEach } from "bun:test";
-import { createTestDir, type TestDir } from "../../helpers/tmp.ts";
-import { exportConfig } from "@/adapters/windsurf/export.ts";
+import { afterEach, describe, expect, test } from "bun:test";
 import type { ResolvedConfig, ResolvedServer } from "@/adapters/types.ts";
+import { exportConfig } from "@/adapters/windsurf/export.ts";
+import { type TestDir, createTestDir } from "../../helpers/tmp.ts";
 
-function server(
-  overrides: Partial<ResolvedServer> & { command: string },
-): ResolvedServer {
+function server(overrides: Partial<ResolvedServer> & { command: string }): ResolvedServer {
   return {
     name: "test",
     args: [],
@@ -58,12 +56,10 @@ describe("windsurf exportConfig()", () => {
     const result = exportConfig(cfg, { dryRun: true }, dir.path);
     expect(result.files.length).toBeGreaterThanOrEqual(1);
 
-    const mcpFile = result.files.find((f) =>
-      f.path.endsWith("mcp_config.json"),
-    );
+    const mcpFile = result.files.find((f) => f.path.endsWith("mcp_config.json"));
     expect(mcpFile).toBeDefined();
 
-    const parsed = JSON.parse(mcpFile!.content);
+    const parsed = JSON.parse(mcpFile?.content);
     expect(parsed.mcpServers.fetch.command).toBe("uvx");
     expect(parsed.mcpServers.fetch.args).toEqual(["mcp-server-fetch"]);
     expect(parsed.mcpServers.tavily.env.TAVILY_API_KEY).toBe("test-key");
@@ -71,7 +67,7 @@ describe("windsurf exportConfig()", () => {
 
   test("generates .windsurf/rules/*.md from instructions", async () => {
     dir = await createTestDir("am-ws-export-");
-    const projectDir = dir.path + "/project";
+    const projectDir = `${dir.path}/project`;
     const cfg = config({
       instructions: {
         "ts-rules": {
@@ -86,20 +82,16 @@ describe("windsurf exportConfig()", () => {
       },
     });
 
-    const result = exportConfig(
-      cfg,
-      { projectPath: projectDir, dryRun: true },
-      dir.path,
-    );
+    const result = exportConfig(cfg, { projectPath: projectDir, dryRun: true }, dir.path);
     const ruleFile = result.files.find((f) => f.path.endsWith("ts-rules.md"));
     expect(ruleFile).toBeDefined();
-    expect(ruleFile!.content).toContain("trigger: always_on");
-    expect(ruleFile!.content).toContain("Use strict TypeScript.");
+    expect(ruleFile?.content).toContain("trigger: always_on");
+    expect(ruleFile?.content).toContain("Use strict TypeScript.");
   });
 
   test("generates glob rules with globs frontmatter", async () => {
     dir = await createTestDir("am-ws-export-");
-    const projectDir = dir.path + "/project";
+    const projectDir = `${dir.path}/project`;
     const cfg = config({
       instructions: {
         testing: {
@@ -114,15 +106,11 @@ describe("windsurf exportConfig()", () => {
       },
     });
 
-    const result = exportConfig(
-      cfg,
-      { projectPath: projectDir, dryRun: true },
-      dir.path,
-    );
+    const result = exportConfig(cfg, { projectPath: projectDir, dryRun: true }, dir.path);
     const ruleFile = result.files.find((f) => f.path.endsWith("testing.md"));
     expect(ruleFile).toBeDefined();
-    expect(ruleFile!.content).toContain("trigger: glob");
-    expect(ruleFile!.content).toContain('globs: "**/*.test.ts"');
+    expect(ruleFile?.content).toContain("trigger: glob");
+    expect(ruleFile?.content).toContain('globs: "**/*.test.ts"');
   });
 
   test("skips disabled servers", async () => {
@@ -139,17 +127,15 @@ describe("windsurf exportConfig()", () => {
     });
 
     const result = exportConfig(cfg, { dryRun: true }, dir.path);
-    const mcpFile = result.files.find((f) =>
-      f.path.endsWith("mcp_config.json"),
-    );
-    const parsed = JSON.parse(mcpFile!.content);
+    const mcpFile = result.files.find((f) => f.path.endsWith("mcp_config.json"));
+    const parsed = JSON.parse(mcpFile?.content);
     expect(parsed.mcpServers.enabled_one).toBeDefined();
     expect(parsed.mcpServers.disabled_one).toBeUndefined();
   });
 
   test("skips instructions not targeting windsurf", async () => {
     dir = await createTestDir("am-ws-export-");
-    const projectDir = dir.path + "/project";
+    const projectDir = `${dir.path}/project`;
     const cfg = config({
       instructions: {
         "claude-only": {
@@ -164,14 +150,8 @@ describe("windsurf exportConfig()", () => {
       },
     });
 
-    const result = exportConfig(
-      cfg,
-      { projectPath: projectDir, dryRun: true },
-      dir.path,
-    );
-    const ruleFiles = result.files.filter((f) =>
-      f.path.includes(".windsurf/rules"),
-    );
+    const result = exportConfig(cfg, { projectPath: projectDir, dryRun: true }, dir.path);
+    const ruleFiles = result.files.filter((f) => f.path.includes(".windsurf/rules"));
     expect(ruleFiles).toHaveLength(0);
   });
 
@@ -206,13 +186,9 @@ describe("windsurf exportConfig()", () => {
     });
 
     const result = exportConfig(cfg, {}, dir.path);
-    const mcpFile = result.files.find((f) =>
-      f.path.endsWith("mcp_config.json"),
-    );
-    expect(mcpFile!.written).toBe(true);
-    const content = JSON.parse(
-      await dir.read(".codeium/windsurf/mcp_config.json"),
-    );
+    const mcpFile = result.files.find((f) => f.path.endsWith("mcp_config.json"));
+    expect(mcpFile?.written).toBe(true);
+    const content = JSON.parse(await dir.read(".codeium/windsurf/mcp_config.json"));
     expect(content.mcpServers.fetch.command).toBe("uvx");
   });
 
@@ -237,10 +213,8 @@ describe("windsurf exportConfig()", () => {
     });
 
     const result = exportConfig(cfg, {}, dir.path);
-    const mcpFile = result.files.find((f) =>
-      f.path.endsWith("mcp_config.json"),
-    );
-    const parsed = JSON.parse(mcpFile!.content);
+    const mcpFile = result.files.find((f) => f.path.endsWith("mcp_config.json"));
+    const parsed = JSON.parse(mcpFile?.content);
     expect(parsed.someOtherSetting).toBe(true);
     expect(parsed.mcpServers.old).toBeUndefined();
     expect(parsed.mcpServers.fetch).toBeDefined();

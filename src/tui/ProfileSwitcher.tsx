@@ -1,5 +1,5 @@
+import { Box, Text, useInput } from "silvery";
 import React, { useState } from "react";
-import { Box, Text, useInput } from "ink";
 
 interface Props {
   profiles: string[];
@@ -16,9 +16,7 @@ export function ProfileSwitcher({
   onSelect,
   onBack,
 }: Props) {
-  const [cursor, setCursor] = useState(
-    Math.max(0, profiles.indexOf(currentProfile)),
-  );
+  const [cursor, setCursor] = useState(Math.max(0, profiles.indexOf(currentProfile)));
 
   useInput((input, key) => {
     if (key.upArrow) {
@@ -37,12 +35,12 @@ export function ProfileSwitcher({
   if (profiles.length === 0) {
     return (
       <Box flexDirection="column">
-        <Text bold>  Switch Profile</Text>
+        <Text bold> Switch Profile</Text>
         <Box marginTop={1}>
-          <Text dimColor>  No profiles configured. Add profiles in config.toml.</Text>
+          <Text dimColor> No profiles configured. Add profiles in config.toml.</Text>
         </Box>
         <Box marginTop={1}>
-          <Text dimColor>  [q] back</Text>
+          <Text dimColor> [q] back</Text>
         </Box>
       </Box>
     );
@@ -50,7 +48,7 @@ export function ProfileSwitcher({
 
   return (
     <Box flexDirection="column">
-      <Text bold>  Switch Profile</Text>
+      <Text bold> Switch Profile</Text>
       <Box marginTop={1} flexDirection="column">
         {profiles.map((name, i) => {
           const isCurrent = name === currentProfile;
@@ -74,7 +72,7 @@ export function ProfileSwitcher({
       <Box marginTop={1}>
         <Text dimColor>
           {"  "}Current: <Text color="cyan">{currentProfile}</Text>
-          {"  "}[Enter] switch  [q/Esc] back
+          {"  "}[Enter] switch [q/Esc] back
         </Text>
       </Box>
     </Box>

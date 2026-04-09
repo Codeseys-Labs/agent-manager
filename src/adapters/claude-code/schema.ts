@@ -25,14 +25,8 @@ export const claudeCodeGlobalSchema = z
       .optional()
       .describe("How Claude Code prompts for tool permissions"),
     model: z.string().optional().describe("Primary model alias"),
-    ANTHROPIC_MODEL: z
-      .string()
-      .optional()
-      .describe("Direct model ID override"),
-    plugins: z
-      .array(z.string())
-      .optional()
-      .describe("Enabled Claude Code plugins"),
+    ANTHROPIC_MODEL: z.string().optional().describe("Direct model ID override"),
+    plugins: z.array(z.string()).optional().describe("Enabled Claude Code plugins"),
   })
   .passthrough();
 

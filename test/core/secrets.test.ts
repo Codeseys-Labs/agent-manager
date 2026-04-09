@@ -1,6 +1,6 @@
-import { describe, test, expect, beforeEach, afterEach } from "bun:test";
-import { interpolateEnv } from "../../src/core/secrets";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import type { Config } from "../../src/core/schema";
+import { interpolateEnv } from "../../src/core/secrets";
 
 describe("interpolateEnv", () => {
   const origEnv: Record<string, string | undefined> = {};
@@ -70,7 +70,7 @@ describe("interpolateEnv", () => {
 
   test("warns on unresolved variable (non-strict)", () => {
     // Ensure this var is NOT set
-    delete process.env.AM_NONEXISTENT_VAR;
+    process.env.AM_NONEXISTENT_VAR = undefined;
 
     const config: Config = {
       servers: {
@@ -89,7 +89,7 @@ describe("interpolateEnv", () => {
   });
 
   test("throws on unresolved variable (strict mode)", () => {
-    delete process.env.AM_NONEXISTENT_VAR;
+    process.env.AM_NONEXISTENT_VAR = undefined;
 
     const config: Config = {
       servers: {

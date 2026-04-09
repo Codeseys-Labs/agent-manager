@@ -1,30 +1,26 @@
 import { describe, expect, it } from "bun:test";
+import { getAdapter, getDetectedAdapters, listAdapters } from "../../src/adapters/registry.ts";
 import type {
+  Adapter,
+  AdapterMeta,
+  AdapterSchema,
   Capability,
   DetectResult,
   DiffChange,
   DiffResult,
-  AdapterMeta,
-  ImportOptions,
-  ImportedServer,
-  ImportedInstruction,
-  ImportedSkill,
-  ImportResult,
   ExportOptions,
-  WrittenFile,
   ExportResult,
-  ResolvedServer,
-  ResolvedInstruction,
-  ResolvedSkill,
+  ImportOptions,
+  ImportResult,
+  ImportedInstruction,
+  ImportedServer,
+  ImportedSkill,
   ResolvedConfig,
-  AdapterSchema,
-  Adapter,
+  ResolvedInstruction,
+  ResolvedServer,
+  ResolvedSkill,
+  WrittenFile,
 } from "../../src/adapters/types.ts";
-import {
-  listAdapters,
-  getAdapter,
-  getDetectedAdapters,
-} from "../../src/adapters/registry.ts";
 
 // ── Capability type ──────────────────────────────────────────────
 
@@ -92,16 +88,11 @@ describe("DiffChange", () => {
       details: [{ field: "content", expected: "old", actual: "new" }],
     };
     expect(change.details).toHaveLength(1);
-    expect(change.details![0].field).toBe("content");
+    expect(change.details?.[0].field).toBe("content");
   });
 
   it("supports all entity types", () => {
-    const entities: DiffChange["entity"][] = [
-      "server",
-      "instruction",
-      "skill",
-      "setting",
-    ];
+    const entities: DiffChange["entity"][] = ["server", "instruction", "skill", "setting"];
     expect(entities).toHaveLength(4);
   });
 
@@ -126,11 +117,7 @@ describe("DiffResult", () => {
   });
 
   it("supports all status values", () => {
-    const statuses: DiffResult["status"][] = [
-      "in-sync",
-      "drifted",
-      "unmanaged",
-    ];
+    const statuses: DiffResult["status"][] = ["in-sync", "drifted", "unmanaged"];
     expect(statuses).toHaveLength(3);
   });
 });
@@ -155,12 +142,12 @@ describe("getAdapter()", () => {
   it("returns adapter with correct meta for 'claude-code'", async () => {
     const adapter = await getAdapter("claude-code");
     expect(adapter).toBeDefined();
-    expect(adapter!.meta.name).toBe("claude-code");
-    expect(adapter!.meta.displayName).toBe("Claude Code");
-    expect(typeof adapter!.meta.version).toBe("string");
-    expect(Array.isArray(adapter!.meta.capabilities)).toBe(true);
-    expect(adapter!.meta.capabilities).toContain("mcp");
-    expect(adapter!.meta.capabilities).toContain("instructions");
+    expect(adapter?.meta.name).toBe("claude-code");
+    expect(adapter?.meta.displayName).toBe("Claude Code");
+    expect(typeof adapter?.meta.version).toBe("string");
+    expect(Array.isArray(adapter?.meta.capabilities)).toBe(true);
+    expect(adapter?.meta.capabilities).toContain("mcp");
+    expect(adapter?.meta.capabilities).toContain("instructions");
   });
 
   it("returns undefined for nonexistent adapter", async () => {
@@ -171,11 +158,11 @@ describe("getAdapter()", () => {
   it("adapter has required interface methods", async () => {
     const adapter = await getAdapter("claude-code");
     expect(adapter).toBeDefined();
-    expect(typeof adapter!.detect).toBe("function");
-    expect(typeof adapter!.import).toBe("function");
-    expect(typeof adapter!.export).toBe("function");
-    expect(typeof adapter!.diff).toBe("function");
-    expect(adapter!.schema).toBeDefined();
+    expect(typeof adapter?.detect).toBe("function");
+    expect(typeof adapter?.import).toBe("function");
+    expect(typeof adapter?.export).toBe("function");
+    expect(typeof adapter?.diff).toBe("function");
+    expect(adapter?.schema).toBeDefined();
   });
 });
 

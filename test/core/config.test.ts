@@ -1,14 +1,15 @@
-import { describe, test, expect, beforeEach, afterEach } from "bun:test";
-import { join } from "node:path";
-import { mkdtemp, rm, readFile } from "node:fs/promises";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
+import { join } from "node:path";
 import {
-  resolveConfigDir,
+  loadResolvedConfig,
+  mergeConfigs,
+  projectToConfig,
   readConfig,
   readProjectConfig,
+  resolveConfigDir,
   writeConfig,
-  mergeConfigs,
-  loadResolvedConfig,
 } from "../../src/core/config";
 import type { Config } from "../../src/core/schema";
 
@@ -19,7 +20,7 @@ describe("resolveConfigDir", () => {
 
   afterEach(() => {
     if (origEnv === undefined) {
-      delete process.env.AM_CONFIG_DIR;
+      process.env.AM_CONFIG_DIR = undefined;
     } else {
       process.env.AM_CONFIG_DIR = origEnv;
     }
@@ -31,7 +32,7 @@ describe("resolveConfigDir", () => {
   });
 
   test("returns default path when AM_CONFIG_DIR is not set", () => {
-    delete process.env.AM_CONFIG_DIR;
+    process.env.AM_CONFIG_DIR = undefined;
     const result = resolveConfigDir();
     expect(result).toEndWith("/.config/agent-manager");
   });
@@ -88,7 +89,7 @@ describe("writeConfig", () => {
     expect(reread.servers?.fetch.command).toBe(original.servers?.fetch.command);
     expect(reread.servers?.outlook.command).toBe(original.servers?.outlook.command);
     expect(reread.skills?.["research-rabbithole"].path).toBe(
-      original.skills?.["research-rabbithole"].path
+      original.skills?.["research-rabbithole"].path,
     );
     expect(reread.profiles?.work.inherits).toBe(original.profiles?.work.inherits);
   });
@@ -262,5 +263,13 @@ describe("loadResolvedConfig", () => {
     expect(config.settings?.default_profile).toBe("local-override");
     // Original server still there
     expect(config.servers?.fetch).toBeDefined();
+  });
+});
+
+describe("projectToConfig", () => {
+  test("projectToConfig preserves agents", () => {
+    const proj = { agents: { reviewer: { description: "Code reviewer" } } };
+    const config = projectToConfig(proj as any);
+    expect(config.agents?.reviewer).toBeDefined();
   });
 });

@@ -7,10 +7,7 @@ import type { AdapterSchema } from "../types.ts";
  */
 export const windsurfServerSchema = z
   .object({
-    serverUrl: z
-      .string()
-      .optional()
-      .describe("Remote server URL (alternative to command)"),
+    serverUrl: z.string().optional().describe("Remote server URL (alternative to command)"),
   })
   .passthrough();
 
@@ -24,10 +21,7 @@ export const windsurfInstructionSchema = z
       .enum(["always_on", "model_decision", "glob", "manual"])
       .optional()
       .describe("Windsurf rule trigger mode"),
-    globs: z
-      .string()
-      .optional()
-      .describe("Glob pattern for trigger: glob rules"),
+    globs: z.string().optional().describe("Glob pattern for trigger: glob rules"),
   })
   .passthrough();
 

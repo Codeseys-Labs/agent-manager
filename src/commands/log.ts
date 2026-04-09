@@ -1,7 +1,7 @@
 import { defineCommand } from "citty";
 import { resolveConfigDir } from "../core/config";
-import { log as gitLog, type LogEntry } from "../core/git";
-import { output, info, error } from "../lib/output";
+import { type LogEntry, log as gitLog } from "../core/git";
+import { error, info, output } from "../lib/output";
 
 /**
  * Format a log entry with a prefix icon based on the commit message:
@@ -12,7 +12,8 @@ export function formatLogEntry(entry: LogEntry): string {
   let prefix = "\u25CF"; // ● default
   if (msg.startsWith("add ")) prefix = "+";
   else if (msg.startsWith("remove ")) prefix = "-";
-  else if (msg.startsWith("import")) prefix = "\u2193"; // ↓
+  else if (msg.startsWith("import"))
+    prefix = "\u2193"; // ↓
   else if (msg.startsWith("revert")) prefix = "\u21B6"; // ↶
 
   const shortOid = entry.oid.substring(0, 7);
@@ -36,7 +37,7 @@ export const logCommand = defineCommand({
 
     let entries;
     try {
-      entries = await gitLog(configDir, parseInt(args.count, 10));
+      entries = await gitLog(configDir, Number.parseInt(args.count, 10));
     } catch {
       error("Cannot read git log. Run `am init` first.", opts);
       process.exitCode = 1;

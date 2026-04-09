@@ -1,12 +1,10 @@
-import { describe, expect, test, afterEach } from "bun:test";
-import { createTestDir, type TestDir } from "../../helpers/tmp.ts";
+import { afterEach, describe, expect, test } from "bun:test";
 import { diffConfig } from "@/adapters/codex-cli/diff.ts";
 import type { ResolvedConfig, ResolvedServer } from "@/adapters/types.ts";
+import { type TestDir, createTestDir } from "../../helpers/tmp.ts";
 
 /** Helper to build a minimal ResolvedServer. */
-function server(
-  overrides: Partial<ResolvedServer> & { command: string },
-): ResolvedServer {
+function server(overrides: Partial<ResolvedServer> & { command: string }): ResolvedServer {
   return {
     name: "test",
     args: [],
@@ -21,9 +19,7 @@ function server(
 }
 
 /** Helper to build a minimal ResolvedConfig. */
-function config(
-  overrides: Partial<ResolvedConfig> = {},
-): ResolvedConfig {
+function config(overrides: Partial<ResolvedConfig> = {}): ResolvedConfig {
   return {
     servers: {},
     instructions: {},
@@ -93,9 +89,7 @@ command = "extra-mcp"
 
     const result = diffConfig(cfg, {}, dir.path);
     expect(result.status).toBe("drifted");
-    const added = result.changes.find(
-      (c) => c.name === "extra" && c.type === "added-locally",
-    );
+    const added = result.changes.find((c) => c.name === "extra" && c.type === "added-locally");
     expect(added).toBeDefined();
   });
 
@@ -127,9 +121,7 @@ args = ["-y", "context7-mcp"]
 
     const result = diffConfig(cfg, {}, dir.path);
     expect(result.status).toBe("drifted");
-    const removed = result.changes.find(
-      (c) => c.name === "tavily" && c.type === "removed-locally",
-    );
+    const removed = result.changes.find((c) => c.name === "tavily" && c.type === "removed-locally");
     expect(removed).toBeDefined();
   });
 
@@ -156,12 +148,10 @@ args = ["-y", "context7-mcp@0.9.0"]
 
     const result = diffConfig(cfg, {}, dir.path);
     expect(result.status).toBe("drifted");
-    const modified = result.changes.find(
-      (c) => c.name === "ctx" && c.type === "modified",
-    );
+    const modified = result.changes.find((c) => c.name === "ctx" && c.type === "modified");
     expect(modified).toBeDefined();
-    expect(modified!.details).toBeDefined();
-    expect(modified!.details!.some((d) => d.field === "args")).toBe(true);
+    expect(modified?.details).toBeDefined();
+    expect(modified?.details?.some((d) => d.field === "args")).toBe(true);
   });
 
   test("returns unmanaged when no native file", async () => {
@@ -234,7 +224,7 @@ API_KEY = "old-value"
     const result = diffConfig(cfg, {}, dir.path);
     expect(result.status).toBe("drifted");
     const modified = result.changes.find((c) => c.type === "modified");
-    expect(modified!.details!.some((d) => d.field === "env")).toBe(true);
+    expect(modified?.details?.some((d) => d.field === "env")).toBe(true);
   });
 
   test("handles HTTP server diff via url field", async () => {

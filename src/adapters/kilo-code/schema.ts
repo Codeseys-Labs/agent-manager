@@ -7,14 +7,8 @@ import type { AdapterSchema } from "../types.ts";
  */
 export const kiloCodeServerSchema = z
   .object({
-    timeout: z
-      .number()
-      .optional()
-      .describe("Server timeout in milliseconds"),
-    enabled: z
-      .boolean()
-      .optional()
-      .describe("Whether the server is enabled"),
+    timeout: z.number().optional().describe("Server timeout in milliseconds"),
+    enabled: z.boolean().optional().describe("Whether the server is enabled"),
     alwaysAllow: z
       .array(z.string())
       .optional()

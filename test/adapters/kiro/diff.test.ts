@@ -1,7 +1,7 @@
-import { describe, expect, test, afterEach } from "bun:test";
-import { createTestDir, type TestDir } from "../../helpers/tmp.ts";
+import { afterEach, describe, expect, test } from "bun:test";
 import { diffConfig } from "@/adapters/kiro/diff.ts";
 import type { ResolvedConfig, ResolvedServer } from "@/adapters/types.ts";
+import { type TestDir, createTestDir } from "../../helpers/tmp.ts";
 
 function makeConfig(overrides: Partial<ResolvedConfig> = {}): ResolvedConfig {
   return {
@@ -101,7 +101,7 @@ describe("kiro diffConfig()", () => {
     expect(result.status).toBe("drifted");
     const added = result.changes.find((c) => c.name === "extra");
     expect(added).toBeDefined();
-    expect(added!.type).toBe("added-locally");
+    expect(added?.type).toBe("added-locally");
   });
 
   test("detects server removed locally", async () => {
@@ -123,7 +123,7 @@ describe("kiro diffConfig()", () => {
     expect(result.status).toBe("drifted");
     const removed = result.changes.find((c) => c.name === "fetch");
     expect(removed).toBeDefined();
-    expect(removed!.type).toBe("removed-locally");
+    expect(removed?.type).toBe("removed-locally");
   });
 
   test("detects modified server (command changed)", async () => {
@@ -151,9 +151,9 @@ describe("kiro diffConfig()", () => {
     expect(result.status).toBe("drifted");
     const modified = result.changes.find((c) => c.name === "fetch");
     expect(modified).toBeDefined();
-    expect(modified!.type).toBe("modified");
-    expect(modified!.details).toBeDefined();
-    expect(modified!.details![0].field).toBe("command");
+    expect(modified?.type).toBe("modified");
+    expect(modified?.details).toBeDefined();
+    expect(modified?.details?.[0].field).toBe("command");
   });
 
   test("detects modified env", async () => {
@@ -185,16 +185,13 @@ describe("kiro diffConfig()", () => {
     const result = diffConfig(config, {}, dir.path);
     expect(result.status).toBe("drifted");
     const modified = result.changes.find((c) => c.name === "tavily");
-    expect(modified!.details!.some((d) => d.field === "env")).toBe(true);
+    expect(modified?.details?.some((d) => d.field === "env")).toBe(true);
   });
 
   test("includes project servers in diff", async () => {
     dir = await createTestDir("am-kiro-diff-");
-    await dir.write(
-      ".kiro/settings/mcp.json",
-      JSON.stringify({ mcpServers: {} }),
-    );
-    const projectDir = dir.path + "/project";
+    await dir.write(".kiro/settings/mcp.json", JSON.stringify({ mcpServers: {} }));
+    const projectDir = `${dir.path}/project`;
     await dir.write(
       "project/.kiro/settings/mcp.json",
       JSON.stringify({

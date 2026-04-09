@@ -1,6 +1,6 @@
-import { describe, expect, test, afterEach } from "bun:test";
-import { createTestDir, type TestDir } from "../../helpers/tmp.ts";
+import { afterEach, describe, expect, test } from "bun:test";
 import { importConfig } from "@/adapters/windsurf/import.ts";
+import { type TestDir, createTestDir } from "../../helpers/tmp.ts";
 
 describe("windsurf importConfig()", () => {
   let dir: TestDir;
@@ -39,20 +39,14 @@ describe("windsurf importConfig()", () => {
 
   test("imports rule files from .windsurf/rules/", async () => {
     dir = await createTestDir("am-ws-import-");
-    await dir.write(
-      ".codeium/windsurf/mcp_config.json",
-      JSON.stringify({ mcpServers: {} }),
-    );
-    const projectDir = dir.path + "/project";
+    await dir.write(".codeium/windsurf/mcp_config.json", JSON.stringify({ mcpServers: {} }));
+    const projectDir = `${dir.path}/project`;
     await dir.write(
       "project/.windsurf/rules/testing.md",
-      "---\ntrigger: glob\nglobs: \"**/*.test.ts\"\n---\n\nUse describe/test blocks.",
+      '---\ntrigger: glob\nglobs: "**/*.test.ts"\n---\n\nUse describe/test blocks.',
     );
 
-    const result = importConfig(
-      { projectPath: projectDir, entities: ["instructions"] },
-      dir.path,
-    );
+    const result = importConfig({ projectPath: projectDir, entities: ["instructions"] }, dir.path);
     expect(result.instructions).toHaveLength(1);
     expect(result.instructions[0].name).toBe("testing");
     expect(result.instructions[0].scope).toBe("glob");
@@ -61,35 +55,27 @@ describe("windsurf importConfig()", () => {
 
   test("imports always_on rules", async () => {
     dir = await createTestDir("am-ws-import-");
-    const projectDir = dir.path + "/project";
+    const projectDir = `${dir.path}/project`;
     await dir.write(
       "project/.windsurf/rules/general.md",
       "---\ntrigger: always_on\n---\n\nBe concise.",
     );
 
-    const result = importConfig(
-      { projectPath: projectDir, entities: ["instructions"] },
-      dir.path,
-    );
+    const result = importConfig({ projectPath: projectDir, entities: ["instructions"] }, dir.path);
     expect(result.instructions).toHaveLength(1);
     expect(result.instructions[0].scope).toBe("always");
   });
 
   test("imports legacy .windsurfrules", async () => {
     dir = await createTestDir("am-ws-import-");
-    const projectDir = dir.path + "/project";
+    const projectDir = `${dir.path}/project`;
     await dir.write("project/.windsurfrules", "Use strict mode.");
 
-    const result = importConfig(
-      { projectPath: projectDir, entities: ["instructions"] },
-      dir.path,
-    );
-    const legacy = result.instructions.find(
-      (i) => i.name === "windsurfrules-legacy",
-    );
+    const result = importConfig({ projectPath: projectDir, entities: ["instructions"] }, dir.path);
+    const legacy = result.instructions.find((i) => i.name === "windsurfrules-legacy");
     expect(legacy).toBeDefined();
-    expect(legacy!.content).toBe("Use strict mode.");
-    expect(legacy!.scope).toBe("always");
+    expect(legacy?.content).toBe("Use strict mode.");
+    expect(legacy?.scope).toBe("always");
   });
 
   test("handles missing mcp_config.json gracefully", async () => {
@@ -102,16 +88,11 @@ describe("windsurf importConfig()", () => {
 
   test("handles malformed JSON gracefully", async () => {
     dir = await createTestDir("am-ws-import-");
-    await dir.write(
-      ".codeium/windsurf/mcp_config.json",
-      "{ not valid json }}}",
-    );
+    await dir.write(".codeium/windsurf/mcp_config.json", "{ not valid json }}}");
 
     const result = importConfig({}, dir.path);
     expect(result.servers).toHaveLength(0);
-    expect(result.warnings.some((w) => w.includes("Malformed JSON"))).toBe(
-      true,
-    );
+    expect(result.warnings.some((w) => w.includes("Malformed JSON"))).toBe(true);
   });
 
   test("marks disabled servers", async () => {
@@ -131,16 +112,13 @@ describe("windsurf importConfig()", () => {
 
   test("imports model_decision rules as agent-decision scope", async () => {
     dir = await createTestDir("am-ws-import-");
-    const projectDir = dir.path + "/project";
+    const projectDir = `${dir.path}/project`;
     await dir.write(
       "project/.windsurf/rules/context.md",
       "---\ntrigger: model_decision\n---\n\nLLM decides when to use this.",
     );
 
-    const result = importConfig(
-      { projectPath: projectDir, entities: ["instructions"] },
-      dir.path,
-    );
+    const result = importConfig({ projectPath: projectDir, entities: ["instructions"] }, dir.path);
     expect(result.instructions[0].scope).toBe("agent-decision");
   });
 });

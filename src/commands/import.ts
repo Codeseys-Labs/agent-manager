@@ -1,14 +1,10 @@
-import { defineCommand } from "citty";
 import { join } from "node:path";
-import {
-  resolveConfigDir,
-  readConfig,
-  writeConfig,
-} from "../core/config";
-import { commitAll } from "../core/git";
-import { getDetectedAdapters, getAdapter, listAdapters } from "../adapters/registry";
-import { output, info, error, debug } from "../lib/output";
+import { defineCommand } from "citty";
+import { getAdapter, getDetectedAdapters, listAdapters } from "../adapters/registry";
 import type { ImportedServer } from "../adapters/types";
+import { readConfig, resolveConfigDir, writeConfig } from "../core/config";
+import { commitAll } from "../core/git";
+import { debug, error, info, output } from "../lib/output";
 
 /**
  * Extract a canonical identity from a server command+args for dedup.
@@ -22,7 +18,7 @@ export function extractServerIdentity(command: string, args?: string[]): string 
 
   // Strip runner prefixes
   const runners = ["npx", "bunx", "uvx", "pipx", "run", "-y"];
-  let pkgParts = [...allParts];
+  const pkgParts = [...allParts];
   while (pkgParts.length > 0 && runners.includes(pkgParts[0])) {
     pkgParts.shift();
   }
@@ -60,7 +56,11 @@ export function extractServerIdentity(command: string, args?: string[]): string 
 export const importCommand = defineCommand({
   meta: { name: "import", description: "Import servers from a tool's native config" },
   args: {
-    source: { type: "positional", description: "Adapter name or 'auto' for all detected", required: true },
+    source: {
+      type: "positional",
+      description: "Adapter name or 'auto' for all detected",
+      required: true,
+    },
     json: { type: "boolean", description: "JSON output", default: false },
     quiet: { type: "boolean", alias: "q", default: false },
     verbose: { type: "boolean", alias: "v", default: false },
@@ -92,10 +92,12 @@ export const importCommand = defineCommand({
       if (!adapter) {
         const available = listAdapters();
         if (args.json) {
-          console.error(JSON.stringify({
-            error: `Adapter "${args.source}" not found`,
-            suggestion: `Available adapters: ${available.join(", ")}`,
-          }));
+          console.error(
+            JSON.stringify({
+              error: `Adapter "${args.source}" not found`,
+              suggestion: `Available adapters: ${available.join(", ")}`,
+            }),
+          );
         } else {
           console.error(`error: Adapter "${args.source}" not found`);
           console.error(`  available: ${available.join(", ")}`);
@@ -139,7 +141,10 @@ export const importCommand = defineCommand({
         const existingName = existingIdentities.get(identity);
 
         if (existingName) {
-          debug(`Skipping "${srv.name}" — duplicate of "${existingName}" (identity: ${identity})`, opts);
+          debug(
+            `Skipping "${srv.name}" — duplicate of "${existingName}" (identity: ${identity})`,
+            opts,
+          );
           totalDuplicates++;
           continue;
         }
@@ -162,9 +167,8 @@ export const importCommand = defineCommand({
 
     // Auto-commit
     if (totalImported > 0) {
-      const sourceStr = args.source === "auto"
-        ? adapters.map((a) => a.meta.name).join(", ")
-        : args.source;
+      const sourceStr =
+        args.source === "auto" ? adapters.map((a) => a.meta.name).join(", ") : args.source;
       try {
         await commitAll(configDir, `import: ${sourceStr} (${totalImported} servers)`);
       } catch {
@@ -182,13 +186,16 @@ export const importCommand = defineCommand({
     }
 
     if (args.json) {
-      output({
-        action: "import",
-        source: args.source,
-        imported: totalImported,
-        duplicates: totalDuplicates,
-        warnings: allWarnings,
-      }, opts);
+      output(
+        {
+          action: "import",
+          source: args.source,
+          imported: totalImported,
+          duplicates: totalDuplicates,
+          warnings: allWarnings,
+        },
+        opts,
+      );
     }
   },
 });

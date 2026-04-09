@@ -1,6 +1,6 @@
 import { existsSync } from "node:fs";
-import { join } from "node:path";
 import { homedir } from "node:os";
+import { join } from "node:path";
 import type { DetectResult } from "../types.ts";
 
 /**
@@ -63,8 +63,7 @@ export function detect(homeDir?: string, projectPath?: string): DetectResult {
     paths.globalAgentsDir = globalAgentsDir;
   }
 
-  const installed =
-    "globalConfigDir" in paths || "globalConfig" in paths;
+  const installed = "globalConfigDir" in paths || "globalConfig" in paths;
 
   // Try to get version from CLI
   let version: string | undefined;

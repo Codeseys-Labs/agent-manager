@@ -8,14 +8,14 @@
  * logic is shared.
  */
 
-import { join } from "node:path";
 import { homedir } from "node:os";
+import { join } from "node:path";
 import { extractPackageId } from "../claude-code/identity.ts";
 import type {
   ImportOptions,
   ImportResult,
-  ImportedServer,
   ImportedInstruction,
+  ImportedServer,
   ImportedSkill,
 } from "../types.ts";
 
@@ -36,10 +36,7 @@ interface McpJson {
 /**
  * Import ForgeCode native configs into core format.
  */
-export function importConfig(
-  options: ImportOptions = {},
-  homeDir?: string,
-): ImportResult {
+export function importConfig(options: ImportOptions = {}, homeDir?: string): ImportResult {
   const home = homeDir ?? homedir();
   const entities = options.entities ?? ["servers", "instructions", "skills"];
   const warnings: string[] = [];
@@ -72,13 +69,7 @@ export function importConfig(
 }
 
 /** Core fields that are part of ImportedServer — everything else goes to adapterExtras. */
-const CORE_FIELDS = new Set([
-  "command",
-  "args",
-  "env",
-  "disable",
-  "url",
-]);
+const CORE_FIELDS = new Set(["command", "args", "env", "disable", "url"]);
 
 function readServersFromFile(
   filePath: string,
@@ -133,9 +124,7 @@ function readServersFromFile(
       ...(entry.env && { env: entry.env }),
       ...(entry.url && { transport: "sse" as const }),
       enabled: entry.disable !== true,
-      packageId: entry.command
-        ? extractPackageId(entry.command, entry.args)
-        : undefined,
+      packageId: entry.command ? extractPackageId(entry.command, entry.args) : undefined,
       ...(Object.keys(adapterExtras).length > 0 && { adapterExtras }),
     };
 
@@ -151,10 +140,7 @@ function readAgentsMd(
   warnings: string[],
 ): ImportedInstruction | null {
   // ForgeCode searches: base path (~/forge) > git root > cwd (first found wins)
-  const candidates = [
-    join(projectPath, "AGENTS.md"),
-    join(homeDir, "forge", "AGENTS.md"),
-  ];
+  const candidates = [join(projectPath, "AGENTS.md"), join(homeDir, "forge", "AGENTS.md")];
 
   for (const candidate of candidates) {
     if (fileExistsSync(candidate)) {
@@ -182,10 +168,7 @@ function readAgentsMdFile(filePath: string): ImportedInstruction | null {
   }
 }
 
-function readSkills(
-  projectPath: string,
-  warnings: string[],
-): ImportedSkill[] {
+function readSkills(projectPath: string, warnings: string[]): ImportedSkill[] {
   const skillsDir = join(projectPath, ".forge", "skills");
   const fs = require("node:fs");
 

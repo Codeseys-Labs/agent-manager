@@ -5,9 +5,8 @@
  * MCP format (`mcp` key with command arrays), and AGENTS.md with am markers.
  */
 
-import { join } from "node:path";
 import { homedir } from "node:os";
-import { parseJsonc } from "./jsonc.ts";
+import { join } from "node:path";
 import type {
   ExportOptions,
   ExportResult,
@@ -15,6 +14,7 @@ import type {
   ResolvedServer,
   WrittenFile,
 } from "../types.ts";
+import { parseJsonc } from "./jsonc.ts";
 
 const AM_BEGIN = "<!-- am:begin -->";
 const AM_END = "<!-- am:end -->";
@@ -48,21 +48,13 @@ export function exportConfig(
   // 1. Generate global config: ~/.config/kilo/kilo.jsonc
   const globalConfigDir = join(home, ".config", "kilo");
   const globalPath = join(globalConfigDir, "kilo.jsonc");
-  const globalContent = generateKiloConfig(
-    globalServers,
-    globalPath,
-    warnings,
-  );
+  const globalContent = generateKiloConfig(globalServers, globalPath, warnings);
   files.push({ path: globalPath, content: globalContent, written: false });
 
   // 2. Generate project config: kilo.jsonc
   if (options.projectPath && Object.keys(projectServers).length > 0) {
     const projectPath = join(options.projectPath, "kilo.jsonc");
-    const projectContent = generateKiloConfig(
-      projectServers,
-      projectPath,
-      warnings,
-    );
+    const projectContent = generateKiloConfig(projectServers, projectPath, warnings);
     files.push({ path: projectPath, content: projectContent, written: false });
   }
 
@@ -71,11 +63,7 @@ export function exportConfig(
     const instructionContent = generateInstructionBlock(config);
     if (instructionContent) {
       const agentsMdPath = join(options.projectPath, "AGENTS.md");
-      const agentsMdContent = generateAgentsMd(
-        agentsMdPath,
-        instructionContent,
-        warnings,
-      );
+      const agentsMdContent = generateAgentsMd(agentsMdPath, instructionContent, warnings);
       files.push({
         path: agentsMdPath,
         content: agentsMdContent,
@@ -155,9 +143,9 @@ function generateKiloConfig(
 
   const output = { ...existing, mcp };
   // Remove legacy mcpServers if we're writing new format
-  delete output.mcpServers;
+  output.mcpServers = undefined;
 
-  return JSON.stringify(output, null, 2) + "\n";
+  return `${JSON.stringify(output, null, 2)}\n`;
 }
 
 /** Concatenate instructions targeted at kilo-code. */
@@ -186,7 +174,7 @@ function generateAgentsMd(
     const fs = require("node:fs");
     existingContent = fs.readFileSync(existingPath, "utf-8");
   } catch {
-    return block + "\n";
+    return `${block}\n`;
   }
 
   // Replace existing managed section
@@ -198,5 +186,5 @@ function generateAgentsMd(
     return before + block + after;
   }
 
-  return existingContent.trimEnd() + "\n\n" + block + "\n";
+  return `${existingContent.trimEnd()}\n\n${block}\n`;
 }

@@ -1,9 +1,7 @@
-import type { GitPlatformAdapter, AuthResult, RepoOptions } from "./types";
+import type { AuthResult, GitPlatformAdapter, RepoOptions } from "./types";
 
 /** Run a command safely using Bun.spawn (array form, no shell injection). */
-async function run(
-  cmd: string[],
-): Promise<{ code: number; stdout: string; stderr: string }> {
+async function run(cmd: string[]): Promise<{ code: number; stdout: string; stderr: string }> {
   const proc = Bun.spawn(cmd, {
     stdout: "pipe",
     stderr: "pipe",
@@ -82,10 +80,7 @@ export const github: GitPlatformAdapter = {
     return null;
   },
 
-  async createRepo(
-    name: string,
-    options: RepoOptions = {},
-  ): Promise<string> {
+  async createRepo(name: string, options: RepoOptions = {}): Promise<string> {
     const args = ["gh", "repo", "create", name];
     if (options.private !== false) args.push("--private");
     if (options.description) args.push("--description", options.description);

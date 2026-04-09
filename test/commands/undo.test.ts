@@ -1,10 +1,10 @@
-import { describe, test, expect, afterEach } from "bun:test";
-import { join } from "node:path";
-import { createTestDir, type TestDir } from "../helpers/tmp";
-import { initRepo, commitAll, revertHead, log as gitLog } from "../../src/core/git";
-import { writeConfig, readConfig } from "../../src/core/config";
-import type { Config } from "../../src/core/schema";
+import { afterEach, describe, expect, test } from "bun:test";
 import * as fs from "node:fs";
+import { join } from "node:path";
+import { readConfig, writeConfig } from "../../src/core/config";
+import { commitAll, log as gitLog, initRepo, revertHead } from "../../src/core/git";
+import type { Config } from "../../src/core/schema";
+import { type TestDir, createTestDir } from "../helpers/tmp";
 
 describe("am undo", () => {
   let dir: TestDir;

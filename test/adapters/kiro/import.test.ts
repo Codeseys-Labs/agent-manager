@@ -1,31 +1,25 @@
-import { describe, expect, test, afterEach } from "bun:test";
-import { createTestDir, type TestDir } from "../../helpers/tmp.ts";
-import { importConfig } from "@/adapters/kiro/import.ts";
+import { afterEach, describe, expect, test } from "bun:test";
 import { extractPackageId } from "@/adapters/kiro/identity.ts";
+import { importConfig } from "@/adapters/kiro/import.ts";
+import { type TestDir, createTestDir } from "../../helpers/tmp.ts";
 
 // ── extractPackageId ────────────────────────────────────────────
 
 describe("kiro extractPackageId()", () => {
   test("extracts package from npx command", () => {
-    expect(extractPackageId("npx", ["-y", "tavily-mcp@latest"])).toBe(
-      "tavily-mcp",
-    );
+    expect(extractPackageId("npx", ["-y", "tavily-mcp@latest"])).toBe("tavily-mcp");
   });
 
   test("extracts scoped package from bunx", () => {
-    expect(
-      extractPackageId("bunx", ["@upstash/context7-mcp@latest"]),
-    ).toBe("@upstash/context7-mcp");
+    expect(extractPackageId("bunx", ["@upstash/context7-mcp@latest"])).toBe(
+      "@upstash/context7-mcp",
+    );
   });
 
   test("extracts hostname from --endpoint URL", () => {
-    expect(
-      extractPackageId("uvx", [
-        "mcp-proxy",
-        "--endpoint",
-        "https://mcp.exa.ai/sse",
-      ]),
-    ).toBe("mcp.exa.ai");
+    expect(extractPackageId("uvx", ["mcp-proxy", "--endpoint", "https://mcp.exa.ai/sse"])).toBe(
+      "mcp.exa.ai",
+    );
   });
 
   test("returns command basename for non-runner commands", () => {
@@ -74,11 +68,8 @@ describe("kiro importConfig()", () => {
 
   test("imports project-scoped servers", async () => {
     dir = await createTestDir("am-kiro-import-");
-    await dir.write(
-      ".kiro/settings/mcp.json",
-      JSON.stringify({ mcpServers: {} }),
-    );
-    const projectDir = dir.path + "/project";
+    await dir.write(".kiro/settings/mcp.json", JSON.stringify({ mcpServers: {} }));
+    const projectDir = `${dir.path}/project`;
     await dir.write(
       "project/.kiro/settings/mcp.json",
       JSON.stringify({
@@ -92,12 +83,10 @@ describe("kiro importConfig()", () => {
     );
 
     const result = importConfig({ projectPath: projectDir }, dir.path);
-    const projectServer = result.servers.find(
-      (s) => s.name === "local-mcp",
-    );
+    const projectServer = result.servers.find((s) => s.name === "local-mcp");
     expect(projectServer).toBeDefined();
-    expect(projectServer!.scope).toBe("project");
-    expect(projectServer!.env).toEqual({ PORT: "3000" });
+    expect(projectServer?.scope).toBe("project");
+    expect(projectServer?.env).toEqual({ PORT: "3000" });
   });
 
   test("imports HTTP/remote servers with url field", async () => {
@@ -118,7 +107,7 @@ describe("kiro importConfig()", () => {
     expect(result.servers).toHaveLength(1);
     expect(result.servers[0].command).toBe("https://mcp.example.com/api");
     expect(result.servers[0].transport).toBe("streamable-http");
-    expect(result.servers[0].adapterExtras!.headers).toEqual({
+    expect(result.servers[0].adapterExtras?.headers).toEqual({
       Authorization: "Bearer tok",
     });
   });
@@ -166,11 +155,8 @@ describe("kiro importConfig()", () => {
 
   test("imports steering files as instructions", async () => {
     dir = await createTestDir("am-kiro-import-");
-    await dir.write(
-      ".kiro/settings/mcp.json",
-      JSON.stringify({ mcpServers: {} }),
-    );
-    const projectDir = dir.path + "/project";
+    await dir.write(".kiro/settings/mcp.json", JSON.stringify({ mcpServers: {} }));
+    const projectDir = `${dir.path}/project`;
     await dir.write(
       "project/.kiro/steering/code-style.md",
       "---\ninclusion: always\ndescription: Code style rules\n---\n\n# Code Style\n\nUse strict mode.",
@@ -180,71 +166,52 @@ describe("kiro importConfig()", () => {
       "---\ninclusion: auto\ndescription: Testing guidelines\n---\n\n# Testing\n\nAlways write tests.",
     );
 
-    const result = importConfig(
-      { projectPath: projectDir, entities: ["instructions"] },
-      dir.path,
-    );
+    const result = importConfig({ projectPath: projectDir, entities: ["instructions"] }, dir.path);
     expect(result.instructions).toHaveLength(2);
 
-    const codeStyle = result.instructions.find(
-      (i) => i.name === "steering-code-style",
-    );
+    const codeStyle = result.instructions.find((i) => i.name === "steering-code-style");
     expect(codeStyle).toBeDefined();
-    expect(codeStyle!.scope).toBe("always");
-    expect(codeStyle!.content).toContain("Use strict mode");
+    expect(codeStyle?.scope).toBe("always");
+    expect(codeStyle?.content).toContain("Use strict mode");
 
-    const testing = result.instructions.find(
-      (i) => i.name === "steering-testing",
-    );
+    const testing = result.instructions.find((i) => i.name === "steering-testing");
     expect(testing).toBeDefined();
-    expect(testing!.scope).toBe("agent-decision");
-    expect(testing!.content).toContain("Always write tests");
+    expect(testing?.scope).toBe("agent-decision");
+    expect(testing?.content).toContain("Always write tests");
   });
 
   test("maps fileMatch inclusion to glob scope", async () => {
     dir = await createTestDir("am-kiro-import-");
-    const projectDir = dir.path + "/project";
+    const projectDir = `${dir.path}/project`;
     await dir.write(
       "project/.kiro/steering/api.md",
-      '---\ninclusion: fileMatch\ndescription: API standards\n---\n\n# API Standards\n\nFollow REST conventions.',
+      "---\ninclusion: fileMatch\ndescription: API standards\n---\n\n# API Standards\n\nFollow REST conventions.",
     );
 
-    const result = importConfig(
-      { projectPath: projectDir, entities: ["instructions"] },
-      dir.path,
-    );
+    const result = importConfig({ projectPath: projectDir, entities: ["instructions"] }, dir.path);
     expect(result.instructions).toHaveLength(1);
     expect(result.instructions[0].scope).toBe("glob");
   });
 
   test("maps manual inclusion to manual scope", async () => {
     dir = await createTestDir("am-kiro-import-");
-    const projectDir = dir.path + "/project";
+    const projectDir = `${dir.path}/project`;
     await dir.write(
       "project/.kiro/steering/deploy.md",
       "---\ninclusion: manual\n---\n\n# Deploy\n\nDeploy steps.",
     );
 
-    const result = importConfig(
-      { projectPath: projectDir, entities: ["instructions"] },
-      dir.path,
-    );
+    const result = importConfig({ projectPath: projectDir, entities: ["instructions"] }, dir.path);
     expect(result.instructions).toHaveLength(1);
     expect(result.instructions[0].scope).toBe("manual");
   });
 
   test("defaults steering without frontmatter to always scope", async () => {
     dir = await createTestDir("am-kiro-import-");
-    const projectDir = dir.path + "/project";
-    await dir.write(
-      "project/.kiro/steering/simple.md",
-      "# Simple\n\nNo frontmatter.",
-    );
+    const projectDir = `${dir.path}/project`;
+    await dir.write("project/.kiro/steering/simple.md", "# Simple\n\nNo frontmatter.");
 
-    const result = importConfig(
-      { projectPath: projectDir, entities: ["instructions"] },
-      dir.path,
-    );
+    const result = importConfig({ projectPath: projectDir, entities: ["instructions"] }, dir.path);
     expect(result.instructions).toHaveLength(1);
     expect(result.instructions[0].scope).toBe("always");
     expect(result.instructions[0].content).toContain("No frontmatter");
@@ -252,21 +219,16 @@ describe("kiro importConfig()", () => {
 
   test("imports skills from .kiro/skills/", async () => {
     dir = await createTestDir("am-kiro-import-");
-    const projectDir = dir.path + "/project";
+    const projectDir = `${dir.path}/project`;
     await dir.write(
       "project/.kiro/skills/pr-review/SKILL.md",
       "---\nname: pr-review\ndescription: Review pull requests for quality.\n---\n\n## Steps\n\n1. Check code.",
     );
 
-    const result = importConfig(
-      { projectPath: projectDir, entities: ["skills"] },
-      dir.path,
-    );
+    const result = importConfig({ projectPath: projectDir, entities: ["skills"] }, dir.path);
     expect(result.skills).toHaveLength(1);
     expect(result.skills[0].name).toBe("pr-review");
-    expect(result.skills[0].description).toBe(
-      "Review pull requests for quality.",
-    );
+    expect(result.skills[0].description).toBe("Review pull requests for quality.");
     expect(result.skills[0].path).toContain("SKILL.md");
   });
 
@@ -280,16 +242,11 @@ describe("kiro importConfig()", () => {
 
   test("handles malformed JSON gracefully", async () => {
     dir = await createTestDir("am-kiro-import-");
-    await dir.write(
-      ".kiro/settings/mcp.json",
-      "{ not valid json ]]]",
-    );
+    await dir.write(".kiro/settings/mcp.json", "{ not valid json ]]]");
 
     const result = importConfig({}, dir.path);
     expect(result.servers).toHaveLength(0);
-    expect(result.warnings.some((w) => w.includes("Malformed JSON"))).toBe(
-      true,
-    );
+    expect(result.warnings.some((w) => w.includes("Malformed JSON"))).toBe(true);
   });
 
   test("imports global steering files", async () => {

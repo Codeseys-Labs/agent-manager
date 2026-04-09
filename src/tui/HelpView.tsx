@@ -1,5 +1,5 @@
+import { Box, Text } from "silvery";
 import React from "react";
-import { Box, Text } from "ink";
 
 interface Props {
   onBack: () => void;
@@ -23,9 +23,9 @@ const SHORTCUTS = [
 export function HelpView({ onBack }: Props) {
   return (
     <Box flexDirection="column">
-      <Text bold>  Keyboard Shortcuts</Text>
+      <Text bold> Keyboard Shortcuts</Text>
       <Box>
-        <Text dimColor>  {"─".repeat(50)}</Text>
+        <Text dimColor> {"─".repeat(50)}</Text>
       </Box>
       <Box flexDirection="column" marginTop={1}>
         {SHORTCUTS.map((s, i) =>
@@ -35,13 +35,15 @@ export function HelpView({ onBack }: Props) {
             </Box>
           ) : s.desc === "" ? (
             <Box key={s.key}>
-              <Text bold>  {s.key}</Text>
+              <Text bold> {s.key}</Text>
             </Box>
           ) : (
             <Box key={s.key}>
               <Text>
                 {"  "}
-                <Text bold color="cyan">{s.key.padEnd(14)}</Text>
+                <Text bold color="cyan">
+                  {s.key.padEnd(14)}
+                </Text>
                 {s.desc}
               </Text>
             </Box>
@@ -49,7 +51,7 @@ export function HelpView({ onBack }: Props) {
         )}
       </Box>
       <Box marginTop={1}>
-        <Text dimColor>  [q/Esc/?] back</Text>
+        <Text dimColor> [q/Esc/?] back</Text>
       </Box>
     </Box>
   );

@@ -1,12 +1,10 @@
-import { describe, expect, test, afterEach } from "bun:test";
-import { createTestDir, type TestDir } from "../../helpers/tmp.ts";
+import { afterEach, describe, expect, test } from "bun:test";
 import { diffConfig } from "@/adapters/forgecode/diff.ts";
 import type { ResolvedConfig, ResolvedServer } from "@/adapters/types.ts";
+import { type TestDir, createTestDir } from "../../helpers/tmp.ts";
 
 /** Helper to build a minimal ResolvedServer. */
-function server(
-  overrides: Partial<ResolvedServer> & { command: string },
-): ResolvedServer {
+function server(overrides: Partial<ResolvedServer> & { command: string }): ResolvedServer {
   return {
     name: "test",
     args: [],
@@ -41,7 +39,7 @@ describe("forgecode diffConfig()", () => {
 
   test("in-sync when native matches resolved", async () => {
     dir = await createTestDir("am-fc-diff-");
-    const projectDir = dir.path + "/project";
+    const projectDir = `${dir.path}/project`;
     await dir.write(
       "project/.mcp.json",
       JSON.stringify({
@@ -68,7 +66,7 @@ describe("forgecode diffConfig()", () => {
 
   test("detects server added locally", async () => {
     dir = await createTestDir("am-fc-diff-");
-    const projectDir = dir.path + "/project";
+    const projectDir = `${dir.path}/project`;
     await dir.write(
       "project/.mcp.json",
       JSON.stringify({
@@ -91,15 +89,13 @@ describe("forgecode diffConfig()", () => {
 
     const result = diffConfig(cfg, { projectPath: projectDir });
     expect(result.status).toBe("drifted");
-    const added = result.changes.find(
-      (c) => c.name === "extra" && c.type === "added-locally",
-    );
+    const added = result.changes.find((c) => c.name === "extra" && c.type === "added-locally");
     expect(added).toBeDefined();
   });
 
   test("detects server removed locally", async () => {
     dir = await createTestDir("am-fc-diff-");
-    const projectDir = dir.path + "/project";
+    const projectDir = `${dir.path}/project`;
     await dir.write(
       "project/.mcp.json",
       JSON.stringify({
@@ -126,15 +122,13 @@ describe("forgecode diffConfig()", () => {
 
     const result = diffConfig(cfg, { projectPath: projectDir });
     expect(result.status).toBe("drifted");
-    const removed = result.changes.find(
-      (c) => c.name === "tavily" && c.type === "removed-locally",
-    );
+    const removed = result.changes.find((c) => c.name === "tavily" && c.type === "removed-locally");
     expect(removed).toBeDefined();
   });
 
   test("detects modified server fields", async () => {
     dir = await createTestDir("am-fc-diff-");
-    const projectDir = dir.path + "/project";
+    const projectDir = `${dir.path}/project`;
     await dir.write(
       "project/.mcp.json",
       JSON.stringify({
@@ -156,17 +150,15 @@ describe("forgecode diffConfig()", () => {
 
     const result = diffConfig(cfg, { projectPath: projectDir });
     expect(result.status).toBe("drifted");
-    const modified = result.changes.find(
-      (c) => c.name === "tavily" && c.type === "modified",
-    );
+    const modified = result.changes.find((c) => c.name === "tavily" && c.type === "modified");
     expect(modified).toBeDefined();
-    expect(modified!.details).toBeDefined();
-    expect(modified!.details!.some((d) => d.field === "args")).toBe(true);
+    expect(modified?.details).toBeDefined();
+    expect(modified?.details?.some((d) => d.field === "args")).toBe(true);
   });
 
   test("returns unmanaged when no native file", async () => {
     dir = await createTestDir("am-fc-diff-");
-    const projectDir = dir.path + "/project";
+    const projectDir = `${dir.path}/project`;
     await dir.write("project/.keep", "");
 
     const cfg = config({
@@ -193,7 +185,7 @@ describe("forgecode diffConfig()", () => {
 
   test("normalizes key order for comparison", async () => {
     dir = await createTestDir("am-fc-diff-");
-    const projectDir = dir.path + "/project";
+    const projectDir = `${dir.path}/project`;
     await dir.write(
       "project/.mcp.json",
       JSON.stringify({
@@ -223,7 +215,7 @@ describe("forgecode diffConfig()", () => {
 
   test("detects env changes", async () => {
     dir = await createTestDir("am-fc-diff-");
-    const projectDir = dir.path + "/project";
+    const projectDir = `${dir.path}/project`;
     await dir.write(
       "project/.mcp.json",
       JSON.stringify({
@@ -249,6 +241,6 @@ describe("forgecode diffConfig()", () => {
     const result = diffConfig(cfg, { projectPath: projectDir });
     expect(result.status).toBe("drifted");
     const modified = result.changes.find((c) => c.type === "modified");
-    expect(modified!.details!.some((d) => d.field === "env")).toBe(true);
+    expect(modified?.details?.some((d) => d.field === "env")).toBe(true);
   });
 });

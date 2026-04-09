@@ -1,9 +1,9 @@
-import { describe, test, expect, afterEach } from "bun:test";
-import { join } from "node:path";
-import { createTestDir, type TestDir } from "../helpers/tmp";
-import { readConfig } from "../../src/core/config";
+import { afterEach, describe, expect, test } from "bun:test";
 import * as fs from "node:fs";
+import { join } from "node:path";
 import git from "isomorphic-git";
+import { readConfig } from "../../src/core/config";
+import { type TestDir, createTestDir } from "../helpers/tmp";
 
 describe("am init", () => {
   let dir: TestDir;

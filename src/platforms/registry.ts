@@ -1,7 +1,7 @@
-import type { GitPlatformAdapter } from "./types";
+import { bare } from "./bare";
 import { github } from "./github";
 import { gitlab } from "./gitlab";
-import { bare } from "./bare";
+import type { GitPlatformAdapter } from "./types";
 
 /** Ordered by specificity — most specific first, bare last as fallback. */
 const PLATFORMS: GitPlatformAdapter[] = [github, gitlab, bare];

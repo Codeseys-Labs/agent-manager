@@ -1,11 +1,9 @@
-import { describe, expect, test, afterEach } from "bun:test";
-import { createTestDir, type TestDir } from "../../helpers/tmp.ts";
+import { afterEach, describe, expect, test } from "bun:test";
 import { diffConfig } from "@/adapters/copilot/diff.ts";
 import type { ResolvedConfig, ResolvedServer } from "@/adapters/types.ts";
+import { type TestDir, createTestDir } from "../../helpers/tmp.ts";
 
-function server(
-  overrides: Partial<ResolvedServer> & { command: string },
-): ResolvedServer {
+function server(overrides: Partial<ResolvedServer> & { command: string }): ResolvedServer {
   return {
     name: "test",
     args: [],
@@ -39,7 +37,7 @@ describe("copilot diffConfig()", () => {
 
   test("in-sync when native matches resolved", async () => {
     dir = await createTestDir("am-cp-diff-");
-    const projectDir = dir.path + "/project";
+    const projectDir = `${dir.path}/project`;
     await dir.write(
       "project/.vscode/mcp.json",
       JSON.stringify({
@@ -66,7 +64,7 @@ describe("copilot diffConfig()", () => {
 
   test("detects server added locally", async () => {
     dir = await createTestDir("am-cp-diff-");
-    const projectDir = dir.path + "/project";
+    const projectDir = `${dir.path}/project`;
     await dir.write(
       "project/.vscode/mcp.json",
       JSON.stringify({
@@ -89,15 +87,13 @@ describe("copilot diffConfig()", () => {
 
     const result = diffConfig(cfg, { projectPath: projectDir });
     expect(result.status).toBe("drifted");
-    const added = result.changes.find(
-      (c) => c.name === "extra" && c.type === "added-locally",
-    );
+    const added = result.changes.find((c) => c.name === "extra" && c.type === "added-locally");
     expect(added).toBeDefined();
   });
 
   test("detects server removed locally", async () => {
     dir = await createTestDir("am-cp-diff-");
-    const projectDir = dir.path + "/project";
+    const projectDir = `${dir.path}/project`;
     await dir.write(
       "project/.vscode/mcp.json",
       JSON.stringify({
@@ -124,15 +120,13 @@ describe("copilot diffConfig()", () => {
 
     const result = diffConfig(cfg, { projectPath: projectDir });
     expect(result.status).toBe("drifted");
-    const removed = result.changes.find(
-      (c) => c.name === "tavily" && c.type === "removed-locally",
-    );
+    const removed = result.changes.find((c) => c.name === "tavily" && c.type === "removed-locally");
     expect(removed).toBeDefined();
   });
 
   test("detects modified server fields", async () => {
     dir = await createTestDir("am-cp-diff-");
-    const projectDir = dir.path + "/project";
+    const projectDir = `${dir.path}/project`;
     await dir.write(
       "project/.vscode/mcp.json",
       JSON.stringify({
@@ -154,16 +148,14 @@ describe("copilot diffConfig()", () => {
 
     const result = diffConfig(cfg, { projectPath: projectDir });
     expect(result.status).toBe("drifted");
-    const modified = result.changes.find(
-      (c) => c.name === "tavily" && c.type === "modified",
-    );
+    const modified = result.changes.find((c) => c.name === "tavily" && c.type === "modified");
     expect(modified).toBeDefined();
-    expect(modified!.details!.some((d) => d.field === "args")).toBe(true);
+    expect(modified?.details?.some((d) => d.field === "args")).toBe(true);
   });
 
   test("returns unmanaged when no native file", async () => {
     dir = await createTestDir("am-cp-diff-");
-    const projectDir = dir.path + "/project";
+    const projectDir = `${dir.path}/project`;
 
     const cfg = config({
       servers: {
@@ -189,7 +181,7 @@ describe("copilot diffConfig()", () => {
 
   test("reads 'servers' key not 'mcpServers'", async () => {
     dir = await createTestDir("am-cp-diff-");
-    const projectDir = dir.path + "/project";
+    const projectDir = `${dir.path}/project`;
     // File has mcpServers instead of servers — should be treated as empty
     await dir.write(
       "project/.vscode/mcp.json",
@@ -213,9 +205,7 @@ describe("copilot diffConfig()", () => {
     const result = diffConfig(cfg, { projectPath: projectDir });
     // fetch should show as removed-locally (not in native "servers" key)
     expect(result.status).toBe("drifted");
-    const removed = result.changes.find(
-      (c) => c.name === "fetch" && c.type === "removed-locally",
-    );
+    const removed = result.changes.find((c) => c.name === "fetch" && c.type === "removed-locally");
     expect(removed).toBeDefined();
   });
 });

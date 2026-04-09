@@ -1,6 +1,6 @@
-import { describe, expect, test, afterEach } from "bun:test";
-import { createTestDir, type TestDir } from "../../helpers/tmp.ts";
+import { afterEach, describe, expect, test } from "bun:test";
 import { importConfig, parseMdc } from "@/adapters/cursor/import.ts";
+import { type TestDir, createTestDir } from "../../helpers/tmp.ts";
 
 // ── parseMdc ───────────────────────────────────────────────────
 
@@ -101,11 +101,8 @@ describe("cursor importConfig()", () => {
 
   test("imports project servers from .cursor/mcp.json", async () => {
     dir = await createTestDir("am-cursor-import-");
-    await dir.write(
-      ".cursor/mcp.json",
-      JSON.stringify({ mcpServers: {} }),
-    );
-    const projectDir = dir.path + "/project";
+    await dir.write(".cursor/mcp.json", JSON.stringify({ mcpServers: {} }));
+    const projectDir = `${dir.path}/project`;
     await dir.write(
       "project/.cursor/mcp.json",
       JSON.stringify({
@@ -122,8 +119,8 @@ describe("cursor importConfig()", () => {
     const result = importConfig({ projectPath: projectDir }, dir.path);
     const projectServer = result.servers.find((s) => s.name === "db-mcp");
     expect(projectServer).toBeDefined();
-    expect(projectServer!.scope).toBe("project");
-    expect(projectServer!.env).toEqual({ DB_URL: "postgres://localhost" });
+    expect(projectServer?.scope).toBe("project");
+    expect(projectServer?.env).toEqual({ DB_URL: "postgres://localhost" });
   });
 
   test("imports URL-based servers with streamable-http transport", async () => {
@@ -144,9 +141,7 @@ describe("cursor importConfig()", () => {
     expect(result.servers).toHaveLength(1);
     expect(result.servers[0].name).toBe("remote-api");
     expect(result.servers[0].transport).toBe("streamable-http");
-    expect(result.servers[0].adapterExtras?.url).toBe(
-      "https://api.example.com/mcp",
-    );
+    expect(result.servers[0].adapterExtras?.url).toBe("https://api.example.com/mcp");
     expect(result.servers[0].adapterExtras?.headers).toEqual({
       Authorization: "Bearer token",
     });
@@ -154,11 +149,8 @@ describe("cursor importConfig()", () => {
 
   test("imports .mdc rules as instructions", async () => {
     dir = await createTestDir("am-cursor-import-");
-    await dir.write(
-      ".cursor/mcp.json",
-      JSON.stringify({ mcpServers: {} }),
-    );
-    const projectDir = dir.path + "/project";
+    await dir.write(".cursor/mcp.json", JSON.stringify({ mcpServers: {} }));
+    const projectDir = `${dir.path}/project`;
     await dir.write(
       "project/.cursor/rules/typescript.mdc",
       `---
@@ -170,10 +162,7 @@ alwaysApply: false
 Use strict TypeScript.`,
     );
 
-    const result = importConfig(
-      { projectPath: projectDir, entities: ["instructions"] },
-      dir.path,
-    );
+    const result = importConfig({ projectPath: projectDir, entities: ["instructions"] }, dir.path);
     expect(result.instructions).toHaveLength(1);
     expect(result.instructions[0].name).toBe("typescript");
     expect(result.instructions[0].scope).toBe("glob");
@@ -183,7 +172,7 @@ Use strict TypeScript.`,
 
   test("imports alwaysApply rules with 'always' scope", async () => {
     dir = await createTestDir("am-cursor-import-");
-    const projectDir = dir.path + "/project";
+    const projectDir = `${dir.path}/project`;
     await dir.write(
       "project/.cursor/rules/global.mdc",
       `---
@@ -194,17 +183,14 @@ alwaysApply: true
 Always do this.`,
     );
 
-    const result = importConfig(
-      { projectPath: projectDir, entities: ["instructions"] },
-      dir.path,
-    );
+    const result = importConfig({ projectPath: projectDir, entities: ["instructions"] }, dir.path);
     expect(result.instructions).toHaveLength(1);
     expect(result.instructions[0].scope).toBe("always");
   });
 
   test("imports agent-requested rules (description only, no globs)", async () => {
     dir = await createTestDir("am-cursor-import-");
-    const projectDir = dir.path + "/project";
+    const projectDir = `${dir.path}/project`;
     await dir.write(
       "project/.cursor/rules/db.mdc",
       `---
@@ -215,17 +201,14 @@ alwaysApply: false
 Use Drizzle ORM.`,
     );
 
-    const result = importConfig(
-      { projectPath: projectDir, entities: ["instructions"] },
-      dir.path,
-    );
+    const result = importConfig({ projectPath: projectDir, entities: ["instructions"] }, dir.path);
     expect(result.instructions).toHaveLength(1);
     expect(result.instructions[0].scope).toBe("agent-decision");
   });
 
   test("imports manual rules (empty frontmatter)", async () => {
     dir = await createTestDir("am-cursor-import-");
-    const projectDir = dir.path + "/project";
+    const projectDir = `${dir.path}/project`;
     await dir.write(
       "project/.cursor/rules/manual.mdc",
       `---
@@ -234,32 +217,21 @@ Use Drizzle ORM.`,
 Only used when explicitly referenced.`,
     );
 
-    const result = importConfig(
-      { projectPath: projectDir, entities: ["instructions"] },
-      dir.path,
-    );
+    const result = importConfig({ projectPath: projectDir, entities: ["instructions"] }, dir.path);
     expect(result.instructions).toHaveLength(1);
     expect(result.instructions[0].scope).toBe("manual");
   });
 
   test("imports legacy .cursorrules", async () => {
     dir = await createTestDir("am-cursor-import-");
-    const projectDir = dir.path + "/project";
-    await dir.write(
-      "project/.cursorrules",
-      "Use strict mode. Legacy rules.",
-    );
+    const projectDir = `${dir.path}/project`;
+    await dir.write("project/.cursorrules", "Use strict mode. Legacy rules.");
 
-    const result = importConfig(
-      { projectPath: projectDir, entities: ["instructions"] },
-      dir.path,
-    );
-    const legacy = result.instructions.find(
-      (i) => i.name === "cursorrules-legacy",
-    );
+    const result = importConfig({ projectPath: projectDir, entities: ["instructions"] }, dir.path);
+    const legacy = result.instructions.find((i) => i.name === "cursorrules-legacy");
     expect(legacy).toBeDefined();
-    expect(legacy!.scope).toBe("always");
-    expect(legacy!.content).toContain("Legacy rules");
+    expect(legacy?.scope).toBe("always");
+    expect(legacy?.content).toContain("Legacy rules");
   });
 
   test("handles missing file gracefully", async () => {
@@ -276,9 +248,7 @@ Only used when explicitly referenced.`,
 
     const result = importConfig({}, dir.path);
     expect(result.servers).toHaveLength(0);
-    expect(result.warnings.some((w) => w.includes("Malformed JSON"))).toBe(
-      true,
-    );
+    expect(result.warnings.some((w) => w.includes("Malformed JSON"))).toBe(true);
   });
 
   test("marks disabled servers", async () => {

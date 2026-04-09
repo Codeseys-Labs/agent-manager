@@ -1,17 +1,10 @@
-import { describe, expect, test, beforeEach, afterEach } from "bun:test";
-import { mkdtemp, rm, readFile, readdir } from "node:fs/promises";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import * as fs from "node:fs";
+import { mkdtemp, readFile, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import {
-  initRepo,
-  commitAll,
-  log,
-  revertHead,
-  getStatus,
-  addRemote,
-} from "../../src/core/git.ts";
-import * as fs from "node:fs";
 import git from "isomorphic-git";
+import { addRemote, commitAll, getStatus, initRepo, log, revertHead } from "../../src/core/git.ts";
 
 let dir: string;
 
@@ -34,9 +27,7 @@ describe("initRepo", () => {
   test("creates .agent-manager directory", async () => {
     await initRepo(dir);
     const entries = await readdir(dir, { withFileTypes: true });
-    const hasAM = entries.some(
-      (e) => e.name === ".agent-manager" && e.isDirectory(),
-    );
+    const hasAM = entries.some((e) => e.name === ".agent-manager" && e.isDirectory());
     expect(hasAM).toBe(true);
   });
 
@@ -177,6 +168,6 @@ describe("addRemote", () => {
     const remotes = await git.listRemotes({ fs, dir });
     const upstream = remotes.find((r) => r.remote === "upstream");
     expect(upstream).toBeDefined();
-    expect(upstream!.url).toBe("https://example.com/repo.git");
+    expect(upstream?.url).toBe("https://example.com/repo.git");
   });
 });

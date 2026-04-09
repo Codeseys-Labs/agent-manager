@@ -1,9 +1,9 @@
-import { defineCommand } from "citty";
 import { join } from "node:path";
-import { resolveConfigDir, readConfig, writeConfig } from "../core/config";
+import { defineCommand } from "citty";
+import { readConfig, resolveConfigDir, writeConfig } from "../core/config";
 import { commitAll } from "../core/git";
-import { output, info, error } from "../lib/output";
 import type { Server } from "../core/schema";
+import { error, info, output } from "../lib/output";
 
 export const addCommand = defineCommand({
   meta: { name: "add", description: "Add a server to the config" },
@@ -14,7 +14,11 @@ export const addCommand = defineCommand({
     tags: { type: "string", description: "Comma-separated tags" },
     description: { type: "string", description: "Server description" },
     env: { type: "string", description: "Comma-separated KEY=VALUE pairs" },
-    project: { type: "boolean", description: "Add to project config instead of global", default: false },
+    project: {
+      type: "boolean",
+      description: "Add to project config instead of global",
+      default: false,
+    },
     json: { type: "boolean", description: "JSON output", default: false },
     quiet: { type: "boolean", alias: "q", default: false },
     verbose: { type: "boolean", alias: "v", default: false },

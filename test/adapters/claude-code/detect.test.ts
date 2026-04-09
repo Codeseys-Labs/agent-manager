@@ -1,7 +1,7 @@
-import { describe, expect, test, beforeEach, afterEach } from "bun:test";
-import { mkdtemp, rm, mkdir, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { detect } from "@/adapters/claude-code/detect.ts";
 
 describe("claude-code detect()", () => {
@@ -60,15 +60,10 @@ describe("claude-code detect()", () => {
     await writeFile(join(tempHome, ".claude.json"), "{}");
     const projectDir = join(tempHome, "my-project");
     await mkdir(join(projectDir, ".claude"), { recursive: true });
-    await writeFile(
-      join(projectDir, ".claude", "CLAUDE.md"),
-      "# Instructions",
-    );
+    await writeFile(join(projectDir, ".claude", "CLAUDE.md"), "# Instructions");
 
     const result = detect(tempHome, projectDir);
-    expect(result.paths.claudeMdDotDir).toBe(
-      join(projectDir, ".claude", "CLAUDE.md"),
-    );
+    expect(result.paths.claudeMdDotDir).toBe(join(projectDir, ".claude", "CLAUDE.md"));
   });
 
   test("does not include project paths when projectPath not provided", async () => {

@@ -1,6 +1,6 @@
 import { existsSync } from "node:fs";
-import { join } from "node:path";
 import { homedir } from "node:os";
+import { join } from "node:path";
 import type { DetectResult } from "../types.ts";
 
 /**
@@ -20,14 +20,7 @@ export function detect(homeDir?: string, projectPath?: string): DetectResult {
   }
 
   // User-level MCP config (macOS): ~/Library/Application Support/Code/User/mcp.json
-  const userMcpConfig = join(
-    home,
-    "Library",
-    "Application Support",
-    "Code",
-    "User",
-    "mcp.json",
-  );
+  const userMcpConfig = join(home, "Library", "Application Support", "Code", "User", "mcp.json");
   if (existsSync(userMcpConfig)) {
     paths.userMcpConfig = userMcpConfig;
   }
@@ -49,11 +42,7 @@ export function detect(homeDir?: string, projectPath?: string): DetectResult {
     }
 
     // .github/copilot-instructions.md
-    const globalInstructions = join(
-      projectPath,
-      ".github",
-      "copilot-instructions.md",
-    );
+    const globalInstructions = join(projectPath, ".github", "copilot-instructions.md");
     if (existsSync(globalInstructions)) {
       paths.globalInstructions = globalInstructions;
     }

@@ -1,11 +1,9 @@
-import { describe, expect, test, afterEach } from "bun:test";
-import { createTestDir, type TestDir } from "../../helpers/tmp.ts";
-import { diffConfig } from "@/adapters/windsurf/diff.ts";
+import { afterEach, describe, expect, test } from "bun:test";
 import type { ResolvedConfig, ResolvedServer } from "@/adapters/types.ts";
+import { diffConfig } from "@/adapters/windsurf/diff.ts";
+import { type TestDir, createTestDir } from "../../helpers/tmp.ts";
 
-function server(
-  overrides: Partial<ResolvedServer> & { command: string },
-): ResolvedServer {
+function server(overrides: Partial<ResolvedServer> & { command: string }): ResolvedServer {
   return {
     name: "test",
     args: [],
@@ -87,9 +85,7 @@ describe("windsurf diffConfig()", () => {
 
     const result = diffConfig(cfg, {}, dir.path);
     expect(result.status).toBe("drifted");
-    const added = result.changes.find(
-      (c) => c.name === "extra" && c.type === "added-locally",
-    );
+    const added = result.changes.find((c) => c.name === "extra" && c.type === "added-locally");
     expect(added).toBeDefined();
   });
 
@@ -121,9 +117,7 @@ describe("windsurf diffConfig()", () => {
 
     const result = diffConfig(cfg, {}, dir.path);
     expect(result.status).toBe("drifted");
-    const removed = result.changes.find(
-      (c) => c.name === "tavily" && c.type === "removed-locally",
-    );
+    const removed = result.changes.find((c) => c.name === "tavily" && c.type === "removed-locally");
     expect(removed).toBeDefined();
   });
 
@@ -150,11 +144,9 @@ describe("windsurf diffConfig()", () => {
 
     const result = diffConfig(cfg, {}, dir.path);
     expect(result.status).toBe("drifted");
-    const modified = result.changes.find(
-      (c) => c.name === "tavily" && c.type === "modified",
-    );
+    const modified = result.changes.find((c) => c.name === "tavily" && c.type === "modified");
     expect(modified).toBeDefined();
-    expect(modified!.details!.some((d) => d.field === "args")).toBe(true);
+    expect(modified?.details?.some((d) => d.field === "args")).toBe(true);
   });
 
   test("returns unmanaged when no native file", async () => {

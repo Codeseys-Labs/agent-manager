@@ -1,22 +1,18 @@
-import { defineCommand } from "citty";
+import { copyFile, mkdir } from "node:fs/promises";
 import { join } from "node:path";
-import { mkdir, copyFile } from "node:fs/promises";
-import {
-  resolveConfigDir,
-  readConfig,
-  writeConfig,
-} from "../core/config";
+import { defineCommand } from "citty";
+import { readConfig, resolveConfigDir, writeConfig } from "../core/config";
 import { commitAll } from "../core/git";
 import {
+  decryptValue,
+  encryptValue,
   generateKey,
   importKey,
+  isEncrypted,
   loadKey,
   saveKey,
-  encryptValue,
-  decryptValue,
-  isEncrypted,
 } from "../core/secrets";
-import { output, info, error } from "../lib/output";
+import { error, info, output } from "../lib/output";
 
 export const secretCommand = defineCommand({
   meta: { name: "secret", description: "Manage encrypted secrets" },
@@ -39,7 +35,10 @@ const setCommand = defineCommand({
   args: {
     name: { type: "positional", description: "Secret name (env var key)", required: true },
     value: { type: "positional", description: "Secret value to encrypt", required: true },
-    server: { type: "string", description: "Server to set the secret for (if omitted, sets in settings.env)" },
+    server: {
+      type: "string",
+      description: "Server to set the secret for (if omitted, sets in settings.env)",
+    },
     json: { type: "boolean", description: "JSON output", default: false },
     quiet: { type: "boolean", alias: "q", default: false },
     verbose: { type: "boolean", alias: "v", default: false },

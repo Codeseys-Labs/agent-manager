@@ -1,12 +1,10 @@
-import { describe, test, expect, beforeEach, afterEach } from "bun:test";
-import { createTestDir, type TestDir } from "../helpers/tmp";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { join } from "node:path";
+import { type TestDir, createTestDir } from "../helpers/tmp";
 
 let testDir: TestDir;
 
-async function runAM(
-  ...args: string[]
-): Promise<{ stdout: string; stderr: string; code: number }> {
+async function runAM(...args: string[]): Promise<{ stdout: string; stderr: string; code: number }> {
   const proc = Bun.spawn(["bun", "run", "src/cli.ts", ...args], {
     cwd: join(import.meta.dir, "../.."),
     env: { ...process.env, AM_CONFIG_DIR: testDir.path },

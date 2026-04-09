@@ -5,8 +5,8 @@
  * and .windsurf/rules/*.md (instructions with frontmatter).
  */
 
-import { join } from "node:path";
 import { homedir } from "node:os";
+import { join } from "node:path";
 import type {
   ExportOptions,
   ExportResult,
@@ -83,7 +83,7 @@ function generateMcpConfig(
     if (Object.keys(server.env).length > 0) entry.env = server.env;
 
     // Map adapter-specific fields
-    const wsExtras = server.adapters?.["windsurf"] ?? {};
+    const wsExtras = server.adapters?.windsurf ?? {};
     for (const [key, value] of Object.entries(wsExtras)) {
       if (key === "scope") continue;
       entry[key] = value;
@@ -93,13 +93,11 @@ function generateMcpConfig(
   }
 
   const output = { ...existing, mcpServers };
-  return JSON.stringify(output, null, 2) + "\n";
+  return `${JSON.stringify(output, null, 2)}\n`;
 }
 
 /** Map our scope enum to Windsurf trigger values. */
-function scopeToTrigger(
-  scope: "always" | "glob" | "agent-decision" | "manual",
-): string {
+function scopeToTrigger(scope: "always" | "glob" | "agent-decision" | "manual"): string {
   switch (scope) {
     case "always":
       return "always_on";
@@ -113,10 +111,7 @@ function scopeToTrigger(
 }
 
 /** Generate .windsurf/rules/*.md files from instructions. */
-function generateRuleFiles(
-  config: ResolvedConfig,
-  projectPath: string,
-): WrittenFile[] {
+function generateRuleFiles(config: ResolvedConfig, projectPath: string): WrittenFile[] {
   const files: WrittenFile[] = [];
 
   for (const [name, instr] of Object.entries(config.instructions)) {
@@ -131,7 +126,7 @@ function generateRuleFiles(
     }
     frontmatter += "---\n";
 
-    const content = frontmatter + "\n" + instr.content + "\n";
+    const content = `${frontmatter}\n${instr.content}\n`;
     const filePath = join(projectPath, ".windsurf", "rules", `${name}.md`);
     files.push({ path: filePath, content, written: false });
   }

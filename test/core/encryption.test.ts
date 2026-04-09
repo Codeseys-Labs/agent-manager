@@ -1,18 +1,18 @@
-import { describe, test, expect, beforeEach, afterEach } from "bun:test";
-import { join } from "node:path";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdir, writeFile } from "node:fs/promises";
-import { createTestDir, type TestDir } from "../helpers/tmp";
+import { join } from "node:path";
+import type { Config } from "../../src/core/schema";
 import {
+  decryptValue,
+  encryptValue,
   generateKey,
   importKey,
-  encryptValue,
-  decryptValue,
+  interpolateEnvAsync,
   isEncrypted,
   loadKey,
   saveKey,
-  interpolateEnvAsync,
 } from "../../src/core/secrets";
-import type { Config } from "../../src/core/schema";
+import { type TestDir, createTestDir } from "../helpers/tmp";
 
 describe("encryption", () => {
   describe("generateKey", () => {
@@ -160,15 +160,12 @@ describe("encryption", () => {
 
     test("reads from .agent-manager/key.txt file", async () => {
       dir = await createTestDir("am-loadkey-");
-      delete process.env.AM_ENCRYPTION_KEY;
+      process.env.AM_ENCRYPTION_KEY = undefined;
       origEnv.AM_ENCRYPTION_KEY = undefined;
 
       const base64 = await generateKey();
       await mkdir(join(dir.path, ".agent-manager"), { recursive: true });
-      await writeFile(
-        join(dir.path, ".agent-manager", "key.txt"),
-        base64 + "\n",
-      );
+      await writeFile(join(dir.path, ".agent-manager", "key.txt"), `${base64}\n`);
 
       const key = await loadKey(dir.path);
       expect(key).not.toBeNull();
@@ -184,10 +181,7 @@ describe("encryption", () => {
 
       setEnv("AM_ENCRYPTION_KEY", envBase64);
       await mkdir(join(dir.path, ".agent-manager"), { recursive: true });
-      await writeFile(
-        join(dir.path, ".agent-manager", "key.txt"),
-        fileBase64,
-      );
+      await writeFile(join(dir.path, ".agent-manager", "key.txt"), fileBase64);
 
       const key = await loadKey(dir.path);
       expect(key).not.toBeNull();
@@ -200,7 +194,7 @@ describe("encryption", () => {
 
     test("returns null when no key available", async () => {
       dir = await createTestDir("am-loadkey-");
-      delete process.env.AM_ENCRYPTION_KEY;
+      process.env.AM_ENCRYPTION_KEY = undefined;
       origEnv.AM_ENCRYPTION_KEY = undefined;
 
       const key = await loadKey(dir.path);

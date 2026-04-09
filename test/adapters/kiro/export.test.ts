@@ -1,7 +1,7 @@
-import { describe, expect, test, afterEach } from "bun:test";
-import { createTestDir, type TestDir } from "../../helpers/tmp.ts";
+import { afterEach, describe, expect, test } from "bun:test";
 import { exportConfig } from "@/adapters/kiro/export.ts";
 import type { ResolvedConfig, ResolvedServer } from "@/adapters/types.ts";
+import { type TestDir, createTestDir } from "../../helpers/tmp.ts";
 
 function makeConfig(overrides: Partial<ResolvedConfig> = {}): ResolvedConfig {
   return {
@@ -52,18 +52,16 @@ describe("kiro exportConfig()", () => {
     const result = exportConfig(config, { dryRun: true }, dir.path);
     expect(result.files.length).toBeGreaterThanOrEqual(1);
 
-    const globalFile = result.files.find((f) =>
-      f.path.includes(".kiro/settings/mcp.json"),
-    );
+    const globalFile = result.files.find((f) => f.path.includes(".kiro/settings/mcp.json"));
     expect(globalFile).toBeDefined();
-    const parsed = JSON.parse(globalFile!.content);
+    const parsed = JSON.parse(globalFile?.content);
     expect(parsed.mcpServers.fetch.command).toBe("uvx");
     expect(parsed.mcpServers.fetch.args).toEqual(["mcp-server-fetch"]);
   });
 
   test("generates project .kiro/settings/mcp.json for project-scoped servers", async () => {
     dir = await createTestDir("am-kiro-export-");
-    const projectDir = dir.path + "/project";
+    const projectDir = `${dir.path}/project`;
     const config = makeConfig({
       servers: {
         local: makeServer({
@@ -74,16 +72,12 @@ describe("kiro exportConfig()", () => {
       },
     });
 
-    const result = exportConfig(
-      config,
-      { projectPath: projectDir, dryRun: true },
-      dir.path,
-    );
-    const projectFile = result.files.find(
-      (f) => f.path.includes("project/.kiro/settings/mcp.json"),
+    const result = exportConfig(config, { projectPath: projectDir, dryRun: true }, dir.path);
+    const projectFile = result.files.find((f) =>
+      f.path.includes("project/.kiro/settings/mcp.json"),
     );
     expect(projectFile).toBeDefined();
-    const parsed = JSON.parse(projectFile!.content);
+    const parsed = JSON.parse(projectFile?.content);
     expect(parsed.mcpServers.local.command).toBe("my-local-mcp");
   });
 
@@ -131,7 +125,7 @@ describe("kiro exportConfig()", () => {
 
   test("generates steering files from instructions", async () => {
     dir = await createTestDir("am-kiro-export-");
-    const projectDir = dir.path + "/project";
+    const projectDir = `${dir.path}/project`;
     const config = makeConfig({
       instructions: {
         "code-style": {
@@ -146,24 +140,18 @@ describe("kiro exportConfig()", () => {
       },
     });
 
-    const result = exportConfig(
-      config,
-      { projectPath: projectDir, dryRun: true },
-      dir.path,
-    );
-    const steeringFile = result.files.find((f) =>
-      f.path.includes(".kiro/steering/code-style.md"),
-    );
+    const result = exportConfig(config, { projectPath: projectDir, dryRun: true }, dir.path);
+    const steeringFile = result.files.find((f) => f.path.includes(".kiro/steering/code-style.md"));
     expect(steeringFile).toBeDefined();
-    expect(steeringFile!.content).toContain("inclusion: always");
-    expect(steeringFile!.content).toContain("<!-- am:begin -->");
-    expect(steeringFile!.content).toContain("Use strict mode");
-    expect(steeringFile!.content).toContain("<!-- am:end -->");
+    expect(steeringFile?.content).toContain("inclusion: always");
+    expect(steeringFile?.content).toContain("<!-- am:begin -->");
+    expect(steeringFile?.content).toContain("Use strict mode");
+    expect(steeringFile?.content).toContain("<!-- am:end -->");
   });
 
   test("filters instructions by target", async () => {
     dir = await createTestDir("am-kiro-export-");
-    const projectDir = dir.path + "/project";
+    const projectDir = `${dir.path}/project`;
     const config = makeConfig({
       instructions: {
         "kiro-only": {
@@ -187,14 +175,8 @@ describe("kiro exportConfig()", () => {
       },
     });
 
-    const result = exportConfig(
-      config,
-      { projectPath: projectDir, dryRun: true },
-      dir.path,
-    );
-    const steeringFiles = result.files.filter((f) =>
-      f.path.includes(".kiro/steering/"),
-    );
+    const result = exportConfig(config, { projectPath: projectDir, dryRun: true }, dir.path);
+    const steeringFiles = result.files.filter((f) => f.path.includes(".kiro/steering/"));
     expect(steeringFiles).toHaveLength(1);
     expect(steeringFiles[0].content).toContain("Kiro rules");
   });

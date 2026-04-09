@@ -7,50 +7,17 @@ import type { AdapterSchema } from "../types.ts";
  */
 export const codexServerSchema = z
   .object({
-    enabled_tools: z
-      .array(z.string())
-      .optional()
-      .describe("Tool allowlist for this server"),
-    disabled_tools: z
-      .array(z.string())
-      .optional()
-      .describe("Tool denylist for this server"),
-    startup_timeout_sec: z
-      .number()
-      .optional()
-      .describe("Startup timeout in seconds"),
-    tool_timeout_sec: z
-      .number()
-      .optional()
-      .describe("Per-tool timeout in seconds"),
-    required: z
-      .boolean()
-      .optional()
-      .describe("Fail startup if server unavailable"),
-    scopes: z
-      .array(z.string())
-      .optional()
-      .describe("OAuth scopes"),
-    oauth_resource: z
-      .string()
-      .optional()
-      .describe("RFC 8707 OAuth resource"),
-    env_vars: z
-      .array(z.string())
-      .optional()
-      .describe("Env vars to forward from host"),
-    cwd: z
-      .string()
-      .optional()
-      .describe("Working directory for server process"),
-    bearer_token_env_var: z
-      .string()
-      .optional()
-      .describe("Bearer token env var for HTTP transport"),
-    http_headers: z
-      .record(z.string())
-      .optional()
-      .describe("Static HTTP headers"),
+    enabled_tools: z.array(z.string()).optional().describe("Tool allowlist for this server"),
+    disabled_tools: z.array(z.string()).optional().describe("Tool denylist for this server"),
+    startup_timeout_sec: z.number().optional().describe("Startup timeout in seconds"),
+    tool_timeout_sec: z.number().optional().describe("Per-tool timeout in seconds"),
+    required: z.boolean().optional().describe("Fail startup if server unavailable"),
+    scopes: z.array(z.string()).optional().describe("OAuth scopes"),
+    oauth_resource: z.string().optional().describe("RFC 8707 OAuth resource"),
+    env_vars: z.array(z.string()).optional().describe("Env vars to forward from host"),
+    cwd: z.string().optional().describe("Working directory for server process"),
+    bearer_token_env_var: z.string().optional().describe("Bearer token env var for HTTP transport"),
+    http_headers: z.record(z.string()).optional().describe("Static HTTP headers"),
     env_http_headers: z
       .record(z.string())
       .optional()
@@ -81,14 +48,8 @@ export const codexGlobalSchema = z
       .enum(["minimal", "low", "medium", "high", "xhigh"])
       .optional()
       .describe("Reasoning effort level"),
-    personality: z
-      .enum(["none", "friendly", "pragmatic"])
-      .optional()
-      .describe("Agent personality"),
-    web_search: z
-      .enum(["disabled", "cached", "live"])
-      .optional()
-      .describe("Web search mode"),
+    personality: z.enum(["none", "friendly", "pragmatic"]).optional().describe("Agent personality"),
+    web_search: z.enum(["disabled", "cached", "live"]).optional().describe("Web search mode"),
   })
   .passthrough();
 

@@ -1,7 +1,7 @@
-import { describe, test, expect, afterEach } from "bun:test";
-import { createTestDir, type TestDir } from "../helpers/tmp";
+import { afterEach, describe, expect, test } from "bun:test";
 import { readActiveProfile, writeActiveProfile } from "../../src/commands/use";
 import { initRepo } from "../../src/core/git";
+import { type TestDir, createTestDir } from "../helpers/tmp";
 
 describe("am use", () => {
   let dir: TestDir;

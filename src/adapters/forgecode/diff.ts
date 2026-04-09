@@ -8,12 +8,7 @@
  */
 
 import { join } from "node:path";
-import type {
-  DiffChange,
-  DiffResult,
-  ResolvedConfig,
-  ResolvedServer,
-} from "../types.ts";
+import type { DiffChange, DiffResult, ResolvedConfig, ResolvedServer } from "../types.ts";
 
 interface NativeServer {
   command: string;
@@ -37,9 +32,7 @@ export function diffConfig(
     return { status: "unmanaged", changes: [] };
   }
 
-  const nativeServers = readNativeServers(
-    join(options.projectPath, ".mcp.json"),
-  );
+  const nativeServers = readNativeServers(join(options.projectPath, ".mcp.json"));
   if (nativeServers === null) {
     return { status: "unmanaged", changes: [] };
   }
@@ -94,9 +87,7 @@ export function diffConfig(
 }
 
 /** Read mcpServers from a JSON file, returning null if file doesn't exist. */
-function readNativeServers(
-  filePath: string,
-): Record<string, NativeServer> | null {
+function readNativeServers(filePath: string): Record<string, NativeServer> | null {
   try {
     const fs = require("node:fs");
     const text = fs.readFileSync(filePath, "utf-8");
@@ -124,10 +115,7 @@ function compareServer(
 
   const expectedArgs = expected.args ?? [];
   const nativeArgs = native.args ?? [];
-  if (
-    JSON.stringify(normalize(expectedArgs)) !==
-    JSON.stringify(normalize(nativeArgs))
-  ) {
+  if (JSON.stringify(normalize(expectedArgs)) !== JSON.stringify(normalize(nativeArgs))) {
     diffs.push({
       field: "args",
       expected: expectedArgs,
@@ -137,10 +125,7 @@ function compareServer(
 
   const expectedEnv = expected.env ?? {};
   const nativeEnv = native.env ?? {};
-  if (
-    JSON.stringify(sortKeys(expectedEnv)) !==
-    JSON.stringify(sortKeys(nativeEnv))
-  ) {
+  if (JSON.stringify(sortKeys(expectedEnv)) !== JSON.stringify(sortKeys(nativeEnv))) {
     diffs.push({
       field: "env",
       expected: expectedEnv,
@@ -163,7 +148,6 @@ function sortKeys<T extends Record<string, unknown>>(obj: T): T {
 /** Normalize a value for comparison (deep sort for objects/arrays). */
 function normalize(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(normalize);
-  if (value && typeof value === "object")
-    return sortKeys(value as Record<string, unknown>);
+  if (value && typeof value === "object") return sortKeys(value as Record<string, unknown>);
   return value;
 }

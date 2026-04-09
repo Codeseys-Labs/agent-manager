@@ -1,9 +1,9 @@
-import { describe, test, expect, afterEach } from "bun:test";
-import { createTestDir, type TestDir } from "../helpers/tmp";
-import { initRepo, commitAll, log as gitLog } from "../../src/core/git";
-import { formatLogEntry } from "../../src/commands/log";
+import { afterEach, describe, expect, test } from "bun:test";
 import * as fs from "node:fs";
 import { join } from "node:path";
+import { formatLogEntry } from "../../src/commands/log";
+import { commitAll, log as gitLog, initRepo } from "../../src/core/git";
+import { type TestDir, createTestDir } from "../helpers/tmp";
 
 describe("am log", () => {
   let dir: TestDir;

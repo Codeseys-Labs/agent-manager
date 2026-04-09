@@ -5,15 +5,10 @@
  * and CLAUDE.md (instructions). Missing files are warned, not fatal.
  */
 
-import { join } from "node:path";
 import { homedir } from "node:os";
+import { join } from "node:path";
+import type { ImportOptions, ImportResult, ImportedInstruction, ImportedServer } from "../types.ts";
 import { extractPackageId } from "./identity.ts";
-import type {
-  ImportOptions,
-  ImportResult,
-  ImportedServer,
-  ImportedInstruction,
-} from "../types.ts";
 
 interface ClaudeJsonServer {
   command: string;
@@ -31,10 +26,7 @@ interface ClaudeJson {
 /**
  * Import Claude Code native configs into core format.
  */
-export function importConfig(
-  options: ImportOptions = {},
-  homeDir?: string,
-): ImportResult {
+export function importConfig(options: ImportOptions = {}, homeDir?: string): ImportResult {
   const home = homeDir ?? homedir();
   const entities = options.entities ?? ["servers", "instructions"];
   const warnings: string[] = [];
@@ -66,12 +58,7 @@ export function importConfig(
 }
 
 /** Core fields that are part of ImportedServer — everything else goes to adapterExtras. */
-const CORE_FIELDS = new Set([
-  "command",
-  "args",
-  "env",
-  "disabled",
-]);
+const CORE_FIELDS = new Set(["command", "args", "env", "disabled"]);
 
 function readServersFromFile(
   filePath: string,
@@ -136,10 +123,7 @@ function readServersFromFile(
   return results;
 }
 
-function readClaudeMd(
-  projectPath: string,
-  warnings: string[],
-): ImportedInstruction | null {
+function readClaudeMd(projectPath: string, warnings: string[]): ImportedInstruction | null {
   const claudeMdPath = join(projectPath, "CLAUDE.md");
 
   if (!fileExistsSync(claudeMdPath)) {

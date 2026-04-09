@@ -1,9 +1,9 @@
-import { describe, it, expect, beforeAll, afterAll } from "bun:test";
-import { createApp } from "../../src/web/server";
-import { join } from "node:path";
-import { mkdtemp, writeFile, mkdir, rm } from "node:fs/promises";
+import { afterAll, beforeAll, describe, expect, it } from "bun:test";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
+import { join } from "node:path";
 import * as TOML from "@iarna/toml";
+import { createApp } from "../../src/web/server";
 
 let tmpDir: string;
 
@@ -42,17 +42,14 @@ beforeAll(async () => {
     },
   };
 
-  await writeFile(
-    join(tmpDir, "config.toml"),
-    TOML.stringify(config as any),
-  );
+  await writeFile(join(tmpDir, "config.toml"), TOML.stringify(config as any));
 
   // Point agent-manager at the temp dir
   process.env.AM_CONFIG_DIR = tmpDir;
 });
 
 afterAll(async () => {
-  delete process.env.AM_CONFIG_DIR;
+  process.env.AM_CONFIG_DIR = undefined;
   await rm(tmpDir, { recursive: true, force: true });
 });
 

@@ -1,4 +1,4 @@
-import type { Config, Server, Profile } from "./schema";
+import type { Config, Profile, Server } from "./schema";
 
 /** A fully resolved profile with all inheritance applied. */
 export interface ResolvedProfile {
@@ -35,9 +35,7 @@ export function resolveProfile(name: string, config: Config): ResolvedProfile {
 
   while (current) {
     if (seen.has(current)) {
-      throw new Error(
-        `Circular inheritance detected: ${[...seen, current].join(" -> ")}`,
-      );
+      throw new Error(`Circular inheritance detected: ${[...seen, current].join(" -> ")}`);
     }
     const profile = profiles[current];
     if (!profile) {
@@ -128,10 +126,7 @@ export function resolveServerTags(tags: string[], config: Config): string[] {
  * Return full Server objects for each server name in the resolved profile.
  * Silently skips names not found in the catalog.
  */
-export function resolveActiveServers(
-  resolved: ResolvedProfile,
-  config: Config,
-): ActiveServer[] {
+export function resolveActiveServers(resolved: ResolvedProfile, config: Config): ActiveServer[] {
   const catalog = config.servers ?? {};
   const result: ActiveServer[] = [];
 

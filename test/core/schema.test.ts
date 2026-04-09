@@ -1,19 +1,19 @@
-import { describe, test, expect } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import {
-  ServerSchema,
-  InstructionSchema,
-  SkillSchema,
+  type AgentProfile,
   AgentProfileSchema,
-  ProfileSchema,
+  type Config,
   ConfigSchema,
+  type Instruction,
+  InstructionSchema,
+  type Profile,
+  ProfileSchema,
+  type ProjectConfig,
   ProjectConfigSchema,
   type Server,
-  type Instruction,
+  ServerSchema,
   type Skill,
-  type AgentProfile,
-  type Profile,
-  type Config,
-  type ProjectConfig,
+  SkillSchema,
 } from "../../src/core/schema";
 
 describe("ServerSchema", () => {
@@ -51,9 +51,7 @@ describe("ServerSchema", () => {
   });
 
   test("rejects invalid transport", () => {
-    expect(() =>
-      ServerSchema.parse({ command: "my-mcp", transport: "grpc" })
-    ).toThrow();
+    expect(() => ServerSchema.parse({ command: "my-mcp", transport: "grpc" })).toThrow();
   });
 });
 
@@ -82,14 +80,12 @@ describe("InstructionSchema", () => {
         content: "inline",
         content_file: "file.md",
         scope: "always",
-      })
+      }),
     ).toThrow();
   });
 
   test("rejects neither content nor content_file", () => {
-    expect(() =>
-      InstructionSchema.parse({ scope: "always" })
-    ).toThrow();
+    expect(() => InstructionSchema.parse({ scope: "always" })).toThrow();
   });
 });
 
@@ -167,7 +163,7 @@ describe("AgentProfileSchema", () => {
         name: "bad-agent",
         prompt: "inline prompt",
         prompt_file: "agents/bad.md",
-      })
+      }),
     ).toThrow();
   });
 });

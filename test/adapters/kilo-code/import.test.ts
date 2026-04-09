@@ -1,8 +1,8 @@
-import { describe, expect, test, afterEach } from "bun:test";
-import { createTestDir, type TestDir } from "../../helpers/tmp.ts";
-import { importConfig } from "@/adapters/kilo-code/import.ts";
+import { afterEach, describe, expect, test } from "bun:test";
 import { extractPackageId } from "@/adapters/kilo-code/identity.ts";
+import { importConfig } from "@/adapters/kilo-code/import.ts";
 import { parseJsonc } from "@/adapters/kilo-code/jsonc.ts";
+import { type TestDir, createTestDir } from "../../helpers/tmp.ts";
 
 // ── parseJsonc ─────────────────────────────────────────────────
 
@@ -39,9 +39,7 @@ describe("parseJsonc()", () => {
     const result = parseJsonc(input) as Record<string, unknown>;
     expect(result.name).toBe("test");
     expect(result.arr).toEqual([1, 2, 3]);
-    expect((result.nested as Record<string, string>).url).toBe(
-      "https://example.com/path",
-    );
+    expect((result.nested as Record<string, string>).url).toBe("https://example.com/path");
   });
 
   test("handles escaped quotes in strings", () => {
@@ -54,21 +52,17 @@ describe("parseJsonc()", () => {
 
 describe("extractPackageId() for Kilo", () => {
   test("extracts from command array (new format)", () => {
-    expect(extractPackageId(["uvx", "mcp-server-fetch"])).toBe(
-      "mcp-server-fetch",
-    );
+    expect(extractPackageId(["uvx", "mcp-server-fetch"])).toBe("mcp-server-fetch");
   });
 
   test("extracts scoped package from command array", () => {
-    expect(
-      extractPackageId(["bunx", "@upstash/context7-mcp@latest"]),
-    ).toBe("@upstash/context7-mcp");
+    expect(extractPackageId(["bunx", "@upstash/context7-mcp@latest"])).toBe(
+      "@upstash/context7-mcp",
+    );
   });
 
   test("extracts from legacy command + args", () => {
-    expect(extractPackageId("bunx", ["tavily-mcp@latest"])).toBe(
-      "tavily-mcp",
-    );
+    expect(extractPackageId("bunx", ["tavily-mcp@latest"])).toBe("tavily-mcp");
   });
 
   test("returns command basename for non-runner", () => {
@@ -174,9 +168,7 @@ describe("importConfig()", () => {
     const result = importConfig({}, dir.path);
     expect(result.servers).toHaveLength(2);
     expect(result.servers.find((s) => s.name === "new-server")).toBeDefined();
-    expect(
-      result.servers.find((s) => s.name === "legacy-server"),
-    ).toBeDefined();
+    expect(result.servers.find((s) => s.name === "legacy-server")).toBeDefined();
   });
 
   test("imports remote MCP servers", async () => {
@@ -237,11 +229,8 @@ describe("importConfig()", () => {
 
   test("imports project servers from .kilo/kilo.jsonc", async () => {
     dir = await createTestDir("am-kc-import-");
-    await dir.write(
-      ".config/kilo/kilo.jsonc",
-      JSON.stringify({ mcp: {} }),
-    );
-    const projectDir = dir.path + "/project";
+    await dir.write(".config/kilo/kilo.jsonc", JSON.stringify({ mcp: {} }));
+    const projectDir = `${dir.path}/project`;
     await dir.write(
       "project/.kilo/kilo.jsonc",
       `{
@@ -257,16 +246,13 @@ describe("importConfig()", () => {
     const result = importConfig({ projectPath: projectDir }, dir.path);
     const projServer = result.servers.find((s) => s.name === "proj-server");
     expect(projServer).toBeDefined();
-    expect(projServer!.scope).toBe("project");
+    expect(projServer?.scope).toBe("project");
   });
 
   test("imports project servers from root kilo.jsonc", async () => {
     dir = await createTestDir("am-kc-import-");
-    await dir.write(
-      ".config/kilo/kilo.jsonc",
-      JSON.stringify({ mcp: {} }),
-    );
-    const projectDir = dir.path + "/project";
+    await dir.write(".config/kilo/kilo.jsonc", JSON.stringify({ mcp: {} }));
+    const projectDir = `${dir.path}/project`;
     await dir.write(
       "project/kilo.jsonc",
       `{
@@ -282,101 +268,60 @@ describe("importConfig()", () => {
     const result = importConfig({ projectPath: projectDir }, dir.path);
     const rootServer = result.servers.find((s) => s.name === "root-server");
     expect(rootServer).toBeDefined();
-    expect(rootServer!.scope).toBe("project");
+    expect(rootServer?.scope).toBe("project");
   });
 
   test("imports AGENTS.md as instruction", async () => {
     dir = await createTestDir("am-kc-import-");
-    await dir.write(
-      ".config/kilo/kilo.jsonc",
-      JSON.stringify({ mcp: {} }),
-    );
-    const projectDir = dir.path + "/project";
-    await dir.write(
-      "project/AGENTS.md",
-      "# Instructions\n\nUse strict mode.",
-    );
+    await dir.write(".config/kilo/kilo.jsonc", JSON.stringify({ mcp: {} }));
+    const projectDir = `${dir.path}/project`;
+    await dir.write("project/AGENTS.md", "# Instructions\n\nUse strict mode.");
 
-    const result = importConfig(
-      { projectPath: projectDir, entities: ["instructions"] },
-      dir.path,
-    );
-    const agentsInstr = result.instructions.find((i) =>
-      i.name.includes("agents"),
-    );
+    const result = importConfig({ projectPath: projectDir, entities: ["instructions"] }, dir.path);
+    const agentsInstr = result.instructions.find((i) => i.name.includes("agents"));
     expect(agentsInstr).toBeDefined();
-    expect(agentsInstr!.content).toContain("Use strict mode");
-    expect(agentsInstr!.scope).toBe("always");
+    expect(agentsInstr?.content).toContain("Use strict mode");
+    expect(agentsInstr?.scope).toBe("always");
   });
 
   test("falls back to CLAUDE.md when no AGENTS.md", async () => {
     dir = await createTestDir("am-kc-import-");
-    await dir.write(
-      ".config/kilo/kilo.jsonc",
-      JSON.stringify({ mcp: {} }),
-    );
-    const projectDir = dir.path + "/project";
-    await dir.write(
-      "project/CLAUDE.md",
-      "# Claude Instructions\n\nFrom CLAUDE.md.",
-    );
+    await dir.write(".config/kilo/kilo.jsonc", JSON.stringify({ mcp: {} }));
+    const projectDir = `${dir.path}/project`;
+    await dir.write("project/CLAUDE.md", "# Claude Instructions\n\nFrom CLAUDE.md.");
 
-    const result = importConfig(
-      { projectPath: projectDir, entities: ["instructions"] },
-      dir.path,
-    );
-    const claudeInstr = result.instructions.find((i) =>
-      i.name.includes("claude"),
-    );
+    const result = importConfig({ projectPath: projectDir, entities: ["instructions"] }, dir.path);
+    const claudeInstr = result.instructions.find((i) => i.name.includes("claude"));
     expect(claudeInstr).toBeDefined();
-    expect(claudeInstr!.content).toContain("From CLAUDE.md");
+    expect(claudeInstr?.content).toContain("From CLAUDE.md");
   });
 
   test("imports rules from .kilocode/rules/", async () => {
     dir = await createTestDir("am-kc-import-");
-    await dir.write(
-      ".config/kilo/kilo.jsonc",
-      JSON.stringify({ mcp: {} }),
-    );
-    const projectDir = dir.path + "/project";
+    await dir.write(".config/kilo/kilo.jsonc", JSON.stringify({ mcp: {} }));
+    const projectDir = `${dir.path}/project`;
     await dir.write(
       "project/.kilocode/rules/react-conventions.md",
       "Use functional components only.",
     );
-    await dir.write(
-      "project/.kilocode/rules/testing.md",
-      "Always write unit tests.",
-    );
+    await dir.write("project/.kilocode/rules/testing.md", "Always write unit tests.");
 
-    const result = importConfig(
-      { projectPath: projectDir, entities: ["instructions"] },
-      dir.path,
-    );
-    const rules = result.instructions.filter((i) =>
-      i.name.includes("kilo-rule"),
-    );
+    const result = importConfig({ projectPath: projectDir, entities: ["instructions"] }, dir.path);
+    const rules = result.instructions.filter((i) => i.name.includes("kilo-rule"));
     expect(rules).toHaveLength(2);
-    expect(rules.some((r) => r.content.includes("functional components"))).toBe(
-      true,
-    );
+    expect(rules.some((r) => r.content.includes("functional components"))).toBe(true);
   });
 
   test("imports skills from .kilocode/skills/", async () => {
     dir = await createTestDir("am-kc-import-");
-    await dir.write(
-      ".config/kilo/kilo.jsonc",
-      JSON.stringify({ mcp: {} }),
-    );
-    const projectDir = dir.path + "/project";
+    await dir.write(".config/kilo/kilo.jsonc", JSON.stringify({ mcp: {} }));
+    const projectDir = `${dir.path}/project`;
     await dir.write(
       "project/.kilocode/skills/my-skill/SKILL.md",
-      '---\nname: my-skill\ndescription: A test skill\n---\n\n# Instructions\n\nDo the thing.',
+      "---\nname: my-skill\ndescription: A test skill\n---\n\n# Instructions\n\nDo the thing.",
     );
 
-    const result = importConfig(
-      { projectPath: projectDir, entities: ["skills"] },
-      dir.path,
-    );
+    const result = importConfig({ projectPath: projectDir, entities: ["skills"] }, dir.path);
     expect(result.skills).toHaveLength(1);
     expect(result.skills[0].name).toBe("my-skill");
     expect(result.skills[0].description).toBe("A test skill");
@@ -392,16 +337,11 @@ describe("importConfig()", () => {
 
   test("handles malformed JSONC gracefully", async () => {
     dir = await createTestDir("am-kc-import-");
-    await dir.write(
-      ".config/kilo/kilo.jsonc",
-      "{ not valid json ]]]",
-    );
+    await dir.write(".config/kilo/kilo.jsonc", "{ not valid json ]]]");
 
     const result = importConfig({}, dir.path);
     expect(result.servers).toHaveLength(0);
-    expect(result.warnings.some((w) => w.includes("Malformed JSONC"))).toBe(
-      true,
-    );
+    expect(result.warnings.some((w) => w.includes("Malformed JSONC"))).toBe(true);
   });
 
   test("falls back to config.json if no kilo.jsonc", async () => {

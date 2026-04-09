@@ -5,15 +5,10 @@
  * Handles both new CLI-native MCP format and legacy mcpServers format.
  */
 
-import { join } from "node:path";
 import { homedir } from "node:os";
+import { join } from "node:path";
+import type { DiffChange, DiffResult, ResolvedConfig, ResolvedServer } from "../types.ts";
 import { parseJsonc } from "./jsonc.ts";
-import type {
-  DiffChange,
-  DiffResult,
-  ResolvedConfig,
-  ResolvedServer,
-} from "../types.ts";
 
 interface NativeServer {
   command: string;
@@ -38,9 +33,7 @@ export function diffConfig(
     return { status: "unmanaged", changes: [] };
   }
 
-  const nativeProject = options.projectPath
-    ? readNativeProjectServers(options.projectPath)
-    : null;
+  const nativeProject = options.projectPath ? readNativeProjectServers(options.projectPath) : null;
 
   const allNative: Record<string, NativeServer> = {
     ...nativeGlobal,
@@ -89,17 +82,9 @@ export function diffConfig(
 }
 
 /** Read and normalize servers from global kilo config. */
-function readNativeServers(
-  home: string,
-): Record<string, NativeServer> | null {
+function readNativeServers(home: string): Record<string, NativeServer> | null {
   const configDir = join(home, ".config", "kilo");
-  const configNames = [
-    "kilo.jsonc",
-    "kilo.json",
-    "config.json",
-    "opencode.jsonc",
-    "opencode.json",
-  ];
+  const configNames = ["kilo.jsonc", "kilo.json", "config.json", "opencode.jsonc", "opencode.json"];
 
   for (const name of configNames) {
     const config = readJsoncConfig(join(configDir, name));
@@ -109,13 +94,9 @@ function readNativeServers(
 }
 
 /** Read and normalize servers from project kilo config. */
-function readNativeProjectServers(
-  projectPath: string,
-): Record<string, NativeServer> | null {
+function readNativeProjectServers(projectPath: string): Record<string, NativeServer> | null {
   // .kilo/kilo.jsonc takes priority
-  const dotKiloConfig = readJsoncConfig(
-    join(projectPath, ".kilo", "kilo.jsonc"),
-  );
+  const dotKiloConfig = readJsoncConfig(join(projectPath, ".kilo", "kilo.jsonc"));
   if (dotKiloConfig) return normalizeServers(dotKiloConfig);
 
   const rootConfig = readJsoncConfig(join(projectPath, "kilo.jsonc"));
@@ -135,9 +116,7 @@ function readJsoncConfig(filePath: string): Record<string, unknown> | null {
 }
 
 /** Normalize both MCP formats into a common NativeServer shape. */
-function normalizeServers(
-  config: Record<string, unknown>,
-): Record<string, NativeServer> {
+function normalizeServers(config: Record<string, unknown>): Record<string, NativeServer> {
   const result: Record<string, NativeServer> = {};
 
   // New format: `mcp` key
@@ -165,9 +144,7 @@ function normalizeServers(
   }
 
   // Legacy format: `mcpServers` key
-  const mcpServers = config.mcpServers as
-    | Record<string, Record<string, unknown>>
-    | undefined;
+  const mcpServers = config.mcpServers as Record<string, Record<string, unknown>> | undefined;
   if (mcpServers && typeof mcpServers === "object") {
     for (const [name, entry] of Object.entries(mcpServers)) {
       if (!entry || typeof entry !== "object") continue;
@@ -208,10 +185,7 @@ function compareServer(
 
   const expectedEnv = expected.env ?? {};
   const nativeEnv = native.env ?? {};
-  if (
-    JSON.stringify(sortKeys(expectedEnv)) !==
-    JSON.stringify(sortKeys(nativeEnv))
-  ) {
+  if (JSON.stringify(sortKeys(expectedEnv)) !== JSON.stringify(sortKeys(nativeEnv))) {
     diffs.push({ field: "env", expected: expectedEnv, actual: nativeEnv });
   }
 
@@ -228,7 +202,6 @@ function sortKeys<T extends Record<string, unknown>>(obj: T): T {
 
 function normalize(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(normalize);
-  if (value && typeof value === "object")
-    return sortKeys(value as Record<string, unknown>);
+  if (value && typeof value === "object") return sortKeys(value as Record<string, unknown>);
   return value;
 }

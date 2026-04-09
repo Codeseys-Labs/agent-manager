@@ -5,15 +5,15 @@
  * .cursor/rules/*.mdc (instructions), and .cursor/agents/*.md (agents).
  */
 
-import { join } from "node:path";
 import { homedir } from "node:os";
+import { join } from "node:path";
 import type {
   ExportOptions,
   ExportResult,
-  ResolvedConfig,
-  ResolvedServer,
-  ResolvedInstruction,
   ResolvedAgent,
+  ResolvedConfig,
+  ResolvedInstruction,
+  ResolvedServer,
   WrittenFile,
 } from "../types.ts";
 
@@ -35,7 +35,7 @@ export function exportConfig(
 
   for (const [name, server] of Object.entries(config.servers)) {
     if (!server.enabled) continue;
-    const cursorAdapter = server.adapters?.["cursor"] ?? {};
+    const cursorAdapter = server.adapters?.cursor ?? {};
     if (cursorAdapter.scope === "project") {
       projectServers[name] = server;
     } else {
@@ -106,7 +106,7 @@ function generateMcpJson(
 
   const mcpServers: Record<string, unknown> = {};
   for (const [name, server] of Object.entries(servers)) {
-    const cursorExtras = server.adapters?.["cursor"] ?? {};
+    const cursorExtras = server.adapters?.cursor ?? {};
 
     // URL-based (remote) server
     if (cursorExtras.url) {
@@ -132,14 +132,11 @@ function generateMcpJson(
   }
 
   const output = { ...existing, mcpServers };
-  return JSON.stringify(output, null, 2) + "\n";
+  return `${JSON.stringify(output, null, 2)}\n`;
 }
 
 /** Generate .cursor/rules/*.mdc files from instructions. */
-function generateMdcRules(
-  config: ResolvedConfig,
-  projectPath: string,
-): WrittenFile[] {
+function generateMdcRules(config: ResolvedConfig, projectPath: string): WrittenFile[] {
   const files: WrittenFile[] = [];
 
   for (const [name, instr] of Object.entries(config.instructions)) {
@@ -180,14 +177,11 @@ function generateMdc(instr: ResolvedInstruction): string {
   parts.push("");
   parts.push(instr.content);
 
-  return parts.join("\n") + "\n";
+  return `${parts.join("\n")}\n`;
 }
 
 /** Generate .cursor/agents/*.md files from agents. */
-function generateAgentFiles(
-  config: ResolvedConfig,
-  projectPath: string,
-): WrittenFile[] {
+function generateAgentFiles(config: ResolvedConfig, projectPath: string): WrittenFile[] {
   const files: WrittenFile[] = [];
 
   for (const [name, agent] of Object.entries(config.agents)) {

@@ -1,26 +1,20 @@
 import type {
   Adapter,
   Capability,
-  ImportOptions,
-  ImportResult,
+  DiffResult,
   ExportOptions,
   ExportResult,
+  ImportOptions,
+  ImportResult,
   ResolvedConfig,
-  DiffResult,
 } from "../types.ts";
 import { detect } from "./detect.ts";
-import { importConfig } from "./import.ts";
-import { exportConfig } from "./export.ts";
 import { diffConfig } from "./diff.ts";
+import { exportConfig } from "./export.ts";
+import { importConfig } from "./import.ts";
 import { forgeCodeSchema } from "./schema.ts";
 
-const CAPABILITIES: Capability[] = [
-  "mcp",
-  "instructions",
-  "skills",
-  "agents",
-  "models",
-];
+const CAPABILITIES: Capability[] = ["mcp", "instructions", "skills", "agents", "models"];
 
 export const forgeCodeAdapter: Adapter = {
   meta: {

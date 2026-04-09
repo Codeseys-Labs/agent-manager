@@ -1,6 +1,6 @@
-import { describe, expect, test, afterEach } from "bun:test";
-import { createTestDir, type TestDir } from "../../helpers/tmp.ts";
+import { afterEach, describe, expect, test } from "bun:test";
 import { detect } from "@/adapters/copilot/detect.ts";
+import { type TestDir, createTestDir } from "../../helpers/tmp.ts";
 
 describe("copilot detect()", () => {
   let dir: TestDir;
@@ -27,11 +27,8 @@ describe("copilot detect()", () => {
   test("includes project .vscode/mcp.json path", async () => {
     dir = await createTestDir("am-cp-detect-");
     await dir.write(".vscode/.keep", "");
-    const projectDir = dir.path + "/project";
-    await dir.write(
-      "project/.vscode/mcp.json",
-      JSON.stringify({ servers: {} }),
-    );
+    const projectDir = `${dir.path}/project`;
+    await dir.write("project/.vscode/mcp.json", JSON.stringify({ servers: {} }));
 
     const result = detect(dir.path, projectDir);
     expect(result.paths.projectMcpConfig).toContain("mcp.json");
@@ -40,26 +37,18 @@ describe("copilot detect()", () => {
   test("includes .github/copilot-instructions.md path", async () => {
     dir = await createTestDir("am-cp-detect-");
     await dir.write(".vscode/.keep", "");
-    const projectDir = dir.path + "/project";
-    await dir.write(
-      "project/.github/copilot-instructions.md",
-      "# Instructions",
-    );
+    const projectDir = `${dir.path}/project`;
+    await dir.write("project/.github/copilot-instructions.md", "# Instructions");
 
     const result = detect(dir.path, projectDir);
-    expect(result.paths.globalInstructions).toContain(
-      "copilot-instructions.md",
-    );
+    expect(result.paths.globalInstructions).toContain("copilot-instructions.md");
   });
 
   test("includes .github/instructions/ directory path", async () => {
     dir = await createTestDir("am-cp-detect-");
     await dir.write(".vscode/.keep", "");
-    const projectDir = dir.path + "/project";
-    await dir.write(
-      "project/.github/instructions/ts.instructions.md",
-      "content",
-    );
+    const projectDir = `${dir.path}/project`;
+    await dir.write("project/.github/instructions/ts.instructions.md", "content");
 
     const result = detect(dir.path, projectDir);
     expect(result.paths.instructionsDir).toContain("instructions");
@@ -67,10 +56,7 @@ describe("copilot detect()", () => {
 
   test("includes CLI config path when present", async () => {
     dir = await createTestDir("am-cp-detect-");
-    await dir.write(
-      ".copilot/mcp-config.json",
-      JSON.stringify({ mcpServers: {} }),
-    );
+    await dir.write(".copilot/mcp-config.json", JSON.stringify({ mcpServers: {} }));
 
     const result = detect(dir.path);
     expect(result.paths.cliMcpConfig).toContain("mcp-config.json");

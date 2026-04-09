@@ -6,8 +6,8 @@
  * (agent definitions).
  */
 
-import { join } from "node:path";
 import { homedir } from "node:os";
+import { join } from "node:path";
 import type {
   ExportOptions,
   ExportResult,
@@ -37,7 +37,7 @@ export function exportConfig(
 
   for (const [name, server] of Object.entries(config.servers)) {
     if (!server.enabled) continue;
-    const kiroAdapter = server.adapters?.["kiro"] ?? {};
+    const kiroAdapter = server.adapters?.kiro ?? {};
     if (kiroAdapter.scope === "project") {
       projectServers[name] = server;
     } else {
@@ -114,7 +114,7 @@ function generateMcpJson(
     if (Object.keys(server.env).length > 0) entry.env = server.env;
 
     // Map adapter-specific fields (autoApprove, disabledTools, timeout, etc.)
-    const kiroExtras = server.adapters?.["kiro"] ?? {};
+    const kiroExtras = server.adapters?.kiro ?? {};
     for (const [key, value] of Object.entries(kiroExtras)) {
       if (key === "scope") continue; // internal routing hint
       entry[key] = value;
@@ -124,7 +124,7 @@ function generateMcpJson(
   }
 
   const output = { ...existing, mcpServers };
-  return JSON.stringify(output, null, 2) + "\n";
+  return `${JSON.stringify(output, null, 2)}\n`;
 }
 
 /** Map scope values to Kiro inclusion modes. */
@@ -175,7 +175,7 @@ function generateSteeringFiles(
         const after = existingContent.slice(endIdx + AM_END.length);
         content = before + managedBlock + after;
       } else {
-        content = existingContent.trimEnd() + "\n\n" + managedBlock + "\n";
+        content = `${existingContent.trimEnd()}\n\n${managedBlock}\n`;
       }
     } catch {
       // No existing file — generate with frontmatter

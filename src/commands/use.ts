@@ -1,10 +1,10 @@
-import { defineCommand } from "citty";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { readFile, writeFile, mkdir } from "node:fs/promises";
 import * as TOML from "@iarna/toml";
-import { resolveConfigDir, readConfig } from "../core/config";
-import { output, info, error } from "../lib/output";
+import { defineCommand } from "citty";
+import { readConfig, resolveConfigDir } from "../core/config";
 import { AmError } from "../lib/errors";
+import { error, info, output } from "../lib/output";
 
 const STATE_FILE = ".agent-manager/state.toml";
 
@@ -23,10 +23,7 @@ export async function readActiveProfile(configDir: string): Promise<string | nul
   }
 }
 
-export async function writeActiveProfile(
-  configDir: string,
-  profile: string,
-): Promise<void> {
+export async function writeActiveProfile(configDir: string, profile: string): Promise<void> {
   const stateDir = join(configDir, ".agent-manager");
   await mkdir(stateDir, { recursive: true });
 
@@ -85,7 +82,7 @@ export const useCommand = defineCommand({
     await writeActiveProfile(configDir, profile);
 
     info(`Active profile set to "${profile}"`, opts);
-    info(`Run \`am apply\` to generate configs for this profile`, opts);
+    info("Run `am apply` to generate configs for this profile", opts);
 
     if (args.json) {
       output({ action: "use", profile }, opts);

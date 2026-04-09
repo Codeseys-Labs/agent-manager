@@ -1,6 +1,6 @@
 import { defineCommand } from "citty";
-import { listAdapters, getAdapter } from "../adapters/registry";
-import { output, info } from "../lib/output";
+import { getAdapter, listAdapters } from "../adapters/registry";
+import { info, output } from "../lib/output";
 
 const listSubcommand = defineCommand({
   meta: { name: "list", description: "Show all registered adapters" },
@@ -43,16 +43,9 @@ const listSubcommand = defineCommand({
       `${"Name".padEnd(16)} ${"Display Name".padEnd(20)} ${"Capabilities".padEnd(30)} ${"Detected"}`,
       opts,
     );
-    info(
-      `${"─".repeat(16)} ${"─".repeat(20)} ${"─".repeat(30)} ${"─".repeat(10)}`,
-      opts,
-    );
+    info(`${"─".repeat(16)} ${"─".repeat(20)} ${"─".repeat(30)} ${"─".repeat(10)}`, opts);
     for (const r of rows) {
-      const detected = r.installed
-        ? r.version
-          ? `yes (${r.version})`
-          : "yes"
-        : "no";
+      const detected = r.installed ? (r.version ? `yes (${r.version})` : "yes") : "no";
       info(
         `${r.name.padEnd(16)} ${r.displayName.padEnd(20)} ${r.capabilities.join(", ").padEnd(30)} ${detected}`,
         opts,

@@ -1,6 +1,6 @@
-import { describe, expect, test, afterEach } from "bun:test";
-import { createTestDir, type TestDir } from "../../helpers/tmp.ts";
+import { afterEach, describe, expect, test } from "bun:test";
 import { importConfig } from "@/adapters/codex-cli/import.ts";
+import { type TestDir, createTestDir } from "../../helpers/tmp.ts";
 
 describe("codex-cli importConfig()", () => {
   let dir: TestDir;
@@ -56,15 +56,15 @@ required = true
     expect(result.servers[0].command).toBe("https://mcp.figma.com/mcp");
     expect(result.servers[0].transport).toBe("streamable-http");
     expect(result.servers[0].adapterExtras).toBeDefined();
-    expect(result.servers[0].adapterExtras!.bearer_token_env_var).toBe("FIGMA_OAUTH_TOKEN");
-    expect(result.servers[0].adapterExtras!.http_headers).toEqual({ "X-Region": "us-east-1" });
-    expect(result.servers[0].adapterExtras!.required).toBe(true);
+    expect(result.servers[0].adapterExtras?.bearer_token_env_var).toBe("FIGMA_OAUTH_TOKEN");
+    expect(result.servers[0].adapterExtras?.http_headers).toEqual({ "X-Region": "us-east-1" });
+    expect(result.servers[0].adapterExtras?.required).toBe(true);
   });
 
   test("imports project-scoped servers from .codex/config.toml", async () => {
     dir = await createTestDir("am-codex-import-");
     await dir.write(".codex/config.toml", "[mcp_servers]\n");
-    const projectDir = dir.path + "/project";
+    const projectDir = `${dir.path}/project`;
     await dir.write(
       "project/.codex/config.toml",
       `
@@ -77,8 +77,8 @@ args = ["--port", "3000"]
     const result = importConfig({ projectPath: projectDir }, dir.path);
     const projectServer = result.servers.find((s) => s.name === "local-tool");
     expect(projectServer).toBeDefined();
-    expect(projectServer!.scope).toBe("project");
-    expect(projectServer!.command).toBe("my-local-mcp");
+    expect(projectServer?.scope).toBe("project");
+    expect(projectServer?.command).toBe("my-local-mcp");
   });
 
   test("preserves Codex-specific fields in adapterExtras", async () => {
@@ -131,13 +131,10 @@ enabled = false
     dir = await createTestDir("am-codex-import-");
     await dir.write(".codex/config.toml", "");
     await dir.write(".codex/AGENTS.md", "# Global Instructions\n\nBe helpful.");
-    const projectDir = dir.path + "/project";
+    const projectDir = `${dir.path}/project`;
     await dir.write("project/AGENTS.md", "# Project Instructions\n\nUse strict mode.");
 
-    const result = importConfig(
-      { projectPath: projectDir, entities: ["instructions"] },
-      dir.path,
-    );
+    const result = importConfig({ projectPath: projectDir, entities: ["instructions"] }, dir.path);
     expect(result.instructions).toHaveLength(2);
     expect(result.instructions[0].name).toBe("agents-md-global");
     expect(result.instructions[0].content).toContain("Global Instructions");

@@ -1,9 +1,9 @@
-import { describe, test, expect, afterEach } from "bun:test";
+import { afterEach, describe, expect, test } from "bun:test";
 import { join } from "node:path";
-import { createTestDir, type TestDir } from "../helpers/tmp";
-import { writeConfig, loadResolvedConfig } from "../../src/core/config";
-import { initRepo, getStatus, commitAll } from "../../src/core/git";
+import { loadResolvedConfig, writeConfig } from "../../src/core/config";
+import { commitAll, getStatus, initRepo } from "../../src/core/git";
 import type { Config } from "../../src/core/schema";
+import { type TestDir, createTestDir } from "../helpers/tmp";
 
 describe("am status", () => {
   let dir: TestDir;

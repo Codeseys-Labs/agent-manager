@@ -1,6 +1,6 @@
-import git from "isomorphic-git";
 import * as fs from "node:fs";
 import { join } from "node:path";
+import git from "isomorphic-git";
 
 const DEFAULT_AUTHOR = { name: "agent-manager", email: "am@localhost" };
 
@@ -13,10 +13,7 @@ const GITIGNORE_ENTRIES = [
 export async function initRepo(dir: string): Promise<void> {
   await git.init({ fs, dir, defaultBranch: "main" });
   await fs.promises.mkdir(join(dir, ".agent-manager"), { recursive: true });
-  await fs.promises.writeFile(
-    join(dir, ".gitignore"),
-    GITIGNORE_ENTRIES.join("\n") + "\n",
-  );
+  await fs.promises.writeFile(join(dir, ".gitignore"), `${GITIGNORE_ENTRIES.join("\n")}\n`);
   await git.add({ fs, dir, filepath: ".gitignore" });
   await git.commit({
     fs,
@@ -26,10 +23,7 @@ export async function initRepo(dir: string): Promise<void> {
   });
 }
 
-export async function commitAll(
-  dir: string,
-  message: string,
-): Promise<string> {
+export async function commitAll(dir: string, message: string): Promise<string> {
   const matrix = await git.statusMatrix({ fs, dir });
 
   // Stage everything first — git.add forces a content hash check that
@@ -44,9 +38,7 @@ export async function commitAll(
 
   // Re-read the matrix after staging to detect real changes
   const staged = await git.statusMatrix({ fs, dir });
-  const hasChanges = staged.some(
-    ([_f, head, _workdir, stage]) => !(head === 1 && stage === 1),
-  );
+  const hasChanges = staged.some(([_f, head, _workdir, stage]) => !(head === 1 && stage === 1));
 
   if (!hasChanges) {
     throw new Error("Nothing to commit");
@@ -55,11 +47,7 @@ export async function commitAll(
   return git.commit({ fs, dir, message, author: DEFAULT_AUTHOR });
 }
 
-export async function push(
-  dir: string,
-  remote = "origin",
-  branch?: string,
-): Promise<void> {
+export async function push(dir: string, remote = "origin", branch?: string): Promise<void> {
   const ref = branch ?? (await git.currentBranch({ fs, dir })) ?? "main";
   await git.push({
     fs,
@@ -70,11 +58,7 @@ export async function push(
   });
 }
 
-export async function pull(
-  dir: string,
-  remote = "origin",
-  branch?: string,
-): Promise<void> {
+export async function pull(dir: string, remote = "origin", branch?: string): Promise<void> {
   const ref = branch ?? (await git.currentBranch({ fs, dir })) ?? "main";
   await git.pull({
     fs,
@@ -160,10 +144,7 @@ export async function revertHead(dir: string): Promise<string> {
   });
 }
 
-async function listTreeFiles(
-  dir: string,
-  oid: string,
-): Promise<string[]> {
+async function listTreeFiles(dir: string, oid: string): Promise<string[]> {
   const files: string[] = [];
   await git.walk({
     fs,
@@ -189,8 +170,7 @@ export interface StatusResult {
 }
 
 export async function getStatus(dir: string): Promise<StatusResult> {
-  const branch =
-    (await git.currentBranch({ fs, dir })) ?? "HEAD (detached)";
+  const branch = (await git.currentBranch({ fs, dir })) ?? "HEAD (detached)";
   const matrix = await git.statusMatrix({ fs, dir });
   const dirty: string[] = [];
 
@@ -210,10 +190,6 @@ export async function getStatus(dir: string): Promise<StatusResult> {
   };
 }
 
-export async function addRemote(
-  dir: string,
-  url: string,
-  remote = "origin",
-): Promise<void> {
+export async function addRemote(dir: string, url: string, remote = "origin"): Promise<void> {
   await git.addRemote({ fs, dir, remote, url });
 }

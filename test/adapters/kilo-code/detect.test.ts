@@ -1,7 +1,7 @@
-import { describe, expect, test, beforeEach, afterEach } from "bun:test";
-import { mkdtemp, rm, mkdir, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { detect } from "@/adapters/kilo-code/detect.ts";
 
 describe("kilo-code detect()", () => {
@@ -19,9 +19,7 @@ describe("kilo-code detect()", () => {
     await mkdir(join(tempHome, ".config", "kilo"), { recursive: true });
     const result = detect(tempHome);
     expect(result.installed).toBe(true);
-    expect(result.paths.globalConfigDir).toBe(
-      join(tempHome, ".config", "kilo"),
-    );
+    expect(result.paths.globalConfigDir).toBe(join(tempHome, ".config", "kilo"));
   });
 
   test("detects global config file kilo.jsonc", async () => {
@@ -64,9 +62,7 @@ describe("kilo-code detect()", () => {
     await writeFile(join(projectDir, "kilo.jsonc"), "{}");
 
     const result = detect(tempHome, projectDir);
-    expect(result.paths.projectConfig).toBe(
-      join(projectDir, ".kilo", "kilo.jsonc"),
-    );
+    expect(result.paths.projectConfig).toBe(join(projectDir, ".kilo", "kilo.jsonc"));
   });
 
   test("finds kilo.jsonc at project root", async () => {
@@ -114,9 +110,7 @@ describe("kilo-code detect()", () => {
     await mkdir(join(projectDir, ".kilocode", "rules"), { recursive: true });
 
     const result = detect(tempHome, projectDir);
-    expect(result.paths.projectRulesDir).toBe(
-      join(projectDir, ".kilocode", "rules"),
-    );
+    expect(result.paths.projectRulesDir).toBe(join(projectDir, ".kilocode", "rules"));
   });
 
   test("finds project skills directory", async () => {
@@ -125,9 +119,7 @@ describe("kilo-code detect()", () => {
     await mkdir(join(projectDir, ".kilocode", "skills"), { recursive: true });
 
     const result = detect(tempHome, projectDir);
-    expect(result.paths.projectSkillsDir).toBe(
-      join(projectDir, ".kilocode", "skills"),
-    );
+    expect(result.paths.projectSkillsDir).toBe(join(projectDir, ".kilocode", "skills"));
   });
 
   test("finds project agents directory", async () => {
@@ -136,9 +128,7 @@ describe("kilo-code detect()", () => {
     await mkdir(join(projectDir, ".kilo", "agents"), { recursive: true });
 
     const result = detect(tempHome, projectDir);
-    expect(result.paths.projectAgentsDir).toBe(
-      join(projectDir, ".kilo", "agents"),
-    );
+    expect(result.paths.projectAgentsDir).toBe(join(projectDir, ".kilo", "agents"));
   });
 
   test("finds global AGENTS.md", async () => {
@@ -155,9 +145,7 @@ describe("kilo-code detect()", () => {
     await mkdir(join(tempHome, ".kilocode", "rules"), { recursive: true });
 
     const result = detect(tempHome);
-    expect(result.paths.globalRulesDir).toBe(
-      join(tempHome, ".kilocode", "rules"),
-    );
+    expect(result.paths.globalRulesDir).toBe(join(tempHome, ".kilocode", "rules"));
   });
 
   test("does not include project paths when projectPath not provided", async () => {

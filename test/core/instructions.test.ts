@@ -1,24 +1,22 @@
-import { describe, test, expect } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { mkdtempSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
 import { tmpdir } from "node:os";
-import {
-  resolveInstructionContent,
-  filterByTarget,
-  generateClaudeMd,
-  generateAgentsMd,
-  generateCursorMdc,
-  generateWindsurfRule,
-  generateCopilotInstruction,
-  generateKiroSteering,
-} from "../../src/core/instructions";
+import { join } from "node:path";
 import type { ResolvedInstruction } from "../../src/adapters/types";
+import {
+  filterByTarget,
+  generateAgentsMd,
+  generateClaudeMd,
+  generateCopilotInstruction,
+  generateCursorMdc,
+  generateKiroSteering,
+  generateWindsurfRule,
+  resolveInstructionContent,
+} from "../../src/core/instructions";
 
 // ── Helpers ─────────────────────────────────────────────────────
 
-function makeInstruction(
-  overrides: Partial<ResolvedInstruction> = {},
-): ResolvedInstruction {
+function makeInstruction(overrides: Partial<ResolvedInstruction> = {}): ResolvedInstruction {
   return {
     name: "test-rule",
     content: "Use strict TypeScript.",
@@ -35,20 +33,14 @@ function makeInstruction(
 
 describe("resolveInstructionContent", () => {
   test("returns inline content directly", () => {
-    const result = resolveInstructionContent(
-      { content: "Use strict TypeScript." },
-      "/unused",
-    );
+    const result = resolveInstructionContent({ content: "Use strict TypeScript." }, "/unused");
     expect(result).toBe("Use strict TypeScript.");
   });
 
   test("reads content_file relative to configDir", () => {
     const tmp = mkdtempSync(join(tmpdir(), "am-test-"));
     writeFileSync(join(tmp, "rule.md"), "No any types allowed.");
-    const result = resolveInstructionContent(
-      { content_file: "rule.md" },
-      tmp,
-    );
+    const result = resolveInstructionContent({ content_file: "rule.md" }, tmp);
     expect(result).toBe("No any types allowed.");
   });
 
@@ -56,23 +48,14 @@ describe("resolveInstructionContent", () => {
     const tmp = mkdtempSync(join(tmpdir(), "am-test-"));
     const { mkdirSync } = require("node:fs");
     mkdirSync(join(tmp, "instructions"), { recursive: true });
-    writeFileSync(
-      join(tmp, "instructions", "code-review.md"),
-      "Review all PRs.",
-    );
-    const result = resolveInstructionContent(
-      { content_file: "instructions/code-review.md" },
-      tmp,
-    );
+    writeFileSync(join(tmp, "instructions", "code-review.md"), "Review all PRs.");
+    const result = resolveInstructionContent({ content_file: "instructions/code-review.md" }, tmp);
     expect(result).toBe("Review all PRs.");
   });
 
   test("throws on missing content_file", () => {
     expect(() =>
-      resolveInstructionContent(
-        { content_file: "nonexistent.md" },
-        "/tmp/nowhere",
-      ),
+      resolveInstructionContent({ content_file: "nonexistent.md" }, "/tmp/nowhere"),
     ).toThrow();
   });
 
@@ -200,8 +183,7 @@ describe("generateAgentsMd", () => {
   });
 
   test("preserves existing content outside markers", () => {
-    const existing =
-      "# Agents\n\n<!-- am:begin -->\nOld.\n<!-- am:end -->\n\nManual section.";
+    const existing = "# Agents\n\n<!-- am:begin -->\nOld.\n<!-- am:end -->\n\nManual section.";
     const instructions = {
       rule1: makeInstruction({ content: "Updated." }),
     };

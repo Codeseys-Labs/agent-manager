@@ -19,10 +19,7 @@ const RUNNER_FLAGS = new Set(["-y", "--yes", "-p", "--package", "run"]);
  *   2. Endpoint-based: --endpoint URL → hostname
  *   3. Command basename: /usr/local/bin/foo → foo
  */
-export function extractPackageId(
-  command: string,
-  args: string[] = [],
-): string | undefined {
+export function extractPackageId(command: string, args: string[] = []): string | undefined {
   const cmdBase = basename(command);
 
   // 1. Endpoint-based extraction (proxy-wrapped servers — highest specificity)

@@ -20,10 +20,7 @@ const AM_END = "<!-- am:end -->";
 /**
  * Export resolved config to ForgeCode native files.
  */
-export function exportConfig(
-  config: ResolvedConfig,
-  options: ExportOptions = {},
-): ExportResult {
+export function exportConfig(config: ResolvedConfig, options: ExportOptions = {}): ExportResult {
   const files: WrittenFile[] = [];
   const warnings: string[] = [];
 
@@ -46,11 +43,7 @@ export function exportConfig(
     const instructionContent = generateInstructionBlock(config);
     if (instructionContent) {
       const agentsMdPath = join(options.projectPath, "AGENTS.md");
-      const agentsMdContent = generateAgentsMd(
-        agentsMdPath,
-        instructionContent,
-        warnings,
-      );
+      const agentsMdContent = generateAgentsMd(agentsMdPath, instructionContent, warnings);
       files.push({
         path: agentsMdPath,
         content: agentsMdContent,
@@ -62,17 +55,11 @@ export function exportConfig(
   // 3. Write skills to .forge/skills/
   if (options.projectPath) {
     for (const [name, skill] of Object.entries(config.skills)) {
-      const fcAdapter = skill.adapters?.["forgecode"] ?? {};
+      const fcAdapter = skill.adapters?.forgecode ?? {};
       const content = (fcAdapter.content as string) ?? "";
       if (!content) continue;
 
-      const skillPath = join(
-        options.projectPath,
-        ".forge",
-        "skills",
-        name,
-        "SKILL.md",
-      );
+      const skillPath = join(options.projectPath, ".forge", "skills", name, "SKILL.md");
       files.push({ path: skillPath, content, written: false });
     }
   }
@@ -106,7 +93,7 @@ function generateMcpJson(servers: Record<string, ResolvedServer>): string {
     if (Object.keys(server.env).length > 0) entry.env = server.env;
     mcpServers[name] = entry;
   }
-  return JSON.stringify({ mcpServers }, null, 2) + "\n";
+  return `${JSON.stringify({ mcpServers }, null, 2)}\n`;
 }
 
 /** Concatenate all instructions into a single markdown block. */
@@ -136,7 +123,7 @@ function generateAgentsMd(
     existingContent = fs.readFileSync(existingPath, "utf-8");
   } catch {
     // No existing file — just return the managed block
-    return block + "\n";
+    return `${block}\n`;
   }
 
   // Replace existing managed section if present
@@ -149,5 +136,5 @@ function generateAgentsMd(
   }
 
   // Append managed section to existing content
-  return existingContent.trimEnd() + "\n\n" + block + "\n";
+  return `${existingContent.trimEnd()}\n\n${block}\n`;
 }

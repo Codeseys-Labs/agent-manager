@@ -1,7 +1,7 @@
-import { describe, expect, test, beforeEach, afterEach } from "bun:test";
-import { mkdtemp, rm, mkdir, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { detect } from "@/adapters/forgecode/detect.ts";
 
 describe("forgecode detect()", () => {
@@ -72,9 +72,7 @@ describe("forgecode detect()", () => {
     await writeFile(join(projectDir, ".forge.toml"), "");
 
     const result = detect(tempHome, projectDir);
-    expect(result.paths.projectSettings).toBe(
-      join(projectDir, ".forge.toml"),
-    );
+    expect(result.paths.projectSettings).toBe(join(projectDir, ".forge.toml"));
   });
 
   test("does not include project paths when projectPath not provided", async () => {

@@ -1,5 +1,5 @@
+import { Box, Text } from "silvery";
 import React from "react";
-import { Box, Text } from "ink";
 import type { TuiData } from "./data.ts";
 
 interface Props {
@@ -15,9 +15,9 @@ export function StatusView({ data, onBack }: Props) {
   return (
     <Box flexDirection="column">
       {/* Git sync state */}
-      <Text bold>  Git Sync</Text>
+      <Text bold> Git Sync</Text>
       <Box>
-        <Text dimColor>  {"─".repeat(50)}</Text>
+        <Text dimColor> {"─".repeat(50)}</Text>
       </Box>
       <Box>
         <Text>
@@ -49,20 +49,21 @@ export function StatusView({ data, onBack }: Props) {
       {/* Dirty files */}
       {git.dirty.length > 0 && (
         <Box flexDirection="column" marginTop={1}>
-          <Text bold>  Uncommitted Files</Text>
+          <Text bold> Uncommitted Files</Text>
           <Box>
-            <Text dimColor>  {"─".repeat(50)}</Text>
+            <Text dimColor> {"─".repeat(50)}</Text>
           </Box>
           {git.dirty.slice(0, 10).map((f) => (
             <Box key={f}>
               <Text>
-                {"  "}<Text color="yellow">M</Text> {f}
+                {"  "}
+                <Text color="yellow">M</Text> {f}
               </Text>
             </Box>
           ))}
           {git.dirty.length > 10 && (
             <Box>
-              <Text dimColor>  ... and {git.dirty.length - 10} more</Text>
+              <Text dimColor> ... and {git.dirty.length - 10} more</Text>
             </Box>
           )}
         </Box>
@@ -70,28 +71,19 @@ export function StatusView({ data, onBack }: Props) {
 
       {/* Adapter drift */}
       <Box flexDirection="column" marginTop={1}>
-        <Text bold>  Adapter Drift</Text>
+        <Text bold> Adapter Drift</Text>
         <Box>
-          <Text dimColor>  {"─".repeat(50)}</Text>
+          <Text dimColor> {"─".repeat(50)}</Text>
         </Box>
         {adapters.length === 0 ? (
           <Box>
-            <Text dimColor>  No adapters detected on this system.</Text>
+            <Text dimColor> No adapters detected on this system.</Text>
           </Box>
         ) : (
           adapters.map((a) => {
-            const icon =
-              a.status === "in-sync"
-                ? "●"
-                : a.status === "drifted"
-                  ? "⚠"
-                  : "○";
+            const icon = a.status === "in-sync" ? "●" : a.status === "drifted" ? "⚠" : "○";
             const color =
-              a.status === "in-sync"
-                ? "green"
-                : a.status === "drifted"
-                  ? "yellow"
-                  : "gray";
+              a.status === "in-sync" ? "green" : a.status === "drifted" ? "yellow" : "gray";
             return (
               <Box key={a.name}>
                 <Text>
@@ -116,7 +108,10 @@ export function StatusView({ data, onBack }: Props) {
       <Box marginTop={1}>
         <Text>
           {"  "}Profile: <Text color="cyan">{profileName}</Text>
-          {"  "}Servers: <Text bold>{activeCount}/{servers.length}</Text>
+          {"  "}Servers:{" "}
+          <Text bold>
+            {activeCount}/{servers.length}
+          </Text>
           {"  "}Adapters: <Text bold>{adapters.length}</Text>
         </Text>
       </Box>
@@ -124,22 +119,31 @@ export function StatusView({ data, onBack }: Props) {
       {/* Suggestions */}
       {(adapters.some((a) => a.status === "drifted") || !git.clean) && (
         <Box flexDirection="column" marginTop={1}>
-          <Text bold color="yellow">  Suggestions</Text>
+          <Text bold color="yellow">
+            {" "}
+            Suggestions
+          </Text>
           {adapters.some((a) => a.status === "drifted") && (
             <Box>
-              <Text>  {"  "}Run <Text bold>am apply</Text> to sync adapter configs</Text>
+              <Text>
+                {" "}
+                {"  "}Run <Text bold>am apply</Text> to sync adapter configs
+              </Text>
             </Box>
           )}
           {!git.clean && (
             <Box>
-              <Text>  {"  "}Run <Text bold>am push</Text> to commit and push changes</Text>
+              <Text>
+                {" "}
+                {"  "}Run <Text bold>am push</Text> to commit and push changes
+              </Text>
             </Box>
           )}
         </Box>
       )}
 
       <Box marginTop={1}>
-        <Text dimColor>  [q/Esc] back to dashboard</Text>
+        <Text dimColor> [q/Esc] back to dashboard</Text>
       </Box>
     </Box>
   );

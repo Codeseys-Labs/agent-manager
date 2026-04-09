@@ -1,10 +1,10 @@
-import { describe, expect, test, afterEach } from "bun:test";
-import { createTestDir, type TestDir } from "../../helpers/tmp.ts";
-import { importConfig } from "@/adapters/kilo-code/import.ts";
-import { exportConfig } from "@/adapters/kilo-code/export.ts";
-import { diffConfig } from "@/adapters/kilo-code/diff.ts";
-import type { ResolvedConfig, ResolvedServer } from "@/adapters/types.ts";
+import { afterEach, describe, expect, test } from "bun:test";
 import { join } from "node:path";
+import { diffConfig } from "@/adapters/kilo-code/diff.ts";
+import { exportConfig } from "@/adapters/kilo-code/export.ts";
+import { importConfig } from "@/adapters/kilo-code/import.ts";
+import type { ResolvedConfig, ResolvedServer } from "@/adapters/types.ts";
+import { type TestDir, createTestDir } from "../../helpers/tmp.ts";
 
 describe("Kilo Code adapter roundtrip", () => {
   let dir: TestDir;
@@ -44,9 +44,7 @@ describe("Kilo Code adapter roundtrip", () => {
     const imported = importConfig({}, dir.path);
     expect(imported.servers).toHaveLength(3);
     // No warnings about missing global config
-    expect(
-      imported.warnings.some((w) => w.includes("No Kilo global config")),
-    ).toBe(false);
+    expect(imported.warnings.some((w) => w.includes("No Kilo global config"))).toBe(false);
 
     // 3. Transform to ResolvedConfig
     const resolvedServers: Record<string, ResolvedServer> = {};
@@ -60,9 +58,7 @@ describe("Kilo Code adapter roundtrip", () => {
         description: s.description ?? "",
         tags: s.tags ?? [],
         enabled: s.enabled ?? true,
-        adapters: s.adapterExtras
-          ? { "kilo-code": s.adapterExtras }
-          : {},
+        adapters: s.adapterExtras ? { "kilo-code": s.adapterExtras } : {},
       };
     }
 
@@ -77,17 +73,12 @@ describe("Kilo Code adapter roundtrip", () => {
     // 4. Export (writes to disk)
     const exported = exportConfig(resolved, {}, dir.path);
     expect(exported.warnings).toHaveLength(0);
-    const globalFile = exported.files.find((f) =>
-      f.path.endsWith("kilo.jsonc"),
-    );
+    const globalFile = exported.files.find((f) => f.path.endsWith("kilo.jsonc"));
     expect(globalFile).toBeDefined();
-    expect(globalFile!.written).toBe(true);
+    expect(globalFile?.written).toBe(true);
 
     // 5. Verify output
-    const outputJson = JSON.parse(globalFile!.content) as Record<
-      string,
-      unknown
-    >;
+    const outputJson = JSON.parse(globalFile?.content) as Record<string, unknown>;
 
     // Non-MCP fields preserved
     expect(outputJson.model).toBe("anthropic/claude-sonnet-4-20250514");
@@ -97,10 +88,7 @@ describe("Kilo Code adapter roundtrip", () => {
     expect(mcp.fetch.command).toEqual(["uvx", "mcp-server-fetch"]);
     expect(mcp.tavily.command).toEqual(["bunx", "tavily-mcp@latest"]);
     expect(mcp.tavily.environment).toEqual({ TAVILY_KEY: "${TAVILY_KEY}" });
-    expect(mcp.context7.command).toEqual([
-      "bunx",
-      "@upstash/context7-mcp@latest",
-    ]);
+    expect(mcp.context7.command).toEqual(["bunx", "@upstash/context7-mcp@latest"]);
 
     // Legacy mcpServers key should be removed
     expect(outputJson.mcpServers).toBeUndefined();
@@ -160,13 +148,8 @@ describe("Kilo Code adapter roundtrip", () => {
 
     // Export (writes new format)
     const exported = exportConfig(resolved, {}, dir.path);
-    const globalFile = exported.files.find((f) =>
-      f.path.endsWith("kilo.jsonc"),
-    );
-    const outputJson = JSON.parse(globalFile!.content) as Record<
-      string,
-      unknown
-    >;
+    const globalFile = exported.files.find((f) => f.path.endsWith("kilo.jsonc"));
+    const outputJson = JSON.parse(globalFile?.content) as Record<string, unknown>;
 
     // Exported in new format
     const mcp = outputJson.mcp as Record<string, Record<string, unknown>>;
@@ -184,23 +167,14 @@ describe("Kilo Code adapter roundtrip", () => {
     // Copy fixture files to temp dir
     const fixtureDir = join(import.meta.dir, "../../fixtures/kilo-code");
     const fs = require("node:fs");
-    const sampleKilo = fs.readFileSync(
-      join(fixtureDir, "sample-kilo.jsonc"),
-      "utf-8",
-    );
+    const sampleKilo = fs.readFileSync(join(fixtureDir, "sample-kilo.jsonc"), "utf-8");
     await dir.write(".config/kilo/kilo.jsonc", sampleKilo);
 
-    const projectDir = dir.path + "/project";
-    const sampleProject = fs.readFileSync(
-      join(fixtureDir, "sample-project.jsonc"),
-      "utf-8",
-    );
+    const projectDir = `${dir.path}/project`;
+    const sampleProject = fs.readFileSync(join(fixtureDir, "sample-project.jsonc"), "utf-8");
     await dir.write("project/kilo.jsonc", sampleProject);
 
-    const sampleAgents = fs.readFileSync(
-      join(fixtureDir, "sample-AGENTS.md"),
-      "utf-8",
-    );
+    const sampleAgents = fs.readFileSync(join(fixtureDir, "sample-AGENTS.md"), "utf-8");
     await dir.write("project/AGENTS.md", sampleAgents);
 
     // Import global + project
@@ -209,12 +183,8 @@ describe("Kilo Code adapter roundtrip", () => {
     expect(imported.instructions).toHaveLength(2); // global config instruction ref + AGENTS.md
 
     // Verify server scopes
-    const globalServers = imported.servers.filter(
-      (s) => s.scope === "global",
-    );
-    const projectServers = imported.servers.filter(
-      (s) => s.scope === "project",
-    );
+    const globalServers = imported.servers.filter((s) => s.scope === "global");
+    const projectServers = imported.servers.filter((s) => s.scope === "project");
     // sample-kilo.jsonc has 4 servers (3 enabled + 1 disabled)
     expect(globalServers.length).toBe(4);
     // sample-project.jsonc has 2 servers (1 new + 1 legacy)

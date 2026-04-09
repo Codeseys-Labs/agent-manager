@@ -1,10 +1,10 @@
-import { describe, expect, test, afterEach } from "bun:test";
-import { createTestDir, type TestDir } from "../../helpers/tmp.ts";
-import { importConfig } from "@/adapters/claude-code/import.ts";
-import { exportConfig } from "@/adapters/claude-code/export.ts";
-import { diffConfig } from "@/adapters/claude-code/diff.ts";
-import type { ResolvedConfig, ResolvedServer } from "@/adapters/types.ts";
+import { afterEach, describe, expect, test } from "bun:test";
 import { join } from "node:path";
+import { diffConfig } from "@/adapters/claude-code/diff.ts";
+import { exportConfig } from "@/adapters/claude-code/export.ts";
+import { importConfig } from "@/adapters/claude-code/import.ts";
+import type { ResolvedConfig, ResolvedServer } from "@/adapters/types.ts";
+import { type TestDir, createTestDir } from "../../helpers/tmp.ts";
 
 describe("Claude Code adapter roundtrip", () => {
   let dir: TestDir;
@@ -49,9 +49,7 @@ describe("Claude Code adapter roundtrip", () => {
         description: s.description ?? "",
         tags: s.tags ?? [],
         enabled: s.enabled ?? true,
-        adapters: s.adapterExtras
-          ? { "claude-code": s.adapterExtras }
-          : {},
+        adapters: s.adapterExtras ? { "claude-code": s.adapterExtras } : {},
       };
     }
 
@@ -66,14 +64,12 @@ describe("Claude Code adapter roundtrip", () => {
     // 4. Export (writes to disk)
     const exported = exportConfig(resolved, {}, dir.path);
     expect(exported.warnings).toHaveLength(0);
-    const globalFile = exported.files.find((f) =>
-      f.path.endsWith(".claude.json"),
-    );
+    const globalFile = exported.files.find((f) => f.path.endsWith(".claude.json"));
     expect(globalFile).toBeDefined();
-    expect(globalFile!.written).toBe(true);
+    expect(globalFile?.written).toBe(true);
 
     // 5. Verify output
-    const outputJson = JSON.parse(globalFile!.content);
+    const outputJson = JSON.parse(globalFile?.content);
 
     // Non-MCP fields preserved
     expect(outputJson.numStartups).toBe(42);
@@ -83,12 +79,8 @@ describe("Claude Code adapter roundtrip", () => {
     expect(outputJson.mcpServers.fetch.args).toEqual(["mcp-server-fetch"]);
     expect(outputJson.mcpServers.tavily.command).toBe("bunx");
     expect(outputJson.mcpServers.tavily.args).toEqual(["tavily-mcp@latest"]);
-    expect(outputJson.mcpServers.tavily.env.TAVILY_API_KEY).toBe(
-      "${TAVILY_API_KEY}",
-    );
-    expect(outputJson.mcpServers.context7.args).toEqual([
-      "@upstash/context7-mcp@latest",
-    ]);
+    expect(outputJson.mcpServers.tavily.env.TAVILY_API_KEY).toBe("${TAVILY_API_KEY}");
+    expect(outputJson.mcpServers.context7.args).toEqual(["@upstash/context7-mcp@latest"]);
 
     // 6. Diff should show in-sync after roundtrip
     const diff = diffConfig(resolved, {}, dir.path);
@@ -100,28 +92,16 @@ describe("Claude Code adapter roundtrip", () => {
     dir = await createTestDir("am-roundtrip-fixture-");
 
     // Copy fixture files to temp dir
-    const fixtureDir = join(
-      import.meta.dir,
-      "../../fixtures/claude-code",
-    );
+    const fixtureDir = join(import.meta.dir, "../../fixtures/claude-code");
     const fs = require("node:fs");
-    const sampleClaude = fs.readFileSync(
-      join(fixtureDir, "sample-claude.json"),
-      "utf-8",
-    );
+    const sampleClaude = fs.readFileSync(join(fixtureDir, "sample-claude.json"), "utf-8");
     await dir.write(".claude.json", sampleClaude);
 
-    const projectDir = dir.path + "/project";
-    const sampleMcp = fs.readFileSync(
-      join(fixtureDir, "sample-mcp.json"),
-      "utf-8",
-    );
+    const projectDir = `${dir.path}/project`;
+    const sampleMcp = fs.readFileSync(join(fixtureDir, "sample-mcp.json"), "utf-8");
     await dir.write("project/.mcp.json", sampleMcp);
 
-    const sampleClaudeMd = fs.readFileSync(
-      join(fixtureDir, "sample-CLAUDE.md"),
-      "utf-8",
-    );
+    const sampleClaudeMd = fs.readFileSync(join(fixtureDir, "sample-CLAUDE.md"), "utf-8");
     await dir.write("project/CLAUDE.md", sampleClaudeMd);
 
     // Import global + project
@@ -130,12 +110,8 @@ describe("Claude Code adapter roundtrip", () => {
     expect(imported.instructions).toHaveLength(1);
 
     // Verify server scopes
-    const globalServers = imported.servers.filter(
-      (s) => s.scope === "global",
-    );
-    const projectServers = imported.servers.filter(
-      (s) => s.scope === "project",
-    );
+    const globalServers = imported.servers.filter((s) => s.scope === "global");
+    const projectServers = imported.servers.filter((s) => s.scope === "project");
     expect(globalServers.length).toBe(5); // from sample-claude.json
     expect(projectServers.length).toBe(2); // from sample-mcp.json
   });

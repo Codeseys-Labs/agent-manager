@@ -1,9 +1,9 @@
+import { Box, Text, useApp, useInput } from "silvery";
 import React, { useState, useCallback } from "react";
-import { Box, Text, useInput, useApp } from "ink";
 import { Dashboard } from "./Dashboard.tsx";
+import { HelpView } from "./HelpView.tsx";
 import { ProfileSwitcher } from "./ProfileSwitcher.tsx";
 import { StatusView } from "./StatusView.tsx";
-import { HelpView } from "./HelpView.tsx";
 import type { TuiData } from "./data.ts";
 
 type View = "dashboard" | "profiles" | "status" | "help";
@@ -139,12 +139,14 @@ export function App({ initialData, onProfileSwitch, onSync, onApply }: Props) {
         {view === "help" && (
           <>
             <Text dimColor>{" | "}</Text>
-            <Text bold color="cyan" inverse>{" ?:Help "}</Text>
+            <Text bold color="cyan" inverse>
+              {" ?:Help "}
+            </Text>
           </>
         )}
       </Box>
       <Box>
-        <Text dimColor>  {"─".repeat(60)}</Text>
+        <Text dimColor> {"─".repeat(60)}</Text>
       </Box>
 
       {/* Content area */}
@@ -161,16 +163,14 @@ export function App({ initialData, onProfileSwitch, onSync, onApply }: Props) {
             onBack={() => setView("dashboard")}
           />
         )}
-        {view === "status" && (
-          <StatusView data={data} onBack={() => setView("dashboard")} />
-        )}
+        {view === "status" && <StatusView data={data} onBack={() => setView("dashboard")} />}
         {view === "help" && <HelpView onBack={() => setView("dashboard")} />}
       </Box>
 
       {/* Status bar */}
       {message && (
         <Box marginTop={1}>
-          <Text color="yellow">  {message}</Text>
+          <Text color="yellow"> {message}</Text>
         </Box>
       )}
     </Box>

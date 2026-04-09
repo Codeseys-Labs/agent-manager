@@ -1,6 +1,6 @@
-import { describe, expect, test, afterEach } from "bun:test";
-import { createTestDir, type TestDir } from "../../helpers/tmp.ts";
+import { afterEach, describe, expect, test } from "bun:test";
 import { detect } from "@/adapters/windsurf/detect.ts";
+import { type TestDir, createTestDir } from "../../helpers/tmp.ts";
 
 describe("windsurf detect()", () => {
   let dir: TestDir;
@@ -19,10 +19,7 @@ describe("windsurf detect()", () => {
 
   test("detects mcp_config.json", async () => {
     dir = await createTestDir("am-ws-detect-");
-    await dir.write(
-      ".codeium/windsurf/mcp_config.json",
-      JSON.stringify({ mcpServers: {} }),
-    );
+    await dir.write(".codeium/windsurf/mcp_config.json", JSON.stringify({ mcpServers: {} }));
     const result = detect(dir.path);
     expect(result.installed).toBe(true);
     expect(result.paths.globalMcpConfig).toContain("mcp_config.json");
@@ -38,7 +35,7 @@ describe("windsurf detect()", () => {
   test("includes project .windsurf/rules/ path", async () => {
     dir = await createTestDir("am-ws-detect-");
     await dir.write(".codeium/windsurf/.keep", "");
-    const projectDir = dir.path + "/project";
+    const projectDir = `${dir.path}/project`;
     await dir.write("project/.windsurf/rules/test.md", "# Rule");
 
     const result = detect(dir.path, projectDir);
@@ -48,7 +45,7 @@ describe("windsurf detect()", () => {
   test("includes legacy .windsurfrules path", async () => {
     dir = await createTestDir("am-ws-detect-");
     await dir.write(".codeium/windsurf/.keep", "");
-    const projectDir = dir.path + "/project";
+    const projectDir = `${dir.path}/project`;
     await dir.write("project/.windsurfrules", "some rules");
 
     const result = detect(dir.path, projectDir);
@@ -57,10 +54,7 @@ describe("windsurf detect()", () => {
 
   test("includes global_rules.md path when present", async () => {
     dir = await createTestDir("am-ws-detect-");
-    await dir.write(
-      ".codeium/windsurf/memories/global_rules.md",
-      "# Global",
-    );
+    await dir.write(".codeium/windsurf/memories/global_rules.md", "# Global");
     const result = detect(dir.path);
     expect(result.installed).toBe(true);
     expect(result.paths.globalRules).toContain("global_rules.md");
