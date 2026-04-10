@@ -50,6 +50,7 @@ in TOML, decrypted at apply time.
 | TUI | [Silvery](https://silvery.dev) + React |
 | Encryption | Web Crypto API (AES-256-GCM) |
 | Search | MiniSearch (BM25 for wiki full-text search) |
+| Secret detection | Tiered: key-name patterns (built-in) + BetterLeaks (optional) |
 
 ## Directory Structure
 
@@ -63,6 +64,8 @@ src/
     resolver.ts             # Profile resolution: inheritance, tag activation, merge
     git.ts                  # Git operations (isomorphic-git)
     secrets.ts              # AES-256-GCM encryption + ${VAR} interpolation
+    secret-detection.ts     # Tiered secret detection: key-name patterns + BetterLeaks
+    betterleaks.ts          # BetterLeaks binary shell-out for Tier 2 scanning
     instructions.ts         # Shared instruction generation for all formats
     session.ts              # Cross-tool session harvest: types, reader interface, filter/format
   adapters/
@@ -113,8 +116,8 @@ src/
     worker.ts               # Cloudflare Workers (stateless, GitHub OAuth)
     public/                 # Static HTML
   lib/                      # Shared utilities (errors.ts, output.ts)
-test/                       # 110 files, 1033 tests, 2738 assertions
-ADRs/                       # 22 architectural decision records
+test/                       # 118 files, 1134 tests, 2967 assertions
+ADRs/                       # 24 architectural decision records
 scripts/
   build.ts                  # Cross-platform build (5 targets)
   install.sh                # curl-based installer
@@ -139,6 +142,8 @@ scripts/
 | `am profile` | Manage profiles (list, show, create) |
 | `am doctor` | Health check: config validation, adapter status, git state |
 | `am secret set/get/init` | Manage AES-256-GCM encrypted secrets |
+| `am secret scan` | Audit config for unencrypted secrets (`--fix` to auto-substitute) |
+| `am secret install-scanner` | Download BetterLeaks binary for Tier 2 scanning |
 | `am adapter list` | Show registered adapters with install status |
 | `am version` | Print version |
 | `am mcp-serve` | Run as MCP server (JSON-RPC over stdio) |
@@ -197,6 +202,16 @@ project context accessible.
 with BM25 ranking. Sessions are harvested into structured wiki pages via NER-based
 entity extraction, enabling knowledge synthesis and agent briefings.
 
+**Tiered secret detection (ADR-0023):** Two-tier approach: Tier 1 uses key-name pattern
+matching (40+ provider patterns, built-in, zero dependencies). Tier 2 shells out to
+BetterLeaks for value-based and inline secret detection when installed. Secrets found
+during import/add are auto-substituted with `${VAR}` references and encrypted.
+
+**MCP Registry with provenance (ADR-0024):** Registry-installed servers carry `_registry`
+metadata (package name, version, installed timestamp). `am update` compares installed
+versions against the registry to detect available upgrades. Provenance is preserved
+through config merges and profile resolution.
+
 ## MCP Registry Integration
 
 The `registry/` module provides an HTTP client for the public MCP package registry.
@@ -234,7 +249,7 @@ Workflow: `am wiki ingest --session <id>` → `am wiki search <query>` → `am w
 
 ```bash
 bun install              # Install dependencies
-bun test                 # Run all 1033 tests
+bun test                 # Run all 1134 tests
 bun test --watch         # Watch mode
 bun run dev              # Run CLI in dev mode
 bun run build            # Single binary (macOS arm64)
@@ -294,6 +309,9 @@ servers = ["outlook", "tavily"]
 server_tags = ["work"]
 instructions = ["typescript-rules"]
 agents = ["researcher"]
+
+[settings.env]
+TAVILY_API_KEY = "enc:v1:abc123:ciphertext"  # Encrypted secret (AES-256-GCM)
 ```
 
 Project config uses the same schema in `.agent-manager.toml` at the repo root.
