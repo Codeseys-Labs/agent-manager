@@ -3,6 +3,7 @@ import { defineCommand } from "citty";
 import { readConfig, resolveConfigDir, writeConfig } from "../core/config";
 import { commitAll } from "../core/git";
 import type { Server } from "../core/schema";
+import { formatScanReport, scanServerForSecrets } from "../core/secret-detection";
 import { error, info, output } from "../lib/output";
 
 export const addCommand = defineCommand({
@@ -67,6 +68,9 @@ export const addCommand = defineCommand({
     if (!config.servers) config.servers = {};
     config.servers[name] = server;
 
+    // Scan for potential secrets before writing
+    const scanResult = scanServerForSecrets(name, server);
+
     await writeConfig(configPath, config);
 
     // Auto-commit
@@ -78,8 +82,27 @@ export const addCommand = defineCommand({
     }
 
     info(`Added server "${name}"`, opts);
+
+    if (scanResult.secrets.length > 0 && !args.json) {
+      info("", opts);
+      info(
+        `Warning: ${scanResult.secrets.length} potential secret(s) detected in server "${name}".`,
+        opts,
+      );
+      info(formatScanReport([scanResult]), opts);
+      info("Run `am secret scan --fix` to substitute and encrypt detected secrets.", opts);
+    }
+
     if (args.json) {
-      output({ action: "add", server: name, config: server }, opts);
+      output(
+        {
+          action: "add",
+          server: name,
+          config: server,
+          detectedSecrets: scanResult.secrets.length > 0 ? scanResult.secrets.length : undefined,
+        },
+        opts,
+      );
     }
   },
 });

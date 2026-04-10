@@ -5,6 +5,7 @@ import { ZodError } from "zod";
 import { getAdapter, listAdapters } from "../adapters/registry";
 import { resolveConfigDir, resolveProjectConfig, tryReadConfig } from "../core/config";
 import { getStatus } from "../core/git";
+import { scanConfigForSecrets } from "../core/secret-detection";
 import { errorMessage } from "../lib/errors";
 import { error, info, output } from "../lib/output";
 
@@ -169,6 +170,31 @@ export const doctorCommand = defineCommand({
       } catch {
         // Not present, fine
       }
+    }
+
+    // 9. Secret audit — scan servers for unencrypted secrets
+    try {
+      const configPath = join(configDir, "config.toml");
+      const configForScan = await tryReadConfig(configPath);
+      if (configForScan?.servers) {
+        const scanResults = scanConfigForSecrets(configForScan.servers);
+        const totalSecrets = scanResults.reduce((sum, r) => sum + r.secrets.length, 0);
+        if (totalSecrets > 0) {
+          checks.push({
+            name: "Secret audit",
+            status: "warn",
+            message: `${totalSecrets} potential unencrypted secret(s) found (run \`am secret scan\` to review)`,
+          });
+        } else {
+          checks.push({
+            name: "Secret audit",
+            status: "ok",
+            message: "No unencrypted secrets detected in server configs",
+          });
+        }
+      }
+    } catch {
+      // Config already checked above, skip silently
     }
 
     // Output

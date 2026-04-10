@@ -4,6 +4,12 @@ import { defineCommand } from "citty";
 import { readConfig, resolveConfigDir, writeConfig } from "../core/config";
 import { commitAll } from "../core/git";
 import {
+  formatScanReport,
+  redactSecret,
+  scanConfigForSecrets,
+  substituteSecret,
+} from "../core/secret-detection";
+import {
   decryptValue,
   encryptValue,
   generateKey,
@@ -25,6 +31,7 @@ export const secretCommand = defineCommand({
     set: () => Promise.resolve(setCommand),
     get: () => Promise.resolve(getCommand),
     list: () => Promise.resolve(listCommand),
+    scan: () => Promise.resolve(scanCommand),
     "generate-key": () => Promise.resolve(generateKeyCommand),
     "import-key": () => Promise.resolve(importKeyCommand),
   },
@@ -210,6 +217,136 @@ const listCommand = defineCommand({
       info(`${s.name.padEnd(30)} ${s.location}`, opts);
     }
     info(`\n${secrets.length} secret(s)`, opts);
+  },
+});
+
+const scanCommand = defineCommand({
+  meta: { name: "scan", description: "Scan server configs for potential unencrypted secrets" },
+  args: {
+    fix: {
+      type: "boolean",
+      description: "Auto-substitute and encrypt all high/medium confidence secrets",
+      default: false,
+    },
+    json: { type: "boolean", description: "JSON output", default: false },
+    quiet: { type: "boolean", alias: "q", default: false },
+    verbose: { type: "boolean", alias: "v", default: false },
+  },
+  async run({ args }) {
+    const opts = { json: args.json, quiet: args.quiet, verbose: args.verbose };
+    const configDir = resolveConfigDir();
+    const configPath = join(configDir, "config.toml");
+
+    let config;
+    try {
+      config = await readConfig(configPath);
+    } catch {
+      error("Config not found. Run `am init` first.", opts);
+      process.exitCode = 1;
+      return;
+    }
+
+    if (!config.servers || Object.keys(config.servers).length === 0) {
+      info("No servers configured.", opts);
+      return;
+    }
+
+    const scanResults = scanConfigForSecrets(config.servers);
+
+    if (scanResults.length === 0) {
+      if (args.json) {
+        output({ action: "scan", secrets: [] }, opts);
+      } else {
+        info("No potential secrets detected.", opts);
+      }
+      return;
+    }
+
+    const totalSecrets = scanResults.reduce((sum, r) => sum + r.secrets.length, 0);
+
+    if (!args.fix) {
+      // Display-only mode
+      if (args.json) {
+        output(
+          {
+            action: "scan",
+            secrets: scanResults.map((r) => ({
+              server: r.serverName,
+              secrets: r.secrets.map((s) => ({
+                location: s.location,
+                key: s.key,
+                value: redactSecret(s.value),
+                confidence: s.confidence,
+                pattern: s.patternName,
+                suggestedEnvVar: s.suggestedEnvVar,
+              })),
+            })),
+          },
+          opts,
+        );
+      } else {
+        info(formatScanReport(scanResults), opts);
+        info("", opts);
+        info("Run `am secret scan --fix` to auto-substitute and encrypt these secrets.", opts);
+      }
+      return;
+    }
+
+    // Fix mode: substitute and encrypt
+    const key = await loadKey(configDir);
+    if (!key) {
+      error("No encryption key found. Run `am secret generate-key` first.", opts);
+      process.exitCode = 1;
+      return;
+    }
+
+    let substituted = 0;
+    const fixedSecrets: Array<{ server: string; key: string; envVar: string }> = [];
+
+    for (const result of scanResults) {
+      const server = config.servers![result.serverName];
+      if (!server) continue;
+
+      for (const secret of result.secrets) {
+        if (secret.confidence === "low") continue;
+
+        const envVar = secret.suggestedEnvVar;
+        substituteSecret(server, secret, envVar);
+
+        // Store the original value encrypted in settings.env
+        if (!config.settings) config.settings = {};
+        if (!config.settings.env) config.settings.env = {};
+        config.settings.env[envVar] = await encryptValue(secret.value, key);
+
+        fixedSecrets.push({
+          server: result.serverName,
+          key: secret.key ?? `args[${secret.index}]`,
+          envVar,
+        });
+        substituted++;
+      }
+    }
+
+    await writeConfig(configPath, config);
+
+    try {
+      await commitAll(configDir, `secret: auto-encrypt ${substituted} secret(s)`);
+    } catch {
+      // Nothing to commit
+    }
+
+    if (args.json) {
+      output({ action: "scan-fix", substituted, fixed: fixedSecrets }, opts);
+    } else {
+      info(`Substituted and encrypted ${substituted} secret(s):`, opts);
+      for (const f of fixedSecrets) {
+        info(`  ${f.server}: ${f.key} -> \${${f.envVar}}`, opts);
+      }
+      info(
+        `\nOriginal values stored encrypted in settings.env. Skipped ${totalSecrets - substituted} low-confidence finding(s).`,
+        opts,
+      );
+    }
   },
 });
 

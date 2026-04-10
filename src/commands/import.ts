@@ -4,6 +4,14 @@ import { getAdapter, getDetectedAdapters, listAdapters } from "../adapters/regis
 import type { ImportedServer } from "../adapters/types";
 import { readConfig, resolveConfigDir, writeConfig } from "../core/config";
 import { commitAll } from "../core/git";
+import {
+  type SecretScanResult,
+  formatScanReport,
+  redactSecret,
+  scanConfigForSecrets,
+  substituteSecret,
+} from "../core/secret-detection";
+import { encryptValue, loadKey } from "../core/secrets";
 import { errorMessage } from "../lib/errors";
 import { debug, error, info, output } from "../lib/output";
 
@@ -61,6 +69,11 @@ export const importCommand = defineCommand({
       type: "positional",
       description: "Adapter name or 'auto' for all detected",
       required: true,
+    },
+    "auto-encrypt": {
+      type: "boolean",
+      description: "Auto-substitute and encrypt detected secrets",
+      default: false,
     },
     json: { type: "boolean", description: "JSON output", default: false },
     quiet: { type: "boolean", alias: "q", default: false },
@@ -164,6 +177,55 @@ export const importCommand = defineCommand({
       }
     }
 
+    // Scan imported servers for potential secrets
+    let scanResults: SecretScanResult[] = [];
+    if (config.servers && totalImported > 0) {
+      scanResults = scanConfigForSecrets(config.servers);
+
+      if (scanResults.length > 0) {
+        const totalSecrets = scanResults.reduce((sum, r) => sum + r.secrets.length, 0);
+
+        if (!args.json) {
+          info("", opts);
+          info(`Warning: ${totalSecrets} potential secret(s) detected in imported servers.`, opts);
+          info(formatScanReport(scanResults), opts);
+          info("", opts);
+        }
+
+        if (args["auto-encrypt"]) {
+          const key = await loadKey(configDir);
+          if (!key) {
+            info(
+              "Cannot auto-encrypt: no encryption key. Run `am secret generate-key` first.",
+              opts,
+            );
+          } else {
+            let substituted = 0;
+            for (const result of scanResults) {
+              const server = config.servers[result.serverName];
+              if (!server) continue;
+              for (const secret of result.secrets) {
+                if (secret.confidence === "low") continue;
+                substituteSecret(server, secret, secret.suggestedEnvVar);
+
+                // Store the original value encrypted in settings.env
+                if (!config.settings) config.settings = {};
+                if (!config.settings.env) config.settings.env = {};
+                config.settings.env[secret.suggestedEnvVar] = await encryptValue(secret.value, key);
+                substituted++;
+              }
+            }
+            info(`Auto-encrypted ${substituted} secret(s). Values stored in settings.env.`, opts);
+          }
+        } else if (!args.json) {
+          info(
+            "Run `am secret scan --fix` to substitute and encrypt, or re-import with --auto-encrypt.",
+            opts,
+          );
+        }
+      }
+    }
+
     await writeConfig(configPath, config);
 
     // Auto-commit
@@ -194,6 +256,16 @@ export const importCommand = defineCommand({
           imported: totalImported,
           duplicates: totalDuplicates,
           warnings: allWarnings,
+          detectedSecrets: scanResults.map((r) => ({
+            server: r.serverName,
+            secrets: r.secrets.map((s) => ({
+              location: s.location,
+              key: s.key,
+              value: redactSecret(s.value),
+              confidence: s.confidence,
+              pattern: s.patternName,
+            })),
+          })),
         },
         opts,
       );
