@@ -44,6 +44,7 @@ export const initCommand = defineCommand({
     // Check if already initialized
     const existing = await tryReadConfig(configPath);
     if (existing) {
+      process.exitCode = 1;
       if (args.json) {
         output({ status: "already_initialized", configDir }, opts);
       } else {

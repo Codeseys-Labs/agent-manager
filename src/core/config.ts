@@ -10,6 +10,7 @@ import type {
   ResolvedServer,
   ResolvedSkill,
 } from "../adapters/types";
+import { isNotFound } from "../lib/errors";
 import { tomlStringify } from "../lib/toml";
 import { type Config, ConfigSchema, type ProjectConfig, ProjectConfigSchema } from "./schema";
 
@@ -59,8 +60,8 @@ export async function readProjectConfig(path: string): Promise<ProjectConfig> {
 export async function tryReadConfig(path: string): Promise<Config | null> {
   try {
     return await readConfig(path);
-  } catch (err: any) {
-    if (err?.code === "ENOENT") return null;
+  } catch (err: unknown) {
+    if (isNotFound(err)) return null;
     throw err;
   }
 }
@@ -69,8 +70,8 @@ export async function tryReadConfig(path: string): Promise<Config | null> {
 export async function tryReadProjectConfig(path: string): Promise<ProjectConfig | null> {
   try {
     return await readProjectConfig(path);
-  } catch (err: any) {
-    if (err?.code === "ENOENT") return null;
+  } catch (err: unknown) {
+    if (isNotFound(err)) return null;
     throw err;
   }
 }
@@ -137,13 +138,20 @@ export function mergeConfigs(a: Config, b: Config): Config {
 
 /** Convert a ProjectConfig into a Config shape for merging. */
 export function projectToConfig(proj: ProjectConfig): Config {
-  return {
+  const config: Config = {
     servers: proj.servers,
     skills: proj.skills,
     instructions: proj.instructions,
     agents: proj.agents,
     adapters: proj.adapters,
   };
+
+  if (proj.env) {
+    if (!config.settings) config.settings = {};
+    config.settings.env = { ...config.settings.env, ...proj.env };
+  }
+
+  return config;
 }
 
 export interface LoadResolvedConfigOpts {

@@ -95,7 +95,7 @@ const VAR_PATTERN = /\$\$\{[^}]+\}|\$\{([^}]+)\}/g;
 /**
  * Deep-walk all string values in config, resolving `${VAR}` references.
  *
- * - `${VAR}` resolves from process.env first, then extraEnv
+ * - `${VAR}` resolves from extraEnv first, then process.env
  * - `$${VAR}` escapes to the literal string `${VAR}`
  * - Unresolved variables: warn (non-strict) or throw (strict)
  */

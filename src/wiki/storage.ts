@@ -22,6 +22,7 @@ import { mkdir, readFile, readdir, rename, rm, writeFile } from "node:fs/promise
 import { basename, dirname, join } from "node:path";
 import MiniSearch from "minisearch";
 import { resolveConfigDir, resolveProjectConfig } from "../core/config";
+import { isNotFound } from "../lib/errors";
 import type {
   EntityType,
   KnowledgeEntry,
@@ -116,7 +117,8 @@ export function createProjectWikiLink(projectDir: string, projectName: string): 
     rmSync(wikiLink, { recursive: true, force: true });
   }
 
-  symlinkSync(target, wikiLink);
+  const symlinkType = process.platform === "win32" ? "junction" : undefined;
+  symlinkSync(target, wikiLink, symlinkType);
 }
 
 /** Ensure .agent-manager/wiki is in the project's .gitignore. (ADR-0022) */
@@ -347,8 +349,8 @@ export async function readPage(slug: string, wikiDir?: string): Promise<WikiPage
     try {
       const raw = await readFile(filePath, "utf-8");
       return parseWikiPage(raw, slug);
-    } catch (err: any) {
-      if (err?.code === "ENOENT") continue;
+    } catch (err: unknown) {
+      if (isNotFound(err)) continue;
       throw err;
     }
   }
@@ -362,8 +364,8 @@ export async function deletePage(slug: string, wikiDir?: string): Promise<boolea
     try {
       await rm(filePath);
       return true;
-    } catch (err: any) {
-      if (err?.code === "ENOENT") continue;
+    } catch (err: unknown) {
+      if (isNotFound(err)) continue;
       throw err;
     }
   }
@@ -384,8 +386,8 @@ export async function listPages(filter?: {
     let files: string[];
     try {
       files = await readdir(dir);
-    } catch (err: any) {
-      if (err?.code === "ENOENT") continue;
+    } catch (err: unknown) {
+      if (isNotFound(err)) continue;
       throw err;
     }
 
@@ -438,24 +440,21 @@ function parseWikiPage(raw: string, fallbackSlug: string): WikiPage | null {
 
 // ── MiniSearch BM25 ─────────────────────────────────────────────
 
+const MINISEARCH_OPTIONS = {
+  fields: ["title", "content", "tags_joined"] as string[],
+  storeFields: ["title", "type", "tags", "updated", "slug"] as string[],
+  searchOptions: { boost: { title: 2, tags_joined: 1.5 }, fuzzy: 0.2, prefix: true },
+  idField: "slug" as const,
+  extractField: (doc: WikiPage, fieldName: string) => {
+    if (fieldName === "tags_joined") {
+      return doc.tags.join(" ");
+    }
+    return (doc as unknown as Record<string, unknown>)[fieldName] as string;
+  },
+};
+
 function createMiniSearchInstance(): MiniSearch<WikiPage> {
-  return new MiniSearch<WikiPage>({
-    fields: ["title", "content", "tags_joined"],
-    storeFields: ["slug", "title", "type", "tags", "created", "updated", "confidence"],
-    searchOptions: {
-      boost: { title: 2, tags_joined: 1.5 },
-      fuzzy: 0.2,
-      prefix: true,
-    },
-    idField: "slug",
-    // Extract the tags as a joined string for indexing
-    extractField: (doc, fieldName) => {
-      if (fieldName === "tags_joined") {
-        return (doc as WikiPage).tags.join(" ");
-      }
-      return (doc as Record<string, unknown>)[fieldName] as string;
-    },
-  });
+  return new MiniSearch<WikiPage>(MINISEARCH_OPTIONS);
 }
 
 /** Search wiki pages using BM25 via MiniSearch */
@@ -494,22 +493,7 @@ export async function loadSearchIndex(wikiDir?: string): Promise<MiniSearch<Wiki
   try {
     const raw = await readFile(searchIndexPath(wikiDir), "utf-8");
     const data = JSON.parse(raw);
-    return MiniSearch.loadJSON<WikiPage>(JSON.stringify(data), {
-      fields: ["title", "content", "tags_joined"],
-      storeFields: ["slug", "title", "type", "tags", "created", "updated", "confidence"],
-      searchOptions: {
-        boost: { title: 2, tags_joined: 1.5 },
-        fuzzy: 0.2,
-        prefix: true,
-      },
-      idField: "slug",
-      extractField: (doc, fieldName) => {
-        if (fieldName === "tags_joined") {
-          return (doc as WikiPage).tags.join(" ");
-        }
-        return (doc as Record<string, unknown>)[fieldName] as string;
-      },
-    });
+    return MiniSearch.loadJSON<WikiPage>(JSON.stringify(data), MINISEARCH_OPTIONS);
   } catch {
     // Index doesn't exist or is corrupt — rebuild
     await rebuildSearchIndex(wikiDir);
@@ -517,22 +501,7 @@ export async function loadSearchIndex(wikiDir?: string): Promise<MiniSearch<Wiki
     try {
       const raw = await readFile(searchIndexPath(wikiDir), "utf-8");
       const data = JSON.parse(raw);
-      return MiniSearch.loadJSON<WikiPage>(JSON.stringify(data), {
-        fields: ["title", "content", "tags_joined"],
-        storeFields: ["slug", "title", "type", "tags", "created", "updated", "confidence"],
-        searchOptions: {
-          boost: { title: 2, tags_joined: 1.5 },
-          fuzzy: 0.2,
-          prefix: true,
-        },
-        idField: "slug",
-        extractField: (doc, fieldName) => {
-          if (fieldName === "tags_joined") {
-            return (doc as WikiPage).tags.join(" ");
-          }
-          return (doc as Record<string, unknown>)[fieldName] as string;
-        },
-      });
+      return MiniSearch.loadJSON<WikiPage>(JSON.stringify(data), MINISEARCH_OPTIONS);
     } catch {
       // Return empty index
       return createMiniSearchInstance();

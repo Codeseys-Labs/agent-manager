@@ -5,6 +5,7 @@ import { defineCommand } from "citty";
 import { listAdapters } from "../adapters/registry";
 import { loadResolvedConfig, resolveConfigDir, resolveProjectConfig } from "../core/config";
 import { ConfigSchema } from "../core/schema";
+import { errorMessage, isNotFound } from "../lib/errors";
 import { error, info, output } from "../lib/output";
 import { tomlStringify } from "../lib/toml";
 
@@ -65,11 +66,11 @@ export const validateCommand = defineCommand({
           }
         }
       }
-    } catch (err: any) {
-      if (err?.code === "ENOENT") {
+    } catch (err: unknown) {
+      if (isNotFound(err)) {
         errors.push("config.toml not found. Run `am init` first.");
       } else {
-        errors.push(`config.toml parse error: ${err.message}`);
+        errors.push(`config.toml parse error: ${errorMessage(err)}`);
       }
     }
 
@@ -86,8 +87,8 @@ export const validateCommand = defineCommand({
             errors.push(`.agent-manager.toml: ${issue.path.join(".")}: ${issue.message}`);
           }
         }
-      } catch (err: any) {
-        errors.push(`.agent-manager.toml parse error: ${err.message}`);
+      } catch (err: unknown) {
+        errors.push(`.agent-manager.toml parse error: ${errorMessage(err)}`);
       }
     }
 
@@ -160,11 +161,11 @@ export const showCommand = defineCommand({
       } else {
         info(raw, opts);
       }
-    } catch (err: any) {
-      if (err?.code === "ENOENT") {
+    } catch (err: unknown) {
+      if (isNotFound(err)) {
         error("config.toml not found. Run `am init` first.", opts);
       } else {
-        error(`Failed to read config: ${err.message}`, opts);
+        error(`Failed to read config: ${errorMessage(err)}`, opts);
       }
     }
   },

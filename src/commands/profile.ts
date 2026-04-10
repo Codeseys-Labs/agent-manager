@@ -1,4 +1,5 @@
 import { join } from "node:path";
+import { confirm, isCancel } from "@clack/prompts";
 import { defineCommand } from "citty";
 import {
   loadResolvedConfig,
@@ -10,6 +11,7 @@ import {
 import { commitAll } from "../core/git";
 import { resolveProfile } from "../core/resolver";
 import type { Config, Profile } from "../core/schema";
+import { errorMessage } from "../lib/errors";
 import { error, info, output } from "../lib/output";
 import { readActiveProfile } from "./use";
 
@@ -39,6 +41,7 @@ export const profileListCommand = defineCommand({
     try {
       config = await readConfig(configPath);
     } catch {
+      process.exitCode = 1;
       error("Config not found. Run `am init` first.", opts);
       return;
     }
@@ -94,6 +97,7 @@ export const profileShowCommand = defineCommand({
     try {
       config = await loadResolvedConfig({ configDir, projectFile });
     } catch {
+      process.exitCode = 1;
       error("Config not found. Run `am init` first.", opts);
       return;
     }
@@ -101,8 +105,9 @@ export const profileShowCommand = defineCommand({
     let resolved;
     try {
       resolved = resolveProfile(args.name, config);
-    } catch (err: any) {
-      error(err.message, opts);
+    } catch (err: unknown) {
+      process.exitCode = 1;
+      error(errorMessage(err), opts);
       return;
     }
 
@@ -148,6 +153,7 @@ export const profileCreateCommand = defineCommand({
     try {
       config = await readConfig(configPath);
     } catch {
+      process.exitCode = 1;
       error("Config not found. Run `am init` first.", opts);
       return;
     }
@@ -155,12 +161,14 @@ export const profileCreateCommand = defineCommand({
     const name = args.name;
 
     if (config.profiles?.[name]) {
+      process.exitCode = 1;
       error(`Profile "${name}" already exists.`, opts);
       return;
     }
 
     // Validate parent exists if specified
     if (args.inherits && !config.profiles?.[args.inherits]) {
+      process.exitCode = 1;
       error(`Parent profile "${args.inherits}" does not exist.`, opts);
       return;
     }
@@ -191,6 +199,7 @@ export const profileDeleteCommand = defineCommand({
   meta: { name: "delete", description: "Delete a profile" },
   args: {
     name: { type: "positional", description: "Profile name", required: true },
+    yes: { type: "boolean", alias: "y", default: false },
     json: { type: "boolean", description: "JSON output", default: false },
     quiet: { type: "boolean", alias: "q", default: false },
     verbose: { type: "boolean", alias: "v", default: false },
@@ -204,6 +213,7 @@ export const profileDeleteCommand = defineCommand({
     try {
       config = await readConfig(configPath);
     } catch {
+      process.exitCode = 1;
       error("Config not found. Run `am init` first.", opts);
       return;
     }
@@ -211,6 +221,7 @@ export const profileDeleteCommand = defineCommand({
     const name = args.name;
 
     if (!config.profiles?.[name]) {
+      process.exitCode = 1;
       error(`Profile "${name}" does not exist.`, opts);
       return;
     }
@@ -218,7 +229,19 @@ export const profileDeleteCommand = defineCommand({
     // Check if any other profile inherits from this one
     for (const [otherName, otherProfile] of Object.entries(config.profiles ?? {})) {
       if (otherProfile.inherits === name) {
+        process.exitCode = 1;
         error(`Cannot delete "${name}": profile "${otherName}" inherits from it.`, opts);
+        return;
+      }
+    }
+
+    // Confirmation prompt (skip if --yes flag or non-interactive)
+    if (!args.yes) {
+      const confirmed = await confirm({
+        message: `Delete profile '${name}'? This cannot be undone.`,
+      });
+      if (isCancel(confirmed) || !confirmed) {
+        info("Aborted.", opts);
         return;
       }
     }

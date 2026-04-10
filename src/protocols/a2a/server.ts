@@ -30,6 +30,32 @@ import type {
 // ── In-memory task store ────────────────────────────────────────
 
 const taskStore = new Map<string, Task>();
+const MAX_TASKS = 1000;
+
+function evictStaleTasks(): void {
+  if (taskStore.size <= MAX_TASKS) return;
+  // Remove completed/failed/canceled tasks first (oldest first via Map insertion order)
+  for (const [id, task] of taskStore) {
+    if (taskStore.size <= MAX_TASKS * 0.8) break;
+    if (
+      task.status.state === "completed" ||
+      task.status.state === "failed" ||
+      task.status.state === "canceled"
+    ) {
+      taskStore.delete(id);
+    }
+  }
+  // If still over limit, remove oldest regardless of state
+  if (taskStore.size > MAX_TASKS) {
+    const toRemove = taskStore.size - MAX_TASKS;
+    let removed = 0;
+    for (const id of taskStore.keys()) {
+      if (removed >= toRemove) break;
+      taskStore.delete(id);
+      removed++;
+    }
+  }
+}
 
 function getOrCreateTask(id: string): Task {
   let task = taskStore.get(id);
@@ -254,6 +280,7 @@ async function handleJsonRpc(
         });
       }
 
+      evictStaleTasks();
       return jsonRpcSuccess(id, task);
     }
 

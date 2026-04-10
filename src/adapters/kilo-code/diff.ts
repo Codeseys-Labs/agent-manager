@@ -3,10 +3,14 @@
  *
  * Reads current native configs (JSONC) and compares against the resolved config.
  * Handles both new CLI-native MCP format and legacy mcpServers format.
+ * Detects drift for both servers and instructions.
  */
 
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { filterByTarget } from "../../core/instructions.ts";
+import { compareInstructions } from "../shared/diff-utils.ts";
+import { compareServerFields, normalize, sortKeys } from "../shared/utils.ts";
 import type { DiffChange, DiffResult, ResolvedConfig, ResolvedServer } from "../types.ts";
 import { parseJsonc } from "./jsonc.ts";
 
@@ -14,6 +18,7 @@ interface NativeServer {
   command: string;
   args: string[];
   env: Record<string, string>;
+  [key: string]: unknown;
 }
 
 /**
@@ -64,7 +69,7 @@ export function diffConfig(
   for (const [name, expectedServer] of Object.entries(expected)) {
     if (!(name in allNative)) continue;
     const native = allNative[name];
-    const fieldChanges = compareServer(expectedServer, native);
+    const fieldChanges = compareServerFields(expectedServer, native);
     if (fieldChanges.length > 0) {
       changes.push({
         entity: "server",
@@ -73,6 +78,21 @@ export function diffConfig(
         details: fieldChanges,
       });
     }
+  }
+
+  // Instruction drift: compare AGENTS.md managed block
+  if (options.projectPath) {
+    const agentsMdPath = join(options.projectPath, "AGENTS.md");
+    let nativeContent: string | null = null;
+    try {
+      const fs = require("node:fs");
+      nativeContent = fs.readFileSync(agentsMdPath, "utf-8");
+    } catch {
+      // File doesn't exist
+    }
+    const targetInstructions = filterByTarget(config.instructions, "kilo-code");
+    const instrChanges = compareInstructions(targetInstructions, nativeContent, "kilo-code");
+    changes.push(...instrChanges);
   }
 
   return {
@@ -160,48 +180,4 @@ function normalizeServers(config: Record<string, unknown>): Record<string, Nativ
   }
 
   return result;
-}
-
-/** Compare a resolved server against native, returning field-level diffs. */
-function compareServer(
-  expected: ResolvedServer,
-  native: NativeServer,
-): { field: string; expected: unknown; actual: unknown }[] {
-  const diffs: { field: string; expected: unknown; actual: unknown }[] = [];
-
-  if (expected.command !== native.command) {
-    diffs.push({
-      field: "command",
-      expected: expected.command,
-      actual: native.command,
-    });
-  }
-
-  const expectedArgs = expected.args ?? [];
-  const nativeArgs = native.args ?? [];
-  if (JSON.stringify(normalize(expectedArgs)) !== JSON.stringify(normalize(nativeArgs))) {
-    diffs.push({ field: "args", expected: expectedArgs, actual: nativeArgs });
-  }
-
-  const expectedEnv = expected.env ?? {};
-  const nativeEnv = native.env ?? {};
-  if (JSON.stringify(sortKeys(expectedEnv)) !== JSON.stringify(sortKeys(nativeEnv))) {
-    diffs.push({ field: "env", expected: expectedEnv, actual: nativeEnv });
-  }
-
-  return diffs;
-}
-
-function sortKeys<T extends Record<string, unknown>>(obj: T): T {
-  const sorted: Record<string, unknown> = {};
-  for (const key of Object.keys(obj).sort()) {
-    sorted[key] = obj[key];
-  }
-  return sorted as T;
-}
-
-function normalize(value: unknown): unknown {
-  if (Array.isArray(value)) return value.map(normalize);
-  if (value && typeof value === "object") return sortKeys(value as Record<string, unknown>);
-  return value;
 }

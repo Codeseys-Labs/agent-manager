@@ -94,7 +94,7 @@ export interface ExportResult {
 // ── Diff ─────────────────────────────────────────────────────────
 
 export interface DiffChange {
-  entity: "server" | "instruction" | "skill" | "setting";
+  entity: "server" | "instruction" | "skill" | "agent" | "setting";
   name: string;
   type: "added-locally" | "removed-locally" | "modified" | "added-in-config";
   details?: { field: string; expected: unknown; actual: unknown }[];

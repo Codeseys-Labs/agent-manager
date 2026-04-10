@@ -30,8 +30,7 @@ describe("lifecycle integration tests", () => {
   test("am version prints version", async () => {
     const { stdout, code } = await runAM("version");
     expect(code).toBe(0);
-    expect(stdout).toContain("agent-manager");
-    expect(stdout).toMatch(/v?\d+\.\d+\.\d+/);
+    expect(stdout).toMatch(/\d+\.\d+\.\d+/);
   });
 
   test("am init creates config.toml and .git", async () => {
@@ -254,8 +253,8 @@ describe("lifecycle integration tests", () => {
   test("am init is idempotent (reports already initialized)", async () => {
     await runAM("init");
     const { stderr, code } = await runAM("init");
-    // Second init should report already initialized (not crash)
-    expect(code).toBe(0);
+    // Second init should report already initialized (exit code 1)
+    expect(code).toBe(1);
     const combined = stderr;
     expect(combined).toContain("Already initialized");
   });

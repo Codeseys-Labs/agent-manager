@@ -34,6 +34,7 @@ export async function initProject(
 
   // Check if already exists
   if (existsSync(outputPath)) {
+    process.exitCode = 1;
     error(`Already initialized. .agent-manager.toml exists at ${outputPath}`, opts);
     return { written: false };
   }
