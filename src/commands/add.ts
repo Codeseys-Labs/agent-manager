@@ -3,7 +3,8 @@ import { defineCommand } from "citty";
 import { readConfig, resolveConfigDir, writeConfig } from "../core/config";
 import { commitAll } from "../core/git";
 import type { Server } from "../core/schema";
-import { formatScanReport, scanServerForSecrets } from "../core/secret-detection";
+import { scanServerForSecrets, substituteSecret } from "../core/secret-detection";
+import { encryptValue, generateKey, importKey, loadKey, saveKey } from "../core/secrets";
 import { error, info, output } from "../lib/output";
 
 export const addCommand = defineCommand({
@@ -68,8 +69,29 @@ export const addCommand = defineCommand({
     if (!config.servers) config.servers = {};
     config.servers[name] = server;
 
-    // Scan for potential secrets before writing
+    // Scan for secrets and auto-encrypt before writing
     const scanResult = scanServerForSecrets(name, server);
+    let secretsEncrypted = 0;
+    const actionableSecrets = scanResult.secrets.filter((s) => s.confidence !== "low");
+
+    if (actionableSecrets.length > 0) {
+      // Ensure encryption key exists — auto-generate if missing
+      let key = await loadKey(configDir);
+      if (!key) {
+        const base64Key = await generateKey();
+        await saveKey(configDir, base64Key);
+        key = await importKey(base64Key);
+        info("Generated encryption key (stored in .agent-manager/key.txt)", opts);
+      }
+
+      for (const secret of actionableSecrets) {
+        substituteSecret(server, secret, secret.suggestedEnvVar);
+        if (!config.settings) config.settings = {};
+        if (!config.settings.env) config.settings.env = {};
+        config.settings.env[secret.suggestedEnvVar] = await encryptValue(secret.value, key);
+        secretsEncrypted++;
+      }
+    }
 
     await writeConfig(configPath, config);
 
@@ -78,19 +100,12 @@ export const addCommand = defineCommand({
     try {
       await commitAll(configDir, `add server: ${name}${tagStr}`);
     } catch {
-      // Nothing to commit is fine (shouldn't happen here but be safe)
+      // Nothing to commit is fine
     }
 
     info(`Added server "${name}"`, opts);
-
-    if (scanResult.secrets.length > 0 && !args.json) {
-      info("", opts);
-      info(
-        `Warning: ${scanResult.secrets.length} potential secret(s) detected in server "${name}".`,
-        opts,
-      );
-      info(formatScanReport([scanResult]), opts);
-      info("Run `am secret scan --fix` to substitute and encrypt detected secrets.", opts);
+    if (secretsEncrypted > 0 && !args.json) {
+      info(`  Encrypted ${secretsEncrypted} secret(s) — values use \${VAR} references now.`, opts);
     }
 
     if (args.json) {
@@ -99,7 +114,7 @@ export const addCommand = defineCommand({
           action: "add",
           server: name,
           config: server,
-          detectedSecrets: scanResult.secrets.length > 0 ? scanResult.secrets.length : undefined,
+          secretsEncrypted: secretsEncrypted > 0 ? secretsEncrypted : undefined,
         },
         opts,
       );
