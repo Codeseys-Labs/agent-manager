@@ -56,6 +56,39 @@ export const applyCommand = defineCommand({
 
     const resolved = buildResolvedConfig(interpolated, profileName, configDir);
 
+    // Security gate: warn if any raw secrets are about to be written to native configs
+    const { scanConfigForSecrets } = await import("../core/secret-detection");
+    if (resolved.servers) {
+      const serverMap: Record<
+        string,
+        { command: string; args?: string[]; env?: Record<string, string> }
+      > = {};
+      for (const [name, srv] of Object.entries(resolved.servers)) {
+        serverMap[name] = { command: srv.command, args: srv.args, env: srv.env };
+      }
+      const scanResults = scanConfigForSecrets(serverMap);
+      const highConfidence = scanResults.flatMap((r) =>
+        r.secrets.filter((s) => s.confidence === "high"),
+      );
+
+      if (highConfidence.length > 0 && !args.force) {
+        info("", opts);
+        info(
+          `Warning: ${highConfidence.length} high-confidence secret(s) will be written to native configs.`,
+          opts,
+        );
+        info("These secrets should use ${VAR} references and be encrypted in settings.env.", opts);
+        info(
+          "Run `am secret scan --fix` to secure them, or use `am apply --force` to proceed.",
+          opts,
+        );
+        if (!args["dry-run"]) {
+          process.exitCode = 1;
+          return;
+        }
+      }
+    }
+
     // Find adapters to apply
     let adapters;
     if (args.target) {

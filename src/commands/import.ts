@@ -222,6 +222,16 @@ export const importCommand = defineCommand({
             "Run `am secret scan --fix` to substitute and encrypt, or re-import with --auto-encrypt.",
             opts,
           );
+          info("", opts);
+          info(
+            "Security recommendation: secrets should be stored as encrypted ${VAR} references.",
+            opts,
+          );
+          info(
+            "  am secret scan --fix    — auto-substitute and encrypt all detected secrets",
+            opts,
+          );
+          info("  am import --auto-encrypt — auto-encrypt on import", opts);
         }
       }
     }
