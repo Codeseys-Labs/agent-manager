@@ -1,6 +1,7 @@
 import { defineCommand } from "citty";
 import { resolveConfigDir } from "../core/config";
 import { getStatus, pull } from "../core/git";
+import { errorMessage } from "../lib/errors";
 import { error, info, output } from "../lib/output";
 
 export const pullCommand = defineCommand({
@@ -46,8 +47,8 @@ export const pullCommand = defineCommand({
       if (args.json) {
         output({ action: "pull", remote: status.remotes[0].url, branch: status.branch }, opts);
       }
-    } catch (e: any) {
-      error(`Pull failed: ${e?.message ?? "unknown error"}`, opts);
+    } catch (e: unknown) {
+      error(`Pull failed: ${errorMessage(e) || "unknown error"}`, opts);
       process.exitCode = 1;
     }
   },

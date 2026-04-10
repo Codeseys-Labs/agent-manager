@@ -8,6 +8,7 @@ import {
   resolveProjectConfig,
 } from "../core/config";
 import { interpolateEnvAsync, loadKey } from "../core/secrets";
+import { errorMessage } from "../lib/errors";
 import { debug, error, info, output } from "../lib/output";
 import { readActiveProfile } from "./use";
 
@@ -137,8 +138,8 @@ export const applyCommand = defineCommand({
         for (const w of result.warnings) {
           info(`  warning: ${w}`, opts);
         }
-      } catch (e: any) {
-        const msg = e?.message ?? "export failed";
+      } catch (e: unknown) {
+        const msg = errorMessage(e) || "export failed";
         info(`${adapter.meta.displayName}: ${msg}`, opts);
         results.push({ adapter: adapter.meta.name, files: [], warnings: [msg] });
       }

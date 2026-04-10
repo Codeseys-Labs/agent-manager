@@ -23,6 +23,7 @@ import type { Config, McpToolGroup, Settings } from "../core/schema";
 import { interpolateEnvAsync, loadKey } from "../core/secrets";
 import { filterMessages, formatJson, formatMarkdown } from "../core/session";
 import type { SessionSummary } from "../core/session";
+import { errorMessage } from "../lib/errors";
 
 // ── JSON-RPC types ──────────────────────────────────────────────
 
@@ -869,11 +870,11 @@ function defineTools(): ToolEntry[] {
               files: result.files.filter((f) => f.written).length,
               warnings: result.warnings,
             });
-          } catch (e: any) {
+          } catch (e: unknown) {
             results.push({
               adapter: adapter.meta.name,
               files: 0,
-              warnings: [e?.message ?? "export failed"],
+              warnings: [errorMessage(e) || "export failed"],
             });
           }
         }
@@ -1350,14 +1351,12 @@ export class McpServer {
               content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
             },
           };
-        } catch (err: any) {
+        } catch (err: unknown) {
           return {
             jsonrpc: "2.0",
             id,
             result: {
-              content: [
-                { type: "text", text: JSON.stringify({ error: err?.message ?? String(err) }) },
-              ],
+              content: [{ type: "text", text: JSON.stringify({ error: errorMessage(err) }) }],
               isError: true,
             },
           };

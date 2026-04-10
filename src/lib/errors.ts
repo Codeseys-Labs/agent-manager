@@ -2,6 +2,23 @@
  * Shared error handling utilities for agent-manager CLI.
  */
 
+/** Extract message from unknown catch value */
+export function errorMessage(err: unknown): string {
+  if (err instanceof Error) return err.message;
+  return String(err);
+}
+
+/** Check if error is a Node.js file-not-found error */
+export function isNotFound(err: unknown): boolean {
+  return err instanceof Error && "code" in err && (err as NodeJS.ErrnoException).code === "ENOENT";
+}
+
+/** Extract errno code from unknown catch value, if present */
+export function errorCode(err: unknown): string | undefined {
+  if (err instanceof Error && "code" in err) return (err as NodeJS.ErrnoException).code;
+  return undefined;
+}
+
 export class AmError extends Error {
   constructor(
     message: string,

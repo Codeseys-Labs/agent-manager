@@ -2,6 +2,7 @@ import { defineCommand } from "citty";
 import { resolveConfigDir } from "../core/config";
 import { getStatus, push } from "../core/git";
 import { loadKey } from "../core/secrets";
+import { errorMessage } from "../lib/errors";
 import { error, info, output } from "../lib/output";
 import { detectPlatform } from "../platforms/registry";
 
@@ -65,8 +66,8 @@ export const pushCommand = defineCommand({
       if (args.json) {
         output({ action: "push", remote: remoteUrl, branch: status.branch }, opts);
       }
-    } catch (e: any) {
-      error(`Push failed: ${e?.message ?? "unknown error"}`, opts);
+    } catch (e: unknown) {
+      error(`Push failed: ${errorMessage(e) || "unknown error"}`, opts);
       process.exitCode = 1;
     }
   },

@@ -12,6 +12,7 @@ import {
 } from "../core/config";
 import { getStatus, pull as gitPull, push as gitPush } from "../core/git";
 import { interpolateEnvAsync, loadKey } from "../core/secrets";
+import { errorMessage } from "../lib/errors";
 
 // ── Token-based authentication for local web server ─────────────
 
@@ -233,8 +234,8 @@ export function createApp() {
 
       await writeActiveProfile(configDir, profile);
       return c.json({ action: "use", profile });
-    } catch (e: any) {
-      return c.json({ error: e?.message ?? "Failed to switch profile" }, 500);
+    } catch (e: unknown) {
+      return c.json({ error: errorMessage(e) || "Failed to switch profile" }, 500);
     }
   });
 
@@ -268,11 +269,11 @@ export function createApp() {
             })),
             warnings: result.warnings,
           });
-        } catch (e: any) {
+        } catch (e: unknown) {
           results.push({
             adapter: adapter.meta.name,
             files: [],
-            warnings: [e?.message ?? "export failed"],
+            warnings: [errorMessage(e) || "export failed"],
           });
         }
       }
@@ -283,8 +284,8 @@ export function createApp() {
         dryRun: false,
         results,
       });
-    } catch (e: any) {
-      return c.json({ error: e?.message ?? "Apply failed" }, 500);
+    } catch (e: unknown) {
+      return c.json({ error: errorMessage(e) || "Apply failed" }, 500);
     }
   });
 
@@ -293,8 +294,8 @@ export function createApp() {
       const configDir = resolveConfigDir();
       await gitPush(configDir);
       return c.json({ action: "push", success: true });
-    } catch (e: any) {
-      return c.json({ error: e?.message ?? "Push failed" }, 500);
+    } catch (e: unknown) {
+      return c.json({ error: errorMessage(e) || "Push failed" }, 500);
     }
   });
 
@@ -303,8 +304,8 @@ export function createApp() {
       const configDir = resolveConfigDir();
       await gitPull(configDir);
       return c.json({ action: "pull", success: true });
-    } catch (e: any) {
-      return c.json({ error: e?.message ?? "Pull failed" }, 500);
+    } catch (e: unknown) {
+      return c.json({ error: errorMessage(e) || "Pull failed" }, 500);
     }
   });
 

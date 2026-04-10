@@ -20,6 +20,7 @@ import { dirname, join } from "node:path";
 import { defineCommand } from "citty";
 import { getAdapter, listAdapters } from "../adapters/registry";
 import { resolveProjectConfig } from "../core/config";
+import { errorCode, errorMessage } from "../lib/errors";
 import { error, info, output } from "../lib/output";
 import { exportGraphForViz, findOrphans, loadGraph } from "../wiki/graph";
 import { harvestSession, harvestSessionAsPages } from "../wiki/harvester";
@@ -678,8 +679,8 @@ const importSubcommand = defineCommand({
     let raw: string;
     try {
       raw = await readFile(filePath, "utf-8");
-    } catch (err: any) {
-      error(`Cannot read file: ${filePath} (${err?.code ?? err?.message})`, opts);
+    } catch (err: unknown) {
+      error(`Cannot read file: ${filePath} (${errorCode(err) ?? errorMessage(err)})`, opts);
       process.exitCode = 1;
       return;
     }

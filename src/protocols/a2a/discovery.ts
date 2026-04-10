@@ -10,6 +10,7 @@
 import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import * as TOML from "@iarna/toml";
+import { isNotFound } from "../../lib/errors";
 import { tomlStringify } from "../../lib/toml";
 import { A2AClient } from "./client";
 import type { AgentCard, AgentRosterEntry } from "./types";
@@ -51,8 +52,8 @@ export async function loadRoster(configDir: string): Promise<AgentRosterEntry[]>
   let raw: string;
   try {
     raw = await readFile(rosterPath, "utf-8");
-  } catch (err: any) {
-    if (err?.code === "ENOENT") return [];
+  } catch (err: unknown) {
+    if (isNotFound(err)) return [];
     throw err;
   }
 

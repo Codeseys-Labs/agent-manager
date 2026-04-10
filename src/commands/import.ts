@@ -4,6 +4,7 @@ import { getAdapter, getDetectedAdapters, listAdapters } from "../adapters/regis
 import type { ImportedServer } from "../adapters/types";
 import { readConfig, resolveConfigDir, writeConfig } from "../core/config";
 import { commitAll } from "../core/git";
+import { errorMessage } from "../lib/errors";
 import { debug, error, info, output } from "../lib/output";
 
 /**
@@ -118,8 +119,8 @@ export const importCommand = defineCommand({
       let result;
       try {
         result = adapter.import({});
-      } catch (e: any) {
-        const msg = e?.message ?? "import failed";
+      } catch (e: unknown) {
+        const msg = errorMessage(e) || "import failed";
         info(`${adapter.meta.displayName}: ${msg}`, opts);
         allWarnings.push(`${adapter.meta.name}: ${msg}`);
         continue;

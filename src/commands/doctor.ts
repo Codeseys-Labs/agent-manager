@@ -5,6 +5,7 @@ import { ZodError } from "zod";
 import { getAdapter, listAdapters } from "../adapters/registry";
 import { resolveConfigDir, resolveProjectConfig, tryReadConfig } from "../core/config";
 import { getStatus } from "../core/git";
+import { errorMessage } from "../lib/errors";
 import { error, info, output } from "../lib/output";
 
 interface Check {
@@ -54,7 +55,7 @@ export const doctorCommand = defineCommand({
       } else {
         checks.push({ name: "config.toml", status: "ok", message: "Valid" });
       }
-    } catch (err: any) {
+    } catch (err: unknown) {
       if (err instanceof ZodError) {
         const issues = err.issues
           .map(
@@ -71,7 +72,7 @@ export const doctorCommand = defineCommand({
         checks.push({
           name: "config.toml",
           status: "fail",
-          message: `Parse error: ${err.message}`,
+          message: `Parse error: ${errorMessage(err)}`,
         });
       }
     }

@@ -1,6 +1,7 @@
 import { defineCommand } from "citty";
 import { resolveConfigDir } from "../core/config";
 import { log as gitLog, revertHead } from "../core/git";
+import { errorMessage } from "../lib/errors";
 import { error, info, output } from "../lib/output";
 
 export const undoCommand = defineCommand({
@@ -39,8 +40,8 @@ export const undoCommand = defineCommand({
       if (args.json) {
         output({ action: "undo", reverted: headMsg, oid }, opts);
       }
-    } catch (e: any) {
-      error(`Undo failed: ${e?.message ?? "unknown error"}`, opts);
+    } catch (e: unknown) {
+      error(`Undo failed: ${errorMessage(e) || "unknown error"}`, opts);
       process.exitCode = 1;
     }
   },

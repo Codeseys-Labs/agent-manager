@@ -8,6 +8,7 @@
 
 import { readFile, rename, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { isNotFound } from "../lib/errors";
 import { entityToSlug, extractEntities } from "./ner";
 import { ensureWikiDirs, resolveWikiDir } from "./storage";
 import type { GraphEdge, KnowledgeGraph, WikiPage, WikiPageType } from "./types";
@@ -25,8 +26,8 @@ export async function loadGraph(wikiDir?: string): Promise<KnowledgeGraph> {
   try {
     const raw = await readFile(graphPath(wikiDir), "utf-8");
     return JSON.parse(raw) as KnowledgeGraph;
-  } catch (err: any) {
-    if (err?.code === "ENOENT") {
+  } catch (err: unknown) {
+    if (isNotFound(err)) {
       return { nodes: {}, edges: [], updated: new Date().toISOString() };
     }
     throw err;
