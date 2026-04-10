@@ -1,210 +1,102 @@
 /**
- * Dynamic secret detection for MCP server configurations.
+ * Tiered secret detection for MCP server configurations.
  *
- * Secret detection patterns derived from gitleaks (https://github.com/gitleaks/gitleaks)
- * and extended with AI/LLM provider-specific patterns for MCP server configs.
+ * Tier 1 (built-in): Env var key name matching. If a server env key is named
+ * something like API_KEY, TOKEN, SECRET, PASSWORD, etc., the value is treated
+ * as a secret regardless of its format. This covers the vast majority of MCP
+ * server configs, where secrets are passed as named env vars.
  *
- * Detects potential secrets (API keys, tokens, passwords) in server configs
- * during import, and provides options to encrypt or substitute with ${VAR}.
+ * Tier 2 (betterleaks): For inline secrets in args, command strings, and
+ * values where the key name doesn't make it obvious — delegate to betterleaks.
+ * It has 200+ rules, BPE tokenization, and CEL validation.
+ *
+ * The philosophy: am-cli handles structural detection (key names are env vars,
+ * env vars have well-known naming conventions). betterleaks handles value-based
+ * detection (regex + entropy + tokenization on arbitrary strings).
  */
 
-/** Patterns for env var key names that likely contain secrets */
-const SECRET_KEY_PATTERNS = [
+// ── Tier 1: Env var key name patterns ────────────────────────────────────────
+// If a key matches ANY of these, we treat the value as a secret.
+
+const SECRET_KEY_PATTERNS: RegExp[] = [
+  // Generic secret indicators
   /api[_-]?key/i,
   /secret/i,
-  /token/i,
+  /\btoken\b/i,
   /password/i,
+  /passwd/i,
   /credential/i,
-  /auth/i,
   /private[_-]?key/i,
   /access[_-]?key/i,
-  // Cloud provider key name patterns
-  /aws_secret_access_key/i,
-  /service_account/i,
-  /azure/i,
-  // AI/LLM provider key name patterns
+  /\bauth\b/i,
+
+  // Cloud providers
+  /aws[_-]secret/i,
+  /aws[_-]access/i,
+
+  // AI/LLM providers (env var naming conventions)
+  /openai/i,
+  /anthropic/i,
   /mistral/i,
   /together/i,
   /fireworks/i,
   /cohere/i,
-  // Developer tool key name patterns
+  /groq/i,
+  /replicate/i,
+  /hugging/i,
+  /perplexity/i,
+  /google[_-]ai/i,
+  /gemini/i,
+  /deepseek/i,
+
+  // Developer tools
+  /github/i,
+  /gitlab/i,
   /vercel/i,
   /netlify/i,
   /supabase/i,
   /firebase/i,
-  // Communication/SaaS key name patterns
+  /heroku/i,
+  /railway/i,
+  /fly[_-]?io/i,
+
+  // Communication/SaaS
+  /slack/i,
   /discord/i,
   /twilio/i,
-  // Search/Data key name patterns
+  /sendgrid/i,
+
+  // Search/Data
+  /tavily/i,
   /algolia/i,
   /pinecone/i,
   /weaviate/i,
+
+  // Payment
+  /stripe/i,
+
+  // Databases
+  /database[_-]?url/i,
+  /\bdb[_-]pass/i,
+  /redis[_-]?url/i,
+  /mongo[_-]?uri/i,
 ];
 
-/** Patterns for actual secret values (API keys, tokens, etc.) */
-const SECRET_VALUE_PATTERNS: Array<{
-  name: string;
-  pattern: RegExp;
-  suggestedEnvVar: string;
-}> = [
-  // ── AI / LLM Provider Keys (highest priority for agent-manager) ────────────
-  {
-    name: "OpenAI API key (project/svc)",
-    pattern: /^sk-(?:proj|svcacct|admin)-[A-Za-z0-9_-]{20,}T3BlbkFJ[A-Za-z0-9_-]{20,}$/,
-    suggestedEnvVar: "OPENAI_API_KEY",
-  },
-  {
-    name: "OpenAI API key",
-    pattern: /^sk-[a-zA-Z0-9]{20,}$/,
-    suggestedEnvVar: "OPENAI_API_KEY",
-  },
-  {
-    name: "Anthropic API key (strict)",
-    pattern: /^sk-ant-api03-[a-zA-Z0-9_-]{93}AA$/,
-    suggestedEnvVar: "ANTHROPIC_API_KEY",
-  },
-  {
-    name: "Anthropic Admin key",
-    pattern: /^sk-ant-admin01-[a-zA-Z0-9_-]{93}AA$/,
-    suggestedEnvVar: "ANTHROPIC_ADMIN_KEY",
-  },
-  {
-    name: "Anthropic API key",
-    pattern: /^sk-ant-[a-zA-Z0-9_-]{20,}$/,
-    suggestedEnvVar: "ANTHROPIC_API_KEY",
-  },
-  {
-    name: "HuggingFace token",
-    pattern: /^hf_[a-zA-Z0-9]{20,}$/,
-    suggestedEnvVar: "HUGGINGFACE_TOKEN",
-  },
-  {
-    name: "HuggingFace org token",
-    pattern: /^api_org_[a-zA-Z0-9]{20,}$/,
-    suggestedEnvVar: "HUGGINGFACE_ORG_TOKEN",
-  },
-  {
-    name: "Google AI / GCP API key",
-    pattern: /^AIza[a-zA-Z0-9_-]{35}$/,
-    suggestedEnvVar: "GOOGLE_API_KEY",
-  },
-  {
-    name: "Replicate API token",
-    pattern: /^r8_[a-zA-Z0-9]{40}$/,
-    suggestedEnvVar: "REPLICATE_API_TOKEN",
-  },
-  {
-    name: "Groq API key",
-    pattern: /^gsk_[a-zA-Z0-9]{48,}$/,
-    suggestedEnvVar: "GROQ_API_KEY",
-  },
-  {
-    name: "Perplexity API key",
-    pattern: /^pplx-[a-zA-Z0-9]{48}$/,
-    suggestedEnvVar: "PERPLEXITY_API_KEY",
-  },
-  {
-    name: "Cohere API key",
-    pattern: /^[a-zA-Z0-9]{40}$/,
-    suggestedEnvVar: "COHERE_API_KEY",
-  },
-
-  // ── Cloud Provider Keys ────────────────────────────────────────────────────
-  {
-    name: "AWS access key",
-    pattern: /^(A3T[A-Z0-9]|AKIA|ASIA|ABIA|ACCA)[A-Z2-7]{16}$/,
-    suggestedEnvVar: "AWS_ACCESS_KEY_ID",
-  },
-
-  // ── Developer Tool Keys ────────────────────────────────────────────────────
-  {
-    name: "GitHub token",
-    pattern: /^gh[ps]_[a-zA-Z0-9]{36,}$/,
-    suggestedEnvVar: "GITHUB_TOKEN",
-  },
-  {
-    name: "GitHub fine-grained token",
-    pattern: /^github_pat_[a-zA-Z0-9_]{20,}$/,
-    suggestedEnvVar: "GITHUB_TOKEN",
-  },
-  {
-    name: "GitLab PAT",
-    pattern: /^glpat-[a-zA-Z0-9_-]{20,}$/,
-    suggestedEnvVar: "GITLAB_TOKEN",
-  },
-
-  // ── Search / Data ──────────────────────────────────────────────────────────
-  {
-    name: "Tavily API key",
-    pattern: /^tvly-[a-zA-Z0-9]{20,}$/,
-    suggestedEnvVar: "TAVILY_API_KEY",
-  },
-
-  // ── Communication / SaaS ───────────────────────────────────────────────────
-  {
-    name: "Slack Bot token",
-    pattern: /^xoxb-[0-9]{10,13}-[0-9]{10,13}[a-zA-Z0-9-]*$/,
-    suggestedEnvVar: "SLACK_BOT_TOKEN",
-  },
-  {
-    name: "Slack App token",
-    pattern: /^xapp-\d-[A-Z0-9]+-\d+-[a-z0-9]+$/,
-    suggestedEnvVar: "SLACK_APP_TOKEN",
-  },
-  {
-    name: "Slack token",
-    pattern: /^xox[pras]-[a-zA-Z0-9-]+$/,
-    suggestedEnvVar: "SLACK_TOKEN",
-  },
-  {
-    name: "SendGrid key",
-    pattern: /^SG\.[a-zA-Z0-9_-]{22}\.[a-zA-Z0-9_-]{43}$/,
-    suggestedEnvVar: "SENDGRID_API_KEY",
-  },
-  {
-    name: "Twilio API key",
-    pattern: /^SK[0-9a-fA-F]{32}$/,
-    suggestedEnvVar: "TWILIO_API_KEY",
-  },
-
-  // ── Payment ────────────────────────────────────────────────────────────────
-  {
-    name: "Stripe key",
-    pattern: /^[sr]k_(test|live|prod)_[a-zA-Z0-9]{10,99}$/,
-    suggestedEnvVar: "STRIPE_API_KEY",
-  },
-
-  // ── Generic Patterns (lower confidence) ────────────────────────────────────
-  {
-    name: "JWT token",
-    pattern: /^eyJ[a-zA-Z0-9_-]{10,}\.[a-zA-Z0-9_-]{10,}\.[a-zA-Z0-9_-]{10,}$/,
-    suggestedEnvVar: "",
-  },
-  {
-    name: "Private key",
-    pattern: /^-----BEGIN (?:RSA |EC |DSA )?PRIVATE KEY-----/,
-    suggestedEnvVar: "",
-  },
-  {
-    name: "Database connection URL",
-    pattern: /^(?:postgres|mysql|mongodb):\/\/[^:]+:[^@]+@/,
-    suggestedEnvVar: "DATABASE_URL",
-  },
-  {
-    name: "Generic long secret",
-    pattern: /^[a-zA-Z0-9_-]{40,}$/,
-    suggestedEnvVar: "",
-  }, // Only flagged if key name also matches
-];
+// ── Types ────────────────────────────────────────────────────────────────────
 
 export interface DetectedSecret {
+  /** Where the secret was found */
   location: "env" | "args" | "command";
-  key?: string; // env var name (if in env)
-  value: string; // the actual secret value
-  index?: number; // arg index (if in args)
-  patternName: string; // what type of secret was detected
-  suggestedEnvVar: string; // suggested ${VAR} replacement
-  confidence: "high" | "medium" | "low";
+  /** Env var name (if location is env) */
+  key?: string;
+  /** The actual secret value */
+  value: string;
+  /** Arg index (if location is args) */
+  index?: number;
+  /** How it was detected */
+  source: "key-name" | "betterleaks";
+  /** Suggested ${VAR} replacement name */
+  suggestedEnvVar: string;
 }
 
 export interface SecretScanResult {
@@ -212,124 +104,42 @@ export interface SecretScanResult {
   secrets: DetectedSecret[];
 }
 
+// ── Tier 1: Key-name-based detection ─────────────────────────────────────────
+
 /**
- * Scan a server config for potential secrets.
- * Checks env values, args array entries, and command string.
+ * Check if an env var key name indicates the value is a secret.
  */
-export function scanServerForSecrets(
+export function isSecretKeyName(key: string): boolean {
+  return SECRET_KEY_PATTERNS.some((p) => p.test(key));
+}
+
+/**
+ * Tier 1 scan: detect secrets by env var key name.
+ * If a key name matches our patterns, the value is a secret. Period.
+ * This handles the structural case — MCP servers use named env vars.
+ */
+export function scanServerEnvVars(
   name: string,
   server: { command: string; args?: string[]; env?: Record<string, string> },
 ): SecretScanResult {
   const secrets: DetectedSecret[] = [];
 
-  // 1. Check env values
-  if (server.env) {
-    for (const [key, value] of Object.entries(server.env)) {
-      // Skip already-templated values
-      if (value.includes("${") || value.startsWith("enc:v1:")) continue;
+  if (!server.env) return { serverName: name, secrets };
 
-      // Check if key name suggests a secret
-      const keyIsSecret = SECRET_KEY_PATTERNS.some((p) => p.test(key));
+  for (const [key, value] of Object.entries(server.env)) {
+    // Skip already-templated or encrypted values
+    if (value.includes("${") || value.startsWith("enc:v1:")) continue;
+    // Skip empty/trivial values
+    if (value.length === 0 || value === "true" || value === "false") continue;
 
-      // Check if value matches a known secret pattern
-      let matched = false;
-      for (const sp of SECRET_VALUE_PATTERNS) {
-        if (sp.pattern.test(value)) {
-          secrets.push({
-            location: "env",
-            key,
-            value,
-            patternName: sp.name,
-            suggestedEnvVar: sp.suggestedEnvVar || key,
-            confidence:
-              sp.name === "Generic long secret" || sp.name === "Cohere API key"
-                ? keyIsSecret
-                  ? "medium"
-                  : "low"
-                : sp.name === "JWT token" || sp.name === "Database connection URL"
-                  ? "medium"
-                  : "high",
-          });
-          matched = true;
-          break;
-        }
-      }
-
-      // If key name matches secret patterns but value didn't match known patterns,
-      // flag as medium confidence if the value is long enough to be a token
-      if (keyIsSecret && !matched && value.length > 15) {
-        secrets.push({
-          location: "env",
-          key,
-          value,
-          patternName: "Secret env var name",
-          suggestedEnvVar: key,
-          confidence: "medium",
-        });
-      }
-    }
-  }
-
-  // 2. Check args for inline secrets
-  if (server.args) {
-    for (let i = 0; i < server.args.length; i++) {
-      const arg = server.args[i];
-      if (arg.includes("${") || arg.startsWith("enc:v1:")) continue;
-
-      for (const sp of SECRET_VALUE_PATTERNS) {
-        if (sp.name === "Generic long secret") continue; // too noisy for args
-        if (sp.pattern.test(arg)) {
-          secrets.push({
-            location: "args",
-            value: arg,
-            index: i,
-            patternName: sp.name,
-            suggestedEnvVar: sp.suggestedEnvVar,
-            confidence: "high",
-          });
-          break;
-        }
-      }
-
-      // Check for --key=value or --key value patterns
-      const kvMatch = arg.match(/^--(api[_-]?key|token|secret|password|auth)=(.+)$/i);
-      if (kvMatch) {
-        secrets.push({
-          location: "args",
-          key: kvMatch[1],
-          value: kvMatch[2],
-          index: i,
-          patternName: "Inline CLI secret",
-          suggestedEnvVar: kvMatch[1].toUpperCase().replace(/-/g, "_"),
-          confidence: "medium",
-        });
-      }
-    }
-  }
-
-  // 3. Check command for inline env assignments: KEY=value command
-  if (server.command) {
-    const inlineEnvMatch = server.command.match(/^([A-Z_]+=\S+\s+)+/);
-    if (inlineEnvMatch) {
-      const assignments = inlineEnvMatch[0].trim().split(/\s+/);
-      for (const assignment of assignments) {
-        const [key, ...valueParts] = assignment.split("=");
-        const value = valueParts.join("=");
-        if (!key || !value) continue;
-        if (value.includes("${")) continue;
-
-        const keyIsSecret = SECRET_KEY_PATTERNS.some((p) => p.test(key));
-        if (keyIsSecret) {
-          secrets.push({
-            location: "command",
-            key,
-            value,
-            patternName: "Inline env in command",
-            suggestedEnvVar: key,
-            confidence: "medium",
-          });
-        }
-      }
+    if (isSecretKeyName(key)) {
+      secrets.push({
+        location: "env",
+        key,
+        value,
+        source: "key-name",
+        suggestedEnvVar: key, // Use the original key name — it's already a good env var name
+      });
     }
   }
 
@@ -337,14 +147,14 @@ export function scanServerForSecrets(
 }
 
 /**
- * Scan all servers in a config for potential secrets.
+ * Tier 1 scan across all servers.
  */
-export function scanConfigForSecrets(
+export function scanConfigEnvVars(
   servers: Record<string, { command: string; args?: string[]; env?: Record<string, string> }>,
 ): SecretScanResult[] {
   const results: SecretScanResult[] = [];
   for (const [name, server] of Object.entries(servers)) {
-    const result = scanServerForSecrets(name, server);
+    const result = scanServerEnvVars(name, server);
     if (result.secrets.length > 0) {
       results.push(result);
     }
@@ -352,8 +162,106 @@ export function scanConfigForSecrets(
   return results;
 }
 
+// ── Tier 2: BetterLeaks integration ──────────────────────────────────────────
+
 /**
- * Apply substitution: replace a detected secret's value with a ${VAR} reference.
+ * Tier 2 scan: shell out to betterleaks for inline secret detection
+ * in args, command strings, and env values that Tier 1 didn't catch.
+ *
+ * Returns null if betterleaks is not available.
+ */
+export async function scanServerWithBetterleaks(
+  name: string,
+  server: { command: string; args?: string[]; env?: Record<string, string> },
+): Promise<SecretScanResult | null> {
+  const { scanWithBetterleaks } = await import("./betterleaks");
+
+  // Build a text representation of the server config for betterleaks to scan
+  const lines: string[] = [];
+  lines.push(`command = "${server.command}"`);
+  if (server.args) {
+    for (const arg of server.args) {
+      lines.push(`arg = "${arg}"`);
+    }
+  }
+  if (server.env) {
+    for (const [key, value] of Object.entries(server.env)) {
+      // Skip values already handled by Tier 1
+      if (value.includes("${") || value.startsWith("enc:v1:")) continue;
+      if (isSecretKeyName(key)) continue; // Tier 1 already caught this
+      lines.push(`${key} = "${value}"`);
+    }
+  }
+
+  const content = lines.join("\n");
+  const findings = scanWithBetterleaks(content);
+  if (findings === null) return null; // betterleaks not available
+
+  const secrets: DetectedSecret[] = findings.map((f) => ({
+    location: "args" as const, // betterleaks findings from the text representation
+    value: f.Secret,
+    source: "betterleaks" as const,
+    suggestedEnvVar: f.RuleID.toUpperCase().replace(/-/g, "_"),
+  }));
+
+  return { serverName: name, secrets };
+}
+
+// ── Combined scan (Tier 1 + optional Tier 2) ─────────────────────────────────
+
+/**
+ * Full scan: Tier 1 (key names) always, Tier 2 (betterleaks) when available.
+ */
+export async function scanServerForSecrets(
+  name: string,
+  server: { command: string; args?: string[]; env?: Record<string, string> },
+): Promise<SecretScanResult> {
+  // Tier 1: always runs, zero dependencies
+  const tier1 = scanServerEnvVars(name, server);
+
+  // Tier 2: only if betterleaks is installed
+  let tier2: SecretScanResult | null = null;
+  try {
+    tier2 = await scanServerWithBetterleaks(name, server);
+  } catch {
+    // betterleaks not available, that's fine
+  }
+
+  // Merge: Tier 1 results + any Tier 2 findings not already covered
+  const allSecrets = [...tier1.secrets];
+  if (tier2) {
+    for (const secret of tier2.secrets) {
+      // Skip if Tier 1 already found this value
+      const alreadyCovered = tier1.secrets.some((s) => s.value === secret.value);
+      if (!alreadyCovered) {
+        allSecrets.push(secret);
+      }
+    }
+  }
+
+  return { serverName: name, secrets: allSecrets };
+}
+
+/**
+ * Full scan across all servers.
+ */
+export async function scanConfigForSecrets(
+  servers: Record<string, { command: string; args?: string[]; env?: Record<string, string> }>,
+): Promise<SecretScanResult[]> {
+  const results: SecretScanResult[] = [];
+  for (const [name, server] of Object.entries(servers)) {
+    const result = await scanServerForSecrets(name, server);
+    if (result.secrets.length > 0) {
+      results.push(result);
+    }
+  }
+  return results;
+}
+
+// ── Substitution + Display Utilities ─────────────────────────────────────────
+
+/**
+ * Replace a detected secret's value with a ${VAR} reference.
  */
 export function substituteSecret(
   server: { command: string; args?: string[]; env?: Record<string, string> },
@@ -410,16 +318,17 @@ export function formatScanReport(results: SecretScanResult[]): string {
         secret.location === "env"
           ? `env.${secret.key}`
           : secret.location === "args"
-            ? `args[${secret.index}]`
+            ? `args[${secret.index ?? "?"}]`
             : "command";
+      const tier = secret.source === "key-name" ? "key-name" : "betterleaks";
       lines.push(
-        `  ${result.serverName.padEnd(20)} ${loc.padEnd(20)} ${redactSecret(secret.value).padEnd(20)} ${secret.confidence.padEnd(8)} ${secret.patternName}`,
+        `  ${result.serverName.padEnd(20)} ${loc.padEnd(25)} ${redactSecret(secret.value).padEnd(20)} ${tier}`,
       );
     }
   }
 
-  const header = `${"Server".padEnd(20)} ${"Location".padEnd(20)} ${"Value".padEnd(20)} ${"Conf.".padEnd(8)} Type`;
-  const separator = "─".repeat(90);
+  const header = `${"Server".padEnd(20)} ${"Location".padEnd(25)} ${"Value".padEnd(20)} Source`;
+  const separator = "─".repeat(80);
 
-  return [`${total} potential secret(s) found:\n`, header, separator, ...lines].join("\n");
+  return [`${total} secret(s) found:\n`, header, separator, ...lines].join("\n");
 }

@@ -70,9 +70,9 @@ export const addCommand = defineCommand({
     config.servers[name] = server;
 
     // Scan for secrets and auto-encrypt before writing
-    const scanResult = scanServerForSecrets(name, server);
+    const scanResult = await scanServerForSecrets(name, server);
     let secretsEncrypted = 0;
-    const actionableSecrets = scanResult.secrets.filter((s) => s.confidence !== "low");
+    const actionableSecrets = scanResult.secrets;
 
     if (actionableSecrets.length > 0) {
       // Ensure encryption key exists — auto-generate if missing

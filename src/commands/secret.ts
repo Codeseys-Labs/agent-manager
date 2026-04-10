@@ -287,40 +287,27 @@ const scanCommand = defineCommand({
       return;
     }
 
-    // Try betterleaks first for higher-quality scanning
-    const { isBetterleaksAvailable, scanFileWithBetterleaks, getBetterleaksVersion } = await import(
-      "../core/betterleaks"
-    );
-
+    // Tiered scan: Tier 1 (key names) always, Tier 2 (betterleaks) when available
+    const { isBetterleaksAvailable, getBetterleaksVersion } = await import("../core/betterleaks");
     const useBetterleaks = isBetterleaksAvailable();
     if (useBetterleaks && !args.json) {
       info(
-        `Using betterleaks (${getBetterleaksVersion() ?? "installed"}) for enhanced scanning`,
+        `Using betterleaks (${getBetterleaksVersion() ?? "installed"}) for Tier 2 inline scanning`,
         opts,
       );
     }
 
-    // If betterleaks is available, scan the config file directly
-    let betterleaksFindings: import("../core/betterleaks").BetterleaksFinding[] | null = null;
-    if (useBetterleaks) {
-      betterleaksFindings = scanFileWithBetterleaks(configPath);
-    }
+    const scanResults = await scanConfigForSecrets(config.servers);
 
-    const scanResults = scanConfigForSecrets(config.servers);
-
-    // Merge betterleaks findings with regex results for display
-    const hasBetterleaksExtras = betterleaksFindings !== null && betterleaksFindings.length > 0;
-
-    if (scanResults.length === 0 && !hasBetterleaksExtras) {
+    if (scanResults.length === 0) {
       if (args.json) {
-        output({ action: "scan", secrets: [], betterleaks: betterleaksFindings ?? [] }, opts);
+        output({ action: "scan", secrets: [] }, opts);
       } else {
-        info("No potential secrets detected.", opts);
+        info("No secrets detected.", opts);
       }
-
       if (!useBetterleaks) {
         info("", opts);
-        info("Tip: Install betterleaks for enhanced secret scanning with 200+ rules:", opts);
+        info("Tip: Install betterleaks for Tier 2 inline secret scanning:", opts);
         info("  am secret install-scanner", opts);
       }
       return;
@@ -329,7 +316,6 @@ const scanCommand = defineCommand({
     const totalSecrets = scanResults.reduce((sum, r) => sum + r.secrets.length, 0);
 
     if (!args.fix) {
-      // Display-only mode
       if (args.json) {
         output(
           {
@@ -340,44 +326,34 @@ const scanCommand = defineCommand({
                 location: s.location,
                 key: s.key,
                 value: redactSecret(s.value),
-                confidence: s.confidence,
-                pattern: s.patternName,
+                source: s.source,
                 suggestedEnvVar: s.suggestedEnvVar,
               })),
             })),
-            betterleaks: betterleaksFindings ?? [],
           },
           opts,
         );
       } else {
-        if (totalSecrets > 0) {
-          info(formatScanReport(scanResults), opts);
-        }
-        if (hasBetterleaksExtras) {
-          info("", opts);
-          info(`betterleaks found ${betterleaksFindings!.length} additional finding(s):`, opts);
-          for (const f of betterleaksFindings!) {
-            info(`  [${f.RuleID}] ${f.Description} in ${f.File}:${f.Line}`, opts);
-          }
-        }
+        info(formatScanReport(scanResults), opts);
         info("", opts);
-        info("Run `am secret scan --fix` to auto-substitute and encrypt these secrets.", opts);
+        info("Run `am secret scan --fix` to auto-substitute and encrypt.", opts);
       }
-
       if (!useBetterleaks) {
         info("", opts);
-        info("Tip: Install betterleaks for enhanced secret scanning with 200+ rules:", opts);
+        info("Tip: Install betterleaks for Tier 2 inline secret scanning:", opts);
         info("  am secret install-scanner", opts);
       }
       return;
     }
 
     // Fix mode: substitute and encrypt
-    const key = await loadKey(configDir);
+    let key = await loadKey(configDir);
     if (!key) {
-      error("No encryption key found. Run `am secret generate-key` first.", opts);
-      process.exitCode = 1;
-      return;
+      // Auto-generate key
+      const base64Key = await generateKey();
+      await saveKey(configDir, base64Key);
+      key = await importKey(base64Key);
+      info("Generated encryption key (stored in .agent-manager/key.txt)", opts);
     }
 
     let substituted = 0;
@@ -388,8 +364,6 @@ const scanCommand = defineCommand({
       if (!server) continue;
 
       for (const secret of result.secrets) {
-        if (secret.confidence === "low") continue;
-
         const envVar = secret.suggestedEnvVar;
         substituteSecret(server, secret, envVar);
 

@@ -181,10 +181,8 @@ export const importCommand = defineCommand({
     let scanResults: SecretScanResult[] = [];
     let totalEncrypted = 0;
     if (config.servers && totalImported > 0) {
-      scanResults = scanConfigForSecrets(config.servers);
-      const actionableSecrets = scanResults.flatMap((r) =>
-        r.secrets.filter((s) => s.confidence !== "low"),
-      );
+      scanResults = await scanConfigForSecrets(config.servers);
+      const actionableSecrets = scanResults.flatMap((r) => r.secrets);
 
       if (actionableSecrets.length > 0 && !args["no-encrypt"]) {
         // Ensure encryption key exists — auto-generate if missing
@@ -204,7 +202,7 @@ export const importCommand = defineCommand({
           const server = config.servers[result.serverName];
           if (!server) continue;
           for (const secret of result.secrets) {
-            if (secret.confidence === "low") continue;
+            // All detected secrets are actionable in the tiered model
             substituteSecret(server, secret, secret.suggestedEnvVar);
 
             // Store the original value encrypted in settings.env
@@ -271,8 +269,7 @@ export const importCommand = defineCommand({
               location: s.location,
               key: s.key,
               value: redactSecret(s.value),
-              confidence: s.confidence,
-              pattern: s.patternName,
+              source: s.source,
             })),
           })),
         },

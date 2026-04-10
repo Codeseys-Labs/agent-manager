@@ -177,7 +177,7 @@ export const doctorCommand = defineCommand({
       const configPath = join(configDir, "config.toml");
       const configForScan = await tryReadConfig(configPath);
       if (configForScan?.servers) {
-        const scanResults = scanConfigForSecrets(configForScan.servers);
+        const scanResults = await scanConfigForSecrets(configForScan.servers);
         const totalSecrets = scanResults.reduce((sum, r) => sum + r.secrets.length, 0);
         if (totalSecrets > 0) {
           checks.push({
