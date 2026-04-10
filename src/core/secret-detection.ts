@@ -1,6 +1,9 @@
 /**
  * Dynamic secret detection for MCP server configurations.
  *
+ * Secret detection patterns derived from gitleaks (https://github.com/gitleaks/gitleaks)
+ * and extended with AI/LLM provider-specific patterns for MCP server configs.
+ *
  * Detects potential secrets (API keys, tokens, passwords) in server configs
  * during import, and provides options to encrypt or substitute with ${VAR}.
  */
@@ -15,6 +18,27 @@ const SECRET_KEY_PATTERNS = [
   /auth/i,
   /private[_-]?key/i,
   /access[_-]?key/i,
+  // Cloud provider key name patterns
+  /aws_secret_access_key/i,
+  /service_account/i,
+  /azure/i,
+  // AI/LLM provider key name patterns
+  /mistral/i,
+  /together/i,
+  /fireworks/i,
+  /cohere/i,
+  // Developer tool key name patterns
+  /vercel/i,
+  /netlify/i,
+  /supabase/i,
+  /firebase/i,
+  // Communication/SaaS key name patterns
+  /discord/i,
+  /twilio/i,
+  // Search/Data key name patterns
+  /algolia/i,
+  /pinecone/i,
+  /weaviate/i,
 ];
 
 /** Patterns for actual secret values (API keys, tokens, etc.) */
@@ -23,12 +47,76 @@ const SECRET_VALUE_PATTERNS: Array<{
   pattern: RegExp;
   suggestedEnvVar: string;
 }> = [
-  { name: "OpenAI API key", pattern: /^sk-[a-zA-Z0-9]{20,}$/, suggestedEnvVar: "OPENAI_API_KEY" },
+  // ── AI / LLM Provider Keys (highest priority for agent-manager) ────────────
+  {
+    name: "OpenAI API key (project/svc)",
+    pattern: /^sk-(?:proj|svcacct|admin)-[A-Za-z0-9_-]{20,}T3BlbkFJ[A-Za-z0-9_-]{20,}$/,
+    suggestedEnvVar: "OPENAI_API_KEY",
+  },
+  {
+    name: "OpenAI API key",
+    pattern: /^sk-[a-zA-Z0-9]{20,}$/,
+    suggestedEnvVar: "OPENAI_API_KEY",
+  },
+  {
+    name: "Anthropic API key (strict)",
+    pattern: /^sk-ant-api03-[a-zA-Z0-9_-]{93}AA$/,
+    suggestedEnvVar: "ANTHROPIC_API_KEY",
+  },
+  {
+    name: "Anthropic Admin key",
+    pattern: /^sk-ant-admin01-[a-zA-Z0-9_-]{93}AA$/,
+    suggestedEnvVar: "ANTHROPIC_ADMIN_KEY",
+  },
   {
     name: "Anthropic API key",
     pattern: /^sk-ant-[a-zA-Z0-9_-]{20,}$/,
     suggestedEnvVar: "ANTHROPIC_API_KEY",
   },
+  {
+    name: "HuggingFace token",
+    pattern: /^hf_[a-zA-Z0-9]{20,}$/,
+    suggestedEnvVar: "HUGGINGFACE_TOKEN",
+  },
+  {
+    name: "HuggingFace org token",
+    pattern: /^api_org_[a-zA-Z0-9]{20,}$/,
+    suggestedEnvVar: "HUGGINGFACE_ORG_TOKEN",
+  },
+  {
+    name: "Google AI / GCP API key",
+    pattern: /^AIza[a-zA-Z0-9_-]{35}$/,
+    suggestedEnvVar: "GOOGLE_API_KEY",
+  },
+  {
+    name: "Replicate API token",
+    pattern: /^r8_[a-zA-Z0-9]{40}$/,
+    suggestedEnvVar: "REPLICATE_API_TOKEN",
+  },
+  {
+    name: "Groq API key",
+    pattern: /^gsk_[a-zA-Z0-9]{48,}$/,
+    suggestedEnvVar: "GROQ_API_KEY",
+  },
+  {
+    name: "Perplexity API key",
+    pattern: /^pplx-[a-zA-Z0-9]{48}$/,
+    suggestedEnvVar: "PERPLEXITY_API_KEY",
+  },
+  {
+    name: "Cohere API key",
+    pattern: /^[a-zA-Z0-9]{40}$/,
+    suggestedEnvVar: "COHERE_API_KEY",
+  },
+
+  // ── Cloud Provider Keys ────────────────────────────────────────────────────
+  {
+    name: "AWS access key",
+    pattern: /^(A3T[A-Z0-9]|AKIA|ASIA|ABIA|ACCA)[A-Z2-7]{16}$/,
+    suggestedEnvVar: "AWS_ACCESS_KEY_ID",
+  },
+
+  // ── Developer Tool Keys ────────────────────────────────────────────────────
   {
     name: "GitHub token",
     pattern: /^gh[ps]_[a-zA-Z0-9]{36,}$/,
@@ -40,19 +128,33 @@ const SECRET_VALUE_PATTERNS: Array<{
     suggestedEnvVar: "GITHUB_TOKEN",
   },
   {
+    name: "GitLab PAT",
+    pattern: /^glpat-[a-zA-Z0-9_-]{20,}$/,
+    suggestedEnvVar: "GITLAB_TOKEN",
+  },
+
+  // ── Search / Data ──────────────────────────────────────────────────────────
+  {
     name: "Tavily API key",
     pattern: /^tvly-[a-zA-Z0-9]{20,}$/,
     suggestedEnvVar: "TAVILY_API_KEY",
   },
+
+  // ── Communication / SaaS ───────────────────────────────────────────────────
   {
-    name: "AWS access key",
-    pattern: /^AKIA[A-Z0-9]{16}$/,
-    suggestedEnvVar: "AWS_ACCESS_KEY_ID",
+    name: "Slack Bot token",
+    pattern: /^xoxb-[0-9]{10,13}-[0-9]{10,13}[a-zA-Z0-9-]*$/,
+    suggestedEnvVar: "SLACK_BOT_TOKEN",
   },
   {
-    name: "Stripe key",
-    pattern: /^[sr]k_(test|live)_[a-zA-Z0-9]{20,}$/,
-    suggestedEnvVar: "STRIPE_API_KEY",
+    name: "Slack App token",
+    pattern: /^xapp-\d-[A-Z0-9]+-\d+-[a-z0-9]+$/,
+    suggestedEnvVar: "SLACK_APP_TOKEN",
+  },
+  {
+    name: "Slack token",
+    pattern: /^xox[pras]-[a-zA-Z0-9-]+$/,
+    suggestedEnvVar: "SLACK_TOKEN",
   },
   {
     name: "SendGrid key",
@@ -60,14 +162,33 @@ const SECRET_VALUE_PATTERNS: Array<{
     suggestedEnvVar: "SENDGRID_API_KEY",
   },
   {
-    name: "Slack token",
-    pattern: /^xox[bpras]-[a-zA-Z0-9-]+$/,
-    suggestedEnvVar: "SLACK_TOKEN",
+    name: "Twilio API key",
+    pattern: /^SK[0-9a-fA-F]{32}$/,
+    suggestedEnvVar: "TWILIO_API_KEY",
+  },
+
+  // ── Payment ────────────────────────────────────────────────────────────────
+  {
+    name: "Stripe key",
+    pattern: /^[sr]k_(test|live|prod)_[a-zA-Z0-9]{10,99}$/,
+    suggestedEnvVar: "STRIPE_API_KEY",
+  },
+
+  // ── Generic Patterns (lower confidence) ────────────────────────────────────
+  {
+    name: "JWT token",
+    pattern: /^eyJ[a-zA-Z0-9_-]{10,}\.[a-zA-Z0-9_-]{10,}\.[a-zA-Z0-9_-]{10,}$/,
+    suggestedEnvVar: "",
   },
   {
-    name: "HuggingFace token",
-    pattern: /^hf_[a-zA-Z0-9]{20,}$/,
-    suggestedEnvVar: "HUGGINGFACE_TOKEN",
+    name: "Private key",
+    pattern: /^-----BEGIN (?:RSA |EC |DSA )?PRIVATE KEY-----/,
+    suggestedEnvVar: "",
+  },
+  {
+    name: "Database connection URL",
+    pattern: /^(?:postgres|mysql|mongodb):\/\/[^:]+:[^@]+@/,
+    suggestedEnvVar: "DATABASE_URL",
   },
   {
     name: "Generic long secret",
@@ -121,7 +242,13 @@ export function scanServerForSecrets(
             patternName: sp.name,
             suggestedEnvVar: sp.suggestedEnvVar || key,
             confidence:
-              sp.name === "Generic long secret" ? (keyIsSecret ? "medium" : "low") : "high",
+              sp.name === "Generic long secret" || sp.name === "Cohere API key"
+                ? keyIsSecret
+                  ? "medium"
+                  : "low"
+                : sp.name === "JWT token" || sp.name === "Database connection URL"
+                  ? "medium"
+                  : "high",
           });
           matched = true;
           break;
