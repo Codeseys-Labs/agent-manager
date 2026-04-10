@@ -3,7 +3,8 @@
 agent-manager (`am`) is chezmoi for AI agent configs. Define your MCP servers, skills,
 instructions, and agent profiles once in TOML, sync the config via git, and generate
 native config files for every AI coding tool. Single source of truth, bidirectional
-sync, profile-based subsets, drift detection.
+sync, profile-based subsets, drift detection, MCP registry integration, and cross-session
+knowledge synthesis.
 
 ## Architecture
 
@@ -12,7 +13,7 @@ five entity types:
 
 | Entity | Purpose | Config key |
 |--------|---------|------------|
-| **Servers** | MCP server definitions (command, args, env, transport) | `[servers.<name>]` |
+| **Servers** | MCP server definitions (command, args, env, transport). Supports `_registry` provenance for registry-installed packages. | `[servers.<name>]` |
 | **Instructions** | Markdown rules with activation scope (always/glob/agent-decision/manual) | `[instructions.<name>]` |
 | **Skills** | Reusable prompt/skill bundles with paths and descriptions | `[skills.<name>]` |
 | **Agent Profiles** | Named agent configurations (prompt, model, tools, MCP servers) | `[agents.<name>]` |
@@ -48,13 +49,14 @@ in TOML, decrypted at apply time.
 | Web | [Hono](https://hono.dev) (local + Cloudflare Workers) |
 | TUI | [Silvery](https://silvery.dev) + React |
 | Encryption | Web Crypto API (AES-256-GCM) |
+| Search | MiniSearch (BM25 for wiki full-text search) |
 
 ## Directory Structure
 
 ```
 src/
-  cli.ts                    # Entry point -- 21 subcommands via citty
-  commands/                 # One file per CLI command (includes session.ts)
+  cli.ts                    # Entry point -- 27 subcommands via citty
+  commands/                 # One file per CLI command (includes session.ts, wiki.ts, agents.ts)
   core/
     schema.ts               # Zod schemas (Server, Instruction, Skill, AgentProfile, Profile, Config)
     config.ts               # TOML read/write, 4-layer hierarchical merge, buildResolvedConfig
@@ -79,6 +81,25 @@ src/
     roo-code/               # Roo Code (VS Code extension, modes)
     amazon-q/               # Amazon Q
     continue/               # Continue.dev
+  registry/
+    types.ts                # MCP registry package types (RegistryPackage, provenance, filters)
+    client.ts               # HTTP client with LRU cache, retry, exponential backoff
+  protocols/
+    a2a/                    # Agent-to-Agent protocol (ADR-0017)
+      types.ts              # Agent Card, Task, Message types
+      client.ts             # A2A HTTP client for task delegation
+      server.ts             # A2A server endpoint handling
+      discovery.ts          # Agent roster management, URL-based discovery
+      generate-card.ts      # Generate Agent Card from am config
+    acp/                    # Agent Communication Protocol types (config-only)
+      types.ts              # ACP type definitions
+  wiki/                     # LLM Wiki / Knowledge Synthesis (ADR-0020)
+    types.ts                # Wiki entry, page, index types
+    storage.ts              # TOML-backed wiki storage with symlinks
+    harvester.ts            # Extract knowledge from sessions into wiki pages
+    synthesizer.ts          # Generate context blocks and agent briefings
+    ner.ts                  # Named entity recognition for auto-linking
+    graph.ts                # Knowledge graph export, orphan detection
   platforms/
     types.ts                # GitPlatformAdapter interface
     registry.ts             # Platform detection (GitHub > GitLab > bare)
@@ -92,8 +113,8 @@ src/
     worker.ts               # Cloudflare Workers (stateless, GitHub OAuth)
     public/                 # Static HTML
   lib/                      # Shared utilities (errors.ts, output.ts)
-test/                       # 106 files, 982 tests, 2604 assertions
-ADRs/                       # 19 architectural decision records
+test/                       # 110 files, 1033 tests, 2738 assertions
+ADRs/                       # 22 architectural decision records
 scripts/
   build.ts                  # Cross-platform build (5 targets)
   install.sh                # curl-based installer
@@ -124,6 +145,12 @@ scripts/
 | `am session list/export/search` | Cross-tool session harvest |
 | `am tui` | Interactive terminal dashboard (Silvery/React) |
 | `am serve` | Local web UI server (Hono) |
+| `am search <query>` | Search the MCP registry for packages (`--tag`, `--verified`) |
+| `am install <packages>` | Install MCP server packages from the registry (`--version`, `--dry-run`) |
+| `am uninstall <name>` | Remove an MCP server package from config (`--dry-run`) |
+| `am update` | Check for and apply MCP registry updates (`--dry-run`) |
+| `am wiki <subcommand>` | LLM Wiki: search, add, show, delete, ingest, synthesize, briefing, export, import, lint, graph |
+| `am agents <subcommand>` | A2A agent management: list, add, remove, ping, delegate |
 
 Global flags: `--profile <name>`, `--json`, `--verbose`, `--quiet`
 
@@ -133,8 +160,8 @@ Global flags: `--profile <name>`, `--json`, `--verbose`, `--quiet`
 the best format for developer configs.
 
 **Git-backed everything (ADR-0002):** The config directory is a git repo. `am add`,
-`am import`, `am remove` auto-commit. `am push`/`am pull` sync. `am undo` reverts.
-Ephemeral state (active profile) lives in gitignored `state.toml`.
+`am import`, `am install`, `am uninstall` auto-commit. `am push`/`am pull` sync.
+`am undo` reverts. Ephemeral state (active profile) lives in gitignored `state.toml`.
 
 **Two-phase validation (ADR-0007):** Core Zod schemas validate core fields strictly.
 Adapter sections use `z.record(z.string(), z.unknown())` passthrough -- preserved by
@@ -155,11 +182,59 @@ push/pull auth handling.
 **Stateless web UI (ADR-0015):** Cloudflare Workers with GitHub OAuth, encrypted
 cookies, no persistent storage. Config accessed via GitHub API.
 
+**MCP tool grouping (ADR-0021):** `settings.mcp_serve.tools` controls which MCP tools
+are exposed per profile. Enables fine-grained tool selection when running as an MCP
+server gateway -- profiles can restrict tools to a subset without modifying the
+underlying server definitions.
+
+**Wiki dual location (ADR-0022):** Wiki pages live in two locations: global
+(`~/.config/agent-manager/wiki/`) for cross-project knowledge, and project-level
+(`.agent-manager/wiki/`) for project-specific entries. Project wikis are symlinked
+into the global store for unified search. This avoids polluting repos while keeping
+project context accessible.
+
+**BM25 search for wiki (ADR-0020):** Full-text search over wiki entries uses MiniSearch
+with BM25 ranking. Sessions are harvested into structured wiki pages via NER-based
+entity extraction, enabling knowledge synthesis and agent briefings.
+
+## MCP Registry Integration
+
+The `registry/` module provides an HTTP client for the public MCP package registry.
+Features include LRU caching with TTL, exponential backoff on failure, and typed
+response parsing. Registry-installed servers carry `_registry` provenance metadata
+(package name, version, installed timestamp) so `am update` can detect newer versions.
+
+Workflow: `am search` → `am install` → `am update` → `am uninstall`.
+
+## A2A Protocol Integration
+
+The `protocols/a2a/` module implements Google's Agent-to-Agent (A2A) protocol
+(ADR-0017). Key components:
+
+- **Agent Card generation** from am config (name, description, skills, endpoint)
+- **Discovery** via `/.well-known/agent.json` URL convention
+- **Client** for sending tasks to remote agents and receiving responses
+- **Roster** management: persist discovered agents in config, ping for health checks
+
+Workflow: `am agents add <url>` → `am agents ping <name>` → `am agents delegate <name> <task>`.
+
+## Wiki / Knowledge Synthesis
+
+The `wiki/` module (ADR-0020) provides an LLM-optimized knowledge base:
+
+- **Harvester**: extracts structured knowledge from cross-tool session transcripts
+- **NER**: named entity recognition for auto-linking wiki entries
+- **Synthesizer**: generates context blocks and agent briefings from the knowledge graph
+- **Graph**: entity-relationship graph with orphan detection and JSON export
+- **Storage**: TOML-backed with dual location strategy (ADR-0022)
+
+Workflow: `am wiki ingest --session <id>` → `am wiki search <query>` → `am wiki synthesize <query>`.
+
 ## Development Workflow
 
 ```bash
 bun install              # Install dependencies
-bun test                 # Run all 982 tests
+bun test                 # Run all 1033 tests
 bun test --watch         # Watch mode
 bun run dev              # Run CLI in dev mode
 bun run build            # Single binary (macOS arm64)
@@ -188,11 +263,19 @@ Register the lazy factory in `src/adapters/registry.ts`. Add tests in `test/adap
 [settings]
 default_profile = "work"
 
+[settings.mcp_serve]
+tools = ["search", "status", "apply"]   # MCP tool grouping (ADR-0021)
+
 [servers.tavily]
 command = "bunx"
 args = ["tavily-mcp@latest"]
 tags = ["search", "web"]
 enabled = true
+
+[servers.tavily._registry]              # Registry provenance (auto-set by am install)
+package = "tavily-mcp"
+version = "1.2.0"
+installed_at = "2025-01-15T10:30:00Z"
 
 [instructions.typescript-rules]
 content = "Use strict TypeScript."
