@@ -32,6 +32,7 @@ export const secretCommand = defineCommand({
     get: () => Promise.resolve(getCommand),
     list: () => Promise.resolve(listCommand),
     scan: () => Promise.resolve(scanCommand),
+    "install-scanner": () => Promise.resolve(installScannerCommand),
     "generate-key": () => Promise.resolve(generateKeyCommand),
     "import-key": () => Promise.resolve(importKeyCommand),
   },
@@ -220,6 +221,41 @@ const listCommand = defineCommand({
   },
 });
 
+const installScannerCommand = defineCommand({
+  meta: { name: "install-scanner", description: "Install betterleaks secret scanner" },
+  args: {
+    json: { type: "boolean", default: false },
+    quiet: { type: "boolean", alias: "q", default: false },
+    verbose: { type: "boolean", alias: "v", default: false },
+  },
+  async run({ args }) {
+    const opts = { json: args.json, quiet: args.quiet, verbose: args.verbose };
+    const { isBetterleaksAvailable, getBetterleaksVersion, installBetterleaks } = await import(
+      "../core/betterleaks"
+    );
+
+    if (isBetterleaksAvailable()) {
+      const version = getBetterleaksVersion();
+      info(`betterleaks is already installed: ${version ?? "unknown version"}`, opts);
+      return;
+    }
+
+    info("Installing betterleaks secret scanner...", opts);
+    const result = await installBetterleaks();
+
+    if (result.success) {
+      info(`betterleaks installed at ${result.path}`, opts);
+      if (args.json) output({ action: "install", path: result.path, success: true }, opts);
+    } else {
+      error(`Failed to install betterleaks: ${result.error}`, opts);
+      info("You can install manually:", opts);
+      info("  brew install betterleaks", opts);
+      info("  # or download from https://github.com/betterleaks/betterleaks/releases", opts);
+      process.exitCode = 1;
+    }
+  },
+});
+
 const scanCommand = defineCommand({
   meta: { name: "scan", description: "Scan server configs for potential unencrypted secrets" },
   args: {
@@ -251,13 +287,41 @@ const scanCommand = defineCommand({
       return;
     }
 
+    // Try betterleaks first for higher-quality scanning
+    const { isBetterleaksAvailable, scanFileWithBetterleaks, getBetterleaksVersion } = await import(
+      "../core/betterleaks"
+    );
+
+    const useBetterleaks = isBetterleaksAvailable();
+    if (useBetterleaks && !args.json) {
+      info(
+        `Using betterleaks (${getBetterleaksVersion() ?? "installed"}) for enhanced scanning`,
+        opts,
+      );
+    }
+
+    // If betterleaks is available, scan the config file directly
+    let betterleaksFindings: import("../core/betterleaks").BetterleaksFinding[] | null = null;
+    if (useBetterleaks) {
+      betterleaksFindings = scanFileWithBetterleaks(configPath);
+    }
+
     const scanResults = scanConfigForSecrets(config.servers);
 
-    if (scanResults.length === 0) {
+    // Merge betterleaks findings with regex results for display
+    const hasBetterleaksExtras = betterleaksFindings !== null && betterleaksFindings.length > 0;
+
+    if (scanResults.length === 0 && !hasBetterleaksExtras) {
       if (args.json) {
-        output({ action: "scan", secrets: [] }, opts);
+        output({ action: "scan", secrets: [], betterleaks: betterleaksFindings ?? [] }, opts);
       } else {
         info("No potential secrets detected.", opts);
+      }
+
+      if (!useBetterleaks) {
+        info("", opts);
+        info("Tip: Install betterleaks for enhanced secret scanning with 200+ rules:", opts);
+        info("  am secret install-scanner", opts);
       }
       return;
     }
@@ -281,13 +345,29 @@ const scanCommand = defineCommand({
                 suggestedEnvVar: s.suggestedEnvVar,
               })),
             })),
+            betterleaks: betterleaksFindings ?? [],
           },
           opts,
         );
       } else {
-        info(formatScanReport(scanResults), opts);
+        if (totalSecrets > 0) {
+          info(formatScanReport(scanResults), opts);
+        }
+        if (hasBetterleaksExtras) {
+          info("", opts);
+          info(`betterleaks found ${betterleaksFindings!.length} additional finding(s):`, opts);
+          for (const f of betterleaksFindings!) {
+            info(`  [${f.RuleID}] ${f.Description} in ${f.File}:${f.Line}`, opts);
+          }
+        }
         info("", opts);
         info("Run `am secret scan --fix` to auto-substitute and encrypt these secrets.", opts);
+      }
+
+      if (!useBetterleaks) {
+        info("", opts);
+        info("Tip: Install betterleaks for enhanced secret scanning with 200+ rules:", opts);
+        info("  am secret install-scanner", opts);
       }
       return;
     }

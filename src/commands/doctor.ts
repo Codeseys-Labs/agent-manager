@@ -197,6 +197,24 @@ export const doctorCommand = defineCommand({
       // Config already checked above, skip silently
     }
 
+    // 10. Betterleaks scanner
+    const { isBetterleaksAvailable, getBetterleaksVersion } = await import("../core/betterleaks");
+    if (isBetterleaksAvailable()) {
+      const version = getBetterleaksVersion();
+      checks.push({
+        name: "Secret scanner",
+        status: "ok",
+        message: `betterleaks ${version ?? "installed"}`,
+      });
+    } else {
+      checks.push({
+        name: "Secret scanner",
+        status: "warn",
+        message:
+          "betterleaks not installed (run `am secret install-scanner` for enhanced scanning)",
+      });
+    }
+
     // Output
     const hasFailures = checks.some((c) => c.status === "fail");
     const hasWarnings = checks.some((c) => c.status === "warn");
