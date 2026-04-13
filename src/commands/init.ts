@@ -4,9 +4,10 @@ import * as clack from "@clack/prompts";
 import { defineCommand } from "citty";
 import { getDetectedAdapters } from "../adapters/registry";
 import { resolveConfigDir, tryReadConfig, writeConfig } from "../core/config";
-import { initRepo } from "../core/git";
+import { addRemote, initRepo } from "../core/git";
 import type { Config } from "../core/schema";
 import { generateKey, saveKey } from "../core/secrets";
+import { errorMessage } from "../lib/errors";
 import { error, info, output } from "../lib/output";
 import { initProject } from "./init-project";
 
@@ -93,6 +94,33 @@ export const initCommand = defineCommand({
       }
     }
 
+    // Offer remote setup (interactive only)
+    let remoteConfigured: string | null = null;
+    if (!args.json && !args.quiet && process.stdin.isTTY) {
+      const remoteUrl = await clack.text({
+        message: "Git remote URL for sync (leave empty to skip):",
+        placeholder: "https://github.com/user/agent-manager-config.git",
+      });
+
+      if (
+        remoteUrl &&
+        !clack.isCancel(remoteUrl) &&
+        typeof remoteUrl === "string" &&
+        remoteUrl.trim()
+      ) {
+        try {
+          await addRemote(configDir, remoteUrl.trim());
+          remoteConfigured = remoteUrl.trim();
+          info(`Remote "origin" set to ${remoteUrl.trim()}`, opts);
+        } catch (err) {
+          info(
+            `Could not set remote: ${errorMessage(err)}. Set it later with: git -C ${configDir} remote add origin <url>`,
+            opts,
+          );
+        }
+      }
+    }
+
     info(`Initialized agent-manager at ${configDir}`, opts);
     if (detectedNames.length > 0) {
       info(`Detected tools: ${detectedNames.join(", ")}`, opts);
@@ -107,6 +135,7 @@ export const initCommand = defineCommand({
           configPath,
           detectedTools: detectedNames,
           keyGenerated,
+          remoteConfigured,
         },
         opts,
       );

@@ -187,4 +187,101 @@ describe("Web API", () => {
     expect(res.status).toBe(200);
     expect(res.headers.get("content-type")).toBe("text/event-stream");
   });
+
+  it("POST /api/servers creates a server and returns 201", async () => {
+    const res = await request(app, "/api/servers", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name: "test-new",
+        command: "npx",
+        args: ["test-server"],
+        tags: ["test"],
+        description: "Test server",
+      }),
+    });
+    expect(res.status).toBe(201);
+    const data = await res.json();
+    expect(data.action).toBe("add");
+    expect(data.server).toBe("test-new");
+
+    // Verify it shows up in server list
+    const listRes = await request(app, "/api/servers");
+    const listData = await listRes.json();
+    const created = listData.servers.find((s: { name: string }) => s.name === "test-new");
+    expect(created).toBeDefined();
+    expect(created.command).toBe("npx");
+  });
+
+  it("POST /api/servers returns 409 for duplicate", async () => {
+    const res = await request(app, "/api/servers", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name: "fetch",
+        command: "uvx",
+        args: ["mcp-server-fetch"],
+      }),
+    });
+    expect(res.status).toBe(409);
+    const data = await res.json();
+    expect(data.error).toContain("already exists");
+  });
+
+  it("PUT /api/servers/:name updates server fields", async () => {
+    const res = await request(app, "/api/servers/fetch", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        description: "Updated fetch server",
+        tags: ["web", "http"],
+      }),
+    });
+    expect(res.status).toBe(200);
+    const data = await res.json();
+    expect(data.action).toBe("update");
+    expect(data.server).toBe("fetch");
+
+    // Verify update
+    const listRes = await request(app, "/api/servers");
+    const listData = await listRes.json();
+    const updated = listData.servers.find((s: { name: string }) => s.name === "fetch");
+    expect(updated.description).toBe("Updated fetch server");
+  });
+
+  it("DELETE /api/servers/:name removes server", async () => {
+    // First create a server to delete
+    await request(app, "/api/servers", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name: "to-delete",
+        command: "echo",
+        args: ["delete-me"],
+      }),
+    });
+
+    const res = await request(app, "/api/servers/to-delete", {
+      method: "DELETE",
+    });
+    expect(res.status).toBe(200);
+    const data = await res.json();
+    expect(data.action).toBe("delete");
+    expect(data.server).toBe("to-delete");
+
+    // Verify it's gone
+    const listRes = await request(app, "/api/servers");
+    const listData = await listRes.json();
+    const deleted = listData.servers.find((s: { name: string }) => s.name === "to-delete");
+    expect(deleted).toBeUndefined();
+  });
+
+  it("DELETE /api/servers/:name returns 404 for missing", async () => {
+    const res = await request(app, "/api/servers/nonexistent", {
+      method: "DELETE",
+    });
+    expect(res.status).toBe(404);
+    const data = await res.json();
+    expect(data.error).toContain("not found");
+  });
 });

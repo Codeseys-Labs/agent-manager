@@ -7,11 +7,13 @@ import { readActiveProfile, writeActiveProfile } from "../commands/use";
 import {
   buildResolvedConfig,
   loadResolvedConfig,
+  readConfig,
   resolveConfigDir,
   resolveProjectConfig,
+  writeConfig,
 } from "../core/config";
-import { getStatus, pull as gitPull, push as gitPush } from "../core/git";
-import { interpolateEnvAsync, loadKey } from "../core/secrets";
+import { commitAll, getStatus, pull as gitPull, push as gitPush } from "../core/git";
+import { encryptValue, generateKey, importKey, loadKey, saveKey } from "../core/secrets";
 import { errorMessage } from "../lib/errors";
 
 // ── Token-based authentication for local web server ─────────────
@@ -107,6 +109,14 @@ export function createApp() {
     return { configDir, config, profileName };
   }
 
+  /** Read the raw (non-merged) global config for mutation endpoints. */
+  async function getConfigAndWritePath() {
+    const dir = resolveConfigDir();
+    const configPath = join(dir, "config.toml");
+    const config = await readConfig(configPath);
+    return { config, configPath, configDir: dir };
+  }
+
   // --- API Routes ---
 
   app.get("/api/health", (c) => {
@@ -137,6 +147,167 @@ export function createApp() {
       return c.json({ servers });
     } catch {
       return c.json({ error: "Config not found" }, 500);
+    }
+  });
+
+  app.post("/api/servers", async (c) => {
+    try {
+      const body = await c.req.json();
+      const { name, command, args, env, tags, description, transport } = body;
+      if (!name || !command) {
+        return c.json({ error: "name and command are required" }, 400);
+      }
+
+      const { config, configPath, configDir: dir } = await getConfigAndWritePath();
+      if (!config.servers) config.servers = {};
+      if (config.servers[name]) {
+        return c.json({ error: `Server "${name}" already exists` }, 409);
+      }
+
+      config.servers[name] = {
+        command,
+        args: args ?? [],
+        env: env ?? {},
+        tags: tags ?? [],
+        description: description ?? "",
+        transport: transport ?? "stdio",
+        enabled: true,
+      };
+
+      // Secret detection + encryption
+      const { scanServerForSecrets, substituteSecret } = await import("../core/secret-detection");
+      const scanResult = await scanServerForSecrets(name, config.servers[name]);
+      if (scanResult.secrets.length > 0) {
+        let key = await loadKey(dir);
+        if (!key) {
+          const b64 = await generateKey();
+          await saveKey(dir, b64);
+          key = await importKey(b64);
+        }
+        for (const secret of scanResult.secrets) {
+          substituteSecret(config.servers[name], secret, secret.suggestedEnvVar);
+          if (!config.settings) config.settings = {};
+          if (!config.settings.env) config.settings.env = {};
+          config.settings.env[secret.suggestedEnvVar] = await encryptValue(secret.value, key);
+        }
+      }
+
+      await writeConfig(configPath, config);
+      try {
+        await commitAll(dir, `add server: ${name}`);
+      } catch {}
+
+      return c.json({ action: "add", server: name }, 201);
+    } catch (err) {
+      return c.json({ error: errorMessage(err) }, 500);
+    }
+  });
+
+  app.put("/api/servers/:name", async (c) => {
+    try {
+      const serverName = c.req.param("name");
+      const body = await c.req.json();
+
+      const { config, configPath, configDir: dir } = await getConfigAndWritePath();
+      if (!config.servers?.[serverName]) {
+        return c.json({ error: `Server "${serverName}" not found` }, 404);
+      }
+
+      const existing = config.servers[serverName];
+      if (body.command !== undefined) existing.command = body.command;
+      if (body.args !== undefined) existing.args = body.args;
+      if (body.env !== undefined) existing.env = body.env;
+      if (body.tags !== undefined) existing.tags = body.tags;
+      if (body.description !== undefined) existing.description = body.description;
+      if (body.transport !== undefined) existing.transport = body.transport;
+      if (body.enabled !== undefined) existing.enabled = body.enabled;
+
+      await writeConfig(configPath, config);
+      try {
+        await commitAll(dir, `update server: ${serverName}`);
+      } catch {}
+
+      return c.json({ action: "update", server: serverName });
+    } catch (err) {
+      return c.json({ error: errorMessage(err) }, 500);
+    }
+  });
+
+  app.delete("/api/servers/:name", async (c) => {
+    try {
+      const serverName = c.req.param("name");
+
+      const { config, configPath, configDir: dir } = await getConfigAndWritePath();
+      if (!config.servers?.[serverName]) {
+        return c.json({ error: `Server "${serverName}" not found` }, 404);
+      }
+
+      delete config.servers[serverName];
+
+      await writeConfig(configPath, config);
+      try {
+        await commitAll(dir, `remove server: ${serverName}`);
+      } catch {}
+
+      return c.json({ action: "delete", server: serverName });
+    } catch (err) {
+      return c.json({ error: errorMessage(err) }, 500);
+    }
+  });
+
+  app.post("/api/import/:adapter", async (c) => {
+    try {
+      const adapterName = c.req.param("adapter");
+      const adapter = await getAdapter(adapterName);
+      if (!adapter) {
+        return c.json({ error: `Adapter "${adapterName}" not found` }, 404);
+      }
+
+      const imported = adapter.import();
+      const { config, configPath, configDir: dir } = await getConfigAndWritePath();
+
+      // Merge imported servers into config
+      if (imported.servers) {
+        if (!config.servers) config.servers = {};
+        for (const [name, srv] of Object.entries(imported.servers)) {
+          config.servers[name] = srv;
+        }
+      }
+
+      // Secret detection + encryption on imported servers
+      if (imported.servers) {
+        const { scanServerForSecrets, substituteSecret } = await import("../core/secret-detection");
+        for (const [name, srv] of Object.entries(imported.servers)) {
+          const scanResult = await scanServerForSecrets(name, srv);
+          if (scanResult.secrets.length > 0) {
+            let key = await loadKey(dir);
+            if (!key) {
+              const b64 = await generateKey();
+              await saveKey(dir, b64);
+              key = await importKey(b64);
+            }
+            for (const secret of scanResult.secrets) {
+              substituteSecret(config.servers![name], secret, secret.suggestedEnvVar);
+              if (!config.settings) config.settings = {};
+              if (!config.settings.env) config.settings.env = {};
+              config.settings.env[secret.suggestedEnvVar] = await encryptValue(secret.value, key);
+            }
+          }
+        }
+      }
+
+      await writeConfig(configPath, config);
+      try {
+        await commitAll(dir, `import from ${adapterName}`);
+      } catch {}
+
+      return c.json({
+        action: "import",
+        adapter: adapterName,
+        servers: Object.keys(imported.servers ?? {}),
+      });
+    } catch (err) {
+      return c.json({ error: errorMessage(err) }, 500);
     }
   });
 
