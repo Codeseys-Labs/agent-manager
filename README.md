@@ -6,7 +6,7 @@ every AI coding tool. Single source of truth with MCP registry integration,
 knowledge synthesis, and agent-to-agent protocol support.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Tests: 1134 pass](https://img.shields.io/badge/tests-1134%20pass-green.svg)](#testing)
+[![Tests: 1373 pass](https://img.shields.io/badge/tests-1373%20pass-green.svg)](#testing)
 [![Adapters: 13](https://img.shields.io/badge/adapters-13-purple.svg)](#adapter-support-matrix)
 [![MCP Tools: 26](https://img.shields.io/badge/MCP%20tools-26-orange.svg)](#mcp-server-mode)
 [![Commands: 27](https://img.shields.io/badge/commands-27-blue.svg)](#cli-reference)
@@ -554,7 +554,7 @@ graph LR
     Core --> A2A["A2A Protocol<br/>(discovery / delegation)"]
 ```
 
-Design decisions documented in [22 ADRs](ADRs/README.md).
+Design decisions documented in [25 ADRs](ADRs/README.md).
 
 ---
 
@@ -562,7 +562,7 @@ Design decisions documented in [22 ADRs](ADRs/README.md).
 
 ```bash
 bun install                       # install dependencies
-bun test                          # run all 1134 tests
+bun test                          # run all 1373 tests
 bun test --watch                  # watch mode
 bun run dev -- <command> [args]   # run CLI from source
 bun run lint                      # Biome check
@@ -571,14 +571,48 @@ bun run build                     # macOS arm64 binary -> dist/am-darwin-arm64
 bun run build -- --all            # all 5 platform targets
 ```
 
+### CI/CD — Blacksmith Runners
+
+CI runs on [Blacksmith](https://blacksmith.sh) bare-metal runners for 2x faster builds
+and 4x faster cache downloads. Drop-in replacement for GitHub-hosted runners.
+
+| Runner | Platform | Used In |
+|--------|----------|---------|
+| `blacksmith-2vcpu-ubuntu-2404` | Linux x64 | CI test + lint + typecheck + build |
+| `blacksmith-6vcpu-macos-latest` | macOS arm64 | Build verify |
+| `blacksmith-2vcpu-windows-2025` | Windows x64 | Build verify (continue-on-error) |
+
+Bun is installed via `useblacksmith/setup-bun@v1` which uses Blacksmith's colocated
+cache for faster downloads.
+
+**CI pipeline** (`.github/workflows/ci.yml` — triggers on push to main + PRs):
+1. Type check — `tsc --noEmit` filtered to `src/` errors only
+2. Lint — `biome check`
+3. Test with coverage — `bun test --coverage` (1373 tests)
+4. Build smoke test — all 5 platform targets
+5. Cross-platform build verify — Ubuntu + macOS + Windows
+
+**Release pipeline** (`.github/workflows/release.yml` — triggers on `v*.*.*` tags):
+1. Build all 5 binaries on native runners (Linux on Ubuntu, macOS on macOS, Windows on Windows)
+2. Generate SHA-256 checksums
+3. Create GitHub Release with all artifacts
+4. Publish to npm
+
+**Workarounds documented in CI:**
+- Bun exits 1 when test code writes to stderr even with 0 failures — CI captures
+  output and checks for actual `N fail` lines where N > 0
+- Silvery ships `.ts` source in `node_modules` causing tsc errors — typecheck filters
+  to `src/` files only
+- Windows has 59 pre-existing path separator failures — marked `continue-on-error`
+
 ### Project Stats
 
 | Metric | Count |
 |--------|-------|
-| Source files | ~160 |
-| Test files | 117 |
-| Tests | 1,134 |
-| Assertions | 2,954 |
+| Source files | 161 |
+| Test files | 132 |
+| Tests | 1,373 |
+| Assertions | 3,988 |
 | IDE adapters | 13 |
 | Platform adapters | 3 |
 | CLI commands | 27 |

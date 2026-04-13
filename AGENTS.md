@@ -116,7 +116,7 @@ src/
     worker.ts               # Cloudflare Workers (stateless, multi-backend git auth — ADR-0025)
     public/                 # Static HTML
   lib/                      # Shared utilities (errors.ts, output.ts)
-test/                       # 132 files, 1335 tests, 3901 assertions
+test/                       # 132 files, 1373 tests, 3988 assertions
 ADRs/                       # 25 architectural decision records
 scripts/
   build.ts                  # Cross-platform build (5 targets)
@@ -255,7 +255,7 @@ Workflow: `am wiki ingest --session <id>` → `am wiki search <query>` → `am w
 
 ```bash
 bun install              # Install dependencies
-bun test                 # Run all 1335 tests
+bun test                 # Run all 1373 tests
 bun test --watch         # Watch mode
 bun run dev              # Run CLI in dev mode
 bun run build            # Single binary (macOS arm64)

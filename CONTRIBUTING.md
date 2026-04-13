@@ -122,7 +122,7 @@ Keep changes focused. One feature or fix per PR.
 ### 5. Validate
 
 ```bash
-bun test            # All 1134 tests pass
+bun test            # All 1373 tests pass
 bun run lint        # Biome linting + formatting
 bun run typecheck   # TypeScript type checking
 ```
