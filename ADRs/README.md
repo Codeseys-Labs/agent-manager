@@ -17,14 +17,19 @@ This folder contains the architectural decisions for agent-manager.
 | [0009](0009-mcp-server-mode.md) | agent-manager as an MCP Server | Accepted | 2026-04-07 |
 | [0010](0010-bunts-single-binary.md) | BunTS Single Binary Distribution | Accepted | 2026-04-07 |
 | [0011](0011-built-in-adapters.md) | Built-In Adapters with Subprocess Escape Hatch | Accepted | 2026-04-07 |
-| [0012](0012-application-level-encryption.md) | Application-Level Encryption (AES-256-GCM, platform-agnostic) | Accepted | 2026-04-07 |
+| [0012](0012-application-level-encryption.md) | Application-Level Encryption (AES-256-GCM) | Accepted | 2026-04-07 |
 | [0013](0013-git-platform-adapters.md) | Git Platform Adapters (GitHub, GitLab, bare) | Accepted | 2026-04-07 |
 | [0014](0014-workspace-profile-import.md) | Workspace-to-Profile Import | Accepted | 2026-04-07 |
 | [0015](0015-stateless-web-ui.md) | Stateless Web UI — Git-Backed, Independently Deployable | Accepted | 2026-04-08 |
-| [0016](0016-session-harvest.md) | Session Harvest — Cross-Tool Conversation Export and Analysis | Accepted | 2026-04-08 |
-| [0017](0017-agent-communication-protocol.md) | Multi-Protocol Agent Integration — MCP, A2A, and ACP | Proposed | 2026-04-08 |
+| [0016](0016-session-harvest.md) | Session Harvest — Cross-Tool Conversation Export | Accepted | 2026-04-08 |
+| [0017](0017-agent-communication-protocol.md) | Multi-Protocol Agent Integration — MCP, A2A, ACP | Accepted | 2026-04-08 |
 | [0018](0018-tui-framework-silvery.md) | Terminal UI Framework — Ink to Silvery Migration | Accepted | 2026-04-08 |
 | [0019](0019-security-hardening.md) | Security Hardening — Threat Model and Fixes | Accepted | 2026-04-08 |
+| [0020](0020-session-knowledge-synthesis.md) | Session Knowledge Synthesis — LLM Wiki | Accepted | 2026-04-08 |
+| [0021](0021-mcp-tool-grouping-and-gateway.md) | MCP Tool Grouping and Gateway Mode | Accepted | 2026-04-10 |
+| [0022](0022-wiki-location-strategy.md) | Wiki Location Strategy — Global Store with Project Symlinks | Accepted | 2026-04-10 |
+| [0023](0023-tiered-secret-detection.md) | Tiered Secret Detection with BetterLeaks Integration | Accepted | 2026-04-10 |
+| [0024](0024-mcp-registry-integration.md) | MCP Registry Integration | Accepted | 2026-04-10 |
 
 ## Template
 

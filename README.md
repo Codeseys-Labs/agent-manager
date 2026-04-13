@@ -6,7 +6,7 @@ every AI coding tool. Single source of truth with MCP registry integration,
 knowledge synthesis, and agent-to-agent protocol support.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Tests: 1130 pass](https://img.shields.io/badge/tests-1130%20pass-green.svg)](#testing)
+[![Tests: 1134 pass](https://img.shields.io/badge/tests-1134%20pass-green.svg)](#testing)
 [![Adapters: 13](https://img.shields.io/badge/adapters-13-purple.svg)](#adapter-support-matrix)
 [![MCP Tools: 26](https://img.shields.io/badge/MCP%20tools-26-orange.svg)](#mcp-server-mode)
 [![Commands: 27](https://img.shields.io/badge/commands-27-blue.svg)](#cli-reference)
@@ -562,7 +562,7 @@ Design decisions documented in [22 ADRs](ADRs/README.md).
 
 ```bash
 bun install                       # install dependencies
-bun test                          # run all 1130 tests
+bun test                          # run all 1134 tests
 bun test --watch                  # watch mode
 bun run dev -- <command> [args]   # run CLI from source
 bun run lint                      # Biome check
@@ -577,7 +577,7 @@ bun run build -- --all            # all 5 platform targets
 |--------|-------|
 | Source files | ~160 |
 | Test files | 117 |
-| Tests | 1,130 |
+| Tests | 1,134 |
 | Assertions | 2,954 |
 | IDE adapters | 13 |
 | Platform adapters | 3 |

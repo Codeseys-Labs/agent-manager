@@ -16,26 +16,31 @@ every AI coding tool.
 | Web framework | Hono (local server + Cloudflare Workers) |
 | TUI | Silvery + React (terminal dashboard) |
 | Encryption | Web Crypto API (AES-256-GCM) |
-| Output | chalk (colors), @clack/prompts (interactive) |
-| Testing | bun:test (982 tests across 106 files) |
+| Output | @clack/prompts (interactive) |
+| Testing | bun:test (1134 tests across 118 files) |
+| Search | MiniSearch (BM25 for wiki full-text search) |
+| Secret detection | Tiered: key-name patterns (built-in) + BetterLeaks (optional) |
 | Linting | Biome |
 
 ## Directory Layout
 
 ```
-src/                                 # 136 TypeScript files
-  cli.ts                             # Entry point -- citty command routing with 21 lazy subcommands
+src/                                 # 161 TypeScript files
+  cli.ts                             # Entry point -- citty command routing with 27 lazy subcommands
   commands/                          # CLI command handlers (one file per command)
     init.ts, add.ts, list.ts, use.ts, apply.ts, status.ts,
     config.ts, profile.ts, doctor.ts, import.ts, push.ts, pull.ts,
     undo.ts, log.ts, secret.ts, version.ts, adapter.ts,
-    mcp-serve.ts, serve.ts, tui.ts, session.ts, init-project.ts
+    mcp-serve.ts, serve.ts, tui.ts, session.ts, init-project.ts,
+    search.ts, install.ts, uninstall.ts, update.ts, wiki.ts, agents.ts
   core/                              # Core engine -- config, resolution, git, validation, encryption
     schema.ts                        # Zod schemas: Server, Instruction, Skill, AgentProfile, Profile, Config, ProjectConfig
     config.ts                        # TOML read/write, hierarchical merge (4 layers), project config, buildResolvedConfig
     resolver.ts                      # Profile resolution: inheritance chains, tag activation, server/skill/agent/instruction merge
     git.ts                           # Git operations via isomorphic-git (init, commit, push, pull, revert, status, log)
     secrets.ts                       # AES-256-GCM encryption + ${VAR} interpolation + async decrypt walk
+    secret-detection.ts              # Tiered secret detection: key-name patterns + BetterLeaks shell-out
+    betterleaks.ts                   # BetterLeaks binary management: detect, install, scan
     instructions.ts                  # Shared instruction generation: CLAUDE.md, AGENTS.md, .mdc, steering, .windsurf rules, copilot
     session.ts                       # Cross-tool session harvest: types, SessionReader interface, filter/format/estimation
   adapters/                          # 13 built-in IDE adapters
@@ -54,6 +59,28 @@ src/                                 # 136 TypeScript files
     roo-code/                        # Roo Code: VS Code globalStorage, roo_mcp_settings.json, .roo/rules
     amazon-q/                        # Amazon Q: ~/.aws/amazonq/mcp.json
     continue/                        # Continue.dev: ~/.continue/config.json
+    shared/                          # Shared adapter utilities
+      utils.ts                       # Common adapter helper functions
+      diff-utils.ts                  # Shared diff/drift detection utilities
+  registry/                          # MCP package registry client
+    types.ts                         # RegistryPackage, provenance, filter types
+    client.ts                        # HTTP client with LRU cache, retry, exponential backoff
+  protocols/                         # Agent communication protocols
+    a2a/                             # Agent-to-Agent protocol (ADR-0017)
+      types.ts                       # Agent Card, Task, Message types
+      client.ts                      # A2A HTTP client for task delegation
+      server.ts                      # A2A server endpoint handling
+      discovery.ts                   # Agent roster management, URL-based discovery
+      generate-card.ts               # Generate Agent Card from am config
+    acp/                             # Agent Communication Protocol (config-only)
+      types.ts                       # ACP type definitions
+  wiki/                              # LLM Wiki / Knowledge Synthesis (ADR-0020)
+    types.ts                         # Wiki entry, page, index types
+    storage.ts                       # TOML-backed wiki storage with symlinks
+    harvester.ts                     # Extract knowledge from sessions into wiki pages
+    synthesizer.ts                   # Generate context blocks and agent briefings
+    ner.ts                           # Named entity recognition for auto-linking
+    graph.ts                         # Knowledge graph export, orphan detection
   platforms/                         # 3 git platform adapters
     types.ts                         # GitPlatformAdapter interface (detect, pushUrl, pullUrl, auth)
     registry.ts                      # Platform detection from remote URL (ordered by specificity)
@@ -77,8 +104,9 @@ src/                                 # 136 TypeScript files
   lib/                               # Shared utilities
     errors.ts                        # Shared error types (AmError) and formatting
     output.ts                        # JSON/text output helpers (--json, --quiet, --verbose)
+    toml.ts                          # TOML parsing/serialization helpers
 
-test/                                # 106 test files, 982 tests, 2604 assertions
+test/                                # 118 test files, 1134 tests, 2967 assertions
   core/                              # Unit tests for core modules
   adapters/                          # Adapter-specific tests (per-adapter directories)
   commands/                          # CLI command integration tests
@@ -86,7 +114,7 @@ test/                                # 106 test files, 982 tests, 2604 assertion
   helpers/                           # Test utilities (tmp dirs, config builders)
   integration/                       # End-to-end tests
 
-ADRs/                                # 19 architectural decision records
+ADRs/                                # 24 architectural decision records
 docs/                                # Design specs and guides
 scripts/
   build.ts                           # Cross-platform build (5 targets via Bun.spawn)
@@ -249,7 +277,7 @@ All git operations use **isomorphic-git** (pure JS). No dependency on system `gi
 ## Testing
 
 ```bash
-bun test                          # Run all 982 tests
+bun test                          # Run all 1134 tests
 bun test:unit                     # Core + adapter unit tests only
 bun test:integration              # Integration tests only
 bun test --watch                  # Watch mode
@@ -303,6 +331,11 @@ bun run deploy:web                # Deploy to Cloudflare Workers
 | [0017](ADRs/0017-agent-communication-protocol.md) | Multi-Protocol Agent Integration -- MCP, A2A, and ACP protocol landscape |
 | [0018](ADRs/0018-tui-framework-silvery.md) | TUI Framework -- Ink to Silvery migration |
 | [0019](ADRs/0019-security-hardening.md) | Security Hardening -- threat model and fixes |
+| [0020](ADRs/0020-session-knowledge-synthesis.md) | Session Knowledge Synthesis -- LLM Wiki with BM25 search |
+| [0021](ADRs/0021-mcp-tool-grouping-and-gateway.md) | MCP Tool Grouping -- per-profile tool selection for MCP server mode |
+| [0022](ADRs/0022-wiki-location-strategy.md) | Wiki Location Strategy -- dual global + project wiki with symlinks |
+| [0023](ADRs/0023-tiered-secret-detection.md) | Tiered Secret Detection -- key-name patterns + BetterLeaks |
+| [0024](ADRs/0024-mcp-registry-integration.md) | MCP Registry Integration -- package install with provenance tracking |
 
 ## Git Commit Style
 

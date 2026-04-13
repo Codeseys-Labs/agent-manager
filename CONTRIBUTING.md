@@ -24,21 +24,23 @@ bun install
 bun test
 ```
 
-If all 982 tests pass, you're ready.
+If all 1134 tests pass, you're ready.
 
 ## Project Structure
 
 ```
 agent-manager/
   src/
-    cli.ts                  # Entry point (citty, 21 subcommands)
-    commands/               # CLI command handlers (22 files, includes session)
+    cli.ts                  # Entry point (citty, 27 subcommands)
+    commands/               # CLI command handlers (28 files)
     core/                   # Config engine (TOML, resolver, git, schema, secrets, instructions, session)
       schema.ts             # Zod schemas (Server, Instruction, Skill, AgentProfile, Profile, Config)
       config.ts             # TOML read/write, hierarchical 4-layer merge, buildResolvedConfig
       resolver.ts           # Profile resolution with inheritance chains
       git.ts                # Git operations (isomorphic-git)
       secrets.ts            # AES-256-GCM encryption + ${VAR} interpolation
+      secret-detection.ts   # Tiered secret detection: key-name patterns + BetterLeaks
+      betterleaks.ts        # BetterLeaks binary management: detect, install, scan
       instructions.ts       # Shared instruction generation for all output formats
       session.ts            # Cross-tool session harvest: types, reader interface, filter/format
     adapters/               # 13 built-in IDE adapters
@@ -61,6 +63,11 @@ agent-manager/
       types.ts              # GitPlatformAdapter interface
       registry.ts           # Platform detection from remote URL
       github.ts, gitlab.ts, bare.ts
+    registry/               # MCP package registry client (HTTP, LRU cache, retry)
+    protocols/              # Agent communication protocols
+      a2a/                  # Agent-to-Agent protocol (ADR-0017)
+      acp/                  # Agent Communication Protocol (config-only)
+    wiki/                   # LLM Wiki / Knowledge Synthesis (ADR-0020)
     mcp/                    # MCP server mode (JSON-RPC over stdio)
       server.ts             # 14 tools across 3 permission tiers
     tui/                    # Terminal UI (Silvery + React)
@@ -73,7 +80,7 @@ agent-manager/
     fixtures/               # Sample config files for testing
     helpers/                # Test utilities (temp dirs, mock configs)
     integration/            # End-to-end tests
-  ADRs/                     # 19 architectural decision records
+  ADRs/                     # 24 architectural decision records
   docs/                     # Design specs and guides
   scripts/
     build.ts                # Cross-platform build script (5 targets)
@@ -115,7 +122,7 @@ Keep changes focused. One feature or fix per PR.
 ### 5. Validate
 
 ```bash
-bun test            # All 982 tests pass
+bun test            # All 1134 tests pass
 bun run lint        # Biome linting + formatting
 bun run typecheck   # TypeScript type checking
 ```
@@ -230,7 +237,7 @@ To add an adapter-specific field, update only that adapter's `schema.ts`.
 
 ## Architecture Decisions
 
-Design decisions are recorded in [19 ADRs](ADRs/README.md). Before proposing a change
+Design decisions are recorded in [24 ADRs](ADRs/README.md). Before proposing a change
 that conflicts with an existing ADR, read it first. To propose a new direction, create
 a new ADR using `ADRs/template.md`.
 
