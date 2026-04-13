@@ -189,11 +189,9 @@ export async function launchTui(): Promise<void> {
     />,
   );
 
-  // @ts-expect-error — Silvery RenderHandle types may not expose waitUntilExit
-  if (typeof instance.waitUntilExit === "function")
-    if (typeof instance.waitUntilExit === "function")
-      if (typeof instance.waitUntilExit === "function")
-        // @ts-expect-error — Silvery RenderHandle types may not expose waitUntilExit
-        // @ts-expect-error — Silvery RenderHandle types may not expose waitUntilExit
-        await instance.waitUntilExit();
+  // Silvery RenderHandle types may not expose waitUntilExit
+  const inst = instance as Record<string, unknown>;
+  if (typeof inst.waitUntilExit === "function") {
+    await (inst.waitUntilExit as () => Promise<void>)();
+  }
 }

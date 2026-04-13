@@ -281,10 +281,10 @@ export function createApp() {
             command: srv.command,
             args: srv.args,
             env: srv.env,
-            transport: srv.transport,
+            transport: srv.transport ?? "stdio",
             description: srv.description,
             tags: srv.tags,
-            enabled: srv.enabled,
+            enabled: srv.enabled ?? true,
           };
         }
       }
