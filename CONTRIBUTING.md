@@ -18,7 +18,7 @@ git --version   # 2.x+
 ## Setup
 
 ```bash
-git clone https://github.com/baladithyab/agent-manager.git
+git clone https://github.com/Codeseys-Labs/agent-manager.git
 cd agent-manager
 bun install
 bun test

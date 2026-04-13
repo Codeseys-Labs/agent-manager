@@ -1,27 +1,27 @@
 class Am < Formula
   desc "chezmoi for AI agent configs — define once in TOML, sync via git, generate native configs for every tool"
-  homepage "https://github.com/baladithyab/agent-manager"
+  homepage "https://github.com/Codeseys-Labs/agent-manager"
   version "PLACEHOLDER_VERSION"
   license "MIT"
 
   on_macos do
     on_arm do
-      url "https://github.com/baladithyab/agent-manager/releases/download/v#{version}/am-darwin-arm64"
+      url "https://github.com/Codeseys-Labs/agent-manager/releases/download/v#{version}/am-darwin-arm64"
       sha256 "PLACEHOLDER_SHA256_DARWIN_ARM64"
     end
     on_intel do
-      url "https://github.com/baladithyab/agent-manager/releases/download/v#{version}/am-darwin-x64"
+      url "https://github.com/Codeseys-Labs/agent-manager/releases/download/v#{version}/am-darwin-x64"
       sha256 "PLACEHOLDER_SHA256_DARWIN_X64"
     end
   end
 
   on_linux do
     on_arm do
-      url "https://github.com/baladithyab/agent-manager/releases/download/v#{version}/am-linux-arm64"
+      url "https://github.com/Codeseys-Labs/agent-manager/releases/download/v#{version}/am-linux-arm64"
       sha256 "PLACEHOLDER_SHA256_LINUX_ARM64"
     end
     on_intel do
-      url "https://github.com/baladithyab/agent-manager/releases/download/v#{version}/am-linux-x64"
+      url "https://github.com/Codeseys-Labs/agent-manager/releases/download/v#{version}/am-linux-x64"
       sha256 "PLACEHOLDER_SHA256_LINUX_X64"
     end
   end

@@ -796,7 +796,7 @@ Two-phase Zod validation:
 | Channel | Method |
 |---------|--------|
 | GitHub Releases | Pre-compiled binaries |
-| Homebrew | `brew install baladithyab/tap/agent-manager` |
+| Homebrew | `brew install Codeseys-Labs/tap/agent-manager` |
 | npm | `npx agent-manager` / `bunx agent-manager` |
 
 Binary: `agent-manager` with `am` as symlink/alias.
@@ -1136,4 +1136,4 @@ import/export model covers the primary use case.
 
 - [Research Index](../research/agent-manager-research-index.md) — 13 research documents
 - [ADR Index](../ADRs/README.md) — 24 architectural decisions
-- [GitHub Repository](https://github.com/baladithyab/agent-manager)
+- [GitHub Repository](https://github.com/Codeseys-Labs/agent-manager)

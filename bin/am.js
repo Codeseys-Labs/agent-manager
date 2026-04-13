@@ -88,7 +88,7 @@ function main() {
 
   // No binary, no bun
   console.error(
-    `agent-manager: No prebuilt binary found for ${process.platform}-${process.arch}.\n\nTo use agent-manager, either:\n  1. Install bun (https://bun.sh) and run: bunx agent-manager\n  2. Download a binary from https://github.com/baladithyab/agent-manager/releases\n  3. Use the install script: curl -fsSL https://raw.githubusercontent.com/baladithyab/agent-manager/main/install.sh | sh`,
+    `agent-manager: No prebuilt binary found for ${process.platform}-${process.arch}.\n\nTo use agent-manager, either:\n  1. Install bun (https://bun.sh) and run: bunx agent-manager\n  2. Download a binary from https://github.com/Codeseys-Labs/agent-manager/releases\n  3. Use the install script: curl -fsSL https://raw.githubusercontent.com/Codeseys-Labs/agent-manager/main/install.sh | sh`,
   );
   process.exit(1);
 }

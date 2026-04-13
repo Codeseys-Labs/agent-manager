@@ -34,7 +34,7 @@ agent-manager is written in TypeScript and compiled to single-platform binaries 
 
 **Distribution channels:**
 - GitHub Releases (pre-compiled binaries)
-- Homebrew tap (`brew install baladithyab/tap/agent-manager`)
+- Homebrew tap (`brew install Codeseys-Labs/tap/agent-manager`)
 - npm (`npx agent-manager` for users who prefer npm)
 
 **Binary naming:** `agent-manager` with `am` as a symlink/alias.

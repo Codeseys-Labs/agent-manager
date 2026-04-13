@@ -1,6 +1,6 @@
 #!/bin/sh
 # Install agent-manager (am)
-# Usage: curl -fsSL https://raw.githubusercontent.com/baladithyab/agent-manager/main/install.sh | sh
+# Usage: curl -fsSL https://raw.githubusercontent.com/Codeseys-Labs/agent-manager/main/install.sh | sh
 #
 # Options:
 #   --dry-run           Print what would be done without doing it
@@ -13,7 +13,7 @@
 
 set -eu
 
-REPO="baladithyab/agent-manager"
+REPO="Codeseys-Labs/agent-manager"
 BASE_URL="https://github.com/${REPO}"
 API_URL="https://api.github.com/repos/${REPO}"
 

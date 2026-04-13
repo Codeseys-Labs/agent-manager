@@ -95,7 +95,7 @@ These limitations are by design — the Web UI is a config editor, not a config 
 docker run -d -p 3456:3456 \
   -e AM_REPO_URL=git@github.com:user/agent-config.git \
   -e AM_ENCRYPTION_KEY=base64... \
-  ghcr.io/baladithyab/agent-manager-web
+  ghcr.io/Codeseys-Labs/agent-manager-web
 ```
 
 **Multi-user with OAuth:**
@@ -103,7 +103,7 @@ docker run -d -p 3456:3456 \
 docker run -d -p 3456:3456 \
   -e GITHUB_CLIENT_ID=xxx \
   -e GITHUB_CLIENT_SECRET=xxx \
-  ghcr.io/baladithyab/agent-manager-web
+  ghcr.io/Codeseys-Labs/agent-manager-web
 ```
 
 ### Session Management

@@ -69,16 +69,16 @@ All 13 adapters implement full bidirectional sync: detect, import, export, and d
 
 ```bash
 # Shell script (macOS / Linux) -- checksums verified
-curl -fsSL https://raw.githubusercontent.com/baladithyab/agent-manager/main/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/Codeseys-Labs/agent-manager/main/install.sh | sh
 
 # Homebrew
-brew tap baladithyab/am && brew install am
+brew tap Codeseys-Labs/am && brew install am
 
 # npm
 npm install -g agent-manager
 
 # From source
-git clone https://github.com/baladithyab/agent-manager.git
+git clone https://github.com/Codeseys-Labs/agent-manager.git
 cd agent-manager && bun install && bun run build
 ```
 
