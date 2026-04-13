@@ -1,8 +1,8 @@
 # agent-manager Design Specification
 
-> **Version:** 0.2.0
-> **Date:** 2026-04-07
-> **Status:** Revised after Codex adversarial review
+> **Version:** 0.3.0
+> **Date:** 2026-04-13
+> **Status:** Updated with ADRs 0018-0024 (registry, wiki, A2A, secret detection, tool grouping)
 >
 > chezmoi for AI agent configs — define your MCP servers, skills, and instructions
 > once in TOML, sync via git, and generate native configs for every AI coding tool.
@@ -35,7 +35,7 @@ supports profile-based subsets for context switching.
 
 ## 2. Architecture Overview
 
-### Core Principles (from ADRs 0001-0017)
+### Core Principles (from ADRs 0001-0024)
 
 | Principle | ADR | Summary |
 |-----------|-----|---------|
@@ -56,6 +56,13 @@ supports profile-based subsets for context switching.
 | Stateless web UI | 0015 | Git-backed, independently deployable, encrypted cookies |
 | Session harvest | 0016 | Cross-tool conversation export and analysis |
 | Multi-protocol agent integration | 0017 | MCP, A2A, and ACP protocol landscape |
+| TUI Framework | 0018 | Silvery + React for terminal UI |
+| Security Hardening | 0019 | Threat model, token auth, secret detection |
+| Knowledge Synthesis | 0020 | LLM Wiki: BM25 search, NER, knowledge graph |
+| MCP Tool Grouping | 0021 | Profile-based tool groups, gateway mode experimental |
+| Wiki Location | 0022 | Global store + project symlinks, dual location |
+| Secret Detection | 0023 | Tiered: key-name (built-in) + BetterLeaks (optional) |
+| MCP Registry | 0024 | Package search, install, update with provenance |
 
 ### System Architecture
 
@@ -86,6 +93,13 @@ graph TD
         More["Cline, Kiro,<br/>Kilo Code, ..."]
     end
 
+    subgraph Extensions["Extension Modules"]
+        Wiki["Wiki<br/>(BM25 + NER)"]
+        Registry["MCP Registry<br/>(search/install)"]
+        A2A["A2A Protocol<br/>(agent discovery)"]
+        SecDet["Secret Detection<br/>(tiered)"]
+    end
+
     subgraph Storage
         GitRepo["~/.config/agent-manager/<br/>(git repo)<br/>config.toml + instructions/ + skills/"]
         State["state.toml (local)<br/>Active profile, cache"]
@@ -96,6 +110,7 @@ graph TD
     TUI_IF --> Core
     WebUI --> Core
 
+    Core --> Extensions
     Resolved --> Adapters
     Core --> Storage
 ```
@@ -614,13 +629,16 @@ MCP server mode (ADR-0009):
 }
 ```
 
-**MCP Server Permission Model (14 tools):**
+**MCP Server Permission Model (26 tools across 4 groups):**
 
-| Tier | Tools | Default |
-|------|-------|---------|
-| Read-only | am_list_servers, am_list_profiles, am_status, am_config_show, am_session_list, am_session_export, am_session_search | Always available |
-| Write-local | am_add_server, am_remove_server, am_use_profile, am_import, am_apply | On by default |
-| Write-remote | am_sync_push, am_sync_pull | Requires opt-in via config |
+Tool groups are controlled by `settings.mcp_serve.tools` (ADR-0021). Default: `["core"]`.
+
+| Group | Count | Tier | Tools |
+|-------|-------|------|-------|
+| `core` | 14 | Mixed | am_list_servers, am_list_profiles, am_status, am_config_show, am_add_server, am_remove_server, am_use_profile, am_import, am_apply, am_sync_push, am_sync_pull, am_session_list, am_session_export, am_session_search |
+| `registry` | 3 | Mixed | am_registry_search, am_registry_install, am_registry_list_installed |
+| `a2a` | 4 | Mixed | am_agent_discover, am_agent_list, am_agent_delegate, am_agent_task_status |
+| `wiki` | 5 | Mixed | am_wiki_search, am_wiki_add, am_wiki_synthesize, am_wiki_briefing, am_wiki_harvest |
 
 ```toml
 [settings.mcp_serve]
@@ -676,6 +694,41 @@ am
 │   └── validate                      # Schema validation
 ├── doctor                            # Health check
 ├── mcp-serve                         # MCP server mode (stdio)
+├── search <query>                    # Search MCP registry
+├── install <packages>                # Install from MCP registry
+├── uninstall <name>                  # Remove MCP server package
+├── update                            # Check/apply registry updates
+├── secret
+│   ├── set <key> <value>             # Encrypt and store a secret
+│   ├── get <key>                     # Decrypt and display
+│   ├── init                          # Generate encryption key
+│   ├── scan [--fix]                  # Audit config for unencrypted secrets
+│   └── install-scanner               # Download BetterLeaks binary
+├── session
+│   ├── list                          # List cross-tool sessions
+│   ├── export <id>                   # Export session transcript
+│   └── search <query>               # Search session content
+├── wiki
+│   ├── search <query>                # BM25 search wiki pages
+│   ├── add <title>                   # Add a wiki page
+│   ├── show <slug>                   # Display a wiki page
+│   ├── delete <slug>                 # Remove a wiki page
+│   ├── ingest --session <id>         # Harvest knowledge from session
+│   ├── synthesize <query>            # Generate context from wiki
+│   ├── briefing                      # Agent briefing from wiki
+│   ├── export                        # Export wiki (JSON/markdown)
+│   ├── import                        # Import wiki data
+│   ├── lint                          # Wiki health check
+│   └── graph                         # Knowledge graph export
+├── agents
+│   ├── list                          # List A2A agents in roster
+│   ├── add <url>                     # Discover and add agent
+│   ├── remove <name>                 # Remove agent from roster
+│   ├── ping <name>                   # Health check agent
+│   └── delegate <name> <task>        # Send task to agent
+├── tui                               # Interactive terminal dashboard
+├── serve                             # Local web UI server
+├── adapter list                      # Show registered adapters
 └── version
 ```
 
@@ -722,6 +775,10 @@ Two-phase Zod validation:
 | Config | @iarna/toml (parser) + Zod (validation) |
 | Git | isomorphic-git (pure JS, no system git dependency) |
 | Encryption | Web Crypto API (AES-256-GCM) |
+| TUI | Silvery + React (pure TS layout, Bun-compatible) |
+| Web | Hono (local + Cloudflare Workers) |
+| Search | MiniSearch (BM25 for wiki full-text search) |
+| Secret scanning | Tiered: key-name patterns (built-in) + BetterLeaks (optional) |
 | State | Flat TOML file (.agent-manager/state.toml) |
 
 ### Build Targets
@@ -842,13 +899,30 @@ agent-manager/
 │   │   ├── windsurf/
 │   │   ├── copilot/
 │   │   └── ...
-│   └── mcp/                      # MCP server mode
-│       └── server.ts
-├── test/
+│   ├── mcp/                      # MCP server mode
+│   │   └── server.ts             # JSON-RPC 2.0, 26 tools, 4 groups
+│   ├── registry/                 # MCP package registry
+│   │   ├── types.ts              # RegistryPackage, provenance types
+│   │   └── client.ts             # HTTP client with LRU cache, retry
+│   ├── protocols/
+│   │   └── a2a/                  # Agent-to-Agent protocol
+│   │       ├── types.ts          # Agent Card, Task, Message
+│   │       ├── client.ts         # A2A HTTP client
+│   │       ├── server.ts         # A2A server endpoint
+│   │       ├── discovery.ts      # Agent roster, URL-based discovery
+│   │       └── generate-card.ts  # Agent Card from am config
+│   └── wiki/                     # LLM Wiki / Knowledge Synthesis
+│       ├── types.ts              # Wiki entry, page, index types
+│       ├── storage.ts            # TOML-backed wiki with symlinks
+│       ├── harvester.ts          # Session → wiki page extraction
+│       ├── synthesizer.ts        # Context blocks, agent briefings
+│       ├── ner.ts                # Named entity recognition
+│       └── graph.ts              # Knowledge graph, orphan detection
+├── test/                         # 1214 tests
 │   ├── core/
 │   ├── adapters/
 │   └── fixtures/                 # Sample config files per tool
-├── ADRs/                         # Architectural decisions
+├── ADRs/                         # 24 architectural decisions
 ├── research/                     # Research documents
 ├── docs/                         # Design specs
 ├── scripts/
@@ -860,8 +934,206 @@ agent-manager/
 
 ---
 
+## 15. MCP Registry Integration (ADR-0024)
+
+agent-manager integrates with the public MCP package registry for server discovery
+and installation.
+
+### Registry Client
+
+`src/registry/client.ts` provides an HTTP client for the MCP registry:
+- Default endpoint: `https://registry.modelcontextprotocol.io` (configurable via `AM_REGISTRY_URL`)
+- In-memory LRU cache (50 entries, 5-minute TTL)
+- Exponential backoff on 429/5xx (3 retries, 1s/2s/4s)
+- Graceful fallback to cache on network failure
+
+### Provenance Tracking
+
+Registry-installed servers carry `_registry` metadata:
+
+```toml
+[servers.tavily._registry]
+source = "mcp-registry"
+package = "tavily-mcp"
+version = "1.2.0"
+installed_at = "2026-04-10T10:30:00Z"
+```
+
+`am update` compares installed versions against the registry to detect available
+upgrades. Provenance is preserved through config merges and profile resolution.
+
+### Secret Handling on Install
+
+Registry packages declare required env vars. During `am install`:
+1. User is prompted for env var values
+2. Values are auto-encrypted via the Tier 1 secret detection pipeline (ADR-0023)
+3. Config is written with `${VAR}` references and encrypted originals in `settings.env`
+
+### CLI: `am search`, `am install`, `am uninstall`, `am update`
+
+| Command | Description |
+|---------|-------------|
+| `am search <query>` | Search registry with `--tag`, `--verified`, `--limit`, `--json` |
+| `am install <package...>` | Resolve, prompt for env vars, encrypt, add to config |
+| `am uninstall <name>` | Remove server with confirmation |
+| `am update` | Check for newer versions of registry-installed servers |
+
+---
+
+## 16. Knowledge Wiki (ADRs 0020, 0022)
+
+The LLM Wiki synthesizes durable, searchable knowledge from agent session transcripts.
+It follows a three-layer model: episodic (raw sessions, ADR-0016), working (structured
+wiki pages, this feature), and procedural (distilled rules, future).
+
+### Search and Indexing
+
+- **BM25 via MiniSearch** — full-text search over wiki pages with ranked results
+- **Rule-based NER** — named entity recognition for auto-linking wiki entries
+  (projects, tools, libraries, concepts)
+- **Knowledge graph** — entity-relationship graph with orphan detection and JSON export
+
+### Dual Location (ADR-0022)
+
+Wiki data lives in two locations:
+- **Global:** `~/.config/agent-manager/wiki/global/` — cross-project knowledge
+- **Per-project:** `~/.config/agent-manager/wiki/projects/<name>/` — project-specific
+
+Projects access their wiki via a symlink: `.agent-manager/wiki` points to the
+central store. The symlink is gitignored in the project repo. All wiki data syncs
+via `am push`/`am pull` through the git-backed AM config repo.
+
+### Session Harvesting
+
+`am wiki ingest --session <id>` extracts structured knowledge from a session transcript:
+decisions, entities, code changes, key facts, open questions, and patterns. The
+harvester uses NER to auto-link entities and builds wiki pages with TOML frontmatter.
+
+### CLI: 13 wiki subcommands
+
+| Command | Description |
+|---------|-------------|
+| `am wiki search <query>` | BM25 search wiki pages |
+| `am wiki add <title>` | Add a wiki page |
+| `am wiki show <slug>` | Display a wiki page |
+| `am wiki delete <slug>` | Remove a wiki page |
+| `am wiki ingest` | Harvest knowledge from sessions |
+| `am wiki synthesize <query>` | Generate context blocks |
+| `am wiki briefing` | Agent briefing from wiki |
+| `am wiki export` | Export wiki (JSON/markdown) |
+| `am wiki import` | Import wiki data |
+| `am wiki lint` | Health check: orphans, staleness |
+| `am wiki graph` | Knowledge graph export |
+
+---
+
+## 17. A2A Protocol Integration (ADR-0017)
+
+agent-manager implements Google's Agent-to-Agent (A2A) protocol for inter-agent
+communication and task delegation.
+
+### Architecture
+
+| Component | File | Purpose |
+|-----------|------|---------|
+| Types | `src/protocols/a2a/types.ts` | Agent Card, Task, Message types per A2A spec |
+| Client | `src/protocols/a2a/client.ts` | HTTP client for sending tasks to remote agents |
+| Server | `src/protocols/a2a/server.ts` | A2A endpoint handling for incoming tasks |
+| Discovery | `src/protocols/a2a/discovery.ts` | Agent roster management, `/.well-known/agent.json` |
+| Card generation | `src/protocols/a2a/generate-card.ts` | Generate Agent Card from am config |
+
+### Agent Roster
+
+Discovered agents are persisted in config. Each agent entry stores the URL, Agent Card
+metadata (name, description, skills), and health status from the last ping.
+
+### CLI: 5 agent subcommands
+
+| Command | Description |
+|---------|-------------|
+| `am agents list` | List agents in roster |
+| `am agents add <url>` | Discover agent via `/.well-known/agent.json` and add to roster |
+| `am agents remove <name>` | Remove agent from roster |
+| `am agents ping <name>` | Health check a registered agent |
+| `am agents delegate <name> <task>` | Send a task to a remote agent |
+
+---
+
+## 18. Secret Detection (ADR-0023)
+
+### Tiered Architecture
+
+**Tier 1 — Built-in (always runs):** Key-name pattern matching in `src/core/secret-detection.ts`.
+If a server env var key matches known patterns (`/api[_-]?key/i`, `/secret/i`, `/token/i`,
+`/password/i`, or 40+ provider-specific patterns like `/openai/i`, `/anthropic/i`,
+`/tavily/i`), the value is treated as a secret. Covers >90% of MCP server configs.
+
+**Tier 2 — BetterLeaks (when installed):** Value-based and inline secret detection via
+`betterleaks stdin --report-format json`. Handles secrets in `args` arrays, `command`
+strings, and env values where key names aren't recognized. Managed at
+`~/.config/agent-manager/bin/betterleaks`, installed via `am secret install-scanner`.
+
+### Auto-Encrypt on Import/Add
+
+During `am import` and `am add server`:
+1. Tier 1 + Tier 2 scan detects secrets
+2. Encryption key is auto-generated if none exists (`am secret init`)
+3. Each secret value is replaced with `${KEY_NAME}` reference
+4. Original value is AES-256-GCM encrypted in `settings.env`
+5. Config is committed — git backend never contains raw secrets
+
+Users can opt out with `--no-encrypt`.
+
+### CLI Commands
+
+| Command | Description |
+|---------|-------------|
+| `am secret scan` | Show detected unencrypted secrets |
+| `am secret scan --fix` | Auto-substitute and encrypt detected secrets |
+| `am secret install-scanner` | Download BetterLeaks binary |
+| `am secret init` | Generate AES-256-GCM encryption key |
+| `am secret set <key> <value>` | Encrypt and store a secret |
+| `am secret get <key>` | Decrypt and display a secret |
+
+---
+
+## 19. MCP Tool Grouping (ADR-0021)
+
+### Configuration
+
+```toml
+[settings.mcp_serve]
+allow_push = false
+tools = ["core", "registry"]  # Only expose these tool groups
+# Available groups: core, registry, a2a, wiki
+# Default: ["core"]
+```
+
+### Tool Groups
+
+| Group | Count | Description |
+|-------|-------|-------------|
+| `core` | 14 | Config management: list, add, remove, apply, import, status, sync, sessions |
+| `registry` | 3 | MCP registry: search, install, list installed |
+| `a2a` | 4 | Agent protocol: discover, list, delegate, task status |
+| `wiki` | 5 | Knowledge wiki: search, add, synthesize, briefing, harvest |
+
+When `settings.mcp_serve.tools` is unset, the default is `["core"]` — the original
+config management tools from ADR-0009. This ensures backward compatibility while
+reducing LLM token usage and tool selection noise.
+
+Permission tiers (read-only, write-local, write-remote) from ADR-0009 compose
+orthogonally with tool groups. A tool must pass both the group filter and the tier
+check to be exposed.
+
+**Gateway mode** (experimental, not recommended): am-cli could proxy MCP tool calls
+through to configured servers, acting as both MCP server and client. Deferred — the
+import/export model covers the primary use case.
+
+---
+
 ## References
 
 - [Research Index](../research/agent-manager-research-index.md) — 13 research documents
-- [ADR Index](../ADRs/README.md) — 19 architectural decisions
+- [ADR Index](../ADRs/README.md) — 24 architectural decisions
 - [GitHub Repository](https://github.com/baladithyab/agent-manager)
