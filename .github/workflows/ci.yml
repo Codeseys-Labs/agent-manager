@@ -30,7 +30,14 @@ jobs:
       - name: Lint
         run: bun run lint
       - name: Test with coverage
-        run: bun test --coverage 2>&1
+        run: |
+          set +e
+          OUTPUT=$(bun test --coverage 2>&1)
+          echo "$OUTPUT"
+          if echo "$OUTPUT" | grep -qE '[1-9][0-9]* fail'; then
+            echo "::error::Test failures detected"
+            exit 1
+          fi
       - name: Build all targets (smoke test)
         run: bun run build -- --all
 
@@ -50,4 +57,14 @@ jobs:
           bun-version: latest
       - run: bun install --frozen-lockfile
       - name: Run tests
-        run: bun test 2>&1
+        run: |
+          # Bun exits 1 when test code writes to stderr even if all tests pass.
+          # Capture output and check for actual test failures.
+          set +e
+          OUTPUT=$(bun test 2>&1)
+          EXIT_CODE=$?
+          echo "$OUTPUT"
+          if echo "$OUTPUT" | grep -q ' fail$\| fail '; then
+            echo "::error::Test failures detected"
+            exit 1
+          fi
