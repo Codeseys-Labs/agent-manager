@@ -190,7 +190,7 @@ export async function launchTui(): Promise<void> {
   );
 
   // Silvery RenderHandle types may not expose waitUntilExit
-  const inst = instance as Record<string, unknown>;
+  const inst = instance as unknown as Record<string, unknown>;
   if (typeof inst.waitUntilExit === "function") {
     await (inst.waitUntilExit as () => Promise<void>)();
   }
