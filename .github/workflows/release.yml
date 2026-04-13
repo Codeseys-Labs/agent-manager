@@ -12,16 +12,16 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: ubuntu-latest
+          - os: blacksmith-2vcpu-ubuntu-2404
             targets: "bun-linux-x64 bun-linux-arm64"
-          - os: macos-latest
+          - os: blacksmith-6vcpu-macos-latest
             targets: "bun-darwin-arm64 bun-darwin-x64"
-          - os: windows-latest
+          - os: blacksmith-2vcpu-windows-2025
             targets: "bun-windows-x64"
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
-      - uses: oven-sh/setup-bun@v2
+      - uses: useblacksmith/setup-bun@v1
         with:
           bun-version: latest
       - run: bun install --frozen-lockfile
@@ -47,7 +47,7 @@ jobs:
 
   release:
     needs: build
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-2vcpu-ubuntu-2404
     steps:
       - uses: actions/checkout@v4
 
@@ -74,7 +74,7 @@ jobs:
             --generate-notes \
             ./artifacts/*
 
-      - uses: oven-sh/setup-bun@v2
+      - uses: useblacksmith/setup-bun@v1
         with:
           bun-version: latest
       - uses: actions/setup-node@v4
