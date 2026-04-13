@@ -64,7 +64,7 @@ describe("am install", () => {
     if (origConfigDir !== undefined) {
       process.env.AM_CONFIG_DIR = origConfigDir;
     } else {
-      delete process.env.AM_CONFIG_DIR;
+      process.env.AM_CONFIG_DIR = undefined;
     }
     if (dir) await dir.cleanup();
   });

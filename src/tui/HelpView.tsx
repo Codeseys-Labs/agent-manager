@@ -48,7 +48,6 @@ export function HelpView({ onBack }: Props) {
               <Text bold> {s.key}</Text>
             </Box>
           ) : (
-            // biome-ignore lint/suspicious/noArrayIndexKey: duplicate keys possible across sections
             <Box key={`${s.key}-${i}`}>
               <Text>
                 {"  "}
