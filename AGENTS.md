@@ -110,14 +110,14 @@ src/
   mcp/
     server.ts               # MCP server: JSON-RPC 2.0, 14 tools, 3 permission tiers
   tui/
-    index.tsx, App.tsx      # Silvery/React terminal UI with dashboard, status, profiles
+    index.tsx, App.tsx      # Silvery/React terminal UI with dashboard, server management (D/E/I/P keys)
   web/
-    server.ts               # Local Hono server (REST API + SSE)
-    worker.ts               # Cloudflare Workers (stateless, GitHub OAuth)
+    server.ts               # Local Hono server (REST API + SSE, server CRUD, wiki endpoints)
+    worker.ts               # Cloudflare Workers (stateless, multi-backend git auth — ADR-0025)
     public/                 # Static HTML
   lib/                      # Shared utilities (errors.ts, output.ts)
-test/                       # 118 files, 1134 tests, 2967 assertions
-ADRs/                       # 24 architectural decision records
+test/                       # 132 files, 1335 tests, 3901 assertions
+ADRs/                       # 25 architectural decision records
 scripts/
   build.ts                  # Cross-platform build (5 targets)
   install.sh                # curl-based installer
@@ -184,8 +184,10 @@ from env var or file. Encrypted values are safe to commit to git.
 **Platform adapters (ADR-0013):** GitHub, GitLab, bare git. URL-based detection for
 push/pull auth handling.
 
-**Stateless web UI (ADR-0015):** Cloudflare Workers with GitHub OAuth, encrypted
-cookies, no persistent storage. Config accessed via GitHub API.
+**Stateless web UI (ADR-0015):** Cloudflare Workers with multi-backend git auth
+(GitHub, GitLab, Codeberg, Gitea — ADR-0025), encrypted cookies, no persistent
+storage. Config accessed via git provider API. Wiki browsing + server CRUD from
+both local and worker web UIs.
 
 **MCP tool grouping (ADR-0021):** `settings.mcp_serve.tools` controls which MCP tools
 are exposed per profile. Enables fine-grained tool selection when running as an MCP
@@ -211,6 +213,10 @@ during import/add are auto-substituted with `${VAR}` references and encrypted.
 metadata (package name, version, installed timestamp). `am update` compares installed
 versions against the registry to detect available upgrades. Provenance is preserved
 through config merges and profile resolution.
+
+**Multi-backend git auth (ADR-0025):** Cloudflare Worker supports GitHub, GitLab,
+Codeberg, and self-hosted Gitea via a `GitProvider` interface that normalizes OAuth
+flows and API access. Provider detection is automatic from the configured remote URL.
 
 ## MCP Registry Integration
 
@@ -249,7 +255,7 @@ Workflow: `am wiki ingest --session <id>` → `am wiki search <query>` → `am w
 
 ```bash
 bun install              # Install dependencies
-bun test                 # Run all 1134 tests
+bun test                 # Run all 1335 tests
 bun test --watch         # Watch mode
 bun run dev              # Run CLI in dev mode
 bun run build            # Single binary (macOS arm64)

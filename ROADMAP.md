@@ -146,9 +146,9 @@ Search, install, uninstall, update with provenance tracking. ADR-0024.
 |-----------|--------|-------|
 | CLI (citty + clack) | Done | 27 commands, --json/--quiet everywhere |
 | MCP Server | Done | 26 tools, 3 permission tiers, 4 groups |
-| TUI (Silvery + React) | Done | Dashboard, status, profiles |
-| Local Web (Hono + Bearer auth) | Done | REST API + SSE |
-| Stateless Web (CF Workers) | Done | GitHub OAuth, git-backed browsing |
+| TUI (Silvery + React) | Done | Dashboard, server management (D/E/I/P keys), status, profiles |
+| Local Web (Hono + Bearer auth) | Done | REST API + SSE, server CRUD, wiki endpoints |
+| Stateless Web (CF Workers) | Done | Multi-backend git auth (ADR-0025), wiki browsing, git-backed config |
 
 ---
 
@@ -186,14 +186,14 @@ Search, install, uninstall, update with provenance tracking. ADR-0024.
 
 ## Deferred — Future Sessions
 
-### Git Backend Adapters
+### Git Backend Adapters — Partially Complete
 
-- Gitea (self-hosted, API-compatible with Codeberg/Forgejo)
-- Codeberg (largest Forgejo instance)
-- Forgejo (Gitea fork)
+- ~~Gitea (self-hosted, API-compatible with Codeberg/Forgejo)~~ — Worker `GitProvider` abstraction (ADR-0025)
+- ~~Codeberg (largest Forgejo instance)~~ — Worker `GitProvider` abstraction (ADR-0025)
+- Forgejo (Gitea fork) — planned, shares Gitea API
 - BitBucket (Atlassian)
 
-All covered by `bare` adapter today. Dedicated adapters would add CI key storage, repo creation, PR creation. See ADR-0013 future section.
+Worker multi-backend auth (ADR-0025) provides the `GitProvider` interface foundation. CLI platform adapters for push/pull still use `bare` for non-GitHub/GitLab. Dedicated CLI adapters would add CI key storage, repo creation, PR creation. See ADR-0013 future section.
 
 ### MCP Gateway Mode (Experimental)
 
@@ -216,7 +216,7 @@ am-cli as a runtime MCP proxy — accept tool calls, route to configured servers
 
 ## ADR Index
 
-24 architectural decisions. All accepted.
+25 architectural decisions. All accepted.
 
 | ADR | Title | Date |
 |-----|-------|------|
@@ -244,6 +244,7 @@ am-cli as a runtime MCP proxy — accept tool calls, route to configured servers
 | 0022 | Wiki Location Strategy | 2026-04-10 |
 | 0023 | Tiered Secret Detection | 2026-04-10 |
 | 0024 | MCP Registry Integration | 2026-04-10 |
+| 0025 | Worker Multi-Backend Git Auth | 2026-04-13 |
 
 ---
 
@@ -252,13 +253,13 @@ am-cli as a runtime MCP proxy — accept tool calls, route to configured servers
 | Metric | Count |
 |--------|-------|
 | Source files | 161 |
-| Test files | 117 |
-| Tests | 1,134 |
-| Assertions | 2,967 |
+| Test files | 132 |
+| Tests | 1,335 |
+| Assertions | 3,901 |
 | IDE adapters | 13 |
 | Platform adapters | 3 |
 | CLI commands | 27 |
 | MCP tools | 26 |
-| ADRs | 24 |
+| ADRs | 25 |
 | `as any` in src/ | 0 |
 | `err: any` in src/ | 0 |

@@ -102,3 +102,34 @@ All notable changes to agent-manager are documented in this file.
 #### Dependencies
 - Added: `minisearch` (7kB, BM25 search for wiki)
 - Removed: `chalk` (dead dependency, zero imports)
+
+### Session 2 (2026-04-13)
+
+#### Critical Fix
+- **P0**: `am apply` now filters entities by active profile — `buildResolvedConfig()` calls `resolveProfile()` to subset servers/instructions/skills/agents
+
+#### Web UI Enhancements
+- Local web server: POST/PUT/DELETE /api/servers for full CRUD + POST /api/import/:adapter
+- Local web server: 5 wiki endpoints (list, search, graph, projects, read page)
+- Cloudflare Worker: 3 wiki endpoints via GitHub API (list, projects, read page)
+- Cloudflare Worker: multi-backend git auth — GitHub, GitLab, Codeberg, self-hosted Gitea (ADR-0025)
+- Worker provider abstraction: `GitProvider` interface normalizes OAuth + API across backends
+
+#### TUI Enhancements
+- D key: remove selected server with y/n confirmation
+- E key: view server details (command, args, tags, transport)
+- I key: auto-import from all detected adapters with secret encryption
+- P key: push config to remote
+- Arrow keys: navigate server list
+
+#### Wiki Pipeline
+- Verified end-to-end: session harvest → NER → wiki pages → BM25 index → knowledge graph → symlink → agent access
+- 20 integration tests covering full pipeline
+- Wiki browsable from web UI (local + worker)
+
+#### Tests
+- 1335 tests across 132 files, 3901 assertions (up from 1134/118/2967)
+
+#### Documentation
+- ADR-0025: Worker Multi-Backend Git Authentication
+- All docs updated: AGENTS.md, ROADMAP.md, CHANGELOG.md
