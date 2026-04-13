@@ -8,7 +8,7 @@ import {
   resolveConfigDir,
   resolveProjectConfig,
 } from "../core/config.ts";
-import { pull } from "../core/git.ts";
+import { pull, push } from "../core/git.ts";
 import { interpolateEnvAsync, loadKey } from "../core/secrets.ts";
 import { App } from "./App.tsx";
 import { loadTuiData } from "./data.ts";
@@ -39,6 +39,19 @@ export async function launchTui(): Promise<void> {
     await pull(configDir);
   };
 
+  const handlePush = async () => {
+    try {
+      await push(configDir);
+      return "Pushed to remote";
+    } catch (err: any) {
+      return `Push failed: ${err.message}`;
+    }
+  };
+
+  const handleAddServer = async () => {
+    return "Use `am add server <name>` from CLI to add servers";
+  };
+
   const handleApply = async () => {
     const projectFile = resolveProjectConfig(process.cwd());
     const config = await loadResolvedConfig({ configDir, projectFile });
@@ -67,6 +80,8 @@ export async function launchTui(): Promise<void> {
       onProfileSwitch={handleProfileSwitch}
       onSync={handleSync}
       onApply={handleApply}
+      onPush={handlePush}
+      onAddServer={handleAddServer}
     />,
   );
 

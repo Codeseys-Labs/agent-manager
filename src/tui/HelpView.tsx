@@ -7,8 +7,10 @@ interface Props {
 
 const SHORTCUTS = [
   { key: "Tab / 1-3", desc: "Switch between Dashboard, Profiles, Status tabs" },
-  { key: "s", desc: "Sync config from git" },
+  { key: "s", desc: "Sync config from git (pull)" },
   { key: "a", desc: "Apply config to all detected adapters" },
+  { key: "P (shift+p)", desc: "Push config to remote" },
+  { key: "A (shift+a)", desc: "Add server (shows CLI hint)" },
   { key: "p", desc: "Open profile switcher" },
   { key: "t", desc: "Open status view" },
   { key: "?", desc: "Show this help" },

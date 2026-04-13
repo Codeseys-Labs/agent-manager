@@ -19,9 +19,11 @@ interface Props {
   onProfileSwitch: (profile: string) => Promise<void>;
   onSync: () => Promise<void>;
   onApply: () => Promise<void>;
+  onPush: () => Promise<string>;
+  onAddServer: () => Promise<string>;
 }
 
-export function App({ initialData, onProfileSwitch, onSync, onApply }: Props) {
+export function App({ initialData, onProfileSwitch, onSync, onApply, onPush, onAddServer }: Props) {
   const { exit } = useApp();
   const [view, setView] = useState<View>("dashboard");
   const [data, setData] = useState<TuiData>(initialData);
@@ -51,6 +53,25 @@ export function App({ initialData, onProfileSwitch, onSync, onApply }: Props) {
       showMessage(`Apply failed: ${err.message}`);
     }
   }, [onApply, showMessage]);
+
+  const handlePush = useCallback(async () => {
+    showMessage("Pushing...");
+    try {
+      const result = await onPush();
+      showMessage(result);
+    } catch (err: any) {
+      showMessage(`Push failed: ${err.message}`);
+    }
+  }, [onPush, showMessage]);
+
+  const handleAddServer = useCallback(async () => {
+    try {
+      const result = await onAddServer();
+      showMessage(result);
+    } catch (err: any) {
+      showMessage(`Add server failed: ${err.message}`);
+    }
+  }, [onAddServer, showMessage]);
 
   const handleProfileSelect = useCallback(
     async (profile: string) => {
@@ -84,6 +105,14 @@ export function App({ initialData, onProfileSwitch, onSync, onApply }: Props) {
       }
       if (input === "a") {
         handleApply();
+        return;
+      }
+      if (input === "P") {
+        handlePush();
+        return;
+      }
+      if (input === "A") {
+        handleAddServer();
         return;
       }
       if (input === "p") {

@@ -117,7 +117,9 @@ export function Dashboard({ data, onSync, onApply }: Props) {
 
       {/* Footer */}
       <Box marginTop={1}>
-        <Text dimColor>{"  "}[s]ync [a]pply [p]rofiles [t]status [q]uit [?]help</Text>
+        <Text dimColor>
+          {"  "}[s]ync [a]pply [P]ush [A]dd server [p]rofiles [t]status [q]uit [?]help
+        </Text>
       </Box>
     </Box>
   );
