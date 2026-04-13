@@ -203,7 +203,7 @@ Override `AM_CONFIG_DIR` to change the global config location (useful in tests).
 
 ### Profile Switching
 
-`am use <profile>` writes to `state.toml` (gitignored), NOT `config.toml`. Only `am add`, `am remove`, `am import`, and `am config edit` modify `config.toml` and auto-commit.
+`am use <profile>` writes to `state.toml` (gitignored), NOT `config.toml`. Only `am add`, `am import`, `am install`, `am uninstall`, and `am config edit` modify `config.toml` and auto-commit.
 
 ### Git Operations
 

@@ -21,7 +21,7 @@ targets 5+ platforms.
 agent-manager is written in TypeScript and compiled to single-platform binaries via
 `bun build --compile`. The binary includes:
 - Application code (CLI, adapters, config engine)
-- All npm dependencies (TOML parser, Zod, isomorphic-git, chalk, citty, @clack/prompts)
+- All npm dependencies (TOML parser, Zod, isomorphic-git, MiniSearch, citty, @clack/prompts)
 - Bun runtime
 - Embedded assets (schema files, adapter templates)
 
