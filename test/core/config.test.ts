@@ -419,4 +419,97 @@ describe("buildResolvedConfig", () => {
     const resolved = buildResolvedConfig(config, "default");
     expect(resolved.instructions["no-dir"].content).toBe("");
   });
+
+  test("filters servers by active profile", () => {
+    const config: Config = {
+      servers: {
+        tavily: { command: "tavily-mcp", transport: "stdio", enabled: true, tags: ["search"] },
+        outlook: { command: "outlook-mcp", transport: "stdio", enabled: true, tags: ["work"] },
+        fetch: { command: "fetch-mcp", transport: "stdio", enabled: true },
+      },
+      profiles: {
+        work: { servers: ["tavily"] },
+      },
+    };
+    const resolved = buildResolvedConfig(config, "work");
+    expect(Object.keys(resolved.servers)).toEqual(["tavily"]);
+  });
+
+  test("returns all servers when profile does not exist", () => {
+    const config: Config = {
+      servers: {
+        tavily: { command: "tavily-mcp", transport: "stdio", enabled: true },
+        outlook: { command: "outlook-mcp", transport: "stdio", enabled: true },
+      },
+      profiles: {
+        work: { servers: ["tavily"] },
+      },
+    };
+    const resolved = buildResolvedConfig(config, "nonexistent");
+    expect(Object.keys(resolved.servers)).toHaveLength(2);
+    expect(resolved.servers.tavily).toBeDefined();
+    expect(resolved.servers.outlook).toBeDefined();
+  });
+
+  test("returns all servers when profile lists no servers", () => {
+    const config: Config = {
+      servers: {
+        tavily: { command: "tavily-mcp", transport: "stdio", enabled: true },
+        outlook: { command: "outlook-mcp", transport: "stdio", enabled: true },
+      },
+      profiles: {
+        minimal: {},
+      },
+    };
+    const resolved = buildResolvedConfig(config, "minimal");
+    expect(Object.keys(resolved.servers)).toHaveLength(2);
+  });
+
+  test("filters instructions, skills, and agents by active profile", () => {
+    const config: Config = {
+      servers: {
+        tavily: { command: "tavily-mcp", transport: "stdio", enabled: true },
+      },
+      instructions: {
+        "ts-rules": { content: "Use strict mode", scope: "always" },
+        "py-rules": { content: "Use black", scope: "always" },
+      },
+      skills: {
+        research: { path: "skills/research", description: "Research" },
+        deploy: { path: "skills/deploy", description: "Deploy" },
+      },
+      agents: {
+        reviewer: { name: "reviewer", description: "Reviewer" },
+        deployer: { name: "deployer", description: "Deployer" },
+      },
+      profiles: {
+        focused: {
+          servers: ["tavily"],
+          instructions: ["ts-rules"],
+          skills: ["research"],
+          agents: ["reviewer"],
+        },
+      },
+    };
+    const resolved = buildResolvedConfig(config, "focused");
+    expect(Object.keys(resolved.servers)).toEqual(["tavily"]);
+    expect(Object.keys(resolved.instructions)).toEqual(["ts-rules"]);
+    expect(Object.keys(resolved.skills)).toEqual(["research"]);
+    expect(Object.keys(resolved.agents)).toEqual(["reviewer"]);
+  });
+
+  test("profile with server_tags includes tag-matched servers", () => {
+    const config: Config = {
+      servers: {
+        tavily: { command: "tavily-mcp", transport: "stdio", enabled: true, tags: ["search"] },
+        outlook: { command: "outlook-mcp", transport: "stdio", enabled: true, tags: ["work"] },
+        fetch: { command: "fetch-mcp", transport: "stdio", enabled: true },
+      },
+      profiles: {
+        work: { server_tags: ["search"] },
+      },
+    };
+    const resolved = buildResolvedConfig(config, "work");
+    expect(Object.keys(resolved.servers)).toEqual(["tavily"]);
+  });
 });

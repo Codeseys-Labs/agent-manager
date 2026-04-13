@@ -12,6 +12,7 @@ import type {
 } from "../adapters/types";
 import { isNotFound } from "../lib/errors";
 import { tomlStringify } from "../lib/toml";
+import { resolveProfile } from "./resolver";
 import { type Config, ConfigSchema, type ProjectConfig, ProjectConfigSchema } from "./schema";
 
 /** Return the agent-manager config directory. */
@@ -277,7 +278,7 @@ export function buildResolvedConfig(
     };
   }
 
-  return {
+  const result: ResolvedConfig = {
     servers,
     instructions,
     skills,
@@ -285,4 +286,56 @@ export function buildResolvedConfig(
     profile: profileName,
     adapters: (config.adapters as Record<string, Record<string, unknown>>) ?? {},
   };
+
+  // Apply profile filtering when the named profile exists
+  const profile = config.profiles?.[profileName];
+  if (profile) {
+    const resolved = resolveProfile(profileName, config);
+
+    // Filter servers to only those in the resolved profile
+    if (resolved.servers.length > 0) {
+      const filteredServers: typeof result.servers = {};
+      for (const name of Object.keys(result.servers)) {
+        if (resolved.servers.includes(name)) {
+          filteredServers[name] = result.servers[name];
+        }
+      }
+      result.servers = filteredServers;
+    }
+
+    // Filter instructions if profile specifies them
+    if (resolved.instructions.length > 0) {
+      const filteredInstructions: typeof result.instructions = {};
+      for (const name of Object.keys(result.instructions)) {
+        if (resolved.instructions.includes(name)) {
+          filteredInstructions[name] = result.instructions[name];
+        }
+      }
+      result.instructions = filteredInstructions;
+    }
+
+    // Filter skills if profile specifies them
+    if (resolved.skills.length > 0) {
+      const filteredSkills: typeof result.skills = {};
+      for (const name of Object.keys(result.skills)) {
+        if (resolved.skills.includes(name)) {
+          filteredSkills[name] = result.skills[name];
+        }
+      }
+      result.skills = filteredSkills;
+    }
+
+    // Filter agents if profile specifies them
+    if (resolved.agents.length > 0) {
+      const filteredAgents: typeof result.agents = {};
+      for (const name of Object.keys(result.agents)) {
+        if (resolved.agents.includes(name)) {
+          filteredAgents[name] = result.agents[name];
+        }
+      }
+      result.agents = filteredAgents;
+    }
+  }
+
+  return result;
 }
