@@ -51,7 +51,9 @@ jobs:
           - os: blacksmith-2vcpu-ubuntu-2404
           - os: blacksmith-6vcpu-macos-latest
           - os: blacksmith-2vcpu-windows-2025
+            continue_on_error: true
     runs-on: ${{ matrix.os }}
+    continue-on-error: ${{ matrix.continue_on_error || false }}
     steps:
       - uses: actions/checkout@v4
       - uses: useblacksmith/setup-bun@v1

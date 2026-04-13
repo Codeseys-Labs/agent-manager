@@ -13,7 +13,14 @@ import {
   writeConfig,
 } from "../core/config";
 import { commitAll, getStatus, pull as gitPull, push as gitPush } from "../core/git";
-import { encryptValue, generateKey, importKey, loadKey, saveKey } from "../core/secrets";
+import {
+  encryptValue,
+  generateKey,
+  importKey,
+  interpolateEnvAsync,
+  loadKey,
+  saveKey,
+} from "../core/secrets";
 import { errorMessage } from "../lib/errors";
 
 // ── Token-based authentication for local web server ─────────────
@@ -270,7 +277,15 @@ export function createApp() {
       if (imported.servers) {
         if (!config.servers) config.servers = {};
         for (const [name, srv] of Object.entries(imported.servers)) {
-          config.servers[name] = srv;
+          config.servers[name] = {
+            command: srv.command,
+            args: srv.args,
+            env: srv.env,
+            transport: srv.transport,
+            description: srv.description,
+            tags: srv.tags,
+            enabled: srv.enabled,
+          };
         }
       }
 
