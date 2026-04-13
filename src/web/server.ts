@@ -556,6 +556,76 @@ export function createApp() {
     }
   });
 
+  // ── Wiki endpoints ───────────────────────────────────────────
+
+  app.get("/api/wiki/pages", async (c) => {
+    const { listPages, resolveWikiDir } = await import("../wiki/storage");
+    const type = c.req.query("type"); // optional filter
+    const global = c.req.query("global") === "true";
+    const wikiDir = resolveWikiDir({ global });
+    const pages = await listPages({ type: type as any, wikiDir });
+    return c.json({
+      pages: pages.map((p) => ({
+        slug: p.slug,
+        title: p.title,
+        type: p.type,
+        tags: p.tags,
+        updated: p.updated,
+        confidence: p.confidence,
+      })),
+    });
+  });
+
+  app.get("/api/wiki/search", async (c) => {
+    const query = c.req.query("q");
+    if (!query) return c.json({ error: "Query parameter 'q' required" }, 400);
+    const { searchPages, resolveWikiDir } = await import("../wiki/storage");
+    const global = c.req.query("global") === "true";
+    const limit = Number.parseInt(c.req.query("limit") ?? "20", 10);
+    const wikiDir = resolveWikiDir({ global });
+    const results = await searchPages(query, limit, wikiDir);
+    return c.json({
+      query,
+      results: results.map((r) => ({
+        slug: r.page.slug,
+        title: r.page.title,
+        type: r.page.type,
+        score: r.score,
+        tags: r.page.tags,
+      })),
+    });
+  });
+
+  app.get("/api/wiki/graph", async (c) => {
+    const { loadGraph, exportGraphForViz } = await import("../wiki/graph");
+    const { resolveWikiDir } = await import("../wiki/storage");
+    const global = c.req.query("global") === "true";
+    const wikiDir = resolveWikiDir({ global });
+    const graph = await loadGraph(wikiDir);
+    return c.json(exportGraphForViz(graph));
+  });
+
+  app.get("/api/wiki/projects", async (c) => {
+    const { resolveConfigDir } = await import("../core/config");
+    const { existsSync, readdirSync } = await import("node:fs");
+    const { join } = await import("node:path");
+    const projectsDir = join(resolveConfigDir(), "wiki", "projects");
+    if (!existsSync(projectsDir)) return c.json({ projects: [] });
+    const projects = readdirSync(projectsDir, { withFileTypes: true })
+      .filter((d) => d.isDirectory())
+      .map((d) => d.name);
+    return c.json({ projects });
+  });
+
+  app.get("/api/wiki/pages/:slug", async (c) => {
+    const { readPage, resolveWikiDir } = await import("../wiki/storage");
+    const global = c.req.query("global") === "true";
+    const wikiDir = resolveWikiDir({ global });
+    const page = await readPage(c.req.param("slug"), wikiDir);
+    if (!page) return c.json({ error: "Page not found" }, 404);
+    return c.json({ page });
+  });
+
   // Serve static dashboard — must be after API routes
   const publicDir = join(import.meta.dir, "public");
   app.use("/*", serveStatic({ root: publicDir }));

@@ -284,4 +284,50 @@ describe("Web API", () => {
     const data = await res.json();
     expect(data.error).toContain("not found");
   });
+
+  // ── Wiki endpoints ──────────────────────────────────────────
+
+  it("GET /api/wiki/pages returns pages array (may be empty)", async () => {
+    const res = await request(app, "/api/wiki/pages");
+    expect(res.status).toBe(200);
+    const data = await res.json();
+    expect(Array.isArray(data.pages)).toBe(true);
+  });
+
+  it("GET /api/wiki/search?q=test returns search results", async () => {
+    const res = await request(app, "/api/wiki/search?q=test");
+    expect(res.status).toBe(200);
+    const data = await res.json();
+    expect(data.query).toBe("test");
+    expect(Array.isArray(data.results)).toBe(true);
+  });
+
+  it("GET /api/wiki/search without q returns 400", async () => {
+    const res = await request(app, "/api/wiki/search");
+    expect(res.status).toBe(400);
+    const data = await res.json();
+    expect(data.error).toContain("required");
+  });
+
+  it("GET /api/wiki/projects returns project list", async () => {
+    const res = await request(app, "/api/wiki/projects");
+    expect(res.status).toBe(200);
+    const data = await res.json();
+    expect(Array.isArray(data.projects)).toBe(true);
+  });
+
+  it("GET /api/wiki/pages/nonexistent returns 404", async () => {
+    const res = await request(app, "/api/wiki/pages/nonexistent");
+    expect(res.status).toBe(404);
+    const data = await res.json();
+    expect(data.error).toContain("not found");
+  });
+
+  it("GET /api/wiki/graph returns nodes and edges", async () => {
+    const res = await request(app, "/api/wiki/graph");
+    expect(res.status).toBe(200);
+    const data = await res.json();
+    expect(Array.isArray(data.nodes)).toBe(true);
+    expect(Array.isArray(data.edges)).toBe(true);
+  });
 });

@@ -409,6 +409,99 @@ app.post("/api/config/:owner/:repo", async (c) => {
 });
 
 // ---------------------------------------------------------------------------
+// API: Wiki — browse wiki pages from GitHub-backed AM repo
+// ---------------------------------------------------------------------------
+
+app.get("/api/wiki/:owner/:repo/pages", async (c) => {
+  const token = c.get("githubToken");
+  const { owner, repo } = c.req.param();
+  const project = c.req.query("project"); // optional project name
+
+  // List files in wiki directory via GitHub Trees API
+  const wikiPath = project ? `wiki/projects/${project}` : "wiki/global";
+  const treeRes = await fetch(
+    `https://api.github.com/repos/${owner}/${repo}/git/trees/main?recursive=1`,
+    {
+      headers: {
+        Authorization: `Bearer ${token}`,
+        Accept: "application/vnd.github+json",
+        "User-Agent": "agent-manager",
+      },
+    },
+  );
+
+  if (!treeRes.ok)
+    return c.json(
+      { error: "Could not read wiki from repository" },
+      treeRes.status as ContentfulStatusCode,
+    );
+  const tree = (await treeRes.json()) as { tree: Array<{ path: string; type: string }> };
+
+  // Filter to wiki markdown files
+  const pages = tree.tree
+    .filter((f) => f.path.startsWith(wikiPath) && f.path.endsWith(".md") && f.type === "blob")
+    .map((f) => {
+      const parts = f.path.split("/");
+      const slug = parts[parts.length - 1].replace(".md", "");
+      const type = parts[parts.length - 2]; // entities, concepts, etc.
+      return { slug, type, path: f.path };
+    });
+
+  return c.json({ pages });
+});
+
+app.get("/api/wiki/:owner/:repo/projects", async (c) => {
+  const token = c.get("githubToken");
+  const { owner, repo } = c.req.param();
+
+  const treeRes = await fetch(
+    `https://api.github.com/repos/${owner}/${repo}/contents/wiki/projects`,
+    {
+      headers: {
+        Authorization: `Bearer ${token}`,
+        Accept: "application/vnd.github+json",
+        "User-Agent": "agent-manager",
+      },
+    },
+  );
+
+  if (!treeRes.ok) return c.json({ projects: [] });
+  const contents = await treeRes.json();
+  const projects = Array.isArray(contents)
+    ? contents.filter((f: any) => f.type === "dir").map((f: any) => f.name)
+    : [];
+
+  return c.json({ projects });
+});
+
+app.get("/api/wiki/:owner/:repo/pages/:slug", async (c) => {
+  const token = c.get("githubToken");
+  const { owner, repo, slug } = c.req.param();
+  const project = c.req.query("project");
+  const type = c.req.query("type") ?? "entities";
+
+  const filePath = project
+    ? `wiki/projects/${project}/${type}/${slug}.md`
+    : `wiki/global/${type}/${slug}.md`;
+
+  const fileRes = await fetch(
+    `https://api.github.com/repos/${owner}/${repo}/contents/${filePath}`,
+    {
+      headers: {
+        Authorization: `Bearer ${token}`,
+        Accept: "application/vnd.github.raw+json",
+        "User-Agent": "agent-manager",
+      },
+    },
+  );
+
+  if (!fileRes.ok) return c.json({ error: "Page not found" }, 404);
+  const content = await fileRes.text();
+
+  return c.json({ slug, type, content });
+});
+
+// ---------------------------------------------------------------------------
 // Static assets — SPA fallback
 // ---------------------------------------------------------------------------
 
