@@ -70,6 +70,7 @@ describe("TUI data types", () => {
         {
           name: "fetch",
           command: "uvx",
+          args: [],
           tags: ["utility"],
           enabled: true,
           description: "Fetch MCP",
@@ -78,6 +79,7 @@ describe("TUI data types", () => {
         {
           name: "tavily",
           command: "bunx",
+          args: ["tavily-mcp@latest"],
           tags: ["search"],
           enabled: false,
           description: "Tavily search",

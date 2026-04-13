@@ -16,6 +16,7 @@ import type { Config, Server } from "../core/schema.ts";
 export interface ServerEntry {
   name: string;
   command: string;
+  args: string[];
   tags: string[];
   enabled: boolean;
   description: string;
@@ -60,6 +61,7 @@ export async function loadTuiData(): Promise<TuiData> {
   const servers: ServerEntry[] = Object.entries(config.servers ?? {}).map(([name, srv]) => ({
     name,
     command: srv.command,
+    args: srv.args ?? [],
     tags: srv.tags ?? [],
     enabled: srv.enabled ?? true,
     description: srv.description ?? "",

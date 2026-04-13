@@ -21,9 +21,20 @@ interface Props {
   onApply: () => Promise<void>;
   onPush: () => Promise<string>;
   onAddServer: () => Promise<string>;
+  onRemoveServer: (serverName: string) => Promise<string>;
+  onImport: () => Promise<string>;
 }
 
-export function App({ initialData, onProfileSwitch, onSync, onApply, onPush, onAddServer }: Props) {
+export function App({
+  initialData,
+  onProfileSwitch,
+  onSync,
+  onApply,
+  onPush,
+  onAddServer,
+  onRemoveServer,
+  onImport,
+}: Props) {
   const { exit } = useApp();
   const [view, setView] = useState<View>("dashboard");
   const [data, setData] = useState<TuiData>(initialData);
@@ -72,6 +83,32 @@ export function App({ initialData, onProfileSwitch, onSync, onApply, onPush, onA
       showMessage(`Add server failed: ${err.message}`);
     }
   }, [onAddServer, showMessage]);
+
+  const handleRemoveServer = useCallback(
+    async (serverName: string): Promise<string> => {
+      try {
+        const result = await onRemoveServer(serverName);
+        // Update local data to remove the server from the list
+        setData((prev) => ({
+          ...prev,
+          servers: prev.servers.filter((s) => s.name !== serverName),
+        }));
+        return result;
+      } catch (err: any) {
+        return `Remove failed: ${err.message}`;
+      }
+    },
+    [onRemoveServer],
+  );
+
+  const handleImport = useCallback(async (): Promise<string> => {
+    try {
+      const result = await onImport();
+      return result;
+    } catch (err: any) {
+      return `Import failed: ${err.message}`;
+    }
+  }, [onImport]);
 
   const handleProfileSelect = useCallback(
     async (profile: string) => {
@@ -181,7 +218,14 @@ export function App({ initialData, onProfileSwitch, onSync, onApply, onPush, onA
       {/* Content area */}
       <Box flexDirection="column" marginTop={1}>
         {view === "dashboard" && (
-          <Dashboard data={data} onSync={handleSync} onApply={handleApply} />
+          <Dashboard
+            data={data}
+            onSync={handleSync}
+            onApply={handleApply}
+            onRemoveServer={handleRemoveServer}
+            onImport={handleImport}
+            showMessage={showMessage}
+          />
         )}
         {view === "profiles" && (
           <ProfileSwitcher

@@ -11,6 +11,10 @@ const SHORTCUTS = [
   { key: "a", desc: "Apply config to all detected adapters" },
   { key: "P (shift+p)", desc: "Push config to remote" },
   { key: "A (shift+a)", desc: "Add server (shows CLI hint)" },
+  { key: "D (shift+d)", desc: "Remove selected server" },
+  { key: "E (shift+e)", desc: "View server details (with edit hint)" },
+  { key: "I (shift+i)", desc: "Import from all detected tools" },
+  { key: "Up/Down", desc: "Navigate server list" },
   { key: "p", desc: "Open profile switcher" },
   { key: "t", desc: "Open status view" },
   { key: "?", desc: "Show this help" },
@@ -19,6 +23,9 @@ const SHORTCUTS = [
   { key: "Profile Switcher", desc: "" },
   { key: "Up/Down", desc: "Navigate profiles" },
   { key: "Enter", desc: "Switch to selected profile" },
+  { key: "Esc/q", desc: "Back to dashboard" },
+  { key: "", desc: "" },
+  { key: "Server Detail", desc: "" },
   { key: "Esc/q", desc: "Back to dashboard" },
 ];
 
@@ -41,7 +48,8 @@ export function HelpView({ onBack }: Props) {
               <Text bold> {s.key}</Text>
             </Box>
           ) : (
-            <Box key={s.key}>
+            // biome-ignore lint/suspicious/noArrayIndexKey: duplicate keys possible across sections
+            <Box key={`${s.key}-${i}`}>
               <Text>
                 {"  "}
                 <Text bold color="cyan">
