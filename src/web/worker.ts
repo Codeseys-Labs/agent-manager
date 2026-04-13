@@ -3,26 +3,83 @@
  *
  * FULLY STATELESS — no KV, D1, or R2. Zero persistent storage.
  * Sessions use encrypted cookies. Config lives in user's git repo.
- * See ADR-0015 for architecture.
+ *
+ * Supports multiple git backends: GitHub, GitLab, Codeberg, self-hosted Gitea.
+ * See ADR-0015 for architecture, ADR-0025 for multi-backend design.
  */
 import { Hono } from "hono";
 import type { ContentfulStatusCode } from "hono/utils/http-status";
+import { type GitProvider, getProvider, registerGiteaInstance } from "./git-providers";
 
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
 
 type Bindings = {
-  GITHUB_CLIENT_ID: string;
-  GITHUB_CLIENT_SECRET: string;
+  // GitHub
+  GITHUB_CLIENT_ID?: string;
+  GITHUB_CLIENT_SECRET?: string;
+  // GitLab
+  GITLAB_CLIENT_ID?: string;
+  GITLAB_CLIENT_SECRET?: string;
+  // Codeberg
+  CODEBERG_CLIENT_ID?: string;
+  CODEBERG_CLIENT_SECRET?: string;
+  // Self-hosted Gitea
+  GITEA_URL?: string;
+  GITEA_CLIENT_ID?: string;
+  GITEA_CLIENT_SECRET?: string;
+  // Common
   SESSION_SECRET: string;
   ENVIRONMENT: string;
   ASSETS?: { fetch: (req: Request) => Promise<Response> };
 };
 
 type Variables = {
-  githubToken: string;
+  token: string;
+  provider: GitProvider;
 };
+
+// ---------------------------------------------------------------------------
+// Provider credential helpers
+// ---------------------------------------------------------------------------
+
+/** Map provider name → env var names for client ID/secret */
+function getProviderCredentials(
+  providerName: string,
+  env: Bindings,
+): { clientId: string; clientSecret: string } | null {
+  switch (providerName) {
+    case "github":
+      return env.GITHUB_CLIENT_ID && env.GITHUB_CLIENT_SECRET
+        ? { clientId: env.GITHUB_CLIENT_ID, clientSecret: env.GITHUB_CLIENT_SECRET }
+        : null;
+    case "gitlab":
+      return env.GITLAB_CLIENT_ID && env.GITLAB_CLIENT_SECRET
+        ? { clientId: env.GITLAB_CLIENT_ID, clientSecret: env.GITLAB_CLIENT_SECRET }
+        : null;
+    case "codeberg":
+      return env.CODEBERG_CLIENT_ID && env.CODEBERG_CLIENT_SECRET
+        ? { clientId: env.CODEBERG_CLIENT_ID, clientSecret: env.CODEBERG_CLIENT_SECRET }
+        : null;
+    case "gitea":
+      return env.GITEA_CLIENT_ID && env.GITEA_CLIENT_SECRET
+        ? { clientId: env.GITEA_CLIENT_ID, clientSecret: env.GITEA_CLIENT_SECRET }
+        : null;
+    default:
+      return null;
+  }
+}
+
+/** Return list of provider names that have credentials configured */
+function getConfiguredProviders(env: Bindings): string[] {
+  const configured: string[] = [];
+  if (env.GITHUB_CLIENT_ID && env.GITHUB_CLIENT_SECRET) configured.push("github");
+  if (env.GITLAB_CLIENT_ID && env.GITLAB_CLIENT_SECRET) configured.push("gitlab");
+  if (env.CODEBERG_CLIENT_ID && env.CODEBERG_CLIENT_SECRET) configured.push("codeberg");
+  if (env.GITEA_CLIENT_ID && env.GITEA_CLIENT_SECRET && env.GITEA_URL) configured.push("gitea");
+  return configured;
+}
 
 // ---------------------------------------------------------------------------
 // Cookie-based session helpers (no persistent storage)
@@ -93,6 +150,20 @@ function sessionCookie(value: string, maxAge = 86400): string {
 const app = new Hono<{ Bindings: Bindings; Variables: Variables }>();
 
 // ---------------------------------------------------------------------------
+// Self-hosted Gitea registration (lazily on first request)
+// ---------------------------------------------------------------------------
+
+app.use("*", async (c, next) => {
+  if (c.env.GITEA_URL && c.env.GITEA_CLIENT_ID && c.env.GITEA_CLIENT_SECRET) {
+    // Ensure the self-hosted Gitea instance is registered
+    if (!getProvider("gitea")) {
+      registerGiteaInstance(c.env.GITEA_URL, "gitea");
+    }
+  }
+  return next();
+});
+
+// ---------------------------------------------------------------------------
 // Health check (unauthenticated)
 // ---------------------------------------------------------------------------
 
@@ -101,36 +172,63 @@ app.get("/api/health", (c) =>
 );
 
 // ---------------------------------------------------------------------------
-// GitHub OAuth flow (stateless — CSRF state in short-lived encrypted cookie)
+// Available providers endpoint (unauthenticated)
 // ---------------------------------------------------------------------------
 
-app.get("/auth/github/login", async (c) => {
-  const clientId = c.env.GITHUB_CLIENT_ID;
-  const redirectUri = new URL("/auth/github/callback", c.req.url).toString();
+app.get("/auth/providers", (c) => {
+  const configured = getConfiguredProviders(c.env);
+  const providers = configured
+    .map((name) => {
+      const p = getProvider(name);
+      return p ? { name: p.name, displayName: p.displayName } : null;
+    })
+    .filter(Boolean);
+  return c.json({ providers });
+});
+
+// ---------------------------------------------------------------------------
+// Multi-provider OAuth flow (stateless — CSRF state in short-lived encrypted cookie)
+// ---------------------------------------------------------------------------
+
+app.get("/auth/:provider/login", async (c) => {
+  const providerName = c.req.param("provider");
+  const provider = getProvider(providerName);
+  if (!provider) {
+    return c.json({ error: `Unknown provider: ${providerName}` }, 400);
+  }
+
+  const creds = getProviderCredentials(providerName, c.env);
+  if (!creds) {
+    return c.json({ error: `Provider ${providerName} is not configured` }, 400);
+  }
+
+  const redirectUri = new URL(`/auth/${providerName}/callback`, c.req.url).toString();
   const state = crypto.randomUUID();
 
-  // Store CSRF state in a short-lived encrypted cookie (5 min)
-  const stateCookie = await encryptSession({ state, ts: Date.now() }, c.env.SESSION_SECRET);
+  // Store CSRF state + provider in a short-lived encrypted cookie (5 min)
+  const stateCookie = await encryptSession(
+    { state, provider: providerName, ts: Date.now() },
+    c.env.SESSION_SECRET,
+  );
 
-  const params = new URLSearchParams({
-    client_id: clientId,
-    redirect_uri: redirectUri,
-    // Minimal OAuth scopes: contents:read for pull, contents:write for push.
-    // Avoids overly broad 'repo' scope that grants access to all repo settings.
-    scope: "contents:read contents:write",
-    state,
-  });
+  const authorizationUrl = provider.authUrl(creds.clientId, redirectUri, state);
 
   return new Response(null, {
     status: 302,
     headers: {
-      Location: `https://github.com/login/oauth/authorize?${params}`,
+      Location: authorizationUrl,
       "Set-Cookie": `am_oauth_state=${stateCookie}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=300`,
     },
   });
 });
 
-app.get("/auth/github/callback", async (c) => {
+app.get("/auth/:provider/callback", async (c) => {
+  const providerName = c.req.param("provider");
+  const provider = getProvider(providerName);
+  if (!provider) {
+    return c.json({ error: `Unknown provider: ${providerName}` }, 400);
+  }
+
   const code = c.req.query("code");
   const state = c.req.query("state");
 
@@ -149,37 +247,53 @@ app.get("/auth/github/callback", async (c) => {
     return c.json({ error: "Invalid state — CSRF check failed" }, 403);
   }
 
+  // Verify the state cookie matches this provider
+  if (stateData.provider !== providerName) {
+    return c.json({ error: "Provider mismatch in state cookie" }, 403);
+  }
+
   // Check state isn't too old (5 min)
   if (Date.now() - (stateData.ts as number) > 300000) {
     return c.json({ error: "State expired" }, 403);
   }
 
-  // Exchange code for access token
-  const tokenRes = await fetch("https://github.com/login/oauth/access_token", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Accept: "application/json",
-    },
-    body: JSON.stringify({
-      client_id: c.env.GITHUB_CLIENT_ID,
-      client_secret: c.env.GITHUB_CLIENT_SECRET,
-      code,
-    }),
-  });
-
-  const tokenData = (await tokenRes.json()) as {
-    access_token?: string;
-    error?: string;
-  };
-
-  if (!tokenData.access_token) {
-    return c.json({ error: tokenData.error ?? "Token exchange failed" }, 400);
+  const creds = getProviderCredentials(providerName, c.env);
+  if (!creds) {
+    return c.json({ error: `Provider ${providerName} is not configured` }, 400);
   }
 
-  // Create encrypted session cookie (no server-side storage)
+  // Exchange code for access token (provider-specific)
+  const redirectUri = new URL(`/auth/${providerName}/callback`, c.req.url).toString();
+  const exchange = provider.tokenExchangeBody(
+    creds.clientId,
+    creds.clientSecret,
+    code,
+    redirectUri,
+  );
+
+  const tokenRes = await fetch(provider.tokenUrl(), {
+    method: "POST",
+    headers: {
+      "Content-Type": exchange.contentType,
+      Accept: "application/json",
+    },
+    body: exchange.body,
+  });
+
+  const tokenData = await tokenRes.json();
+  const accessToken = provider.parseTokenResponse(tokenData);
+
+  if (!accessToken) {
+    const errorMsg =
+      (tokenData as { error?: string; error_description?: string }).error_description ??
+      (tokenData as { error?: string }).error ??
+      "Token exchange failed";
+    return c.json({ error: errorMsg }, 400);
+  }
+
+  // Create encrypted session cookie with provider info (no server-side storage)
   const sessionCookieValue = await encryptSession(
-    { token: tokenData.access_token, created: Date.now() },
+    { token: accessToken, provider: providerName, created: Date.now() },
     c.env.SESSION_SECRET,
   );
 
@@ -212,21 +326,24 @@ app.get("/auth/check", async (c) => {
   const session = await decryptSession(encrypted, c.env.SESSION_SECRET);
   if (!session?.token) return c.json({ authenticated: false });
 
+  const providerName = (session.provider as string) ?? "github";
+  const provider = getProvider(providerName);
+  if (!provider) return c.json({ authenticated: false });
+
   try {
-    const userRes = await fetch("https://api.github.com/user", {
+    const userRes = await fetch(provider.userUrl(), {
       headers: {
-        Authorization: `Bearer ${session.token}`,
+        Authorization: provider.authHeader(session.token as string),
         "User-Agent": "agent-manager",
       },
     });
     if (!userRes.ok) return c.json({ authenticated: false });
-    const user = (await userRes.json()) as {
-      login: string;
-      avatar_url: string;
-    };
+    const userData = await userRes.json();
+    const user = provider.parseUser(userData);
     return c.json({
       authenticated: true,
-      user: { login: user.login, avatar: user.avatar_url },
+      provider: providerName,
+      user,
     });
   } catch {
     return c.json({ authenticated: false });
@@ -242,15 +359,22 @@ app.use("/api/*", async (c, next) => {
 
   const encrypted = getSessionCookie(c);
   if (!encrypted) {
-    return c.json({ error: "Not authenticated", login: "/auth/github/login" }, 401);
+    return c.json({ error: "Not authenticated", login: "/auth/providers" }, 401);
   }
 
   const session = await decryptSession(encrypted, c.env.SESSION_SECRET);
   if (!session?.token) {
-    return c.json({ error: "Session expired", login: "/auth/github/login" }, 401);
+    return c.json({ error: "Session expired", login: "/auth/providers" }, 401);
   }
 
-  c.set("githubToken", session.token as string);
+  const providerName = (session.provider as string) ?? "github";
+  const provider = getProvider(providerName);
+  if (!provider) {
+    return c.json({ error: `Unknown provider in session: ${providerName}` }, 401);
+  }
+
+  c.set("token", session.token as string);
+  c.set("provider", provider);
   return next();
 });
 
@@ -259,10 +383,12 @@ app.use("/api/*", async (c, next) => {
 // ---------------------------------------------------------------------------
 
 app.get("/api/repos", async (c) => {
-  const token = c.get("githubToken");
-  const res = await fetch("https://api.github.com/user/repos?per_page=100&sort=updated", {
+  const token = c.get("token");
+  const provider = c.get("provider");
+
+  const res = await fetch(provider.reposUrl(), {
     headers: {
-      Authorization: `Bearer ${token}`,
+      Authorization: provider.authHeader(token),
       "User-Agent": "agent-manager",
     },
   });
@@ -271,21 +397,8 @@ app.get("/api/repos", async (c) => {
     return c.json({ error: "Failed to fetch repos" }, res.status as ContentfulStatusCode);
   }
 
-  const repos = (await res.json()) as Array<{
-    full_name: string;
-    clone_url: string;
-    private: boolean;
-    updated_at: string;
-  }>;
-
-  return c.json(
-    repos.map((r) => ({
-      name: r.full_name,
-      url: r.clone_url,
-      private: r.private,
-      updated: r.updated_at,
-    })),
-  );
+  const data = await res.json();
+  return c.json(provider.parseRepos(data));
 });
 
 // ---------------------------------------------------------------------------
@@ -293,14 +406,15 @@ app.get("/api/repos", async (c) => {
 // ---------------------------------------------------------------------------
 
 app.get("/api/config/:owner/:repo", async (c) => {
-  const token = c.get("githubToken");
+  const token = c.get("token");
+  const provider = c.get("provider");
   const { owner, repo } = c.req.param();
 
-  const res = await fetch(`https://api.github.com/repos/${owner}/${repo}/contents/config.toml`, {
+  const res = await fetch(provider.fileUrl(owner, repo, "config.toml"), {
     headers: {
-      Authorization: `Bearer ${token}`,
+      Authorization: provider.authHeader(token),
       "User-Agent": "agent-manager",
-      Accept: "application/vnd.github.v3.raw",
+      Accept: provider.rawAccept(),
     },
   });
 
@@ -328,14 +442,15 @@ app.get("/api/config/:owner/:repo", async (c) => {
 // ---------------------------------------------------------------------------
 
 app.get("/api/servers/:owner/:repo", async (c) => {
-  const token = c.get("githubToken");
+  const token = c.get("token");
+  const provider = c.get("provider");
   const { owner, repo } = c.req.param();
 
-  const res = await fetch(`https://api.github.com/repos/${owner}/${repo}/contents/config.toml`, {
+  const res = await fetch(provider.fileUrl(owner, repo, "config.toml"), {
     headers: {
-      Authorization: `Bearer ${token}`,
+      Authorization: provider.authHeader(token),
       "User-Agent": "agent-manager",
-      Accept: "application/vnd.github.v3.raw",
+      Accept: provider.rawAccept(),
     },
   });
 
@@ -363,7 +478,8 @@ app.get("/api/servers/:owner/:repo", async (c) => {
 // ---------------------------------------------------------------------------
 
 app.post("/api/config/:owner/:repo", async (c) => {
-  const token = c.get("githubToken");
+  const token = c.get("token");
+  const provider = c.get("provider");
   const { owner, repo } = c.req.param();
   const body = (await c.req.json()) as { content: string; message?: string };
 
@@ -371,111 +487,93 @@ app.post("/api/config/:owner/:repo", async (c) => {
     return c.json({ error: "Missing content field" }, 400);
   }
 
-  const getRes = await fetch(`https://api.github.com/repos/${owner}/${repo}/contents/config.toml`, {
+  // Get file metadata (SHA needed for updates on GitHub/Gitea)
+  const getRes = await fetch(provider.fileMetaUrl(owner, repo, "config.toml"), {
     headers: {
-      Authorization: `Bearer ${token}`,
+      Authorization: provider.authHeader(token),
       "User-Agent": "agent-manager",
     },
   });
 
   if (!getRes.ok) return c.json({ error: "Config not found" }, 404);
 
-  const fileData = (await getRes.json()) as { sha: string };
+  const fileData = await getRes.json();
+  const sha = provider.parseFileSha(fileData);
+  const commitMessage = body.message ?? "Update config via agent-manager web UI";
+  const updateBody = provider.buildUpdateBody(body.content, sha, commitMessage);
 
-  const updateRes = await fetch(
-    `https://api.github.com/repos/${owner}/${repo}/contents/config.toml`,
-    {
-      method: "PUT",
-      headers: {
-        Authorization: `Bearer ${token}`,
-        "User-Agent": "agent-manager",
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        message: body.message ?? "Update config via agent-manager web UI",
-        content: btoa(body.content),
-        sha: fileData.sha,
-      }),
+  const updateRes = await fetch(provider.updateFileUrl(owner, repo, "config.toml"), {
+    method: "PUT",
+    headers: {
+      Authorization: provider.authHeader(token),
+      "User-Agent": "agent-manager",
+      "Content-Type": "application/json",
     },
-  );
+    body: JSON.stringify(updateBody),
+  });
 
   if (!updateRes.ok) {
     const err = await updateRes.json();
     return c.json({ error: "Commit failed", detail: err }, 500);
   }
 
-  const result = (await updateRes.json()) as { commit: { sha: string } };
-  return c.json({ success: true, sha: result.commit.sha });
+  const result = await updateRes.json();
+  const commitSha = provider.parseCommitSha(result);
+  return c.json({ success: true, sha: commitSha });
 });
 
 // ---------------------------------------------------------------------------
-// API: Wiki — browse wiki pages from GitHub-backed AM repo
+// API: Wiki — browse wiki pages from git-backed AM repo
 // ---------------------------------------------------------------------------
 
 app.get("/api/wiki/:owner/:repo/pages", async (c) => {
-  const token = c.get("githubToken");
+  const token = c.get("token");
+  const provider = c.get("provider");
   const { owner, repo } = c.req.param();
-  const project = c.req.query("project"); // optional project name
+  const project = c.req.query("project");
 
-  // List files in wiki directory via GitHub Trees API
   const wikiPath = project ? `wiki/projects/${project}` : "wiki/global";
-  const treeRes = await fetch(
-    `https://api.github.com/repos/${owner}/${repo}/git/trees/main?recursive=1`,
-    {
-      headers: {
-        Authorization: `Bearer ${token}`,
-        Accept: "application/vnd.github+json",
-        "User-Agent": "agent-manager",
-      },
+  const treeRes = await fetch(provider.treeUrl(owner, repo, "main"), {
+    headers: {
+      Authorization: provider.authHeader(token),
+      Accept: "application/json",
+      "User-Agent": "agent-manager",
     },
-  );
+  });
 
   if (!treeRes.ok)
     return c.json(
       { error: "Could not read wiki from repository" },
       treeRes.status as ContentfulStatusCode,
     );
-  const tree = (await treeRes.json()) as { tree: Array<{ path: string; type: string }> };
 
-  // Filter to wiki markdown files
-  const pages = tree.tree
-    .filter((f) => f.path.startsWith(wikiPath) && f.path.endsWith(".md") && f.type === "blob")
-    .map((f) => {
-      const parts = f.path.split("/");
-      const slug = parts[parts.length - 1].replace(".md", "");
-      const type = parts[parts.length - 2]; // entities, concepts, etc.
-      return { slug, type, path: f.path };
-    });
-
+  const treeData = await treeRes.json();
+  const pages = provider.parseTree(treeData, wikiPath);
   return c.json({ pages });
 });
 
 app.get("/api/wiki/:owner/:repo/projects", async (c) => {
-  const token = c.get("githubToken");
+  const token = c.get("token");
+  const provider = c.get("provider");
   const { owner, repo } = c.req.param();
 
-  const treeRes = await fetch(
-    `https://api.github.com/repos/${owner}/${repo}/contents/wiki/projects`,
-    {
-      headers: {
-        Authorization: `Bearer ${token}`,
-        Accept: "application/vnd.github+json",
-        "User-Agent": "agent-manager",
-      },
+  const treeRes = await fetch(provider.dirUrl(owner, repo, "wiki/projects"), {
+    headers: {
+      Authorization: provider.authHeader(token),
+      Accept: "application/json",
+      "User-Agent": "agent-manager",
     },
-  );
+  });
 
   if (!treeRes.ok) return c.json({ projects: [] });
   const contents = await treeRes.json();
-  const projects = Array.isArray(contents)
-    ? contents.filter((f: any) => f.type === "dir").map((f: any) => f.name)
-    : [];
-
+  const projects = provider.parseDirs(contents);
   return c.json({ projects });
 });
 
 app.get("/api/wiki/:owner/:repo/pages/:slug", async (c) => {
-  const token = c.get("githubToken");
+  const token = c.get("token");
+  const provider = c.get("provider");
   const { owner, repo, slug } = c.req.param();
   const project = c.req.query("project");
   const type = c.req.query("type") ?? "entities";
@@ -484,16 +582,13 @@ app.get("/api/wiki/:owner/:repo/pages/:slug", async (c) => {
     ? `wiki/projects/${project}/${type}/${slug}.md`
     : `wiki/global/${type}/${slug}.md`;
 
-  const fileRes = await fetch(
-    `https://api.github.com/repos/${owner}/${repo}/contents/${filePath}`,
-    {
-      headers: {
-        Authorization: `Bearer ${token}`,
-        Accept: "application/vnd.github.raw+json",
-        "User-Agent": "agent-manager",
-      },
+  const fileRes = await fetch(provider.fileUrl(owner, repo, filePath), {
+    headers: {
+      Authorization: provider.authHeader(token),
+      Accept: provider.rawAccept(),
+      "User-Agent": "agent-manager",
     },
-  );
+  });
 
   if (!fileRes.ok) return c.json({ error: "Page not found" }, 404);
   const content = await fileRes.text();
