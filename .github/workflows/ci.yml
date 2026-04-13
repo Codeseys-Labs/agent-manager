@@ -59,12 +59,12 @@ jobs:
           bun-version: latest
       - run: bun install --frozen-lockfile
       - name: Run tests
+        shell: bash
         run: |
           # Bun exits 1 when test code writes to stderr even if all tests pass.
           # Capture output and check for actual test failures.
           set +e
           OUTPUT=$(bun test 2>&1)
-          EXIT_CODE=$?
           echo "$OUTPUT"
           # Check for actual failures: line matching "N fail" where N > 0
           FAIL_LINE=$(echo "$OUTPUT" | grep -E '^ [0-9]+ fail$' | tail -1)

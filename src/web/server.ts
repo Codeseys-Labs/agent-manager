@@ -263,7 +263,7 @@ export function createApp() {
         return c.json({ error: `Adapter "${adapterName}" not found` }, 404);
       }
 
-      const imported = adapter.import();
+      const imported = adapter.import({});
       const { config, configPath, configDir: dir } = await getConfigAndWritePath();
 
       // Merge imported servers into config

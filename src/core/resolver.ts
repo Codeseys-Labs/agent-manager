@@ -37,7 +37,7 @@ export function resolveProfile(name: string, config: Config): ResolvedProfile {
     if (seen.has(current)) {
       throw new Error(`Circular inheritance detected: ${[...seen, current].join(" -> ")}`);
     }
-    const profile = profiles[current];
+    const profile: Profile | undefined = profiles[current];
     if (!profile) {
       throw new Error(`Unknown profile: "${current}"`);
     }

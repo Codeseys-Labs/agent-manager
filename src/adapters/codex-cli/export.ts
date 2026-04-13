@@ -7,7 +7,8 @@
 
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { parse as parseTOML, stringify as stringifyTOML } from "@iarna/toml";
+import { parse as parseTOML } from "@iarna/toml";
+import { tomlStringify as stringifyTOML } from "../../lib/toml";
 import type {
   ExportOptions,
   ExportResult,
@@ -128,7 +129,7 @@ function generateConfigToml(
   }
 
   const output = { ...existing, mcp_servers: mcpServers };
-  return stringifyTOML(output as Record<string, unknown>);
+  return stringifyTOML(output);
 }
 
 /** Concatenate all instructions into a single markdown block. */
