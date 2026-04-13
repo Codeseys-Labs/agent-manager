@@ -303,7 +303,7 @@ describe("Worker — Health check", () => {
     expect(res.status).toBe(200);
     const data = (await res.json()) as { status: string; version: string; runtime: string };
     expect(data.status).toBe("ok");
-    expect(data.version).toBe("0.1.0");
+    expect(data.version).toBe("0.3.0");
     expect(data.runtime).toBe("cloudflare-workers");
   });
 });

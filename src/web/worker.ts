@@ -168,7 +168,7 @@ app.use("*", async (c, next) => {
 // ---------------------------------------------------------------------------
 
 app.get("/api/health", (c) =>
-  c.json({ status: "ok", version: "0.1.0", runtime: "cloudflare-workers" }),
+  c.json({ status: "ok", version: "0.3.0", runtime: "cloudflare-workers" }),
 );
 
 // ---------------------------------------------------------------------------
