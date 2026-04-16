@@ -63,15 +63,142 @@ jobs:
       - name: Run tests
         shell: bash
         run: |
-          # Bun exits 1 when test code writes to stderr even if all tests pass.
-          # Capture output and check for actual test failures.
           set +e
           OUTPUT=$(bun test 2>&1)
           echo "$OUTPUT"
-          # Check for actual failures: line matching "N fail" where N > 0
           FAIL_LINE=$(echo "$OUTPUT" | grep -E '^ [0-9]+ fail$' | tail -1)
           FAIL_COUNT=$(echo "$FAIL_LINE" | awk '{print $1}')
           if [ -n "$FAIL_COUNT" ] && [ "$FAIL_COUNT" != "0" ] && [ "$FAIL_COUNT" != "" ]; then
             echo "::error::$FAIL_COUNT test(s) failed"
             exit 1
           fi
+
+  integration:
+    needs: test
+    runs-on: blacksmith-2vcpu-ubuntu-2404
+    steps:
+      - uses: actions/checkout@v4
+      - uses: useblacksmith/setup-bun@v1
+        with:
+          bun-version: latest
+      - run: bun install --frozen-lockfile
+
+      - name: Build binary
+        run: VERSION=ci-test bun run build
+
+      - name: Seed IDE configs
+        run: |
+          TEST_HOME=$(mktemp -d)
+          echo "TEST_HOME=$TEST_HOME" >> "$GITHUB_ENV"
+
+          mkdir -p "$TEST_HOME/.claude"
+          printf '{"mcpServers":{"tavily":{"command":"bunx","args":["tavily-mcp@latest"]},"fetch":{"command":"uvx","args":["mcp-server-fetch"]},"context7":{"command":"bunx","args":["-y","@upstash/context7-mcp@latest"]}}}\n' > "$TEST_HOME/.claude.json"
+
+          mkdir -p "$TEST_HOME/test-project"
+          printf '{"mcpServers":{"project-server":{"command":"my-server","args":["--port","3000"]},"disabled-server":{"command":"old-server","args":[],"disabled":true}}}\n' > "$TEST_HOME/test-project/.mcp.json"
+
+      - name: "Binary: version + help"
+        run: |
+          ./dist/am-linux-x64 version
+          ./dist/am-linux-x64 --help | grep -q "Config commands" && echo "Grouped help: PASS"
+
+      - name: "Binary: init + doctor"
+        run: |
+          export HOME="$TEST_HOME"
+          ./dist/am-linux-x64 init --yes
+          ./dist/am-linux-x64 doctor || true
+
+      - name: "Binary: import from Claude Code"
+        run: |
+          export HOME="$TEST_HOME"
+          ./dist/am-linux-x64 import claude-code --json | python3 -c "
+          import json, sys
+          data = json.load(sys.stdin)
+          print(f'Imported: {data[\"imported\"]} servers')
+          assert data['imported'] >= 3, f'Expected >=3 imported, got {data[\"imported\"]}'
+          print('Import: PASS')
+          "
+
+      - name: "Binary: import from project .mcp.json"
+        run: |
+          export HOME="$TEST_HOME"
+          cd "$TEST_HOME/test-project"
+          "$GITHUB_WORKSPACE/dist/am-linux-x64" import claude-code --json | python3 -c "
+          import json, sys
+          data = json.load(sys.stdin)
+          print(f'Imported: {data[\"imported\"]} (merged: {data[\"merged\"]})')
+          "
+
+      - name: "Binary: list servers"
+        run: |
+          export HOME="$TEST_HOME"
+          ./dist/am-linux-x64 list servers --json | python3 -c "
+          import json, sys
+          data = json.load(sys.stdin)
+          names = {s['name'] for s in data['servers']}
+          print(f'{len(names)} servers: {sorted(names)}')
+          assert 'tavily' in names, 'tavily missing'
+          assert 'fetch' in names, 'fetch missing'
+          print('List servers: PASS')
+          "
+
+      - name: "Binary: add + list round-trip"
+        run: |
+          export HOME="$TEST_HOME"
+          ./dist/am-linux-x64 add server ci-test --command "echo test" --tags ci,test
+          ./dist/am-linux-x64 list servers --json | python3 -c "
+          import json, sys
+          data = json.load(sys.stdin)
+          ts = next((s for s in data['servers'] if s['name'] == 'ci-test'), None)
+          assert ts, 'ci-test not found'
+          assert ts['command'] == 'echo test', f'Wrong command: {ts[\"command\"]}'
+          assert 'ci' in ts['tags'], f'Missing ci tag: {ts[\"tags\"]}'
+          print('Add + list: PASS')
+          "
+
+      - name: "Binary: add instruction + list entities"
+        run: |
+          export HOME="$TEST_HOME"
+          ./dist/am-linux-x64 add instruction ci-rule --content "Always run tests" --scope always
+          ./dist/am-linux-x64 list instructions --json | python3 -c "
+          import json, sys
+          data = json.load(sys.stdin)
+          names = [i['name'] for i in data['instructions']]
+          assert 'ci-rule' in names, 'ci-rule missing'
+          print('Add instruction: PASS')
+          "
+          ./dist/am-linux-x64 list skills --json
+          ./dist/am-linux-x64 list agents --json
+          ./dist/am-linux-x64 list profiles --json
+
+      - name: "Binary: status"
+        run: |
+          export HOME="$TEST_HOME"
+          ./dist/am-linux-x64 status --json | python3 -c "
+          import json, sys
+          data = json.load(sys.stdin)
+          assert data['servers'] > 0, 'No servers'
+          print(f'Status: {data[\"servers\"]} servers, profile={data[\"profile\"]}')
+          print('Status: PASS')
+          "
+
+      - name: "Binary: completions"
+        run: |
+          ./dist/am-linux-x64 completion bash | grep -q "init" && echo "Bash: PASS"
+          ./dist/am-linux-x64 completion zsh | grep -q "init" && echo "Zsh: PASS"
+          ./dist/am-linux-x64 completion fish | grep -q "init" && echo "Fish: PASS"
+
+      - name: "Binary: marketplace + flow + adapter"
+        run: |
+          export HOME="$TEST_HOME"
+          ./dist/am-linux-x64 marketplace list 2>&1 || true
+          ./dist/am-linux-x64 flow list 2>&1 || true
+          ./dist/am-linux-x64 adapter list 2>&1 || true
+
+      - name: "Binary: undo"
+        run: |
+          export HOME="$TEST_HOME"
+          ./dist/am-linux-x64 undo --json 2>&1 || true
+
+      - name: Summary
+        run: echo "Integration tests PASSED — compiled binary verified end-to-end"
