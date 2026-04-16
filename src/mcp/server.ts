@@ -1544,26 +1544,26 @@ function defineTools(): ToolEntry[] {
       tier: "write-remote" as ToolTier,
       handler: async (args) => {
         const { createAcpClient } = await import("../protocols/acp/client");
-        const { resolveAgent } = await import("../protocols/acp/registry");
+        const { resolveAgentAsync } = await import("../core/agent-registry");
         const agentName = args.agent as string;
         const promptText = args.prompt as string;
         const sessionName = args.session as string | undefined;
         const cwd = (args.cwd as string) ?? process.cwd();
 
-        // Load ACP settings for agent resolution
+        // Load config for unified agent resolution
         const { config } = await loadConfigAndProfile();
-        const acpSettings = config.settings?.acp;
+        const configDir = resolveConfigDir();
 
-        const entry = resolveAgent(agentName, acpSettings);
-        if (!entry) {
+        const entry = await resolveAgentAsync(agentName, config, configDir);
+        if (!entry || !entry.acp) {
           throw new Error(
-            `Unknown agent "${agentName}". Use am_acp_list_agents to see available agents.`,
+            `Unknown agent "${agentName}" or no ACP (local) endpoint. Use am_acp_list_agents to see available agents.`,
           );
         }
 
         const client = createAcpClient();
         try {
-          await client.connect(entry.command);
+          await client.connect(entry.acp.command);
           const sessionId =
             sessionName ?? `am-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
           await client.newSession({ cwd });
@@ -1591,20 +1591,23 @@ function defineTools(): ToolEntry[] {
       def: {
         name: "am_acp_list_agents",
         description:
-          "List available ACP-compatible agents (built-in registry + config overrides from settings.acp.agents).",
+          "List all agents from the unified registry (config overrides, ACP built-in, A2A roster). Shows protocol availability (ACP/A2A/both).",
         inputSchema: { type: "object", properties: {} },
       },
       tier: "read-only" as ToolTier,
       handler: async () => {
-        const { listAgents } = await import("../protocols/acp/registry");
+        const { listAllAgentsAsync } = await import("../core/agent-registry");
         const { config } = await loadConfigAndProfile();
-        const acpSettings = config.settings?.acp;
-        const agents = listAgents(acpSettings);
+        const configDir = resolveConfigDir();
+        const agents = await listAllAgentsAsync(config, configDir);
         return {
           agents: agents.map((a) => ({
             name: a.name,
-            command: a.command,
+            description: a.description ?? null,
             source: a.source,
+            protocol: a.acp && a.a2a ? "both" : a.acp ? "acp" : "a2a",
+            acp: a.acp ?? null,
+            a2a: a.a2a ?? null,
           })),
         };
       },

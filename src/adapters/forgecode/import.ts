@@ -11,6 +11,7 @@
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { extractPackageId } from "../claude-code/identity.ts";
+import { fileExistsSync } from "../shared/utils.ts";
 import type {
   ImportOptions,
   ImportResult,
@@ -197,12 +198,3 @@ function readSkills(projectPath: string, warnings: string[]): ImportedSkill[] {
   return skills;
 }
 
-function fileExistsSync(path: string): boolean {
-  try {
-    const fs = require("node:fs");
-    fs.accessSync(path);
-    return true;
-  } catch {
-    return false;
-  }
-}

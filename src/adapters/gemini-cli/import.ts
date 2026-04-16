@@ -8,6 +8,7 @@
 
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { fileExistsSync } from "../shared/utils.ts";
 import type { ImportOptions, ImportResult, ImportedInstruction, ImportedServer } from "../types.ts";
 
 interface GeminiServer {
@@ -144,12 +145,3 @@ function readGeminiMd(projectPath: string, warnings: string[]): ImportedInstruct
   }
 }
 
-function fileExistsSync(path: string): boolean {
-  try {
-    const fs = require("node:fs");
-    fs.accessSync(path);
-    return true;
-  } catch {
-    return false;
-  }
-}

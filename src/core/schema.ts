@@ -66,6 +66,7 @@ export type Skill = z.infer<typeof SkillSchema>;
 
 // --- Agent Profile Schema ---
 // prompt XOR prompt_file (mutually exclusive)
+// acp/a2a are unified registry protocol entries (ADR-0030)
 export const AgentProfileSchema = z
   .object({
     name: z.string(),
@@ -78,6 +79,8 @@ export const AgentProfileSchema = z
     disallowed_tools: z.array(z.string()).optional(),
     mcp_servers: z.array(z.string()).optional(),
     max_turns: z.number().optional(),
+    acp: z.object({ command: z.string() }).optional(),
+    a2a: z.object({ url: z.string() }).optional(),
     adapters: adaptersPassthrough,
   })
   .refine((data) => !(data.prompt && data.prompt_file), {

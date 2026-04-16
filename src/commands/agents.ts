@@ -11,8 +11,11 @@
  *   am agent cancel <name> <taskId>      — cancel a running task
  */
 
+import { join } from "node:path";
 import { defineCommand } from "citty";
-import { resolveConfigDir } from "../core/config";
+import { listAllAgentsAsync } from "../core/agent-registry";
+import type { UnifiedRegistryConfig } from "../core/agent-registry";
+import { resolveConfigDir, tryReadConfig } from "../core/config";
 import { error, info, output } from "../lib/output";
 import { A2AClient } from "../protocols/a2a/client";
 import {
@@ -28,7 +31,7 @@ import type { AgentRosterEntry } from "../protocols/a2a/types";
 // ── Subcommands ─────────────────────────────────────────────────
 
 const listSubcommand = defineCommand({
-  meta: { name: "list", description: "List all discovered A2A agents" },
+  meta: { name: "list", description: "List all agents (config, ACP built-in, A2A roster)" },
   args: {
     json: { type: "boolean", description: "JSON output", default: false },
     quiet: { type: "boolean", alias: "q", default: false },
@@ -42,38 +45,41 @@ const listSubcommand = defineCommand({
   async run({ args }) {
     const opts = { json: args.json, quiet: args.quiet, verbose: args.verbose };
     const configDir = resolveConfigDir();
-    const roster = await loadRoster(configDir);
+    const config = await tryReadConfig(join(configDir, "config.toml"));
+    const registryConfig = config as UnifiedRegistryConfig | undefined;
+    const agents = await listAllAgentsAsync(registryConfig, configDir);
 
     // Fetch discovered agents from config discovery_sources
     let discovered: { name: string; url: string; description: string }[] = [];
     if (args.discover) {
       const cards = await discoverFromConfig(configDir);
-      const rosterNames = new Set(roster.map((r) => r.name));
+      const agentNames = new Set(agents.map((a) => a.name));
       discovered = cards
-        .filter((c) => !rosterNames.has(c.name))
+        .filter((c) => !agentNames.has(c.name))
         .map((c) => ({ name: c.name, url: c.url, description: c.description }));
     }
 
     if (args.json) {
-      output({ agents: roster, ...(args.discover ? { discovered } : {}) }, opts);
+      output({ agents, ...(args.discover ? { discovered } : {}) }, opts);
       return;
     }
 
-    if (roster.length === 0 && discovered.length === 0) {
+    if (agents.length === 0 && discovered.length === 0) {
       info("No agents registered. Use `am agent add <url>` to add one.", opts);
       return;
     }
 
-    info(`${"Name".padEnd(24)} ${"URL".padEnd(40)} ${"Source"}`, opts);
-    info(`${"\u2500".repeat(24)} ${"\u2500".repeat(40)} ${"\u2500".repeat(20)}`, opts);
-    for (const agent of roster) {
-      const added = agent.addedAt.slice(0, 16).replace("T", " ");
-      info(`${agent.name.padEnd(24)} ${agent.url.padEnd(40)} ${added}`, opts);
+    info(`${"Name".padEnd(20)} ${"Protocol".padEnd(12)} ${"Source".padEnd(14)} Endpoint`, opts);
+    info(`${"\u2500".repeat(20)} ${"\u2500".repeat(12)} ${"\u2500".repeat(14)} ${"\u2500".repeat(44)}`, opts);
+    for (const agent of agents) {
+      const protocol = agent.acp && agent.a2a ? "ACP/A2A" : agent.acp ? "ACP" : "A2A";
+      const endpoint = agent.acp?.command ?? agent.a2a?.url ?? "\u2014";
+      info(`${agent.name.padEnd(20)} ${protocol.padEnd(12)} ${agent.source.padEnd(14)} ${endpoint}`, opts);
     }
     for (const agent of discovered) {
-      info(`${agent.name.padEnd(24)} ${agent.url.padEnd(40)} [discovered]`, opts);
+      info(`${agent.name.padEnd(20)} ${"A2A".padEnd(12)} ${"[discovered]".padEnd(14)} ${agent.url}`, opts);
     }
-    info(`\n${roster.length} registered, ${discovered.length} discovered`, opts);
+    info(`\n${agents.length} registered, ${discovered.length} discovered`, opts);
   },
 });
 

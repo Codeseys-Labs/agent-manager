@@ -12,12 +12,14 @@
  */
 
 import type { ResolvedConfig } from "../adapters/types";
+import {
+  type UnifiedRegistryConfig,
+  resolveAgent as resolveUnifiedAgent,
+} from "../core/agent-registry";
 import type { TaskHandler } from "./a2a/server";
 import { TaskEventEmitter } from "./a2a/server";
 import type { Artifact, Message } from "./a2a/types";
 import { AmAcpClient } from "./acp/client";
-import { resolveAgent } from "./acp/registry";
-import type { AcpSettings } from "./acp/types";
 
 // ── Message parsing ────────────────────────────────────────────
 
@@ -66,8 +68,10 @@ export interface BridgeConfig {
   cwd?: string;
   /** Timeout in milliseconds for the ACP prompt. Default: 300000 (5 min). */
   timeout?: number;
-  /** ACP settings from config (for agent command overrides). */
-  acpSettings?: AcpSettings;
+  /** Unified registry config (for config agent overrides). */
+  registryConfig?: UnifiedRegistryConfig;
+  /** Pre-loaded A2A roster agents (avoids disk reads). */
+  rosterAgents?: Record<string, { url: string; description?: string }>;
 }
 
 /**
@@ -86,7 +90,8 @@ export interface BridgeConfig {
 export function createBridgeTaskHandler(bridgeConfig?: BridgeConfig): TaskHandler {
   const cwd = bridgeConfig?.cwd ?? process.cwd();
   const timeout = bridgeConfig?.timeout ?? 300_000;
-  const acpSettings = bridgeConfig?.acpSettings;
+  const registryConfig = bridgeConfig?.registryConfig;
+  const rosterAgents = bridgeConfig?.rosterAgents;
 
   return async (userMessage: Message, config: ResolvedConfig) => {
     const request = parseBridgeRequest(userMessage);
@@ -104,9 +109,9 @@ export function createBridgeTaskHandler(bridgeConfig?: BridgeConfig): TaskHandle
       };
     }
 
-    // 1. Resolve agent in ACP registry
-    const entry = resolveAgent(request.agent, acpSettings);
-    if (!entry) {
+    // 1. Resolve agent in unified registry
+    const entry = resolveUnifiedAgent(request.agent, registryConfig, rosterAgents);
+    if (!entry || !entry.acp) {
       return {
         message: {
           role: "agent" as const,
@@ -123,7 +128,7 @@ export function createBridgeTaskHandler(bridgeConfig?: BridgeConfig): TaskHandle
     // 2. Spawn ACP agent and execute prompt
     const client = new AmAcpClient();
     try {
-      await client.connect(entry.command, { initTimeout: 30_000 });
+      await client.connect(entry.acp.command, { initTimeout: 30_000 });
       const sessionId = await client.newSession({ cwd });
       const result = await Promise.race([
         client.prompt(sessionId, [{ type: "text", text: request.prompt }]),

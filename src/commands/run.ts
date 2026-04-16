@@ -16,20 +16,30 @@
 
 import { join } from "node:path";
 import { defineCommand } from "citty";
+import {
+  type UnifiedRegistryConfig,
+  listAllAgentsAsync,
+  resolveAgentAsync,
+} from "../core/agent-registry";
 import { resolveConfigDir } from "../core/config";
 import { tryReadConfig } from "../core/config";
 import { debug, error, info, output, parsePositiveInt } from "../lib/output";
 import { AcpClientError, AmAcpClient, createAcpClient } from "../protocols/acp/client";
-import { listAgents, resolveAgent } from "../protocols/acp/registry";
-import type { AcpSettings, SessionUpdate } from "../protocols/acp/types";
+import type { SessionUpdate } from "../protocols/acp/types";
 
 // ── Helpers ────────────────────────────────────────────────────
 
-/** Load ACP settings from the global config. */
-async function loadAcpSettings(): Promise<AcpSettings | undefined> {
+/** Load unified registry config and config dir for agent resolution. */
+async function loadRegistryContext(): Promise<{
+  registryConfig: UnifiedRegistryConfig | undefined;
+  configDir: string;
+}> {
   const configDir = resolveConfigDir();
   const config = await tryReadConfig(join(configDir, "config.toml"));
-  return config?.settings?.acp as AcpSettings | undefined;
+  // Build UnifiedRegistryConfig from [agents.*] entries that have acp/a2a sub-sections
+  // The TOML config's agents section may have entries with acp/a2a sub-tables
+  const registryConfig = config as UnifiedRegistryConfig | undefined;
+  return { registryConfig, configDir };
 }
 
 /** Format a session update for human-readable output. */
@@ -79,17 +89,17 @@ async function runAgent(args: RunAgentArgs): Promise<void> {
   const cwd = args.cwd || process.cwd();
   const timeoutSecs = parsePositiveInt(args.timeout, "timeout", 300);
 
-  const acpSettings = await loadAcpSettings();
+  const { registryConfig, configDir } = await loadRegistryContext();
 
-  // Resolve the agent command
-  const entry = resolveAgent(agentName, acpSettings);
-  if (!entry) {
-    error(`Unknown agent "${agentName}". Run \`am run agents\` to list available agents.`, opts);
+  // Resolve the agent via unified registry
+  const entry = await resolveAgentAsync(agentName, registryConfig, configDir);
+  if (!entry || !entry.acp) {
+    error(`Unknown agent "${agentName}" or no ACP (local) endpoint. Run \`am run agents\` to list available agents.`, opts);
     process.exitCode = 1;
     return;
   }
 
-  debug(`Resolved agent: ${agentName} -> ${entry.command} (${entry.source})`, opts);
+  debug(`Resolved agent: ${agentName} -> ${entry.acp.command} (${entry.source})`, opts);
 
   const client = createAcpClient();
 
@@ -111,7 +121,7 @@ async function runAgent(args: RunAgentArgs): Promise<void> {
   try {
     // 1. Connect
     info(`Connecting to ${agentName}...`, opts);
-    const conn = await client.connect(entry.command, {
+    const conn = await client.connect(entry.acp.command, {
       initTimeout: 30_000,
     });
     debug(
@@ -198,18 +208,20 @@ const agentsSubcommand = defineCommand({
   },
   async run({ args }) {
     const opts = { json: args.json, quiet: args.quiet, verbose: args.verbose };
-    const acpSettings = await loadAcpSettings();
-    const agents = listAgents(acpSettings);
+    const { registryConfig, configDir } = await loadRegistryContext();
+    const agents = await listAllAgentsAsync(registryConfig, configDir);
 
     if (args.json) {
       output({ agents }, opts);
       return;
     }
 
-    info(`${"Name".padEnd(20)} ${"Source".padEnd(10)} Command`, opts);
-    info(`${"─".repeat(20)} ${"─".repeat(10)} ${"─".repeat(50)}`, opts);
+    info(`${"Name".padEnd(20)} ${"Protocol".padEnd(12)} ${"Source".padEnd(14)} Endpoint`, opts);
+    info(`${"─".repeat(20)} ${"─".repeat(12)} ${"─".repeat(14)} ${"─".repeat(44)}`, opts);
     for (const agent of agents) {
-      info(`${agent.name.padEnd(20)} ${agent.source.padEnd(10)} ${agent.command}`, opts);
+      const protocol = agent.acp && agent.a2a ? "ACP/A2A" : agent.acp ? "ACP" : "A2A";
+      const endpoint = agent.acp?.command ?? agent.a2a?.url ?? "—";
+      info(`${agent.name.padEnd(20)} ${protocol.padEnd(12)} ${agent.source.padEnd(14)} ${endpoint}`, opts);
     }
     info(`\n${agents.length} agent(s) available`, opts);
   },
@@ -229,18 +241,18 @@ const sessionListSubcommand = defineCommand({
   async run({ args }) {
     const opts = { json: args.json, quiet: args.quiet, verbose: args.verbose };
     const agentName = args.agent as string;
-    const acpSettings = await loadAcpSettings();
-    const entry = resolveAgent(agentName, acpSettings);
+    const { registryConfig, configDir } = await loadRegistryContext();
+    const entry = await resolveAgentAsync(agentName, registryConfig, configDir);
 
-    if (!entry) {
-      error(`Unknown agent "${agentName}".`, opts);
+    if (!entry || !entry.acp) {
+      error(`Unknown agent "${agentName}" or no ACP endpoint.`, opts);
       process.exitCode = 1;
       return;
     }
 
     const client = createAcpClient();
     try {
-      await client.connect(entry.command, { initTimeout: 30_000 });
+      await client.connect(entry.acp.command, { initTimeout: 30_000 });
       const response = await client.listSessions(args.cwd as string | undefined);
 
       if (args.json) {
@@ -283,18 +295,18 @@ const sessionCancelSubcommand = defineCommand({
     const opts = { json: args.json, quiet: args.quiet, verbose: args.verbose };
     const agentName = args.agent as string;
     const sessionId = args.sessionId as string;
-    const acpSettings = await loadAcpSettings();
-    const entry = resolveAgent(agentName, acpSettings);
+    const { registryConfig, configDir } = await loadRegistryContext();
+    const entry = await resolveAgentAsync(agentName, registryConfig, configDir);
 
-    if (!entry) {
-      error(`Unknown agent "${agentName}".`, opts);
+    if (!entry || !entry.acp) {
+      error(`Unknown agent "${agentName}" or no ACP endpoint.`, opts);
       process.exitCode = 1;
       return;
     }
 
     const client = createAcpClient();
     try {
-      await client.connect(entry.command, { initTimeout: 30_000 });
+      await client.connect(entry.acp.command, { initTimeout: 30_000 });
       await client.cancel(sessionId);
 
       if (args.json) {

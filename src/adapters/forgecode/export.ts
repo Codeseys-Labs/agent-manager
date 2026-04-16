@@ -7,6 +7,7 @@
 
 import { dirname, join } from "node:path";
 import { generateWikiContext, spliceWikiBlock } from "../../core/instructions.ts";
+import { AM_BEGIN, AM_END, spliceMarkerBlock } from "../shared/utils.ts";
 import type {
   ExportOptions,
   ExportResult,
@@ -14,9 +15,6 @@ import type {
   ResolvedServer,
   WrittenFile,
 } from "../types.ts";
-
-const AM_BEGIN = "<!-- am:begin -->";
-const AM_END = "<!-- am:end -->";
 
 /**
  * Export resolved config to ForgeCode native files.
@@ -47,7 +45,15 @@ export async function exportConfig(
     const instructionContent = generateInstructionBlock(config);
     if (instructionContent) {
       const agentsMdPath = join(options.projectPath, "AGENTS.md");
-      let agentsMdContent = generateAgentsMd(agentsMdPath, instructionContent, warnings);
+      const block = `${AM_BEGIN}\n${instructionContent}\n${AM_END}`;
+      let existingContent: string | undefined;
+      try {
+        const fs = require("node:fs");
+        existingContent = fs.readFileSync(agentsMdPath, "utf-8");
+      } catch {
+        // No existing file
+      }
+      let agentsMdContent = spliceMarkerBlock(block, existingContent);
 
       // Inject wiki context if enabled
       const configDir = options.projectPath;
@@ -121,32 +127,3 @@ function generateInstructionBlock(config: ResolvedConfig): string | null {
   return parts.join("\n\n");
 }
 
-/** Generate AGENTS.md content, preserving content outside am markers. */
-function generateAgentsMd(
-  existingPath: string,
-  managedContent: string,
-  warnings: string[],
-): string {
-  const block = `${AM_BEGIN}\n${managedContent}\n${AM_END}`;
-
-  let existingContent = "";
-  try {
-    const fs = require("node:fs");
-    existingContent = fs.readFileSync(existingPath, "utf-8");
-  } catch {
-    // No existing file — just return the managed block
-    return `${block}\n`;
-  }
-
-  // Replace existing managed section if present
-  const beginIdx = existingContent.indexOf(AM_BEGIN);
-  const endIdx = existingContent.indexOf(AM_END);
-  if (beginIdx !== -1 && endIdx !== -1) {
-    const before = existingContent.slice(0, beginIdx);
-    const after = existingContent.slice(endIdx + AM_END.length);
-    return before + block + after;
-  }
-
-  // Append managed section to existing content
-  return `${existingContent.trimEnd()}\n\n${block}\n`;
-}

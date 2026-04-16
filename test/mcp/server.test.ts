@@ -1187,10 +1187,12 @@ describe("MCP ACP tools", () => {
     await setupConfig({
       settings: {
         mcp_serve: { tools: ["acp"] },
-        acp: {
-          agents: {
-            "my-custom": { command: "./custom-agent --acp" },
-          },
+      },
+      agents: {
+        "my-custom": {
+          name: "My Custom",
+          description: "Custom agent",
+          acp: { command: "./custom-agent --acp" },
         },
       },
     });
@@ -1217,7 +1219,7 @@ describe("MCP ACP tools", () => {
     // Check config override has correct source
     const custom = content.agents.find((a: { name: string }) => a.name === "my-custom");
     expect(custom.source).toBe("config");
-    expect(custom.command).toBe("./custom-agent --acp");
+    expect(custom.acp.command).toBe("./custom-agent --acp");
   });
 
   test("am_acp_session_list returns empty when no session dir", async () => {

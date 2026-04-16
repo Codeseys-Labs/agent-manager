@@ -131,6 +131,179 @@
     .user-info a { color: var(--fg2); text-decoration: none; margin-left: 0.5rem; }
     .repo-selector { margin-bottom: 1.5rem; }
     .repo-selector select { width: 100%; padding: 0.5rem; }
+
+    /* Tab system */
+    .tabs {
+      display: flex;
+      gap: 0;
+      margin-bottom: 1.5rem;
+      border-bottom: 2px solid var(--border);
+    }
+    .tab {
+      padding: 0.5rem 1.25rem;
+      border: none;
+      border-bottom: 2px solid transparent;
+      background: none;
+      color: var(--fg2);
+      font-weight: 600;
+      font-size: 0.85rem;
+      cursor: pointer;
+      margin-bottom: -2px;
+      transition: color 0.15s, border-color 0.15s;
+    }
+    .tab:hover { color: var(--fg); }
+    .tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+    .tab-content { display: none; }
+    .tab-content.active { display: block; }
+
+    /* Wiki tab */
+    .wiki-controls {
+      display: flex;
+      gap: 0.75rem;
+      margin-bottom: 1rem;
+      align-items: center;
+    }
+    .wiki-controls select {
+      min-width: 160px;
+    }
+    .wiki-controls input[type="text"] {
+      flex: 1;
+      font-family: inherit;
+      font-size: 0.85rem;
+      padding: 0.4rem 0.75rem;
+      border-radius: var(--radius);
+      border: 1px solid var(--border);
+      background: var(--bg2);
+      color: var(--fg);
+    }
+    .wiki-controls input[type="text"]::placeholder { color: var(--fg2); }
+    .badge-entity { background: #2563eb; color: #fff; }
+    .badge-concept { background: #7c3aed; color: #fff; }
+    .badge-summary { background: #16a34a; color: #fff; }
+    .badge-synthesis { background: #ca8a04; color: #fff; }
+    .badge-decision { background: #dc2626; color: #fff; }
+    .wiki-page-row { cursor: pointer; transition: background 0.1s; }
+    .wiki-page-row:hover { background: var(--border); }
+    .confidence-bar {
+      display: inline-block;
+      width: 50px;
+      height: 6px;
+      background: var(--border);
+      border-radius: 3px;
+      overflow: hidden;
+      vertical-align: middle;
+    }
+    .confidence-bar-fill {
+      height: 100%;
+      background: var(--accent);
+      border-radius: 3px;
+    }
+    .wiki-reader-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 1rem;
+    }
+    .wiki-reader-meta {
+      display: flex;
+      gap: 1rem;
+      flex-wrap: wrap;
+      font-size: 0.8rem;
+      color: var(--fg2);
+      padding-bottom: 0.75rem;
+      margin-bottom: 0.75rem;
+      border-bottom: 1px solid var(--border);
+    }
+    .wiki-reader-body {
+      font-size: 0.9rem;
+      line-height: 1.6;
+    }
+    .wiki-reader-body h1 { font-size: 1.3rem; margin: 1rem 0 0.5rem; }
+    .wiki-reader-body h2 { font-size: 1.1rem; margin: 1rem 0 0.5rem; color: var(--fg); text-transform: none; letter-spacing: normal; }
+    .wiki-reader-body h3 { font-size: 0.95rem; margin: 0.75rem 0 0.25rem; }
+    .wiki-reader-body p { margin-bottom: 0.75rem; }
+    .wiki-reader-body pre {
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 0.75rem;
+      overflow-x: auto;
+      font-size: 0.8rem;
+      margin-bottom: 0.75rem;
+    }
+    .wiki-reader-body code { font-size: 0.85em; background: var(--bg); padding: 0.1rem 0.3rem; border-radius: 3px; }
+    .wiki-reader-body pre code { background: none; padding: 0; }
+    .wiki-reader-body ul, .wiki-reader-body ol { margin: 0.5rem 0 0.75rem 1.5rem; }
+    .wiki-reader-body a { color: var(--accent); }
+    .wikilink { color: var(--accent); cursor: pointer; text-decoration: underline dotted; }
+    .wikilink:hover { text-decoration: underline; }
+    .wiki-empty { text-align: center; color: var(--fg2); padding: 2rem 0; }
+
+    /* Graph tab */
+    #graph-container {
+      width: 100%;
+      min-height: 500px;
+      background: var(--bg2);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      position: relative;
+      overflow: hidden;
+    }
+    #graph-container svg { width: 100%; height: 100%; display: block; }
+    #graph-legend {
+      display: flex;
+      gap: 1rem;
+      flex-wrap: wrap;
+      margin-top: 0.75rem;
+      font-size: 0.75rem;
+      color: var(--fg2);
+    }
+    .legend-item { display: flex; align-items: center; gap: 0.3rem; }
+    .legend-dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      display: inline-block;
+    }
+    .legend-line {
+      width: 20px;
+      height: 0;
+      display: inline-block;
+      vertical-align: middle;
+    }
+    #graph-info {
+      position: absolute;
+      top: 0.75rem;
+      right: 0.75rem;
+      background: var(--bg2);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 0.5rem 0.75rem;
+      font-size: 0.8rem;
+      display: none;
+      max-width: 250px;
+      z-index: 10;
+    }
+    .graph-unavailable {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 300px;
+      color: var(--fg2);
+      font-size: 0.9rem;
+    }
+
+    /* Responsive */
+    @media (max-width: 768px) {
+      .wiki-col-tags, .wiki-col-confidence { display: none; }
+      #graph-container { min-height: 300px; }
+      .wiki-controls { flex-direction: column; }
+      .wiki-controls select { width: 100%; }
+    }
+    @media (max-width: 480px) {
+      .wiki-col-updated { display: none; }
+      .wiki-controls > * { width: 100%; }
+    }
   </style>
 </head>
 <body>
@@ -155,57 +328,122 @@
     </div>
   </div>
 
-  <div class="status-bar card" id="status-bar">
-    <div class="stat">
-      <div class="value" id="server-count">-</div>
-      <div class="label">Servers</div>
+  <!-- Tab bar -->
+  <div class="tabs">
+    <button class="tab active" data-tab="servers">Servers</button>
+    <button class="tab" data-tab="wiki">Wiki</button>
+    <button class="tab" data-tab="graph">Graph</button>
+  </div>
+
+  <!-- Servers tab (existing content) -->
+  <div class="tab-content active" id="tab-servers">
+    <div class="status-bar card" id="status-bar">
+      <div class="stat">
+        <div class="value" id="server-count">-</div>
+        <div class="label">Servers</div>
+      </div>
+      <div class="stat">
+        <div class="value" id="profile-name">-</div>
+        <div class="label">Profile</div>
+      </div>
+      <div class="stat">
+        <div class="value" id="git-branch">-</div>
+        <div class="label">Branch</div>
+      </div>
+      <div class="stat">
+        <div class="value" id="git-status">-</div>
+        <div class="label">Git</div>
+      </div>
     </div>
-    <div class="stat">
-      <div class="value" id="profile-name">-</div>
-      <div class="label">Profile</div>
+
+    <h2>Profiles</h2>
+    <div class="card">
+      <div class="profile-switcher">
+        <select id="profile-select"><option>Loading...</option></select>
+        <button id="btn-switch" class="primary">Switch</button>
+      </div>
     </div>
-    <div class="stat">
-      <div class="value" id="git-branch">-</div>
-      <div class="label">Branch</div>
+
+    <h2>MCP Servers</h2>
+    <div class="card">
+      <table>
+        <thead><tr><th>Name</th><th>Command</th><th>Transport</th><th>Tags</th><th>Status</th></tr></thead>
+        <tbody id="servers-body"><tr><td colspan="5" class="loading">Loading...</td></tr></tbody>
+      </table>
     </div>
-    <div class="stat">
-      <div class="value" id="git-status">-</div>
-      <div class="label">Git</div>
+
+    <h2>Tool Sync Status</h2>
+    <div class="card">
+      <table>
+        <thead><tr><th>Tool</th><th>Status</th><th>Changes</th></tr></thead>
+        <tbody id="tools-body"><tr><td colspan="3" class="loading">Loading...</td></tr></tbody>
+      </table>
+    </div>
+
+    <h2>Actions</h2>
+    <div class="card">
+      <div class="actions">
+        <button id="btn-apply" class="primary">Apply Config</button>
+        <button id="btn-pull">Git Pull</button>
+        <button id="btn-push">Git Push</button>
+      </div>
+      <p id="git-info" style="margin-top: 0.75rem;"></p>
     </div>
   </div>
 
-  <h2>Profiles</h2>
-  <div class="card">
-    <div class="profile-switcher">
-      <select id="profile-select"><option>Loading...</option></select>
-      <button id="btn-switch" class="primary">Switch</button>
+  <!-- Wiki tab -->
+  <div class="tab-content" id="tab-wiki">
+    <div id="wiki-list-view">
+      <div class="wiki-controls">
+        <select id="wiki-project">
+          <option value="global">global</option>
+        </select>
+        <select id="wiki-type-filter">
+          <option value="">All types</option>
+          <option value="entity">entity</option>
+          <option value="concept">concept</option>
+          <option value="summary">summary</option>
+          <option value="synthesis">synthesis</option>
+          <option value="decision">decision</option>
+        </select>
+        <input type="text" id="wiki-search" placeholder="Search pages...">
+      </div>
+      <div class="card">
+        <table id="wiki-table">
+          <thead>
+            <tr>
+              <th>Type</th>
+              <th>Title</th>
+              <th class="wiki-col-tags">Tags</th>
+              <th class="wiki-col-updated">Updated</th>
+              <th class="wiki-col-confidence">Confidence</th>
+            </tr>
+          </thead>
+          <tbody id="wiki-pages-body">
+            <tr><td colspan="5" class="loading">Select a project or search to load pages...</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+    <div id="wiki-reader" style="display:none;">
+      <div class="card">
+        <div class="wiki-reader-header">
+          <button id="wiki-back">Back to list</button>
+          <span id="wiki-reader-project" style="font-size:0.8rem;color:var(--fg2);"></span>
+        </div>
+        <h1 id="wiki-reader-title" style="font-size:1.3rem;margin-bottom:0.5rem;"></h1>
+        <div class="wiki-reader-meta" id="wiki-reader-meta"></div>
+        <div class="wiki-reader-body" id="wiki-reader-body"></div>
+      </div>
     </div>
   </div>
 
-  <h2>MCP Servers</h2>
-  <div class="card">
-    <table>
-      <thead><tr><th>Name</th><th>Command</th><th>Transport</th><th>Tags</th><th>Status</th></tr></thead>
-      <tbody id="servers-body"><tr><td colspan="5" class="loading">Loading...</td></tr></tbody>
-    </table>
-  </div>
-
-  <h2>Tool Sync Status</h2>
-  <div class="card">
-    <table>
-      <thead><tr><th>Tool</th><th>Status</th><th>Changes</th></tr></thead>
-      <tbody id="tools-body"><tr><td colspan="3" class="loading">Loading...</td></tr></tbody>
-    </table>
-  </div>
-
-  <h2>Actions</h2>
-  <div class="card">
-    <div class="actions">
-      <button id="btn-apply" class="primary">Apply Config</button>
-      <button id="btn-pull">Git Pull</button>
-      <button id="btn-push">Git Push</button>
+  <!-- Graph tab -->
+  <div class="tab-content" id="tab-graph">
+    <div id="graph-container">
+      <div id="graph-info"></div>
     </div>
-    <p id="git-info" style="margin-top: 0.75rem;"></p>
+    <div id="graph-legend"></div>
   </div>
 
   <div class="toast" id="toast"></div>
@@ -533,16 +771,698 @@
       document.getElementById("git-status").textContent = "remote";
     }
 
+    // --- Tab system ---
+    const tabButtons = document.querySelectorAll(".tab[data-tab]");
+    const tabPanels = document.querySelectorAll(".tab-content");
+    function switchTab(name) {
+      tabButtons.forEach(b => b.classList.toggle("active", b.dataset.tab === name));
+      tabPanels.forEach(p => p.classList.toggle("active", p.id === "tab-" + name));
+      if (name === "wiki" && !wikiLoaded) loadWiki();
+      if (name === "graph" && !graphLoaded) loadGraph();
+    }
+    tabButtons.forEach(b => b.addEventListener("click", () => switchTab(b.dataset.tab)));
+
     // --- Startup ---
     (async () => {
       const isCloud = await detectCloudMode();
-      if (!isCloud) {
+      if (isCloud) {
+        // Hide graph tab in cloud mode (no endpoint)
+        const graphTab = document.querySelector('.tab[data-tab="graph"]');
+        if (graphTab) graphTab.style.display = "none";
+      } else {
         // Local mode — load everything directly
         loadAll();
         setInterval(loadStatus, 30000);
         connectSSE();
       }
     })();
+  </script>
+
+  <!-- Markdown rendering -->
+  <script src="https://cdn.jsdelivr.net/npm/marked@12/marked.min.js"></script>
+
+  <!-- Wiki + Graph logic -->
+  <script type="module">
+    import { forceSimulation, forceLink, forceManyBody, forceCenter, forceCollide }
+      from "https://cdn.jsdelivr.net/npm/d3-force@3/+esm";
+    import { select } from "https://cdn.jsdelivr.net/npm/d3-selection@3/+esm";
+    import { zoom, zoomIdentity } from "https://cdn.jsdelivr.net/npm/d3-zoom@3/+esm";
+    import { drag } from "https://cdn.jsdelivr.net/npm/d3-drag@3/+esm";
+
+    // Re-use the api() helper from the main script
+    async function wikiApi(path) {
+      try {
+        const res = await fetch(path);
+        if (!res.ok) return null;
+        return await res.json();
+      } catch { return null; }
+    }
+
+    // ── Wiki API adapter ──────────────────────────────────────────
+
+    const WikiAPI = {
+      isCloud: false,
+      owner: null,
+      repo: null,
+
+      init() {
+        // Detect cloud mode by checking the global cloudMode variable
+        if (window.cloudMode) {
+          this.isCloud = true;
+          if (window.selectedRepo) {
+            this.owner = window.selectedRepo.owner;
+            this.repo = window.selectedRepo.repo;
+          }
+        }
+      },
+
+      async projects() {
+        if (this.isCloud) {
+          if (!this.owner) return { projects: [] };
+          return wikiApi(`/api/wiki/${this.owner}/${this.repo}/projects`);
+        }
+        return wikiApi("/api/wiki/projects");
+      },
+
+      async pages(project) {
+        if (this.isCloud) {
+          if (!this.owner) return { pages: [] };
+          const params = project && project !== "global" ? `?project=${encodeURIComponent(project)}` : "";
+          return wikiApi(`/api/wiki/${this.owner}/${this.repo}/pages${params}`);
+        }
+        const params = !project || project === "global" ? "?global=true" : "";
+        return wikiApi(`/api/wiki/pages${params}`);
+      },
+
+      async search(query, limit = 20) {
+        if (this.isCloud) return null;
+        return wikiApi(`/api/wiki/search?q=${encodeURIComponent(query)}&limit=${limit}`);
+      },
+
+      async read(slug, project, type) {
+        if (this.isCloud) {
+          if (!this.owner) return null;
+          const params = new URLSearchParams();
+          if (project && project !== "global") params.set("project", project);
+          if (type) params.set("type", type);
+          const qs = params.toString();
+          return wikiApi(`/api/wiki/${this.owner}/${this.repo}/pages/${encodeURIComponent(slug)}${qs ? "?" + qs : ""}`);
+        }
+        return wikiApi(`/api/wiki/pages/${encodeURIComponent(slug)}`);
+      },
+
+      async graph() {
+        if (this.isCloud) return null;
+        return wikiApi("/api/wiki/graph");
+      },
+    };
+
+    // ── State ─────────────────────────────────────────────────────
+
+    let wikiLoaded = false;
+    let graphLoaded = false;
+    let allPages = [];      // cached full page list for client-side filtering
+    let currentProject = "global";
+
+    // Expose to the non-module script
+    window.wikiLoaded = false;
+    window.graphLoaded = false;
+    window.loadWiki = loadWiki;
+    window.loadGraph = loadGraph;
+
+    // ── Wiki Tab ──────────────────────────────────────────────────
+
+    const projectSelect = document.getElementById("wiki-project");
+    const typeFilter = document.getElementById("wiki-type-filter");
+    const searchInput = document.getElementById("wiki-search");
+    const pagesBody = document.getElementById("wiki-pages-body");
+    const listView = document.getElementById("wiki-list-view");
+    const readerView = document.getElementById("wiki-reader");
+    const readerTitle = document.getElementById("wiki-reader-title");
+    const readerMeta = document.getElementById("wiki-reader-meta");
+    const readerBody = document.getElementById("wiki-reader-body");
+    const readerProject = document.getElementById("wiki-reader-project");
+    const backBtn = document.getElementById("wiki-back");
+
+    // Type badge color mapping
+    const typeColors = {
+      entity: "badge-entity",
+      concept: "badge-concept",
+      summary: "badge-summary",
+      synthesis: "badge-synthesis",
+      decision: "badge-decision",
+    };
+
+    function typeBadgeClass(type) {
+      return typeColors[type] || "badge-unknown";
+    }
+
+    // Relative time helper
+    function relativeTime(dateStr) {
+      if (!dateStr) return "-";
+      const now = Date.now();
+      const then = new Date(dateStr).getTime();
+      if (isNaN(then)) return dateStr;
+      const diff = now - then;
+      const mins = Math.floor(diff / 60000);
+      if (mins < 1) return "just now";
+      if (mins < 60) return mins + "m ago";
+      const hours = Math.floor(mins / 60);
+      if (hours < 24) return hours + "h ago";
+      const days = Math.floor(hours / 24);
+      if (days < 30) return days + "d ago";
+      const months = Math.floor(days / 30);
+      return months + "mo ago";
+    }
+
+    // Title derivation for cloud mode (slug-based)
+    function titleFromSlug(slug) {
+      return slug.replace(/-/g, " ").replace(/\b\w/g, c => c.toUpperCase());
+    }
+
+    async function loadWiki() {
+      WikiAPI.init();
+      wikiLoaded = true;
+      window.wikiLoaded = true;
+
+      // Load projects
+      const projData = await WikiAPI.projects();
+      if (projData && projData.projects) {
+        projectSelect.replaceChildren();
+        const globalOpt = document.createElement("option");
+        globalOpt.value = "global";
+        globalOpt.textContent = "global";
+        projectSelect.appendChild(globalOpt);
+        for (const p of projData.projects) {
+          const opt = document.createElement("option");
+          opt.value = p;
+          opt.textContent = p;
+          projectSelect.appendChild(opt);
+        }
+      }
+
+      // Load initial page list
+      await loadPages();
+    }
+
+    async function loadPages() {
+      pagesBody.replaceChildren();
+      const tr = document.createElement("tr");
+      const td = document.createElement("td");
+      td.colSpan = 5;
+      td.className = "loading";
+      td.textContent = "Loading...";
+      tr.appendChild(td);
+      pagesBody.appendChild(tr);
+
+      currentProject = projectSelect.value;
+      const data = await WikiAPI.pages(currentProject);
+      if (!data || !data.pages) {
+        pagesBody.replaceChildren();
+        const tr2 = document.createElement("tr");
+        const td2 = document.createElement("td");
+        td2.colSpan = 5;
+        td2.textContent = "No pages found";
+        td2.className = "wiki-empty";
+        tr2.appendChild(td2);
+        pagesBody.appendChild(tr2);
+        allPages = [];
+        return;
+      }
+      allPages = data.pages;
+      renderPages(allPages);
+    }
+
+    function renderPages(pages) {
+      // Apply type filter
+      const typeVal = typeFilter.value;
+      if (typeVal) {
+        pages = pages.filter(p => p.type === typeVal);
+      }
+
+      pagesBody.replaceChildren();
+      if (pages.length === 0) {
+        const tr = document.createElement("tr");
+        const td = document.createElement("td");
+        td.colSpan = 5;
+        td.textContent = "No pages match the current filter";
+        td.className = "wiki-empty";
+        tr.appendChild(td);
+        pagesBody.appendChild(tr);
+        return;
+      }
+      for (const p of pages) {
+        const tr = document.createElement("tr");
+        tr.className = "wiki-page-row";
+
+        // Type badge
+        const tdType = document.createElement("td");
+        const badge = document.createElement("span");
+        badge.className = "badge " + typeBadgeClass(p.type);
+        badge.textContent = p.type || "page";
+        tdType.appendChild(badge);
+        tr.appendChild(tdType);
+
+        // Title
+        const tdTitle = document.createElement("td");
+        const titleText = document.createElement("strong");
+        titleText.textContent = p.title || titleFromSlug(p.slug);
+        tdTitle.appendChild(titleText);
+        tr.appendChild(tdTitle);
+
+        // Tags
+        const tdTags = document.createElement("td");
+        tdTags.className = "wiki-col-tags";
+        tdTags.textContent = (p.tags || []).join(", ") || "-";
+        tr.appendChild(tdTags);
+
+        // Updated
+        const tdUpdated = document.createElement("td");
+        tdUpdated.className = "wiki-col-updated";
+        tdUpdated.textContent = relativeTime(p.updated);
+        tr.appendChild(tdUpdated);
+
+        // Confidence
+        const tdConf = document.createElement("td");
+        tdConf.className = "wiki-col-confidence";
+        if (p.confidence != null) {
+          const bar = document.createElement("span");
+          bar.className = "confidence-bar";
+          const fill = document.createElement("span");
+          fill.className = "confidence-bar-fill";
+          fill.style.width = Math.round(p.confidence * 100) + "%";
+          bar.appendChild(fill);
+          tdConf.appendChild(bar);
+          const num = document.createElement("span");
+          num.textContent = " " + p.confidence.toFixed(2);
+          num.style.fontSize = "0.75rem";
+          num.style.color = "var(--fg2)";
+          tdConf.appendChild(num);
+        } else {
+          tdConf.textContent = "-";
+        }
+        tr.appendChild(tdConf);
+
+        // Click to read
+        tr.addEventListener("click", () => openPage(p.slug, p.type));
+        pagesBody.appendChild(tr);
+      }
+    }
+
+    // Wikilink processing: convert [[slug]] and [[slug|label]] to clickable links.
+    // Returns a DocumentFragment built with safe DOM methods — no innerHTML.
+    function processWikilinksInElement(container) {
+      const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT);
+      const textNodes = [];
+      let textNode;
+      while ((textNode = walker.nextNode())) {
+        if (/\[\[/.test(textNode.textContent)) textNodes.push(textNode);
+      }
+      for (const node of textNodes) {
+        const parts = node.textContent.split(/(\[\[[^\]]+?\]\])/g);
+        if (parts.length <= 1) continue;
+        const frag = document.createDocumentFragment();
+        for (const part of parts) {
+          const match = part.match(/^\[\[([^\]|]+?)(?:\|([^\]]+?))?\]\]$/);
+          if (match) {
+            const a = document.createElement("a");
+            a.href = "#";
+            a.className = "wikilink";
+            a.dataset.slug = match[1];
+            a.textContent = match[2] || match[1];
+            a.addEventListener("click", (e) => {
+              e.preventDefault();
+              openPage(a.dataset.slug);
+            });
+            frag.appendChild(a);
+          } else {
+            frag.appendChild(document.createTextNode(part));
+          }
+        }
+        node.parentNode.replaceChild(frag, node);
+      }
+    }
+
+    // Sanitize rendered HTML: strip script tags and on* attributes
+    function sanitizeRenderedDom(container) {
+      for (const script of container.querySelectorAll("script")) {
+        script.remove();
+      }
+      for (const el of container.querySelectorAll("*")) {
+        for (const attr of [...el.attributes]) {
+          if (attr.name.startsWith("on")) {
+            el.removeAttribute(attr.name);
+          }
+        }
+      }
+    }
+
+    async function openPage(slug, type) {
+      listView.style.display = "none";
+      readerView.style.display = "block";
+      readerBody.textContent = "Loading...";
+      readerTitle.textContent = "";
+      readerMeta.replaceChildren();
+      readerProject.textContent = currentProject;
+
+      const data = await WikiAPI.read(slug, currentProject, type);
+      if (!data) {
+        readerBody.textContent = "Failed to load page.";
+        return;
+      }
+
+      const page = data.page || data;
+      readerTitle.textContent = page.title || titleFromSlug(slug);
+
+      // Meta row
+      readerMeta.replaceChildren();
+      const metaItems = [];
+      if (page.type) metaItems.push("Type: " + page.type);
+      if (page.tags && page.tags.length) metaItems.push("Tags: " + page.tags.join(", "));
+      if (page.updated) metaItems.push("Updated: " + relativeTime(page.updated));
+      if (page.confidence != null) metaItems.push("Confidence: " + page.confidence.toFixed(2));
+      for (const text of metaItems) {
+        const span = document.createElement("span");
+        span.textContent = text;
+        readerMeta.appendChild(span);
+      }
+
+      // Render markdown content safely:
+      // 1. Parse markdown to HTML string with marked
+      // 2. Insert into a detached div, sanitize the DOM tree
+      // 3. Process wikilinks via DOM walking (no regex on HTML strings)
+      // 4. Move the sanitized children into the reader
+      const content = page.content || page.body || "";
+      if (typeof marked !== "undefined") {
+        const rendered = marked.parse(content);
+        const temp = document.createElement("div");
+        temp.innerHTML = rendered;
+        sanitizeRenderedDom(temp);
+        processWikilinksInElement(temp);
+        readerBody.replaceChildren();
+        while (temp.firstChild) readerBody.appendChild(temp.firstChild);
+      } else {
+        // Fallback: plain text
+        readerBody.textContent = content;
+      }
+    }
+
+    // Back button
+    backBtn.addEventListener("click", () => {
+      readerView.style.display = "none";
+      listView.style.display = "block";
+    });
+
+    // Project change
+    projectSelect.addEventListener("change", () => {
+      searchInput.value = "";
+      loadPages();
+    });
+
+    // Type filter change
+    typeFilter.addEventListener("change", () => renderPages(allPages));
+
+    // Search with debounce
+    let searchTimer = null;
+    searchInput.addEventListener("input", () => {
+      clearTimeout(searchTimer);
+      searchTimer = setTimeout(async () => {
+        const query = searchInput.value.trim();
+        if (query.length < 2) {
+          renderPages(allPages);
+          return;
+        }
+        if (WikiAPI.isCloud) {
+          // Client-side filter
+          const lower = query.toLowerCase();
+          const filtered = allPages.filter(p =>
+            (p.slug && p.slug.toLowerCase().includes(lower)) ||
+            (p.title && p.title.toLowerCase().includes(lower)) ||
+            (p.type && p.type.toLowerCase().includes(lower))
+          );
+          renderPages(filtered);
+        } else {
+          const data = await WikiAPI.search(query);
+          if (data && data.results) {
+            renderPages(data.results);
+          }
+        }
+      }, 300);
+    });
+
+    // ── Graph Tab ─────────────────────────────────────────────────
+
+    const NODE_COLORS = {
+      entity:    { light: "#2563eb", dark: "#3b82f6" },
+      concept:   { light: "#7c3aed", dark: "#a78bfa" },
+      summary:   { light: "#16a34a", dark: "#22c55e" },
+      synthesis: { light: "#ca8a04", dark: "#eab308" },
+      decision:  { light: "#dc2626", dark: "#ef4444" },
+    };
+
+    const EDGE_STYLES = {
+      wikilink:       { dash: "",       width: 1.5, opacity: 0.6 },
+      backlink:       { dash: "4,3",    width: 1,   opacity: 0.3 },
+      entity_mention: { dash: "2,2",    width: 1,   opacity: 0.4 },
+      related:        { dash: "",       width: 1,   opacity: 0.2 },
+    };
+
+    function isDark() {
+      return window.matchMedia("(prefers-color-scheme: dark)").matches;
+    }
+
+    function nodeColor(type) {
+      const mode = isDark() ? "dark" : "light";
+      return (NODE_COLORS[type] || NODE_COLORS.entity)[mode];
+    }
+
+    function edgeStyle(type) {
+      return EDGE_STYLES[type] || EDGE_STYLES.related;
+    }
+
+    async function loadGraph() {
+      graphLoaded = true;
+      window.graphLoaded = true;
+      WikiAPI.init();
+
+      if (WikiAPI.isCloud) {
+        const container = document.getElementById("graph-container");
+        container.replaceChildren();
+        const msg = document.createElement("div");
+        msg.className = "graph-unavailable";
+        msg.textContent = "Graph view is not available in cloud mode";
+        container.appendChild(msg);
+        return;
+      }
+
+      const data = await WikiAPI.graph();
+      if (!data || !data.nodes || data.nodes.length === 0) {
+        const container = document.getElementById("graph-container");
+        container.replaceChildren();
+        const msg = document.createElement("div");
+        msg.className = "graph-unavailable";
+        msg.textContent = "No graph data available. Add wiki pages to see the graph.";
+        container.appendChild(msg);
+        return;
+      }
+
+      renderGraph(data);
+      renderLegend();
+    }
+
+    function renderGraph(data) {
+      const container = document.getElementById("graph-container");
+      const infoPanel = document.getElementById("graph-info");
+      container.replaceChildren();
+      container.appendChild(infoPanel);
+
+      const width = container.clientWidth || 800;
+      const height = Math.max(container.clientHeight, 500);
+
+      const svg = select(container)
+        .append("svg")
+        .attr("width", width)
+        .attr("height", height)
+        .attr("viewBox", `0 0 ${width} ${height}`);
+
+      const g = svg.append("g");
+
+      // Zoom/pan
+      const zoomBehavior = zoom()
+        .scaleExtent([0.2, 4])
+        .on("zoom", (event) => g.attr("transform", event.transform));
+      svg.call(zoomBehavior);
+
+      // Build node/edge index
+      const nodes = data.nodes.map(n => ({ ...n }));
+      const edges = data.edges.map(e => ({ ...e }));
+
+      // Count connections per node
+      const connectionCount = {};
+      for (const n of nodes) connectionCount[n.id] = 0;
+      for (const e of edges) {
+        connectionCount[e.source] = (connectionCount[e.source] || 0) + 1;
+        connectionCount[e.target] = (connectionCount[e.target] || 0) + 1;
+      }
+
+      // Scale force params for large graphs
+      const count = nodes.length;
+      const linkDist = count > 200 ? 120 : 80;
+      const chargeStr = count > 200 ? -300 : -200;
+
+      // Simulation
+      const simulation = forceSimulation(nodes)
+        .force("link", forceLink(edges).id(d => d.id).distance(linkDist))
+        .force("charge", forceManyBody().strength(chargeStr))
+        .force("center", forceCenter(width / 2, height / 2))
+        .force("collision", forceCollide().radius(20));
+
+      // Edges
+      const link = g.append("g")
+        .selectAll("line")
+        .data(edges)
+        .join("line")
+        .attr("stroke", "var(--fg2)")
+        .attr("stroke-width", d => edgeStyle(d.type).width)
+        .attr("stroke-opacity", d => edgeStyle(d.type).opacity)
+        .attr("stroke-dasharray", d => edgeStyle(d.type).dash);
+
+      // Nodes
+      const node = g.append("g")
+        .selectAll("circle")
+        .data(nodes)
+        .join("circle")
+        .attr("r", 8)
+        .attr("fill", d => nodeColor(d.type))
+        .attr("stroke", "var(--bg2)")
+        .attr("stroke-width", 1.5)
+        .style("cursor", "pointer");
+
+      // Labels
+      const label = g.append("g")
+        .selectAll("text")
+        .data(nodes)
+        .join("text")
+        .text(d => {
+          const t = d.label || d.id;
+          return t.length > 20 ? t.slice(0, 18) + ".." : t;
+        })
+        .attr("font-size", "9px")
+        .attr("fill", "var(--fg2)")
+        .attr("text-anchor", "middle")
+        .attr("dy", 18)
+        .style("pointer-events", "none");
+
+      // Drag behavior
+      const dragBehavior = drag()
+        .on("start", (event, d) => {
+          if (!event.active) simulation.alphaTarget(0.3).restart();
+          d.fx = d.x;
+          d.fy = d.y;
+        })
+        .on("drag", (event, d) => {
+          d.fx = event.x;
+          d.fy = event.y;
+        })
+        .on("end", (event, d) => {
+          if (!event.active) simulation.alphaTarget(0);
+          d.fx = null;
+          d.fy = null;
+        });
+
+      node.call(dragBehavior);
+
+      // Hover: show info panel
+      node.on("mouseenter", (event, d) => {
+        infoPanel.style.display = "block";
+        infoPanel.textContent = "";
+        const title = document.createElement("strong");
+        title.textContent = d.label || d.id;
+        infoPanel.appendChild(title);
+        infoPanel.appendChild(document.createElement("br"));
+        const info = document.createElement("span");
+        info.style.fontSize = "0.75rem";
+        info.style.color = "var(--fg2)";
+        info.textContent = `Type: ${d.type || "unknown"} | Connections: ${connectionCount[d.id] || 0}`;
+        infoPanel.appendChild(info);
+      });
+      node.on("mouseleave", () => {
+        infoPanel.style.display = "none";
+      });
+
+      // Click: navigate to wiki read view
+      node.on("click", (event, d) => {
+        // Switch to wiki tab and open the page
+        const tabBtns = document.querySelectorAll(".tab[data-tab]");
+        const tabPnls = document.querySelectorAll(".tab-content");
+        tabBtns.forEach(b => b.classList.toggle("active", b.dataset.tab === "wiki"));
+        tabPnls.forEach(p => p.classList.toggle("active", p.id === "tab-wiki"));
+        if (!window.wikiLoaded) {
+          loadWiki().then(() => openPage(d.id, d.type));
+        } else {
+          openPage(d.id, d.type);
+        }
+      });
+
+      // Tick
+      simulation.on("tick", () => {
+        link
+          .attr("x1", d => d.source.x)
+          .attr("y1", d => d.source.y)
+          .attr("x2", d => d.target.x)
+          .attr("y2", d => d.target.y);
+        node
+          .attr("cx", d => d.x)
+          .attr("cy", d => d.y);
+        label
+          .attr("x", d => d.x)
+          .attr("y", d => d.y);
+      });
+    }
+
+    function renderLegend() {
+      const legendEl = document.getElementById("graph-legend");
+      legendEl.replaceChildren();
+
+      // Node types
+      for (const [type, colors] of Object.entries(NODE_COLORS)) {
+        const item = document.createElement("span");
+        item.className = "legend-item";
+        const dot = document.createElement("span");
+        dot.className = "legend-dot";
+        dot.style.background = isDark() ? colors.dark : colors.light;
+        item.appendChild(dot);
+        const text = document.createElement("span");
+        text.textContent = type;
+        item.appendChild(text);
+        legendEl.appendChild(item);
+      }
+
+      // Edge types
+      for (const [type, style] of Object.entries(EDGE_STYLES)) {
+        const item = document.createElement("span");
+        item.className = "legend-item";
+        const line = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+        line.setAttribute("width", "20");
+        line.setAttribute("height", "10");
+        line.style.verticalAlign = "middle";
+        const l = document.createElementNS("http://www.w3.org/2000/svg", "line");
+        l.setAttribute("x1", "0");
+        l.setAttribute("y1", "5");
+        l.setAttribute("x2", "20");
+        l.setAttribute("y2", "5");
+        l.setAttribute("stroke", "var(--fg2)");
+        l.setAttribute("stroke-width", String(style.width));
+        l.setAttribute("stroke-opacity", String(style.opacity));
+        if (style.dash) l.setAttribute("stroke-dasharray", style.dash);
+        line.appendChild(l);
+        item.appendChild(line);
+        const text = document.createElement("span");
+        text.textContent = type.replace(/_/g, " ");
+        item.appendChild(text);
+        legendEl.appendChild(item);
+      }
+    }
   </script>
 </body>
 </html>
