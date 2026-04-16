@@ -41,7 +41,7 @@ const listSubcommand = defineCommand({
     for (const name of names) {
       const adapter = await getAdapter(name);
       if (!adapter) continue;
-      const detect = adapter.detect();
+      const detect = await adapter.detect();
       rows.push({
         name: adapter.meta.name,
         displayName: adapter.meta.displayName,
@@ -387,7 +387,7 @@ const verifySubcommand = defineCommand({
       }
 
       const meta = proxy.meta;
-      const detectResult = await proxy.detectAsync();
+      const detectResult = await proxy.detect();
       proxy.kill();
 
       const result = {

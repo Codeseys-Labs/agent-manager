@@ -145,7 +145,7 @@ async function scanAdapters(projectPath: string, opts: OutputOptions): Promise<S
     // Detect with project scope
     let detected;
     try {
-      detected = adapter.detect();
+      detected = await adapter.detect();
     } catch {
       debug(`${adapter.meta.displayName}: detect() failed`, opts);
       continue;
@@ -155,7 +155,7 @@ async function scanAdapters(projectPath: string, opts: OutputOptions): Promise<S
     // since we care about project-level configs
     let imported;
     try {
-      imported = adapter.import({ projectPath });
+      imported = await adapter.import({ projectPath });
     } catch {
       debug(`${adapter.meta.displayName}: import() failed`, opts);
       continue;

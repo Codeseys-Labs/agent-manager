@@ -127,11 +127,7 @@ export async function getDetectedAdapters(): Promise<Adapter[]> {
   for (const name of listAdapters()) {
     const adapter = await getAdapter(name);
     if (!adapter) continue;
-    // Community adapters have async detect — use it when available
-    const result =
-      "detectAsync" in adapter && typeof adapter.detectAsync === "function"
-        ? await (adapter as { detectAsync(): Promise<{ installed: boolean }> }).detectAsync()
-        : adapter.detect();
+    const result = await adapter.detect();
     if (result.installed) {
       detected.push(adapter);
     }

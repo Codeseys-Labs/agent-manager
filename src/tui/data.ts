@@ -94,7 +94,7 @@ export async function loadTuiData(): Promise<TuiData> {
 
   for (const adapter of detected) {
     try {
-      const diffResult = adapter.diff(resolvedConfig);
+      const diffResult = await adapter.diff(resolvedConfig);
       adapters.push({
         name: adapter.meta.displayName,
         status: diffResult.status,

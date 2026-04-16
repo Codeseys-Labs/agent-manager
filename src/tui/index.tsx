@@ -86,7 +86,7 @@ export async function launchTui(): Promise<void> {
       let imported = 0;
       for (const adapter of adapters) {
         try {
-          const result = adapter.import({});
+          const result = await adapter.import({});
           for (const srv of result.servers) {
             if (!config.servers[srv.name]) {
               config.servers[srv.name] = {

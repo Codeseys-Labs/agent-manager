@@ -208,10 +208,10 @@ export interface MarketplaceResult {
 
 export interface Adapter {
   meta: AdapterMeta;
-  detect(): DetectResult;
-  import(options: ImportOptions): ImportResult;
+  detect(): DetectResult | Promise<DetectResult>;
+  import(options: ImportOptions): ImportResult | Promise<ImportResult>;
   export(config: ResolvedConfig, options: ExportOptions): ExportResult | Promise<ExportResult>;
-  diff(config: ResolvedConfig): DiffResult;
+  diff(config: ResolvedConfig): DiffResult | Promise<DiffResult>;
   schema: AdapterSchema;
   sessionReader?: SessionReader;
   scanMarketplace?(): MarketplaceResult;

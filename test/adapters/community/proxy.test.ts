@@ -27,15 +27,15 @@ describe("CommunityAdapterProxy", () => {
     expect(proxy.schema).toBeDefined();
   });
 
-  it("calls detectAsync()", async () => {
-    const result = await proxy.detectAsync();
+  it("calls detect() via async IPC", async () => {
+    const result = await proxy.detect();
     expect(result.installed).toBe(true);
     expect(result.version).toBe("1.0.0");
     expect(result.paths.configDir).toBe("/tmp/mock");
   });
 
-  it("calls importAsync()", async () => {
-    const result = await proxy.importAsync({});
+  it("calls import() via async IPC", async () => {
+    const result = await proxy.import({});
     expect(result.servers).toEqual([]);
     expect(result.instructions).toEqual([]);
     expect(result.skills).toEqual([]);
@@ -56,7 +56,7 @@ describe("CommunityAdapterProxy", () => {
     expect(result.warnings).toEqual([]);
   });
 
-  it("calls diffAsync()", async () => {
+  it("calls diff() via async IPC", async () => {
     const config = {
       servers: {},
       instructions: {},
@@ -65,33 +65,9 @@ describe("CommunityAdapterProxy", () => {
       profile: "default",
       adapters: {},
     };
-    const result = await proxy.diffAsync(config);
+    const result = await proxy.diff(config);
     expect(result.status).toBe("in-sync");
     expect(result.changes).toEqual([]);
-  });
-
-  it("synchronous detect() returns undetected fallback", () => {
-    const result = proxy.detect();
-    expect(result.installed).toBe(false);
-    expect(result.paths).toEqual({});
-  });
-
-  it("synchronous import() returns empty fallback", () => {
-    const result = proxy.import({});
-    expect(result.servers).toEqual([]);
-  });
-
-  it("synchronous diff() returns unmanaged fallback", () => {
-    const config = {
-      servers: {},
-      instructions: {},
-      skills: {},
-      agents: {},
-      profile: "default",
-      adapters: {},
-    };
-    const result = proxy.diff(config);
-    expect(result.status).toBe("unmanaged");
   });
 });
 

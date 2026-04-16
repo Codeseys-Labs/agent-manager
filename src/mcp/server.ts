@@ -236,7 +236,7 @@ function defineTools(): ToolEntry[] {
         const toolStatuses: Array<{ name: string; status: string; changes: number }> = [];
         for (const adapter of adapters) {
           try {
-            const diffResult = adapter.diff(resolved);
+            const diffResult = await adapter.diff(resolved);
             toolStatuses.push({
               name: adapter.meta.displayName,
               status: diffResult.status,
@@ -330,7 +330,7 @@ function defineTools(): ToolEntry[] {
         for (const name of adapterNames) {
           const adapter = await getAdapter(name);
           if (!adapter) continue;
-          const detection = adapter.detect();
+          const detection = await adapter.detect();
           if (detection.installed) {
             checks.push({
               name: `Adapter: ${adapter.meta.displayName}`,
@@ -884,7 +884,7 @@ function defineTools(): ToolEntry[] {
 
         for (const adapter of adapters) {
           try {
-            const result = adapter.import({ projectPath: process.cwd() });
+            const result = await adapter.import({ projectPath: process.cwd() });
             for (const srv of result.servers) {
               if (!config.servers[srv.name]) {
                 config.servers[srv.name] = {

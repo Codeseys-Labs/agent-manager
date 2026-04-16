@@ -55,7 +55,7 @@ export const statusCommand = defineCommand({
 
       for (const adapter of adapters) {
         try {
-          const diffResult = adapter.diff(resolved);
+          const diffResult = await adapter.diff(resolved);
           toolStatuses.push({
             name: adapter.meta.displayName,
             status: diffResult.status,

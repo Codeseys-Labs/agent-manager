@@ -141,7 +141,7 @@ export const importCommand = defineCommand({
 
         let result;
         try {
-          result = adapter.import({ projectPath: process.cwd() });
+          result = await adapter.import({ projectPath: process.cwd() });
         } catch (e: unknown) {
           const msg = errorMessage(e) || "import failed";
           info(`${adapter.meta.displayName}: ${msg}`, opts);

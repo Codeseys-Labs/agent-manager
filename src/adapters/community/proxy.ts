@@ -172,26 +172,12 @@ export class CommunityAdapterProxy implements Adapter {
     this.schema = schemaResult as unknown as AdapterSchema;
   }
 
-  detect(): DetectResult {
-    // detect() in the Adapter interface is synchronous, but community adapters
-    // need async IPC. We use a blocking pattern: call detectAsync() separately.
-    // For registry enumeration, use detectAsync() instead.
-    return { installed: false, paths: {} };
-  }
-
-  /** Async version of detect() for community adapters. */
-  async detectAsync(projectPath?: string): Promise<DetectResult> {
-    const result = await this.call("adapter/detect", { projectPath });
+  async detect(): Promise<DetectResult> {
+    const result = await this.call("adapter/detect", {});
     return result as DetectResult;
   }
 
-  import(options: ImportOptions): ImportResult {
-    // Synchronous stub — use importAsync() for actual IPC.
-    return { servers: [], instructions: [], skills: [], warnings: [] };
-  }
-
-  /** Async version of import() for community adapters. */
-  async importAsync(options: ImportOptions): Promise<ImportResult> {
+  async import(options: ImportOptions): Promise<ImportResult> {
     const result = await this.call("adapter/import", options as unknown as Record<string, unknown>);
     return result as ImportResult;
   }
@@ -201,13 +187,7 @@ export class CommunityAdapterProxy implements Adapter {
     return result as ExportResult;
   }
 
-  diff(config: ResolvedConfig): DiffResult {
-    // Synchronous stub — use diffAsync() for actual IPC.
-    return { status: "unmanaged", changes: [] };
-  }
-
-  /** Async version of diff() for community adapters. */
-  async diffAsync(config: ResolvedConfig): Promise<DiffResult> {
+  async diff(config: ResolvedConfig): Promise<DiffResult> {
     const result = await this.call("adapter/diff", { config });
     return result as DiffResult;
   }

@@ -275,7 +275,7 @@ export async function createApp(options?: CreateAppOptions) {
         return c.json({ error: `Adapter "${adapterName}" not found` }, 404);
       }
 
-      const imported = adapter.import({});
+      const imported = await adapter.import({});
       const { config, configPath, configDir: dir } = await getConfigAndWritePath();
 
       // Merge imported servers into config
@@ -370,7 +370,7 @@ export async function createApp(options?: CreateAppOptions) {
 
       for (const adapter of adapters) {
         try {
-          const diffResult = adapter.diff(resolved);
+          const diffResult = await adapter.diff(resolved);
           tools.push({
             name: adapter.meta.name,
             displayName: adapter.meta.displayName,

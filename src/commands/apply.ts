@@ -92,7 +92,7 @@ export const applyCommand = defineCommand({
 
         if (args.diff) {
           try {
-            const diffResult = adapter.diff(resolved);
+            const diffResult = await adapter.diff(resolved);
             if (diffResult.status === "in-sync") {
               info(`${adapter.meta.displayName}: in sync`, opts);
             } else {

@@ -83,7 +83,7 @@ export const doctorCommand = defineCommand({
     for (const name of adapterNames) {
       const adapter = await getAdapter(name);
       if (!adapter) continue;
-      const detection = adapter.detect();
+      const detection = await adapter.detect();
       if (detection.installed) {
         checks.push({
           name: `Adapter: ${adapter.meta.displayName}`,
