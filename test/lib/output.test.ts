@@ -141,4 +141,30 @@ describe("parsePositiveInt()", () => {
   test("zero should throw — parsePositiveInt requires > 0", () => {
     expect(() => parsePositiveInt("0", "timeout")).toThrow("positive integer");
   });
+
+  test("throws on NaN string", () => {
+    expect(() => parsePositiveInt("NaN", "timeout")).toThrow("positive integer");
+  });
+
+  test("truncates float string via parseInt — returns integer part", () => {
+    // parseInt("3.14") => 3, which is a valid positive integer
+    expect(parsePositiveInt("3.14", "timeout")).toBe(3);
+  });
+
+  test("throws on empty string", () => {
+    expect(() => parsePositiveInt("", "timeout")).toThrow("positive integer");
+  });
+
+  test("parses MAX_SAFE_INTEGER string", () => {
+    const max = String(Number.MAX_SAFE_INTEGER);
+    expect(parsePositiveInt(max, "timeout")).toBe(Number.MAX_SAFE_INTEGER);
+  });
+
+  test("parses '1' — smallest valid positive integer", () => {
+    expect(parsePositiveInt("1", "count")).toBe(1);
+  });
+
+  test("throws on whitespace-only string", () => {
+    expect(() => parsePositiveInt("   ", "timeout")).toThrow("positive integer");
+  });
 });

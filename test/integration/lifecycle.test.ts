@@ -266,4 +266,178 @@ describe("lifecycle integration tests", () => {
     expect(code).not.toBe(0);
     expect(stderr).toContain("already exists");
   });
+
+  test("am apply writes native config files (not dry-run)", async () => {
+    // Set HOME to temp dir so claude-code adapter writes .claude.json there
+    const fakeHome = join(testDir.path, "fakehome");
+    const fs = require("node:fs");
+    fs.mkdirSync(fakeHome, { recursive: true });
+
+    // Override HOME for the subprocess
+    const origRunAM = runAM;
+    async function runAMWithHome(
+      ...args: string[]
+    ): Promise<{ stdout: string; stderr: string; code: number }> {
+      const proc = Bun.spawn(["bun", "run", "src/cli.ts", ...args], {
+        cwd: join(import.meta.dir, "../.."),
+        env: { ...process.env, AM_CONFIG_DIR: testDir.path, HOME: fakeHome },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr] = await Promise.all([
+        new Response(proc.stdout).text(),
+        new Response(proc.stderr).text(),
+      ]);
+      return { stdout, stderr, code: await proc.exited };
+    }
+
+    await runAMWithHome("init");
+    await runAMWithHome(
+      "add",
+      "test-server",
+      "--command",
+      "uvx",
+      "--args",
+      "mcp-server-fetch",
+    );
+
+    // Real apply (no --dry-run)
+    const { stdout, code } = await runAMWithHome("apply", "--target", "claude-code");
+    expect(code).toBe(0);
+    expect(stdout).toContain("wrote");
+
+    // Verify the native config file was actually written
+    const claudeJsonPath = join(fakeHome, ".claude.json");
+    expect(fs.existsSync(claudeJsonPath)).toBe(true);
+
+    const written = JSON.parse(fs.readFileSync(claudeJsonPath, "utf-8"));
+    expect(written.mcpServers).toBeDefined();
+    expect(written.mcpServers["test-server"]).toBeDefined();
+    expect(written.mcpServers["test-server"].command).toBe("uvx");
+    expect(written.mcpServers["test-server"].args).toEqual(["mcp-server-fetch"]);
+  });
+
+  test("am import reads native claude-code config", async () => {
+    const fakeHome = join(testDir.path, "fakehome");
+    const fs = require("node:fs");
+    fs.mkdirSync(fakeHome, { recursive: true });
+
+    // Write a native claude-code config for import to read
+    const nativeConfig = {
+      mcpServers: {
+        fetch: { command: "uvx", args: ["mcp-server-fetch"] },
+        tavily: { command: "bunx", args: ["tavily-mcp@latest"], env: { KEY: "val" } },
+      },
+    };
+    fs.writeFileSync(join(fakeHome, ".claude.json"), JSON.stringify(nativeConfig));
+
+    async function runAMWithHome(
+      ...args: string[]
+    ): Promise<{ stdout: string; stderr: string; code: number }> {
+      const proc = Bun.spawn(["bun", "run", "src/cli.ts", ...args], {
+        cwd: join(import.meta.dir, "../.."),
+        env: { ...process.env, AM_CONFIG_DIR: testDir.path, HOME: fakeHome },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr] = await Promise.all([
+        new Response(proc.stdout).text(),
+        new Response(proc.stderr).text(),
+      ]);
+      return { stdout, stderr, code: await proc.exited };
+    }
+
+    await runAMWithHome("init");
+
+    const { stdout, code } = await runAMWithHome("import", "claude-code", "--json");
+    expect(code).toBe(0);
+
+    const parsed = JSON.parse(stdout);
+    expect(parsed.imported).toBeGreaterThanOrEqual(2);
+
+    // Verify servers are in config
+    const configRaw = await testDir.read("config.toml");
+    expect(configRaw).toContain("[servers.fetch]");
+    expect(configRaw).toContain("[servers.tavily]");
+    expect(configRaw).toContain('command = "uvx"');
+    expect(configRaw).toContain('command = "bunx"');
+  });
+
+  test("add → apply → import round-trip preserves server config", async () => {
+    const fakeHome = join(testDir.path, "fakehome");
+    const fs = require("node:fs");
+    fs.mkdirSync(fakeHome, { recursive: true });
+
+    async function runAMWithHome(
+      ...args: string[]
+    ): Promise<{ stdout: string; stderr: string; code: number }> {
+      const proc = Bun.spawn(["bun", "run", "src/cli.ts", ...args], {
+        cwd: join(import.meta.dir, "../.."),
+        env: { ...process.env, AM_CONFIG_DIR: testDir.path, HOME: fakeHome },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr] = await Promise.all([
+        new Response(proc.stdout).text(),
+        new Response(proc.stderr).text(),
+      ]);
+      return { stdout, stderr, code: await proc.exited };
+    }
+
+    // 1. Init and add a server
+    await runAMWithHome("init");
+    let result = await runAMWithHome(
+      "add",
+      "roundtrip-server",
+      "--command",
+      "uvx",
+      "--args",
+      "mcp-server-fetch",
+      "--tags",
+      "utility,test",
+    );
+    expect(result.code).toBe(0);
+
+    // 2. Apply to claude-code (writes native config)
+    result = await runAMWithHome("apply", "--target", "claude-code");
+    expect(result.code).toBe(0);
+
+    // 3. Verify native config was written
+    const claudeJsonPath = join(fakeHome, ".claude.json");
+    expect(fs.existsSync(claudeJsonPath)).toBe(true);
+    const nativeConfig = JSON.parse(fs.readFileSync(claudeJsonPath, "utf-8"));
+    expect(nativeConfig.mcpServers["roundtrip-server"]).toBeDefined();
+    expect(nativeConfig.mcpServers["roundtrip-server"].command).toBe("uvx");
+
+    // 4. Create a fresh config dir to import into
+    const importDir = join(testDir.path, "import-target");
+    fs.mkdirSync(importDir, { recursive: true });
+
+    async function runAMWithHomeAndDir(
+      configDir: string,
+      ...args: string[]
+    ): Promise<{ stdout: string; stderr: string; code: number }> {
+      const proc = Bun.spawn(["bun", "run", "src/cli.ts", ...args], {
+        cwd: join(import.meta.dir, "../.."),
+        env: { ...process.env, AM_CONFIG_DIR: configDir, HOME: fakeHome },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr] = await Promise.all([
+        new Response(proc.stdout).text(),
+        new Response(proc.stderr).text(),
+      ]);
+      return { stdout, stderr, code: await proc.exited };
+    }
+
+    // 5. Init a new config dir and import from claude-code
+    await runAMWithHomeAndDir(importDir, "init");
+    result = await runAMWithHomeAndDir(importDir, "import", "claude-code", "--json");
+    expect(result.code).toBe(0);
+
+    // 6. Verify the imported server matches the original
+    const importedConfigRaw = fs.readFileSync(join(importDir, "config.toml"), "utf-8");
+    expect(importedConfigRaw).toContain("[servers.roundtrip-server]");
+    expect(importedConfigRaw).toContain('command = "uvx"');
+  });
 });

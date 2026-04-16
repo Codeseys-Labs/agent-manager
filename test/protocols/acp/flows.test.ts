@@ -922,6 +922,145 @@ describe("Checkpoint handler nodeId", () => {
   });
 });
 
+// ── Action node cwd override ────────────────────────────────
+
+describe("Action node cwd override", () => {
+  test("action node respects cwd override", async () => {
+    const flow = defineFlow({
+      name: "action-cwd",
+      nodes: {
+        pwd: action({ command: "pwd", cwd: "/tmp" }),
+      },
+      edges: [],
+    });
+
+    const result = await runFlow(flow, { runsDir });
+    expect(result.status).toBe("completed");
+    const output = result.nodes.pwd.output as { stdout: string };
+    // /tmp may resolve to /private/tmp on macOS
+    expect(output.stdout).toContain("tmp");
+  });
+});
+
+// ── Compute node error state ────────────────────────────────
+
+describe("Compute node error state details", () => {
+  test("compute node failure persists error message in node state", async () => {
+    const flow = defineFlow({
+      name: "compute-error-detail",
+      nodes: {
+        bomb: compute({
+          fn: () => {
+            throw new Error("compute kaboom");
+          },
+        }),
+      },
+      edges: [],
+    });
+
+    try {
+      await runFlow(flow, { runsDir });
+      expect(true).toBe(false);
+    } catch {
+      // expected
+    }
+
+    const runs = await listRuns(runsDir);
+    expect(runs).toHaveLength(1);
+    expect(runs[0].status).toBe("failed");
+    expect(runs[0].nodes.bomb.status).toBe("failed");
+    expect(runs[0].nodes.bomb.error).toBe("compute kaboom");
+  });
+
+  test("compute node throwing non-Error value persists string representation", async () => {
+    const flow = defineFlow({
+      name: "compute-throw-string",
+      nodes: {
+        bomb: compute({
+          fn: () => {
+            throw "string error";
+          },
+        }),
+      },
+      edges: [],
+    });
+
+    try {
+      await runFlow(flow, { runsDir });
+      expect(true).toBe(false);
+    } catch {
+      // expected
+    }
+
+    const runs = await listRuns(runsDir);
+    expect(runs).toHaveLength(1);
+    expect(runs[0].nodes.bomb.error).toBe("string error");
+  });
+});
+
+// ── Multiple entry points (disconnected nodes) ─────────────
+
+describe("Disconnected nodes", () => {
+  test("only the entry node runs when nodes have no edges connecting them", async () => {
+    const flow = defineFlow({
+      name: "disconnected",
+      nodes: {
+        first: compute({ fn: () => ({ x: 1 }) }),
+        island: compute({ fn: () => ({ y: 2 }) }),
+      },
+      edges: [],
+    });
+
+    const result = await runFlow(flow, { runsDir });
+    expect(result.status).toBe("completed");
+    // Only the entry node should run; the island node stays pending
+    expect(result.executionOrder).toHaveLength(1);
+    expect(result.nodes.island.status).toBe("pending");
+  });
+});
+
+// ── Flow with empty nodes ───────────────────────────────────
+
+describe("Edge cases", () => {
+  test("flow with single node and no edges completes", async () => {
+    const flow = defineFlow({
+      name: "single-node",
+      nodes: {
+        only: compute({ fn: () => ({ solo: true }) }),
+      },
+      edges: [],
+    });
+
+    const result = await runFlow(flow, { runsDir });
+    expect(result.status).toBe("completed");
+    expect(result.executionOrder).toEqual(["only"]);
+    expect(result.nodes.only.output).toEqual({ solo: true });
+  });
+
+  test("conditional edge with null return from switch stops flow", async () => {
+    const flow = defineFlow({
+      name: "switch-null",
+      nodes: {
+        start: compute({ fn: () => ({ path: "none" }) }),
+        a: compute({ fn: () => ({ reached: "a" }) }),
+      },
+      edges: [
+        {
+          from: "start",
+          switch: () => "nonexistent-case",
+          cases: { a: "a" },
+          // no default
+        },
+      ],
+    });
+
+    const result = await runFlow(flow, { runsDir });
+    expect(result.status).toBe("completed");
+    expect(result.executionOrder).toEqual(["start"]);
+    expect(result.nodes.a.status).toBe("pending");
+  });
+});
+
 // ── Mixed flow: compute + action + acp ────────────────────────
 
 describe("Mixed node type flows", () => {

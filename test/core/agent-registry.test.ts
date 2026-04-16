@@ -242,6 +242,87 @@ describe("listAllAgents", () => {
     expect(claude!.description).toBe("Remote Claude");
   });
 
+  test("priority chain — same name in all 3 sources, config wins", () => {
+    const config = makeConfig({
+      claude: {
+        description: "Config Claude",
+        acp: { command: "config-claude --acp" },
+        a2a: { url: "https://config-claude.example.com" },
+      },
+    });
+    const roster = makeRoster({
+      claude: {
+        url: "https://roster-claude.example.com",
+        description: "Roster Claude",
+      },
+    });
+
+    const agents = listAllAgents(config, roster);
+    const claude = agents.find((a) => a.name === "claude");
+
+    expect(claude).toBeDefined();
+    // Config wins — overrides both built-in ACP and roster A2A
+    expect(claude!.source).toBe("config");
+    expect(claude!.acp?.command).toBe("config-claude --acp");
+    expect(claude!.a2a?.url).toBe("https://config-claude.example.com");
+    expect(claude!.description).toBe("Config Claude");
+    // Built-in command is NOT used
+    expect(claude!.acp?.command).not.toBe(BUILT_IN_ACP_AGENTS.claude);
+  });
+
+  test("priority chain — overlapping names across all 3 sources with multiple agents", () => {
+    const config = makeConfig({
+      // Overrides built-in "gemini"
+      gemini: {
+        description: "Custom Gemini",
+        acp: { command: "my-gemini --acp" },
+      },
+      // Config-only agent
+      "my-bot": {
+        description: "My Bot",
+        a2a: { url: "https://my-bot.example.com" },
+      },
+    });
+    const roster = makeRoster({
+      // Overlaps built-in "claude" — should merge
+      claude: { url: "https://claude-remote.example.com", description: "Remote Claude" },
+      // Overlaps config "gemini" — config wins
+      gemini: { url: "https://gemini-remote.example.com", description: "Remote Gemini" },
+      // Roster-only
+      "external-agent": { url: "https://external.example.com", description: "External" },
+    });
+
+    const agents = listAllAgents(config, roster);
+
+    // Gemini: config wins completely
+    const gemini = agents.find((a) => a.name === "gemini")!;
+    expect(gemini.source).toBe("config");
+    expect(gemini.acp?.command).toBe("my-gemini --acp");
+    expect(gemini.a2a).toBeUndefined(); // config didn't specify a2a
+    // Roster's URL is NOT merged because config takes full priority
+    expect(gemini.description).toBe("Custom Gemini");
+
+    // Claude: built-in + roster merged (no config override)
+    const claude = agents.find((a) => a.name === "claude")!;
+    expect(claude.source).toBe("acp-builtin");
+    expect(claude.acp?.command).toBe(BUILT_IN_ACP_AGENTS.claude);
+    expect(claude.a2a?.url).toBe("https://claude-remote.example.com");
+
+    // my-bot: config-only
+    const myBot = agents.find((a) => a.name === "my-bot")!;
+    expect(myBot.source).toBe("config");
+    expect(myBot.a2a?.url).toBe("https://my-bot.example.com");
+
+    // external-agent: roster-only
+    const ext = agents.find((a) => a.name === "external-agent")!;
+    expect(ext.source).toBe("a2a-roster");
+    expect(ext.a2a?.url).toBe("https://external.example.com");
+
+    // Total: 16 built-in + 1 config-only (my-bot) + 1 roster-only (external-agent) = 18
+    const builtInCount = Object.keys(BUILT_IN_ACP_AGENTS).length;
+    expect(agents).toHaveLength(builtInCount + 2);
+  });
+
   test("results are sorted alphabetically", () => {
     const agents = listAllAgents();
     const names = agents.map((a) => a.name);

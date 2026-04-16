@@ -215,6 +215,74 @@ describe("parseBridgeRequest", () => {
   });
 });
 
+// ── isValidAgentName (direct unit tests) ──────────────────────
+
+describe("isValidAgentName", () => {
+  test("accepts simple lowercase names", () => {
+    expect(isValidAgentName("claude")).toBe(true);
+  });
+
+  test("accepts names with hyphens and underscores", () => {
+    expect(isValidAgentName("my-custom_agent-2")).toBe(true);
+  });
+
+  test("accepts uppercase names", () => {
+    expect(isValidAgentName("MyAgent")).toBe(true);
+  });
+
+  test("accepts single character name", () => {
+    expect(isValidAgentName("a")).toBe(true);
+  });
+
+  test("accepts 64-character name (max length)", () => {
+    expect(isValidAgentName("a".repeat(64))).toBe(true);
+  });
+
+  test("rejects 65-character name (exceeds max)", () => {
+    expect(isValidAgentName("a".repeat(65))).toBe(false);
+  });
+
+  test("rejects empty string", () => {
+    expect(isValidAgentName("")).toBe(false);
+  });
+
+  test("rejects dots", () => {
+    expect(isValidAgentName("agent.evil")).toBe(false);
+  });
+
+  test("rejects forward slashes", () => {
+    expect(isValidAgentName("usr/bin/env")).toBe(false);
+  });
+
+  test("rejects backslashes", () => {
+    expect(isValidAgentName("agent\\evil")).toBe(false);
+  });
+
+  test("rejects spaces", () => {
+    expect(isValidAgentName("agent name")).toBe(false);
+  });
+
+  test("rejects semicolons", () => {
+    expect(isValidAgentName("agent;rm")).toBe(false);
+  });
+
+  test("rejects pipe characters", () => {
+    expect(isValidAgentName("agent|curl")).toBe(false);
+  });
+
+  test("rejects backticks", () => {
+    expect(isValidAgentName("agent`whoami`")).toBe(false);
+  });
+
+  test("rejects dollar signs", () => {
+    expect(isValidAgentName("agent$HOME")).toBe(false);
+  });
+
+  test("rejects null bytes", () => {
+    expect(isValidAgentName("agent\x00evil")).toBe(false);
+  });
+});
+
 // ── createBridgeTaskHandler ────────────────────────────────────
 
 describe("createBridgeTaskHandler", () => {

@@ -291,6 +291,101 @@ describe("loadResolvedConfig", () => {
   });
 });
 
+describe("loadResolvedConfig — full 4-layer hierarchy", () => {
+  let tmpDir: string;
+
+  beforeEach(async () => {
+    tmpDir = await mkdtemp(join(tmpdir(), "am-hierarchy-"));
+  });
+
+  afterEach(async () => {
+    await rm(tmpDir, { recursive: true, force: true });
+  });
+
+  test("global -> global.local -> project -> project.local, highest layer wins", async () => {
+    const { writeFile: wf } = await import("node:fs/promises");
+    const TOML = await import("@iarna/toml");
+
+    // Layer 1: global config.toml
+    await wf(
+      join(tmpDir, "config.toml"),
+      TOML.stringify({
+        settings: { default_profile: "base" },
+        servers: {
+          fetch: { command: "uvx mcp-server-fetch" },
+          tavily: { command: "tavily-mcp", enabled: true },
+        },
+        instructions: {
+          "rule-a": { content: "Global rule A", scope: "always" },
+        },
+      } as any),
+    );
+
+    // Layer 2: global config.local.toml (overrides settings + adds server)
+    await wf(
+      join(tmpDir, "config.local.toml"),
+      TOML.stringify({
+        settings: { default_profile: "local-override" },
+        servers: {
+          "local-server": { command: "local-mcp" },
+        },
+      } as any),
+    );
+
+    // Layer 3: project .agent-manager.toml
+    const projPath = join(tmpDir, ".agent-manager.toml");
+    await wf(
+      projPath,
+      TOML.stringify({
+        profile: "work",
+        servers: {
+          wiki: { command: "amazon-wiki-mcp" },
+          tavily: { command: "tavily-mcp-v2", enabled: false },  // overrides global tavily
+        },
+        instructions: {
+          "rule-b": { content: "Project rule B", scope: "always" },
+        },
+      } as any),
+    );
+
+    // Layer 4: project .agent-manager.local.toml
+    const projLocalPath = join(tmpDir, ".agent-manager.local.toml");
+    await wf(
+      projLocalPath,
+      TOML.stringify({
+        servers: {
+          "local-project-server": { command: "secret-mcp" },
+        },
+        instructions: {
+          "rule-b": { content: "Project-local overrides rule B", scope: "always" },
+        },
+      } as any),
+    );
+
+    const config = await loadResolvedConfig({
+      configDir: tmpDir,
+      configFile: "config.toml",
+      projectFile: projPath,
+    });
+
+    // Settings: global.local overrides global
+    expect(config.settings?.default_profile).toBe("local-override");
+
+    // Servers: union of all 4 layers, higher layers win on same-name
+    expect(config.servers?.fetch).toBeDefined();           // from global
+    expect(config.servers?.["local-server"]).toBeDefined(); // from global.local
+    expect(config.servers?.wiki).toBeDefined();             // from project
+    expect(config.servers?.["local-project-server"]).toBeDefined(); // from project.local
+    // tavily: project overrides global
+    expect(config.servers?.tavily.command).toBe("tavily-mcp-v2");
+    expect(config.servers?.tavily.enabled).toBe(false);
+
+    // Instructions: project.local overrides project for rule-b
+    expect(config.instructions?.["rule-a"]?.content).toBe("Global rule A");
+    expect(config.instructions?.["rule-b"]?.content).toBe("Project-local overrides rule B");
+  });
+});
+
 describe("projectToConfig", () => {
   test("projectToConfig preserves agents", () => {
     const proj = { agents: { reviewer: { name: "reviewer", description: "Code reviewer" } } };

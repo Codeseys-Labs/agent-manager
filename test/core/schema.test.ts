@@ -191,6 +191,25 @@ describe("SkillSchema", () => {
     expect(result.description).toBe("Multi-agent research");
   });
 
+  test("parses skill with _marketplace provenance", () => {
+    const result = SkillSchema.parse({
+      path: "skills/research",
+      description: "Research skill",
+      _marketplace: {
+        source: "claude-plugin",
+        package: "@anthropic/skill-research",
+        version: "2.0.0",
+        imported_at: "2026-04-15T12:00:00Z",
+        install_path: "~/.claude/plugins/@anthropic/skill-research",
+      },
+    });
+    expect(result._marketplace).toBeDefined();
+    expect(result._marketplace!.source).toBe("claude-plugin");
+    expect(result._marketplace!.package).toBe("@anthropic/skill-research");
+    expect(result._marketplace!.version).toBe("2.0.0");
+    expect(result._marketplace!.install_path).toBe("~/.claude/plugins/@anthropic/skill-research");
+  });
+
   test("parses with tags and adapters", () => {
     const result = SkillSchema.parse({
       path: "skills/research-rabbithole",
@@ -247,6 +266,40 @@ describe("AgentProfileSchema", () => {
     });
     expect(result.prompt_file).toBe("agents/reviewer.md");
     expect(result.prompt).toBeUndefined();
+  });
+
+  test("parses agent profile with _marketplace provenance", () => {
+    const result = AgentProfileSchema.parse({
+      name: "code-reviewer",
+      description: "Reviews code",
+      _marketplace: {
+        source: "vscode-extension",
+        package: "pub.code-reviewer-agent",
+        version: "1.5.0",
+        imported_at: "2026-04-15T10:00:00Z",
+      },
+    });
+    expect(result._marketplace).toBeDefined();
+    expect(result._marketplace!.source).toBe("vscode-extension");
+    expect(result._marketplace!.package).toBe("pub.code-reviewer-agent");
+  });
+
+  test("accepts agent profile with both _marketplace and acp/a2a", () => {
+    const result = AgentProfileSchema.parse({
+      name: "hybrid-agent",
+      description: "Marketplace-imported agent with protocol entries",
+      acp: { command: "my-agent --acp" },
+      a2a: { url: "https://agent.example.com" },
+      _marketplace: {
+        source: "kiro-extension",
+        package: "kiro.agent-hybrid",
+        version: "3.0.0",
+        imported_at: "2026-04-15",
+      },
+    });
+    expect(result._marketplace).toBeDefined();
+    expect(result.acp?.command).toBe("my-agent --acp");
+    expect(result.a2a?.url).toBe("https://agent.example.com");
   });
 
   test("rejects both prompt and prompt_file", () => {

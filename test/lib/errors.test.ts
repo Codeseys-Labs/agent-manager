@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { AmError, formatError, requireConfig } from "../../src/lib/errors";
+import { AmError, errorCode, errorMessage, formatError, isNotFound, requireConfig } from "../../src/lib/errors";
 
 describe("AmError", () => {
   test("sets name, message, suggestion, and code", () => {
@@ -22,6 +22,64 @@ describe("AmError", () => {
     const err = new AmError("test");
     expect(err).toBeInstanceOf(Error);
     expect(err).toBeInstanceOf(AmError);
+  });
+});
+
+describe("errorMessage", () => {
+  test("extracts message from Error instance", () => {
+    expect(errorMessage(new Error("broken"))).toBe("broken");
+  });
+
+  test("extracts message from AmError instance", () => {
+    expect(errorMessage(new AmError("config failed", "run init"))).toBe("config failed");
+  });
+
+  test("coerces non-Error to string", () => {
+    expect(errorMessage("raw string error")).toBe("raw string error");
+    expect(errorMessage(42)).toBe("42");
+    expect(errorMessage(null)).toBe("null");
+    expect(errorMessage(undefined)).toBe("undefined");
+  });
+});
+
+describe("isNotFound", () => {
+  test("returns true for ENOENT error", () => {
+    const err = new Error("no such file") as NodeJS.ErrnoException;
+    err.code = "ENOENT";
+    expect(isNotFound(err)).toBe(true);
+  });
+
+  test("returns false for other error codes", () => {
+    const err = new Error("permission denied") as NodeJS.ErrnoException;
+    err.code = "EACCES";
+    expect(isNotFound(err)).toBe(false);
+  });
+
+  test("returns false for plain Error without code", () => {
+    expect(isNotFound(new Error("generic"))).toBe(false);
+  });
+
+  test("returns false for non-Error values", () => {
+    expect(isNotFound("ENOENT")).toBe(false);
+    expect(isNotFound(null)).toBe(false);
+  });
+});
+
+describe("errorCode", () => {
+  test("extracts code from Node.js errno error", () => {
+    const err = new Error("not found") as NodeJS.ErrnoException;
+    err.code = "ENOENT";
+    expect(errorCode(err)).toBe("ENOENT");
+  });
+
+  test("returns undefined for Error without code", () => {
+    expect(errorCode(new Error("generic"))).toBeUndefined();
+  });
+
+  test("returns undefined for non-Error values", () => {
+    expect(errorCode("string")).toBeUndefined();
+    expect(errorCode(42)).toBeUndefined();
+    expect(errorCode(null)).toBeUndefined();
   });
 });
 

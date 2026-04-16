@@ -691,6 +691,64 @@ describe("runMergePipeline", () => {
     expect(result.conflicts).toHaveLength(1);
   });
 
+  test("brownfield import — 10 incoming servers: 3 exact, 2 fuzzy, 5 new", () => {
+    const existing: Record<string, Server> = {
+      tavily: makeServer({ command: "bunx", args: ["tavily-mcp@latest"], env: { KEY: "val" } }),
+      fetch: makeServer({ command: "uvx", args: ["mcp-server-fetch"], description: "Fetcher" }),
+      outlook: makeServer({ command: "aws-outlook-mcp", tags: ["email"] }),
+      sentral: makeServer({ command: "aws-sentral-mcp", tags: ["crm"] }),
+      // "builder" exists by name only (different command) — will fuzzy match
+      builder: makeServer({ command: "builder-mcp-v1", description: "Old builder" }),
+    };
+
+    const incoming: ImportedServer[] = [
+      // 3 exact matches (same identity)
+      makeImported({ name: "tavily-cursor", command: "bunx", args: ["tavily-mcp@latest"], env: { KEY: "val" } }),
+      makeImported({ name: "fetcher", command: "uvx", args: ["mcp-server-fetch"], description: "Better fetcher desc" }),
+      makeImported({ name: "outlook-import", command: "aws-outlook-mcp", tags: ["calendar"] }),
+      // 2 fuzzy matches (name match)
+      makeImported({ name: "sentral", command: "docker", args: ["run", "sentral:latest"] }),
+      makeImported({ name: "builder", command: "builder-mcp-v2", description: "New builder" }),
+      // 5 completely new
+      makeImported({ name: "exa", command: "exa-mcp" }),
+      makeImported({ name: "context7", command: "bunx", args: ["@upstash/context7-mcp@latest"] }),
+      makeImported({ name: "slack", command: "slack-mcp" }),
+      makeImported({ name: "wiki", command: "amazon-wiki-mcp" }),
+      makeImported({ name: "gitlab", command: "aws-gitlab-mcp" }),
+    ];
+
+    const result = runMergePipeline(existing, incoming, "auto", "cursor");
+
+    // 1 exact identical (tavily — same env)
+    expect(result.skipped).toHaveLength(1);
+    expect(result.skipped[0].existingName).toBe("tavily");
+
+    // 2 exact with diffs get auto-merged (fetch has description diff, outlook has tag diff)
+    expect(result.merged).toHaveLength(2);
+    const mergedNames = result.merged.map((m) => m.name).sort();
+    expect(mergedNames).toEqual(["fetch", "outlook"]);
+
+    // fetch merged: longer description wins
+    const fetchMerged = result.merged.find((m) => m.name === "fetch")!;
+    expect(fetchMerged.server.description).toBe("Better fetcher desc");
+
+    // outlook merged: tags unioned
+    const outlookMerged = result.merged.find((m) => m.name === "outlook")!;
+    expect(outlookMerged.server.tags).toContain("email");
+    expect(outlookMerged.server.tags).toContain("calendar");
+
+    // 2 fuzzy matches become conflicts (never auto-resolved)
+    expect(result.conflicts).toHaveLength(2);
+    const conflictNames = result.conflicts.map((c) => c.match.existingName).sort();
+    expect(conflictNames).toEqual(["builder", "sentral"]);
+    expect(result.conflicts.every((c) => c.match.type === "fuzzy")).toBe(true);
+
+    // 5 new servers added
+    expect(result.added).toHaveLength(5);
+    const addedNames = result.added.map((s) => s.name).sort();
+    expect(addedNames).toEqual(["context7", "exa", "gitlab", "slack", "wiki"]);
+  });
+
   test("complex scenario — mixed exact, fuzzy, new, and identical", () => {
     const existing: Record<string, Server> = {
       tavily: makeServer({

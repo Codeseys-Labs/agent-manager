@@ -272,6 +272,45 @@ describe("AmAcpClient", () => {
       // Handler is stored, will be called when updates arrive
       expect(handler).not.toHaveBeenCalled();
     });
+
+    test("registered handler is invoked when _handleSessionUpdate is called", () => {
+      const client = new AmAcpClient();
+      const received: unknown[] = [];
+      client.onSessionUpdate((update) => received.push(update));
+
+      // Simulate an update arriving
+      client._handleSessionUpdate({
+        sessionId: "s1",
+        update: {
+          sessionUpdate: "agent_message_chunk",
+          content: { type: "text", text: "hello" },
+        },
+      } as any);
+
+      expect(received).toHaveLength(1);
+      expect((received[0] as any).sessionUpdate).toBe("agent_message_chunk");
+    });
+
+    test("handler is NOT called after a new handler replaces it", () => {
+      const client = new AmAcpClient();
+      const first: unknown[] = [];
+      const second: unknown[] = [];
+
+      client.onSessionUpdate((update) => first.push(update));
+      client.onSessionUpdate((update) => second.push(update));
+
+      client._handleSessionUpdate({
+        sessionId: "s1",
+        update: {
+          sessionUpdate: "agent_message_chunk",
+          content: { type: "text", text: "test" },
+        },
+      } as any);
+
+      // Only the second handler should receive the update
+      expect(first).toHaveLength(0);
+      expect(second).toHaveLength(1);
+    });
   });
 
   describe("_handleSessionUpdate state accumulation", () => {
@@ -319,6 +358,75 @@ describe("AmAcpClient", () => {
       // Should only contain second prompt's data
       expect((client as any).collectedText).toBe("second reply");
       expect((client as any).collectedToolCalls).toHaveLength(0);
+    });
+
+    test("handles unknown sessionUpdate types without crashing", () => {
+      const client = new AmAcpClient();
+
+      // Should not throw on an unrecognized update type
+      expect(() => {
+        client._handleSessionUpdate({
+          sessionId: "s1",
+          update: {
+            sessionUpdate: "some_future_event_type",
+            data: { foo: "bar" },
+          },
+        } as any);
+      }).not.toThrow();
+
+      // Collected state should be unchanged
+      expect((client as any).collectedText).toBe("");
+      expect((client as any).collectedToolCalls).toHaveLength(0);
+    });
+
+    test("accumulates text from multiple chunks", () => {
+      const client = new AmAcpClient();
+
+      client._handleSessionUpdate({
+        sessionId: "s1",
+        update: {
+          sessionUpdate: "agent_message_chunk",
+          content: { type: "text", text: "Hello " },
+        },
+      } as any);
+      client._handleSessionUpdate({
+        sessionId: "s1",
+        update: {
+          sessionUpdate: "agent_message_chunk",
+          content: { type: "text", text: "World" },
+        },
+      } as any);
+
+      expect((client as any).collectedText).toBe("Hello World");
+    });
+
+    test("accumulates multiple tool calls", () => {
+      const client = new AmAcpClient();
+
+      client._handleSessionUpdate({
+        sessionId: "s1",
+        update: {
+          sessionUpdate: "tool_call",
+          toolCallId: "tc-1",
+          title: "Read file",
+          status: "completed",
+          kind: "read",
+        },
+      } as any);
+      client._handleSessionUpdate({
+        sessionId: "s1",
+        update: {
+          sessionUpdate: "tool_call",
+          toolCallId: "tc-2",
+          title: "Write file",
+          status: "completed",
+          kind: "write",
+        },
+      } as any);
+
+      expect((client as any).collectedToolCalls).toHaveLength(2);
+      expect((client as any).collectedToolCalls[0].toolCallId).toBe("tc-1");
+      expect((client as any).collectedToolCalls[1].toolCallId).toBe("tc-2");
     });
   });
 });

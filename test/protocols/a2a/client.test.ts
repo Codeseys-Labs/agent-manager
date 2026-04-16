@@ -625,4 +625,353 @@ describe("A2AClient", () => {
       expect(err.data).toBeUndefined();
     });
   });
+
+  // ── pollTask ─────────────────────────────────────────────────
+
+  describe("pollTask", () => {
+    test("resolves immediately when task is already in terminal state", async () => {
+      const mockResponse: A2AJsonRpcResponse = {
+        jsonrpc: "2.0",
+        id: 1,
+        result: {
+          id: "task-poll-done",
+          status: { state: "completed", timestamp: new Date().toISOString() },
+        },
+      };
+
+      mockFetch = mock(() =>
+        Promise.resolve(new Response(JSON.stringify(mockResponse), { status: 200 })),
+      );
+      globalThis.fetch = mockFetch as unknown as typeof fetch;
+
+      const client = new A2AClient({ timeout: 5000 });
+      const task = await client.pollTask("https://agent.example.com", "task-poll-done", {
+        intervalMs: 10,
+        maxAttempts: 3,
+      });
+
+      expect(task.id).toBe("task-poll-done");
+      expect(task.status.state).toBe("completed");
+      // Should have made exactly 1 fetch call (tasks/get)
+      expect(mockFetch.mock.calls.length).toBe(1);
+    });
+
+    test("polls multiple times until terminal state", async () => {
+      let callCount = 0;
+      mockFetch = mock(() => {
+        callCount++;
+        const state = callCount < 3 ? "working" : "completed";
+        const resp: A2AJsonRpcResponse = {
+          jsonrpc: "2.0",
+          id: callCount,
+          result: {
+            id: "task-poll-multi",
+            status: { state, timestamp: new Date().toISOString() },
+          },
+        };
+        return Promise.resolve(new Response(JSON.stringify(resp), { status: 200 }));
+      });
+      globalThis.fetch = mockFetch as unknown as typeof fetch;
+
+      const client = new A2AClient({ timeout: 5000 });
+      const task = await client.pollTask("https://agent.example.com", "task-poll-multi", {
+        intervalMs: 10,
+        maxAttempts: 10,
+      });
+
+      expect(task.status.state).toBe("completed");
+      expect(callCount).toBe(3);
+    });
+
+    test("throws A2AClientError when max attempts exceeded", async () => {
+      mockFetch = mock(() => {
+        const resp: A2AJsonRpcResponse = {
+          jsonrpc: "2.0",
+          id: 1,
+          result: {
+            id: "task-poll-timeout",
+            status: { state: "working", timestamp: new Date().toISOString() },
+          },
+        };
+        return Promise.resolve(new Response(JSON.stringify(resp), { status: 200 }));
+      });
+      globalThis.fetch = mockFetch as unknown as typeof fetch;
+
+      const client = new A2AClient({ timeout: 5000 });
+      try {
+        await client.pollTask("https://agent.example.com", "task-poll-timeout", {
+          intervalMs: 10,
+          maxAttempts: 2,
+        });
+        expect(true).toBe(false); // should not reach
+      } catch (err) {
+        expect(err).toBeInstanceOf(A2AClientError);
+        expect((err as A2AClientError).message).toContain("timed out");
+        expect((err as A2AClientError).message).toContain("2 attempts");
+      }
+    });
+
+    test("respects abort signal", async () => {
+      mockFetch = mock(() => {
+        const resp: A2AJsonRpcResponse = {
+          jsonrpc: "2.0",
+          id: 1,
+          result: {
+            id: "task-poll-abort",
+            status: { state: "working", timestamp: new Date().toISOString() },
+          },
+        };
+        return Promise.resolve(new Response(JSON.stringify(resp), { status: 200 }));
+      });
+      globalThis.fetch = mockFetch as unknown as typeof fetch;
+
+      const controller = new AbortController();
+      // Abort after a short delay
+      setTimeout(() => controller.abort(), 50);
+
+      const client = new A2AClient({ timeout: 5000 });
+      try {
+        await client.pollTask("https://agent.example.com", "task-poll-abort", {
+          intervalMs: 10,
+          maxAttempts: 100,
+          signal: controller.signal,
+        });
+        expect(true).toBe(false);
+      } catch (err) {
+        expect(err).toBeInstanceOf(A2AClientError);
+        expect((err as A2AClientError).message).toContain("aborted");
+      }
+    });
+
+    test("detects failed state as terminal", async () => {
+      mockFetch = mock(() => {
+        const resp: A2AJsonRpcResponse = {
+          jsonrpc: "2.0",
+          id: 1,
+          result: {
+            id: "task-poll-failed",
+            status: { state: "failed", timestamp: new Date().toISOString() },
+          },
+        };
+        return Promise.resolve(new Response(JSON.stringify(resp), { status: 200 }));
+      });
+      globalThis.fetch = mockFetch as unknown as typeof fetch;
+
+      const client = new A2AClient({ timeout: 5000 });
+      const task = await client.pollTask("https://agent.example.com", "task-poll-failed", {
+        intervalMs: 10,
+      });
+
+      expect(task.status.state).toBe("failed");
+    });
+
+    test("detects canceled state as terminal", async () => {
+      mockFetch = mock(() => {
+        const resp: A2AJsonRpcResponse = {
+          jsonrpc: "2.0",
+          id: 1,
+          result: {
+            id: "task-poll-canceled",
+            status: { state: "canceled", timestamp: new Date().toISOString() },
+          },
+        };
+        return Promise.resolve(new Response(JSON.stringify(resp), { status: 200 }));
+      });
+      globalThis.fetch = mockFetch as unknown as typeof fetch;
+
+      const client = new A2AClient({ timeout: 5000 });
+      const task = await client.pollTask("https://agent.example.com", "task-poll-canceled", {
+        intervalMs: 10,
+      });
+
+      expect(task.status.state).toBe("canceled");
+    });
+  });
+
+  // ── sendSubscribe edge cases ────────────────────────────────
+
+  describe("sendSubscribe edge cases", () => {
+    function buildSSEBody(events: Array<{ event: string; data: unknown }>): string {
+      return events.map((e) => `event: ${e.event}\ndata: ${JSON.stringify(e.data)}\n\n`).join("");
+    }
+
+    test("throws when SSE stream ends without any status event", async () => {
+      // Stream with only an artifact event, no status event at all
+      const sseBody = buildSSEBody([
+        {
+          event: "artifact",
+          data: {
+            id: "task-no-status",
+            artifact: { name: "test.json", parts: [{ type: "data", data: {} }] },
+          },
+        },
+      ]);
+
+      mockFetch = mock(() =>
+        Promise.resolve(
+          new Response(sseBody, {
+            status: 200,
+            headers: { "Content-Type": "text/event-stream" },
+          }),
+        ),
+      );
+      globalThis.fetch = mockFetch as unknown as typeof fetch;
+
+      const client = new A2AClient({ timeout: 5000 });
+      try {
+        await client.sendSubscribe(
+          "https://agent.example.com",
+          {
+            id: "task-no-status",
+            message: { role: "user", parts: [{ type: "text", text: "test" }] },
+          },
+          {},
+        );
+        expect(true).toBe(false);
+      } catch (err) {
+        expect(err).toBeInstanceOf(A2AClientError);
+        expect((err as A2AClientError).message).toContain("without a final status event");
+      }
+    });
+
+    test("returns last status event when stream ends with non-final status", async () => {
+      // Stream with a working status but no final=true event, then stream ends
+      const sseBody = buildSSEBody([
+        {
+          event: "status",
+          data: {
+            id: "task-no-final",
+            status: { state: "working", timestamp: "2026-01-01T00:00:00Z" },
+            final: false,
+          },
+        },
+      ]);
+
+      mockFetch = mock(() =>
+        Promise.resolve(
+          new Response(sseBody, {
+            status: 200,
+            headers: { "Content-Type": "text/event-stream" },
+          }),
+        ),
+      );
+      globalThis.fetch = mockFetch as unknown as typeof fetch;
+
+      const client = new A2AClient({ timeout: 5000 });
+      const result = await client.sendSubscribe(
+        "https://agent.example.com",
+        {
+          id: "task-no-final",
+          message: { role: "user", parts: [{ type: "text", text: "test" }] },
+        },
+        {},
+      );
+
+      // Should return the last status event even though final was false
+      expect(result.status.state).toBe("working");
+    });
+
+    test("skips malformed JSON in SSE data lines", async () => {
+      // Manually construct SSE with one bad event and one good event
+      const sseBody =
+        "event: status\ndata: {not valid json}\n\n" +
+        `event: status\ndata: ${JSON.stringify({
+          id: "task-malformed",
+          status: { state: "completed", timestamp: "2026-01-01T00:00:00Z" },
+          final: true,
+        })}\n\n`;
+
+      mockFetch = mock(() =>
+        Promise.resolve(
+          new Response(sseBody, {
+            status: 200,
+            headers: { "Content-Type": "text/event-stream" },
+          }),
+        ),
+      );
+      globalThis.fetch = mockFetch as unknown as typeof fetch;
+
+      const client = new A2AClient({ timeout: 5000 });
+      const statusEvents: TaskStatusUpdateEvent[] = [];
+      const result = await client.sendSubscribe(
+        "https://agent.example.com",
+        {
+          id: "task-malformed",
+          message: { role: "user", parts: [{ type: "text", text: "test" }] },
+        },
+        { onStatus: (evt) => statusEvents.push(evt) },
+      );
+
+      // Malformed event skipped, good event processed
+      expect(statusEvents).toHaveLength(1);
+      expect(result.status.state).toBe("completed");
+    });
+  });
+
+  // ── sendAndPoll ─────────────────────────────────────────────
+
+  describe("sendAndPoll", () => {
+    test("returns immediately when sendTask returns terminal state", async () => {
+      const { sendAndPoll } = await import("../../../src/protocols/a2a/client");
+
+      mockFetch = mock(() => {
+        const resp: A2AJsonRpcResponse = {
+          jsonrpc: "2.0",
+          id: 1,
+          result: {
+            id: "task-sendpoll-done",
+            status: { state: "completed", timestamp: new Date().toISOString() },
+          },
+        };
+        return Promise.resolve(new Response(JSON.stringify(resp), { status: 200 }));
+      });
+      globalThis.fetch = mockFetch as unknown as typeof fetch;
+
+      const client = new A2AClient({ timeout: 5000 });
+      const task = await sendAndPoll(client, "https://agent.example.com", {
+        id: "task-sendpoll-done",
+        message: { role: "user", parts: [{ type: "text", text: "test" }] },
+      });
+
+      expect(task.id).toBe("task-sendpoll-done");
+      expect(task.status.state).toBe("completed");
+      // Only 1 call: the sendTask. No polling needed.
+      expect(mockFetch.mock.calls.length).toBe(1);
+    });
+
+    test("polls when sendTask returns non-terminal state", async () => {
+      const { sendAndPoll } = await import("../../../src/protocols/a2a/client");
+
+      let callCount = 0;
+      mockFetch = mock(() => {
+        callCount++;
+        // First call is tasks/send returning working, second is tasks/get returning completed
+        const state = callCount === 1 ? "working" : "completed";
+        const resp: A2AJsonRpcResponse = {
+          jsonrpc: "2.0",
+          id: callCount,
+          result: {
+            id: "task-sendpoll-poll",
+            status: { state, timestamp: new Date().toISOString() },
+          },
+        };
+        return Promise.resolve(new Response(JSON.stringify(resp), { status: 200 }));
+      });
+      globalThis.fetch = mockFetch as unknown as typeof fetch;
+
+      const client = new A2AClient({ timeout: 5000 });
+      const task = await sendAndPoll(
+        client,
+        "https://agent.example.com",
+        {
+          id: "task-sendpoll-poll",
+          message: { role: "user", parts: [{ type: "text", text: "test" }] },
+        },
+        { intervalMs: 10 },
+      );
+
+      expect(task.status.state).toBe("completed");
+      expect(callCount).toBe(2); // 1 send + 1 poll
+    });
+  });
 });

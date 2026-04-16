@@ -25,7 +25,7 @@ import type {
 // ── Capability type ──────────────────────────────────────────────
 
 describe("Capability type", () => {
-  it("includes all 9 values", () => {
+  it("includes all 10 values", () => {
     const all: Capability[] = [
       "mcp",
       "instructions",
@@ -36,8 +36,9 @@ describe("Capability type", () => {
       "agents",
       "hooks",
       "modes",
+      "marketplace",
     ];
-    expect(all).toHaveLength(9);
+    expect(all).toHaveLength(10);
   });
 });
 
@@ -92,8 +93,8 @@ describe("DiffChange", () => {
   });
 
   it("supports all entity types", () => {
-    const entities: DiffChange["entity"][] = ["server", "instruction", "skill", "setting"];
-    expect(entities).toHaveLength(4);
+    const entities: DiffChange["entity"][] = ["server", "instruction", "skill", "agent", "setting"];
+    expect(entities).toHaveLength(5);
   });
 
   it("supports all change types", () => {

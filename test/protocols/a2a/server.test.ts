@@ -1443,6 +1443,240 @@ describe("A2A Server", () => {
     });
   });
 
+  // ── defaultTaskHandler command coverage ────────────────────────
+
+  describe("defaultTaskHandler command coverage", () => {
+    test("'config' command returns resolved config summary with data part", async () => {
+      const store = createTaskStore();
+      const app = makeApp(
+        {
+          servers: { "mcp-fetch": { command: "uvx mcp-server-fetch" } as any },
+          agents: { researcher: { name: "researcher" } as any },
+          instructions: { base: "Be helpful" as any },
+          skills: { research: {} as any },
+        },
+        { taskStore: store },
+      );
+
+      await jsonRpcRequest(app, {
+        jsonrpc: "2.0",
+        id: 1,
+        method: "tasks/send",
+        params: {
+          id: "cmd-config",
+          message: { role: "user", parts: [{ type: "text", text: "config" }] },
+        },
+      });
+
+      await waitForTask(store, "cmd-config");
+      const task = store.get("cmd-config")!;
+      expect(task.status.state).toBe("completed");
+      const dataPart = task.status.message!.parts.find((p) => p.type === "data") as {
+        data: { servers: string[]; agents: string[]; instructions: string[]; skills: string[] };
+      };
+      expect(dataPart).toBeDefined();
+      expect(dataPart.data.servers).toContain("mcp-fetch");
+      expect(dataPart.data.agents).toContain("researcher");
+      expect(dataPart.data.instructions).toContain("base");
+      expect(dataPart.data.skills).toContain("research");
+    });
+
+    test("'servers' command returns server list with artifact", async () => {
+      const store = createTaskStore();
+      const app = makeApp(
+        {
+          servers: {
+            "my-server": { command: "node server.js", args: [], tags: ["test"], enabled: true } as any,
+          },
+        },
+        { taskStore: store },
+      );
+
+      await jsonRpcRequest(app, {
+        jsonrpc: "2.0",
+        id: 1,
+        method: "tasks/send",
+        params: {
+          id: "cmd-servers",
+          message: { role: "user", parts: [{ type: "text", text: "servers" }] },
+        },
+      });
+
+      await waitForTask(store, "cmd-servers");
+      const task = store.get("cmd-servers")!;
+      expect(task.status.state).toBe("completed");
+      // Verify artifacts are produced
+      expect(task.artifacts).toBeDefined();
+      expect(task.artifacts!.length).toBeGreaterThanOrEqual(1);
+      expect(task.artifacts![0].name).toBe("servers.json");
+    });
+
+    test("'agents' command returns agent list", async () => {
+      const store = createTaskStore();
+      const app = makeApp(
+        {
+          agents: {
+            researcher: {
+              name: "researcher",
+              description: "Research agent",
+              model: "opus",
+              tools: [],
+              mcp_servers: [],
+            } as any,
+          },
+        },
+        { taskStore: store },
+      );
+
+      await jsonRpcRequest(app, {
+        jsonrpc: "2.0",
+        id: 1,
+        method: "tasks/send",
+        params: {
+          id: "cmd-agents",
+          message: { role: "user", parts: [{ type: "text", text: "agents" }] },
+        },
+      });
+
+      await waitForTask(store, "cmd-agents");
+      const task = store.get("cmd-agents")!;
+      expect(task.status.state).toBe("completed");
+      const dataPart = task.status.message!.parts.find((p) => p.type === "data") as {
+        data: { agents: Array<{ name: string }> };
+      };
+      expect(dataPart.data.agents).toHaveLength(1);
+      expect(dataPart.data.agents[0].name).toBe("researcher");
+    });
+
+    test("'apply' command returns write operation guidance", async () => {
+      const store = createTaskStore();
+      const app = makeApp({}, { taskStore: store });
+
+      await jsonRpcRequest(app, {
+        jsonrpc: "2.0",
+        id: 1,
+        method: "tasks/send",
+        params: {
+          id: "cmd-apply",
+          message: { role: "user", parts: [{ type: "text", text: "apply" }] },
+        },
+      });
+
+      await waitForTask(store, "cmd-apply");
+      const task = store.get("cmd-apply")!;
+      const textPart = task.status.message!.parts.find((p) => p.type === "text") as { text: string };
+      expect(textPart.text).toContain("write operation");
+    });
+
+    test("'config.write' command returns write operation guidance", async () => {
+      const store = createTaskStore();
+      const app = makeApp({}, { taskStore: store });
+
+      await jsonRpcRequest(app, {
+        jsonrpc: "2.0",
+        id: 1,
+        method: "tasks/send",
+        params: {
+          id: "cmd-config-write",
+          message: { role: "user", parts: [{ type: "text", text: "config.write" }] },
+        },
+      });
+
+      await waitForTask(store, "cmd-config-write");
+      const task = store.get("cmd-config-write")!;
+      const textPart = task.status.message!.parts.find((p) => p.type === "text") as { text: string };
+      expect(textPart.text).toContain("write operation");
+    });
+
+    test("'registry.install' command returns write operation guidance", async () => {
+      const store = createTaskStore();
+      const app = makeApp({}, { taskStore: store });
+
+      await jsonRpcRequest(app, {
+        jsonrpc: "2.0",
+        id: 1,
+        method: "tasks/send",
+        params: {
+          id: "cmd-reg-install",
+          message: { role: "user", parts: [{ type: "text", text: "registry.install" }] },
+        },
+      });
+
+      await waitForTask(store, "cmd-reg-install");
+      const task = store.get("cmd-reg-install")!;
+      const textPart = task.status.message!.parts.find((p) => p.type === "text") as { text: string };
+      expect(textPart.text).toContain("write operation");
+    });
+
+    test("unrecognized command returns error with available commands list", async () => {
+      const store = createTaskStore();
+      const app = makeApp({}, { taskStore: store });
+
+      await jsonRpcRequest(app, {
+        jsonrpc: "2.0",
+        id: 1,
+        method: "tasks/send",
+        params: {
+          id: "cmd-unknown",
+          message: { role: "user", parts: [{ type: "text", text: "foobar" }] },
+        },
+      });
+
+      await waitForTask(store, "cmd-unknown");
+      const task = store.get("cmd-unknown")!;
+      const textPart = task.status.message!.parts.find((p) => p.type === "text") as { text: string };
+      expect(textPart.text).toContain("Unrecognized command");
+      expect(textPart.text).toContain("foobar");
+      expect(textPart.text).toContain("status");
+      expect(textPart.text).toContain("config");
+      expect(textPart.text).toContain("servers");
+    });
+
+    test("command matching is case-insensitive", async () => {
+      const store = createTaskStore();
+      const app = makeApp({}, { taskStore: store });
+
+      await jsonRpcRequest(app, {
+        jsonrpc: "2.0",
+        id: 1,
+        method: "tasks/send",
+        params: {
+          id: "cmd-case",
+          message: { role: "user", parts: [{ type: "text", text: "STATUS" }] },
+        },
+      });
+
+      await waitForTask(store, "cmd-case");
+      const task = store.get("cmd-case")!;
+      expect(task.status.state).toBe("completed");
+      const textPart = task.status.message!.parts.find((p) => p.type === "text") as { text: string };
+      expect(textPart.text).toContain("agent-manager status");
+    });
+
+    test("message with no text part defaults to empty command (unrecognized)", async () => {
+      const store = createTaskStore();
+      const app = makeApp({}, { taskStore: store });
+
+      await jsonRpcRequest(app, {
+        jsonrpc: "2.0",
+        id: 1,
+        method: "tasks/send",
+        params: {
+          id: "cmd-no-text",
+          message: {
+            role: "user",
+            parts: [{ type: "data", data: { key: "value" } }],
+          },
+        },
+      });
+
+      await waitForTask(store, "cmd-no-text");
+      const task = store.get("cmd-no-text")!;
+      const textPart = task.status.message!.parts.find((p) => p.type === "text") as { text: string };
+      expect(textPart.text).toContain("Unrecognized command");
+    });
+  });
+
   // ── MEDIUM-1: SSE idle timeout ────────────────────────────────
 
   describe("SSE idle timeout (MEDIUM-1)", () => {

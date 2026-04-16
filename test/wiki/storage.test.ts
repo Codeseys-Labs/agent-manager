@@ -1,12 +1,15 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { join } from "node:path";
 import {
+  createProjectWikiLink,
   deletePage,
   ensureWikiDirs,
+  getProjectWikiDir,
   listPages,
   parseFrontmatter,
   readPage,
   rebuildSearchIndex,
+  resolveProjectName,
   searchPages,
   serializeFrontmatter,
   writePage,
@@ -239,6 +242,63 @@ describe("wiki/storage", () => {
       const results = await searchPages("widgets", 10, wikiDir);
       expect(results.length).toBeGreaterThanOrEqual(1);
       expect(results[0].page.slug).toBe("index-test");
+    });
+  });
+
+  // ── createProjectWikiLink (symlink system) ──────────────────
+
+  describe("createProjectWikiLink", () => {
+    test("creates symlink from project dir to central wiki", async () => {
+      const { lstatSync, readlinkSync, existsSync, mkdirSync } = await import("node:fs");
+
+      // Set AM_CONFIG_DIR so getProjectWikiDir resolves to our tmp
+      const origEnv = process.env.AM_CONFIG_DIR;
+      process.env.AM_CONFIG_DIR = tmp.path;
+      try {
+        const projectDir = join(tmp.path, "my-project");
+        mkdirSync(projectDir, { recursive: true });
+
+        createProjectWikiLink(projectDir, "my-project");
+
+        const wikiLink = join(projectDir, ".agent-manager", "wiki");
+        expect(existsSync(wikiLink)).toBe(true);
+
+        const stat = lstatSync(wikiLink);
+        expect(stat.isSymbolicLink()).toBe(true);
+
+        const target = readlinkSync(wikiLink);
+        expect(target).toBe(getProjectWikiDir("my-project"));
+      } finally {
+        process.env.AM_CONFIG_DIR = origEnv;
+      }
+    });
+
+    test("idempotent — calling twice does not error", async () => {
+      const { existsSync, mkdirSync } = await import("node:fs");
+
+      const origEnv = process.env.AM_CONFIG_DIR;
+      process.env.AM_CONFIG_DIR = tmp.path;
+      try {
+        const projectDir = join(tmp.path, "idempotent-proj");
+        mkdirSync(projectDir, { recursive: true });
+
+        createProjectWikiLink(projectDir, "idempotent-proj");
+        createProjectWikiLink(projectDir, "idempotent-proj"); // second call
+
+        const wikiLink = join(projectDir, ".agent-manager", "wiki");
+        expect(existsSync(wikiLink)).toBe(true);
+      } finally {
+        process.env.AM_CONFIG_DIR = origEnv;
+      }
+    });
+  });
+
+  // ── resolveProjectName ──────────────────────────────────────
+
+  describe("resolveProjectName", () => {
+    test("falls back to directory basename when no git", () => {
+      const name = resolveProjectName(join(tmp.path, "my-cool-app"));
+      expect(name).toBe("my-cool-app");
     });
   });
 

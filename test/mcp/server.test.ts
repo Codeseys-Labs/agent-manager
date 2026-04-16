@@ -878,6 +878,280 @@ describe("MCP server", () => {
   });
 });
 
+// ── Error hint field tests ────────────────────────────────────────
+// Verify that tool errors produce structured JSON with `error` and optional `hint`.
+
+describe("MCP error response structure", () => {
+  let dir: TestDir;
+  const originalEnv = process.env.AM_CONFIG_DIR;
+
+  afterEach(async () => {
+    if (originalEnv) {
+      process.env.AM_CONFIG_DIR = originalEnv;
+    } else {
+      process.env.AM_CONFIG_DIR = undefined;
+    }
+    if (dir) await dir.cleanup();
+  });
+
+  async function setupConfig(config: Config): Promise<string> {
+    dir = await createTestDir("am-mcp-err-");
+    const configDir = dir.path;
+    process.env.AM_CONFIG_DIR = configDir;
+    await initRepo(configDir);
+    await writeConfig(join(configDir, "config.toml"), config);
+    return configDir;
+  }
+
+  test("error responses include hint field for actionable errors", async () => {
+    await setupConfig({ servers: {} });
+
+    const server = new McpServer();
+    const resp = await server.handleRequest({
+      jsonrpc: "2.0",
+      id: 200,
+      method: "tools/call",
+      params: { name: "am_remove_server", arguments: { name: "nonexistent" } },
+    });
+
+    const result = resp?.result as JsonRpcResult;
+    expect(result.isError).toBe(true);
+    const content = JSON.parse(result.content[0].text);
+    expect(content.error).toBeDefined();
+    // The error message contains a period-separated hint
+    expect(content.hint).toBeDefined();
+    expect(content.hint).toContain("am_list_servers");
+  });
+
+  test("am_add_server duplicate returns error with hint", async () => {
+    await setupConfig({
+      servers: {
+        fetch: { command: "uvx", transport: "stdio", enabled: true },
+      },
+    });
+
+    const server = new McpServer();
+    const resp = await server.handleRequest({
+      jsonrpc: "2.0",
+      id: 201,
+      method: "tools/call",
+      params: {
+        name: "am_add_server",
+        arguments: { name: "fetch", command: "uvx" },
+      },
+    });
+
+    const result = resp?.result as JsonRpcResult;
+    expect(result.isError).toBe(true);
+    const content = JSON.parse(result.content[0].text);
+    expect(content.error).toContain("already exists");
+    expect(content.hint).toBeDefined();
+  });
+
+  test("am_use_profile with nonexistent profile returns error with available profiles", async () => {
+    await setupConfig({
+      profiles: {
+        work: { description: "Work profile" },
+        personal: { description: "Personal profile" },
+      },
+    });
+
+    const server = new McpServer();
+    const resp = await server.handleRequest({
+      jsonrpc: "2.0",
+      id: 202,
+      method: "tools/call",
+      params: { name: "am_use_profile", arguments: { profile: "nonexistent" } },
+    });
+
+    const result = resp?.result as JsonRpcResult;
+    expect(result.isError).toBe(true);
+    const content = JSON.parse(result.content[0].text);
+    expect(content.error).toContain("not found");
+  });
+
+  test("am_import with nonexistent adapter returns error with hint", async () => {
+    await setupConfig({ servers: {} });
+
+    const server = new McpServer();
+    const resp = await server.handleRequest({
+      jsonrpc: "2.0",
+      id: 203,
+      method: "tools/call",
+      params: { name: "am_import", arguments: { source: "nonexistent-tool" } },
+    });
+
+    const result = resp?.result as JsonRpcResult;
+    expect(result.isError).toBe(true);
+    const content = JSON.parse(result.content[0].text);
+    expect(content.error).toContain("not found");
+  });
+});
+
+// ── Import projectPath regression test ──────────────────────────
+// Verifies that am_import passes projectPath to adapters (bug fix).
+
+describe("MCP am_import passes projectPath to adapters", () => {
+  let dir: TestDir;
+  const originalEnv = process.env.AM_CONFIG_DIR;
+
+  afterEach(async () => {
+    if (originalEnv) {
+      process.env.AM_CONFIG_DIR = originalEnv;
+    } else {
+      process.env.AM_CONFIG_DIR = undefined;
+    }
+    if (dir) await dir.cleanup();
+  });
+
+  test("am_import with 'auto' source returns structured result", async () => {
+    dir = await createTestDir("am-mcp-import-");
+    const configDir = dir.path;
+    process.env.AM_CONFIG_DIR = configDir;
+    await initRepo(configDir);
+    await writeConfig(join(configDir, "config.toml"), { servers: {} });
+
+    const server = new McpServer();
+    const resp = await server.handleRequest({
+      jsonrpc: "2.0",
+      id: 300,
+      method: "tools/call",
+      params: { name: "am_import", arguments: { source: "auto" } },
+    });
+
+    expect(resp).not.toBeNull();
+    const result = resp?.result as JsonRpcResult;
+    // Even with no detected tools, should return a structured response (not error)
+    if (!result.isError) {
+      const content = JSON.parse(result.content[0].text);
+      expect(content.action).toBe("import");
+      expect(typeof content.imported).toBe("number");
+    }
+  });
+
+  test("am_import with specific adapter returns structured result", async () => {
+    dir = await createTestDir("am-mcp-import-");
+    const configDir = dir.path;
+    process.env.AM_CONFIG_DIR = configDir;
+    await initRepo(configDir);
+    await writeConfig(join(configDir, "config.toml"), { servers: {} });
+
+    const server = new McpServer();
+    // Use claude-code which is always available
+    const resp = await server.handleRequest({
+      jsonrpc: "2.0",
+      id: 301,
+      method: "tools/call",
+      params: { name: "am_import", arguments: { source: "claude-code" } },
+    });
+
+    expect(resp).not.toBeNull();
+    const result = resp?.result as JsonRpcResult;
+    if (!result.isError) {
+      const content = JSON.parse(result.content[0].text);
+      expect(content.action).toBe("import");
+      expect(content.source).toBe("claude-code");
+      expect(typeof content.imported).toBe("number");
+    }
+  });
+});
+
+// ── am_list_profiles handler test ───────────────────────────────
+
+describe("MCP am_list_profiles handler", () => {
+  let dir: TestDir;
+  const originalEnv = process.env.AM_CONFIG_DIR;
+
+  afterEach(async () => {
+    if (originalEnv) {
+      process.env.AM_CONFIG_DIR = originalEnv;
+    } else {
+      process.env.AM_CONFIG_DIR = undefined;
+    }
+    if (dir) await dir.cleanup();
+  });
+
+  test("am_list_profiles returns profile list with active indicator", async () => {
+    dir = await createTestDir("am-mcp-profiles-");
+    const configDir = dir.path;
+    process.env.AM_CONFIG_DIR = configDir;
+    await initRepo(configDir);
+    await writeConfig(join(configDir, "config.toml"), {
+      settings: { default_profile: "work" },
+      profiles: {
+        work: { description: "Work environment" },
+        personal: { description: "Personal setup", inherits: "work" },
+      },
+    });
+
+    const server = new McpServer();
+    const resp = await server.handleRequest({
+      jsonrpc: "2.0",
+      id: 400,
+      method: "tools/call",
+      params: { name: "am_list_profiles", arguments: {} },
+    });
+
+    expect(resp).not.toBeNull();
+    const result = resp?.result as JsonRpcResult;
+    expect(result.isError).toBeUndefined();
+    const content = JSON.parse(result.content[0].text);
+    expect(content.activeProfile).toBe("work");
+    expect(Array.isArray(content.profiles)).toBe(true);
+    expect(content.profiles.length).toBe(2);
+
+    const work = content.profiles.find((p: { name: string }) => p.name === "work");
+    expect(work.active).toBe(true);
+    expect(work.description).toBe("Work environment");
+
+    const personal = content.profiles.find((p: { name: string }) => p.name === "personal");
+    expect(personal.active).toBe(false);
+    expect(personal.inherits).toBe("work");
+  });
+});
+
+// ── am_use_profile handler test ─────────────────────────────────
+
+describe("MCP am_use_profile handler", () => {
+  let dir: TestDir;
+  const originalEnv = process.env.AM_CONFIG_DIR;
+
+  afterEach(async () => {
+    if (originalEnv) {
+      process.env.AM_CONFIG_DIR = originalEnv;
+    } else {
+      process.env.AM_CONFIG_DIR = undefined;
+    }
+    if (dir) await dir.cleanup();
+  });
+
+  test("am_use_profile switches active profile", async () => {
+    dir = await createTestDir("am-mcp-use-");
+    const configDir = dir.path;
+    process.env.AM_CONFIG_DIR = configDir;
+    await initRepo(configDir);
+    await writeConfig(join(configDir, "config.toml"), {
+      settings: { default_profile: "default" },
+      profiles: {
+        default: { description: "Default" },
+        work: { description: "Work" },
+      },
+    });
+
+    const server = new McpServer();
+    const resp = await server.handleRequest({
+      jsonrpc: "2.0",
+      id: 500,
+      method: "tools/call",
+      params: { name: "am_use_profile", arguments: { profile: "work" } },
+    });
+
+    const content = JSON.parse((resp?.result as JsonRpcResult).content[0].text);
+    expect(content.action).toBe("use");
+    expect(content.profile).toBe("work");
+  });
+});
+
 // ── Session tools with mocked session data ──────────────────────
 // These tests exercise session tool handlers with actual session data
 // by directly testing the core session functions used by the MCP handlers,

@@ -884,7 +884,7 @@ function defineTools(): ToolEntry[] {
 
         for (const adapter of adapters) {
           try {
-            const result = adapter.import({});
+            const result = adapter.import({ projectPath: process.cwd() });
             for (const srv of result.servers) {
               if (!config.servers[srv.name]) {
                 config.servers[srv.name] = {
