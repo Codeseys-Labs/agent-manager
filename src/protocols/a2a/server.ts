@@ -30,6 +30,8 @@ import type {
 // ── Task store ─────────────────────────────────────────────────
 
 const MAX_TASKS = 1000;
+/** Tasks in terminal state older than this are eligible for TTL eviction. */
+export const TASK_TTL_MS = 3_600_000; // 1 hour
 
 export interface TaskStore {
   get(id: string): Task | undefined;
@@ -45,16 +47,30 @@ export function createTaskStore(): TaskStore {
   return new Map<string, Task>();
 }
 
+function isTerminalState(state: TaskState): boolean {
+  return state === "completed" || state === "failed" || state === "canceled";
+}
+
 function evictStaleTasks(store: TaskStore): void {
+  const now = Date.now();
+
+  // Phase 1: TTL — remove terminal tasks older than TASK_TTL_MS regardless of store size
+  for (const [id, task] of store.entries()) {
+    if (isTerminalState(task.status.state)) {
+      const taskTime = new Date(task.status.timestamp).getTime();
+      if (now - taskTime >= TASK_TTL_MS) {
+        store.delete(id);
+      }
+    }
+  }
+
+  // Phase 2: capacity — only if still over MAX_TASKS after TTL cleanup
   if (store.size <= MAX_TASKS) return;
-  // Remove completed/failed/canceled tasks first (oldest first via Map insertion order)
+
+  // Remove remaining terminal tasks first (oldest first via Map insertion order)
   for (const [id, task] of store.entries()) {
     if (store.size <= MAX_TASKS * 0.8) break;
-    if (
-      task.status.state === "completed" ||
-      task.status.state === "failed" ||
-      task.status.state === "canceled"
-    ) {
+    if (isTerminalState(task.status.state)) {
       store.delete(id);
     }
   }
@@ -340,6 +356,11 @@ function handleJsonRpc(
         return jsonRpcError(id, -32602, "Invalid params: id required");
       }
 
+      // Opportunistic eviction on read when store is large
+      if (store.size > MAX_TASKS * 0.5) {
+        evictStaleTasks(store);
+      }
+
       const task = store.get(p.id);
       if (!task) {
         return jsonRpcError(id, -32001, `Task not found: ${p.id}`);
@@ -396,6 +417,8 @@ export interface A2AServerOptions {
   taskHandler?: TaskHandler;
   /** Optional task store. Each call creates its own store if not provided. */
   taskStore?: TaskStore;
+  /** Optional bearer token for auth. When set, POST /a2a requires Authorization: Bearer <token>. */
+  auth_token?: string;
 }
 
 /**
@@ -414,15 +437,27 @@ export function createA2ARoutes(options: A2AServerOptions): Hono {
     cardOptions,
     taskHandler = defaultTaskHandler,
     taskStore: externalStore,
+    auth_token,
   } = options;
   const store = externalStore ?? createTaskStore();
   const a2aApp = new Hono();
 
-  // Agent Card endpoint
+  // Agent Card endpoint — public by design (A2A spec)
   a2aApp.get("/.well-known/agent.json", (c) => {
     const card = generateAgentCard(config, cardOptions);
     return c.json(card);
   });
+
+  // Bearer token auth middleware for POST /a2a
+  if (auth_token) {
+    a2aApp.use("/a2a", async (c, next) => {
+      const authHeader = c.req.header("Authorization");
+      if (!authHeader || authHeader !== `Bearer ${auth_token}`) {
+        return c.json({ error: "Unauthorized" }, 401);
+      }
+      await next();
+    });
+  }
 
   // A2A JSON-RPC endpoint
   a2aApp.post("/a2a", async (c) => {

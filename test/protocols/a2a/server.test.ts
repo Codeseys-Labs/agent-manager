@@ -6,6 +6,7 @@ import * as TOML from "@iarna/toml";
 import type { ResolvedConfig } from "../../../src/adapters/types";
 import {
   type A2AServerOptions,
+  TASK_TTL_MS,
   type TaskStore,
   createA2ARoutes,
   createTaskStore,
@@ -767,6 +768,214 @@ describe("A2A Server", () => {
       const data = (await res.json()) as { error: { code: number; message: string } };
       expect(data.error).toBeDefined();
       expect(data.error.code).toBe(-32600);
+    });
+  });
+
+  // ── Bearer token auth middleware ───────────────────────────
+
+  describe("bearer token auth", () => {
+    test("rejects request without token when auth_token is set", async () => {
+      const app = makeApp({}, { auth_token: "secret-token-123" });
+      const res = await jsonRpcRequest(app, {
+        jsonrpc: "2.0",
+        id: 1,
+        method: "tasks/send",
+        params: {
+          id: "auth-test-1",
+          message: { role: "user", parts: [{ type: "text", text: "status" }] },
+        },
+      });
+
+      expect(res.status).toBe(401);
+      const data = await res.json();
+      expect(data.error).toBe("Unauthorized");
+    });
+
+    test("rejects request with wrong token", async () => {
+      const app = makeApp({}, { auth_token: "secret-token-123" });
+      const res = await app.request("/a2a", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: "Bearer wrong-token",
+        },
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: 1,
+          method: "tasks/send",
+          params: {
+            id: "auth-test-2",
+            message: { role: "user", parts: [{ type: "text", text: "status" }] },
+          },
+        }),
+      });
+
+      expect(res.status).toBe(401);
+    });
+
+    test("allows request with valid token", async () => {
+      const app = makeApp({}, { auth_token: "secret-token-123" });
+      const res = await app.request("/a2a", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: "Bearer secret-token-123",
+        },
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: 1,
+          method: "tasks/send",
+          params: {
+            id: "auth-test-3",
+            message: { role: "user", parts: [{ type: "text", text: "status" }] },
+          },
+        }),
+      });
+
+      expect(res.status).toBe(200);
+      const data = (await res.json()) as {
+        result: { id: string; status: { state: string } };
+        error?: unknown;
+      };
+      expect(data.error).toBeUndefined();
+      expect(data.result.id).toBe("auth-test-3");
+    });
+
+    test("allows all requests when no auth_token is configured", async () => {
+      const app = makeApp(); // no auth_token
+      const res = await jsonRpcRequest(app, {
+        jsonrpc: "2.0",
+        id: 1,
+        method: "tasks/send",
+        params: {
+          id: "auth-test-4",
+          message: { role: "user", parts: [{ type: "text", text: "status" }] },
+        },
+      });
+
+      expect(res.status).toBe(200);
+      const data = (await res.json()) as { result: { id: string }; error?: unknown };
+      expect(data.error).toBeUndefined();
+      expect(data.result.id).toBe("auth-test-4");
+    });
+
+    test("Agent Card endpoint is public even when auth_token is set", async () => {
+      const app = makeApp({}, { auth_token: "secret-token-123" });
+      const res = await app.request("/.well-known/agent.json");
+
+      expect(res.status).toBe(200);
+      const card = await res.json();
+      expect(card.name).toBe("agent-manager");
+    });
+  });
+
+  // ── TTL-based task eviction ────────────────────────────────
+
+  describe("TTL-based task eviction", () => {
+    test("evicts terminal tasks older than TASK_TTL_MS", async () => {
+      const store = createTaskStore();
+      const app = makeApp({}, { taskStore: store });
+
+      // Create a task and complete it
+      await jsonRpcRequest(app, {
+        jsonrpc: "2.0",
+        id: 1,
+        method: "tasks/send",
+        params: {
+          id: "ttl-old-task",
+          message: { role: "user", parts: [{ type: "text", text: "status" }] },
+        },
+      });
+      await waitForTask(store, "ttl-old-task");
+
+      // Verify task exists and is completed
+      expect(store.get("ttl-old-task")).toBeDefined();
+      expect(store.get("ttl-old-task")!.status.state).toBe("completed");
+
+      // Manually backdate the task's timestamp to exceed TTL
+      const task = store.get("ttl-old-task")!;
+      task.status.timestamp = new Date(Date.now() - TASK_TTL_MS - 1000).toISOString();
+
+      // Create a new task to trigger eviction (via the .finally() in tasks/send)
+      await jsonRpcRequest(app, {
+        jsonrpc: "2.0",
+        id: 2,
+        method: "tasks/send",
+        params: {
+          id: "ttl-new-task",
+          message: { role: "user", parts: [{ type: "text", text: "status" }] },
+        },
+      });
+      await waitForTask(store, "ttl-new-task");
+
+      // The old task should have been evicted by TTL
+      expect(store.get("ttl-old-task")).toBeUndefined();
+      // The new task should still exist
+      expect(store.get("ttl-new-task")).toBeDefined();
+    });
+
+    test("does not evict terminal tasks within TTL", async () => {
+      const store = createTaskStore();
+      const app = makeApp({}, { taskStore: store });
+
+      // Create and complete a task (timestamp is recent)
+      await jsonRpcRequest(app, {
+        jsonrpc: "2.0",
+        id: 1,
+        method: "tasks/send",
+        params: {
+          id: "ttl-recent-task",
+          message: { role: "user", parts: [{ type: "text", text: "status" }] },
+        },
+      });
+      await waitForTask(store, "ttl-recent-task");
+
+      // Trigger eviction with another task
+      await jsonRpcRequest(app, {
+        jsonrpc: "2.0",
+        id: 2,
+        method: "tasks/send",
+        params: {
+          id: "ttl-trigger-task",
+          message: { role: "user", parts: [{ type: "text", text: "status" }] },
+        },
+      });
+      await waitForTask(store, "ttl-trigger-task");
+
+      // Recent task should still exist
+      expect(store.get("ttl-recent-task")).toBeDefined();
+    });
+
+    test("does not evict working tasks regardless of age", async () => {
+      const store = createTaskStore();
+
+      // Manually insert a "working" task with old timestamp
+      store.set("ttl-working-old", {
+        id: "ttl-working-old",
+        status: {
+          state: "working",
+          timestamp: new Date(Date.now() - TASK_TTL_MS - 60_000).toISOString(),
+        },
+        history: [],
+        artifacts: [],
+      });
+
+      const app = makeApp({}, { taskStore: store });
+
+      // Trigger eviction
+      await jsonRpcRequest(app, {
+        jsonrpc: "2.0",
+        id: 1,
+        method: "tasks/send",
+        params: {
+          id: "ttl-evict-trigger",
+          message: { role: "user", parts: [{ type: "text", text: "status" }] },
+        },
+      });
+      await waitForTask(store, "ttl-evict-trigger");
+
+      // Working task should NOT be evicted (not in terminal state)
+      expect(store.get("ttl-working-old")).toBeDefined();
     });
   });
 });

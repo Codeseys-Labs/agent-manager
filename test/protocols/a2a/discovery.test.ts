@@ -3,6 +3,7 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import {
   addToRoster,
+  discoverFromConfig,
   discoverFromRoster,
   loadRoster,
   removeFromRoster,
@@ -214,6 +215,98 @@ describe("protocols/a2a/discovery", () => {
     test("returns empty array when roster file does not exist", async () => {
       const cards = await discoverFromRoster(join(configDir, "nonexistent-roster.toml"));
       expect(cards).toEqual([]);
+    });
+  });
+
+  // ── discoverFromConfig ──────────────────────────────────────
+
+  describe("discoverFromConfig", () => {
+    const originalFetch = globalThis.fetch;
+
+    afterEach(() => {
+      globalThis.fetch = originalFetch;
+    });
+
+    const MOCK_CARD: AgentCard = {
+      name: "config-agent",
+      description: "Discovered via config",
+      version: "1.0.0",
+      url: "https://config-agent.example.com",
+      capabilities: { streaming: false },
+      skills: [{ id: "s1", name: "Skill", description: "A skill" }],
+    };
+
+    test("returns cards from discovery_sources in config.toml", async () => {
+      // Write a config.toml with discovery_sources
+      await tmp.write(
+        "config.toml",
+        [
+          "[settings.a2a]",
+          'discovery_sources = ["https://agent-one.example.com", "https://agent-two.example.com"]',
+        ].join("\n"),
+      );
+
+      const card1: AgentCard = { ...MOCK_CARD, name: "agent-one", url: "https://agent-one.example.com" };
+      const card2: AgentCard = { ...MOCK_CARD, name: "agent-two", url: "https://agent-two.example.com" };
+
+      const mockFetch = mock((url: string) => {
+        if (url.includes("agent-one.example.com")) {
+          return Promise.resolve(new Response(JSON.stringify(card1), { status: 200 }));
+        }
+        if (url.includes("agent-two.example.com")) {
+          return Promise.resolve(new Response(JSON.stringify(card2), { status: 200 }));
+        }
+        return Promise.resolve(new Response("Not Found", { status: 404 }));
+      });
+      globalThis.fetch = mockFetch as unknown as typeof fetch;
+
+      const cards = await discoverFromConfig(configDir);
+      expect(cards).toHaveLength(2);
+      const names = cards.map((c) => c.name).sort();
+      expect(names).toEqual(["agent-one", "agent-two"]);
+    });
+
+    test("returns empty array when no discovery_sources configured", async () => {
+      await tmp.write("config.toml", "[settings]\ndefault_profile = \"default\"\n");
+
+      const cards = await discoverFromConfig(configDir);
+      expect(cards).toEqual([]);
+    });
+
+    test("returns empty array when config.toml does not exist", async () => {
+      // configDir exists but no config.toml
+      const cards = await discoverFromConfig(configDir);
+      expect(cards).toEqual([]);
+    });
+
+    test("skips unreachable discovery sources and returns reachable ones", async () => {
+      await tmp.write(
+        "config.toml",
+        [
+          "[settings.a2a]",
+          'discovery_sources = ["https://reachable.example.com", "https://down.example.com"]',
+        ].join("\n"),
+      );
+
+      const reachableCard: AgentCard = {
+        ...MOCK_CARD,
+        name: "reachable",
+        url: "https://reachable.example.com",
+      };
+
+      const mockFetch = mock((input: string | Request) => {
+        const url = typeof input === "string" ? input : input.url;
+        if (url.includes("reachable.example.com")) {
+          return Promise.resolve(new Response(JSON.stringify(reachableCard), { status: 200 }));
+        }
+        // Simulate network error for down.example.com
+        return Promise.reject(new Error("Connection refused"));
+      });
+      globalThis.fetch = mockFetch as unknown as typeof fetch;
+
+      const cards = await discoverFromConfig(configDir);
+      expect(cards).toHaveLength(1);
+      expect(cards[0].name).toBe("reachable");
     });
   });
 

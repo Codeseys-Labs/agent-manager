@@ -90,6 +90,11 @@ const TOOL_GROUP_MAP: Record<string, McpToolGroup> = {
   am_session_list: "session",
   am_session_export: "session",
   am_session_search: "session",
+  // acp group (ADR-0026 Phase 2)
+  am_run_agent: "acp",
+  am_acp_list_agents: "acp",
+  am_acp_session_list: "acp",
+  am_acp_session_cancel: "acp",
   // All other tools (am_list_servers, am_list_profiles, am_status, etc.) default to "core"
 };
 
@@ -1503,6 +1508,174 @@ function defineTools(): ToolEntry[] {
           entries_extracted: entries.length,
           entries_added: added,
         };
+      },
+    },
+
+    // ── ACP tools (ADR-0026 Phase 2) ─────────────────────────────
+    {
+      def: {
+        name: "am_run_agent",
+        description:
+          "Run a prompt against an ACP-compatible coding agent. Returns immediately with a session ID. Use am_acp_session_list to check progress. Requires the agent to be in the built-in registry or configured in settings.acp.agents.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            agent: { type: "string", description: "Agent name (e.g., 'claude', 'codex', 'gemini')" },
+            prompt: { type: "string", description: "Prompt text to send to the agent" },
+            session: {
+              type: "string",
+              description: "Named session to create or resume. If omitted, a new anonymous session is created.",
+            },
+            cwd: {
+              type: "string",
+              description: "Working directory for the agent session. Defaults to current working directory.",
+            },
+          },
+          required: ["agent", "prompt"],
+        },
+      },
+      tier: "write-remote" as ToolTier,
+      handler: async (args) => {
+        const { createAcpClient } = await import("../protocols/acp/client");
+        const { resolveAgent } = await import("../protocols/acp/registry");
+        const agentName = args.agent as string;
+        const promptText = args.prompt as string;
+        const sessionName = args.session as string | undefined;
+        const cwd = (args.cwd as string) ?? process.cwd();
+
+        // Load ACP settings for agent resolution
+        const { config } = await loadConfigAndProfile();
+        const acpSettings = config.settings?.acp;
+
+        const entry = resolveAgent(agentName, acpSettings);
+        if (!entry) {
+          throw new Error(
+            `Unknown agent "${agentName}". Use am_acp_list_agents to see available agents.`,
+          );
+        }
+
+        const client = createAcpClient();
+        try {
+          await client.connect(entry.command);
+          const sessionId = sessionName ?? `am-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+          await client.newSession({ cwd });
+          const result = await client.prompt(sessionId, [{ type: "text", text: promptText }]);
+          await client.disconnect();
+
+          return {
+            sessionId,
+            agent: agentName,
+            status: "completed",
+            result: {
+              text: result.text,
+              toolCalls: result.toolCalls.map((tc) => ({
+                name: (tc as Record<string, unknown>).name ?? "unknown",
+              })),
+            },
+          };
+        } catch (err) {
+          await client.disconnect().catch(() => {});
+          throw err;
+        }
+      },
+    },
+    {
+      def: {
+        name: "am_acp_list_agents",
+        description:
+          "List available ACP-compatible agents (built-in registry + config overrides from settings.acp.agents).",
+        inputSchema: { type: "object", properties: {} },
+      },
+      tier: "read-only" as ToolTier,
+      handler: async () => {
+        const { listAgents } = await import("../protocols/acp/registry");
+        const { config } = await loadConfigAndProfile();
+        const acpSettings = config.settings?.acp;
+        const agents = listAgents(acpSettings);
+        return {
+          agents: agents.map((a) => ({
+            name: a.name,
+            command: a.command,
+            source: a.source,
+          })),
+        };
+      },
+    },
+    {
+      def: {
+        name: "am_acp_session_list",
+        description: "List active ACP sessions from the session directory.",
+        inputSchema: { type: "object", properties: {} },
+      },
+      tier: "read-only" as ToolTier,
+      handler: async () => {
+        const { readdir, stat } = await import("node:fs/promises");
+        const { join } = await import("node:path");
+        const { config } = await loadConfigAndProfile();
+        const sessionDir = config.settings?.acp?.session_dir
+          ?? join(resolveConfigDir(), "sessions");
+
+        const sessions: Array<{
+          id: string;
+          agent: string;
+          created: string;
+          status: string;
+        }> = [];
+
+        try {
+          const entries = await readdir(sessionDir);
+          for (const entry of entries) {
+            try {
+              const entryPath = join(sessionDir, entry);
+              const info = await stat(entryPath);
+              sessions.push({
+                id: entry,
+                agent: "unknown",
+                created: info.birthtime.toISOString(),
+                status: "persisted",
+              });
+            } catch {
+              // Skip unreadable entries
+            }
+          }
+        } catch {
+          // Session directory doesn't exist yet — return empty
+        }
+
+        return { sessions };
+      },
+    },
+    {
+      def: {
+        name: "am_acp_session_cancel",
+        description: "Cancel an active ACP session by session ID.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            sessionId: { type: "string", description: "Session ID to cancel" },
+          },
+          required: ["sessionId"],
+        },
+      },
+      tier: "write-remote" as ToolTier,
+      handler: async (args) => {
+        const sessionId = args.sessionId as string;
+        // ACP sessions are transient — cancellation removes persisted state if any
+        const { rm } = await import("node:fs/promises");
+        const { join } = await import("node:path");
+        const { config } = await loadConfigAndProfile();
+        const sessionDir = config.settings?.acp?.session_dir
+          ?? join(resolveConfigDir(), "sessions");
+        const sessionPath = join(sessionDir, sessionId);
+
+        try {
+          await rm(sessionPath, { recursive: true });
+          return { action: "cancel", sessionId, status: "cancelled" };
+        } catch {
+          throw new Error(
+            `Session "${sessionId}" not found. Use am_acp_session_list to see active sessions.`,
+          );
+        }
       },
     },
   ];

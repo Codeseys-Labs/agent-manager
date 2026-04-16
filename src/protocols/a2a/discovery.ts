@@ -15,6 +15,14 @@ import { tomlStringify } from "../../lib/toml";
 import { A2AClient } from "./client";
 import type { AgentCard, AgentRosterEntry } from "./types";
 
+interface ConfigToml {
+  settings?: {
+    a2a?: {
+      discovery_sources?: string[];
+    };
+  };
+}
+
 const ROSTER_FILENAME = "agents.toml";
 
 // ── URL-based discovery ────────────────────────────────────────
@@ -151,6 +159,40 @@ export async function discoverFromRoster(rosterPath: string): Promise<AgentCard[
     const results = await Promise.allSettled(
       batch.map(([, entry]) => client.discoverAgent(entry.url)),
     );
+    for (const result of results) {
+      if (result.status === "fulfilled" && result.value) {
+        cards.push(result.value);
+      }
+    }
+  }
+
+  return cards;
+}
+
+/**
+ * Discover agents from settings.a2a.discovery_sources in config.toml.
+ * Fetches Agent Cards from each URL and returns reachable cards.
+ * Does NOT auto-add to roster.
+ */
+export async function discoverFromConfig(configDir: string): Promise<AgentCard[]> {
+  const configPath = join(configDir, "config.toml");
+  let raw: string;
+  try {
+    raw = await readFile(configPath, "utf-8");
+  } catch (err: unknown) {
+    if (isNotFound(err)) return [];
+    throw err;
+  }
+
+  const parsed = TOML.parse(raw) as unknown as ConfigToml;
+  const sources = parsed.settings?.a2a?.discovery_sources;
+  if (!sources || sources.length === 0) return [];
+
+  const cards: AgentCard[] = [];
+  const batchSize = 5;
+  for (let i = 0; i < sources.length; i += batchSize) {
+    const batch = sources.slice(i, i + batchSize);
+    const results = await Promise.allSettled(batch.map((url) => discoverFromUrl(url)));
     for (const result of results) {
       if (result.status === "fulfilled" && result.value) {
         cards.push(result.value);

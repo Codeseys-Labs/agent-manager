@@ -84,12 +84,17 @@ describe("MCP server", () => {
     expect(names).not.toContain("am_registry_search");
     expect(names).not.toContain("am_wiki_search");
     expect(names).not.toContain("am_agent_discover");
+    // ACP tools should NOT be present by default
+    expect(names).not.toContain("am_run_agent");
+    expect(names).not.toContain("am_acp_list_agents");
+    expect(names).not.toContain("am_acp_session_list");
+    expect(names).not.toContain("am_acp_session_cancel");
   });
 
   test("tools/list returns all groups when configured (ADR-0021)", async () => {
     await setupConfig({
       settings: {
-        mcp_serve: { tools: ["core", "registry", "a2a", "wiki", "session"] },
+        mcp_serve: { tools: ["core", "registry", "a2a", "wiki", "session", "acp"] },
       },
     });
     const server = new McpServer();
@@ -120,7 +125,12 @@ describe("MCP server", () => {
     expect(names).toContain("am_session_list");
     expect(names).toContain("am_session_export");
     expect(names).toContain("am_session_search");
-    expect(names.length).toBe(29);
+    // ACP tools (ADR-0026 Phase 2)
+    expect(names).toContain("am_run_agent");
+    expect(names).toContain("am_acp_list_agents");
+    expect(names).toContain("am_acp_session_list");
+    expect(names).toContain("am_acp_session_cancel");
+    expect(names.length).toBe(33);
   });
 
   test("tools/list respects selective group configuration (ADR-0021)", async () => {
@@ -1050,5 +1060,240 @@ describe("MCP session tools — core function integration", () => {
   test("session search no matches returns empty", () => {
     const matched = filterMessages(testSession.messages, { query: "xyznonexistent" });
     expect(matched.length).toBe(0);
+  });
+});
+
+// ── ACP tool tests (ADR-0026 Phase 2) ────────────────────────────
+
+describe("MCP ACP tools", () => {
+  let dir: TestDir;
+  const originalEnv = process.env.AM_CONFIG_DIR;
+
+  afterEach(async () => {
+    if (originalEnv) {
+      process.env.AM_CONFIG_DIR = originalEnv;
+    } else {
+      process.env.AM_CONFIG_DIR = undefined;
+    }
+    if (dir) await dir.cleanup();
+  });
+
+  async function setupConfig(config: Config): Promise<string> {
+    dir = await createTestDir("am-mcp-acp-");
+    const configDir = dir.path;
+    process.env.AM_CONFIG_DIR = configDir;
+    await initRepo(configDir);
+    await writeConfig(join(configDir, "config.toml"), config);
+    return configDir;
+  }
+
+  test("ACP tools are registered with correct names", () => {
+    const server = new McpServer();
+    const tools = server.getTools();
+    const names = tools.map((t) => t.def.name);
+    expect(names).toContain("am_run_agent");
+    expect(names).toContain("am_acp_list_agents");
+    expect(names).toContain("am_acp_session_list");
+    expect(names).toContain("am_acp_session_cancel");
+  });
+
+  test("ACP tools belong to the 'acp' group", () => {
+    const server = new McpServer();
+    const tools = server.getTools();
+    const acpToolNames = ["am_run_agent", "am_acp_list_agents", "am_acp_session_list", "am_acp_session_cancel"];
+    for (const name of acpToolNames) {
+      const tool = tools.find((t) => t.def.name === name);
+      expect(tool).toBeDefined();
+    }
+  });
+
+  test("ACP tools visible only when acp group is enabled", async () => {
+    await setupConfig({
+      settings: {
+        mcp_serve: { tools: ["acp"] },
+      },
+    });
+    const server = new McpServer();
+    const resp = await server.handleRequest({
+      jsonrpc: "2.0",
+      id: 100,
+      method: "tools/list",
+    });
+    expect(resp).not.toBeNull();
+    const tools = (resp?.result as JsonRpcResult).tools;
+    const names = tools.map((t: { name: string }) => t.name);
+    expect(names).toContain("am_run_agent");
+    expect(names).toContain("am_acp_list_agents");
+    expect(names).toContain("am_acp_session_list");
+    expect(names).toContain("am_acp_session_cancel");
+    expect(names.length).toBe(4);
+    // Core tools should NOT be present
+    expect(names).not.toContain("am_list_servers");
+  });
+
+  test("am_run_agent has correct tier (write-remote)", () => {
+    const server = new McpServer();
+    const tools = server.getTools();
+    const runAgent = tools.find((t) => t.def.name === "am_run_agent");
+    expect(runAgent?.tier).toBe("write-remote");
+  });
+
+  test("am_acp_list_agents has correct tier (read-only)", () => {
+    const server = new McpServer();
+    const tools = server.getTools();
+    const listAgents = tools.find((t) => t.def.name === "am_acp_list_agents");
+    expect(listAgents?.tier).toBe("read-only");
+  });
+
+  test("am_acp_session_list has correct tier (read-only)", () => {
+    const server = new McpServer();
+    const tools = server.getTools();
+    const sessionList = tools.find((t) => t.def.name === "am_acp_session_list");
+    expect(sessionList?.tier).toBe("read-only");
+  });
+
+  test("am_acp_session_cancel has correct tier (write-remote)", () => {
+    const server = new McpServer();
+    const tools = server.getTools();
+    const sessionCancel = tools.find((t) => t.def.name === "am_acp_session_cancel");
+    expect(sessionCancel?.tier).toBe("write-remote");
+  });
+
+  test("am_run_agent requires agent and prompt params", () => {
+    const server = new McpServer();
+    const tools = server.getTools();
+    const runAgent = tools.find((t) => t.def.name === "am_run_agent");
+    expect(runAgent?.def.inputSchema.required).toEqual(["agent", "prompt"]);
+    expect(runAgent?.def.inputSchema.properties).toHaveProperty("agent");
+    expect(runAgent?.def.inputSchema.properties).toHaveProperty("prompt");
+    expect(runAgent?.def.inputSchema.properties).toHaveProperty("session");
+    expect(runAgent?.def.inputSchema.properties).toHaveProperty("cwd");
+  });
+
+  test("am_acp_session_cancel requires sessionId param", () => {
+    const server = new McpServer();
+    const tools = server.getTools();
+    const cancel = tools.find((t) => t.def.name === "am_acp_session_cancel");
+    expect(cancel?.def.inputSchema.required).toEqual(["sessionId"]);
+    expect(cancel?.def.inputSchema.properties).toHaveProperty("sessionId");
+  });
+
+  test("am_acp_list_agents returns agents from registry", async () => {
+    await setupConfig({
+      settings: {
+        mcp_serve: { tools: ["acp"] },
+        acp: {
+          agents: {
+            "my-custom": { command: "./custom-agent --acp" },
+          },
+        },
+      },
+    });
+
+    const server = new McpServer();
+    const resp = await server.handleRequest({
+      jsonrpc: "2.0",
+      id: 101,
+      method: "tools/call",
+      params: { name: "am_acp_list_agents", arguments: {} },
+    });
+
+    expect(resp).not.toBeNull();
+    const result = resp?.result as JsonRpcResult;
+    expect(result.isError).toBeUndefined();
+    const content = JSON.parse(result.content[0].text);
+    expect(Array.isArray(content.agents)).toBe(true);
+    // Should include built-in agents
+    const names = content.agents.map((a: { name: string }) => a.name);
+    expect(names).toContain("claude");
+    expect(names).toContain("codex");
+    // Should include config override
+    expect(names).toContain("my-custom");
+    // Check config override has correct source
+    const custom = content.agents.find((a: { name: string }) => a.name === "my-custom");
+    expect(custom.source).toBe("config");
+    expect(custom.command).toBe("./custom-agent --acp");
+  });
+
+  test("am_acp_session_list returns empty when no session dir", async () => {
+    await setupConfig({});
+
+    const server = new McpServer();
+    const resp = await server.handleRequest({
+      jsonrpc: "2.0",
+      id: 102,
+      method: "tools/call",
+      params: { name: "am_acp_session_list", arguments: {} },
+    });
+
+    expect(resp).not.toBeNull();
+    const result = resp?.result as JsonRpcResult;
+    expect(result.isError).toBeUndefined();
+    const content = JSON.parse(result.content[0].text);
+    expect(Array.isArray(content.sessions)).toBe(true);
+    expect(content.sessions.length).toBe(0);
+  });
+
+  test("am_acp_session_cancel errors on nonexistent session", async () => {
+    await setupConfig({
+      settings: {
+        mcp_serve: { allow_push: true },
+      },
+    });
+
+    const server = new McpServer();
+
+    const resp = await server.handleRequest({
+      jsonrpc: "2.0",
+      id: 103,
+      method: "tools/call",
+      params: { name: "am_acp_session_cancel", arguments: { sessionId: "nonexistent-session" } },
+    });
+
+    expect(resp).not.toBeNull();
+    const result = resp?.result as JsonRpcResult;
+    expect(result.isError).toBe(true);
+    const content = JSON.parse(result.content[0].text);
+    expect(content.error).toContain("not found");
+  });
+
+  test("am_run_agent rejected without write-remote opt-in", async () => {
+    await setupConfig({});
+
+    const server = new McpServer();
+    server.setSettings({});
+
+    const resp = await server.handleRequest({
+      jsonrpc: "2.0",
+      id: 104,
+      method: "tools/call",
+      params: { name: "am_run_agent", arguments: { agent: "claude", prompt: "test" } },
+    });
+
+    expect(resp).not.toBeNull();
+    const result = resp?.result as JsonRpcResult;
+    expect(result.isError).toBe(true);
+    const content = JSON.parse(result.content[0].text);
+    expect(content.error).toContain("opt-in");
+  });
+
+  test("am_acp_session_cancel rejected without write-remote opt-in", async () => {
+    await setupConfig({});
+
+    const server = new McpServer();
+    server.setSettings({});
+
+    const resp = await server.handleRequest({
+      jsonrpc: "2.0",
+      id: 105,
+      method: "tools/call",
+      params: { name: "am_acp_session_cancel", arguments: { sessionId: "test" } },
+    });
+
+    expect(resp).not.toBeNull();
+    const result = resp?.result as JsonRpcResult;
+    expect(result.isError).toBe(true);
+    const content = JSON.parse(result.content[0].text);
+    expect(content.error).toContain("opt-in");
   });
 });

@@ -47,6 +47,7 @@ const main = defineCommand({
     update: () => import("./commands/update").then((m) => m.updateCommand),
     wiki: () => import("./commands/wiki").then((m) => m.wikiCommand),
     agents: () => import("./commands/agents").then((m) => m.agentsCommand),
+    run: () => import("./commands/run").then((m) => m.runCommand),
   },
 });
 

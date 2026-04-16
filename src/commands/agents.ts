@@ -17,6 +17,7 @@ import { error, info, output } from "../lib/output";
 import { A2AClient } from "../protocols/a2a/client";
 import {
   addToRoster,
+  discoverFromConfig,
   discoverFromUrl,
   loadRoster,
   removeFromRoster,
@@ -32,29 +33,47 @@ const listSubcommand = defineCommand({
     json: { type: "boolean", description: "JSON output", default: false },
     quiet: { type: "boolean", alias: "q", default: false },
     verbose: { type: "boolean", alias: "v", default: false },
+    discover: {
+      type: "boolean",
+      description: "Also fetch agents from settings.a2a.discovery_sources",
+      default: false,
+    },
   },
   async run({ args }) {
     const opts = { json: args.json, quiet: args.quiet, verbose: args.verbose };
     const configDir = resolveConfigDir();
     const roster = await loadRoster(configDir);
 
+    // Fetch discovered agents from config discovery_sources
+    let discovered: { name: string; url: string; description: string }[] = [];
+    if (args.discover) {
+      const cards = await discoverFromConfig(configDir);
+      const rosterNames = new Set(roster.map((r) => r.name));
+      discovered = cards
+        .filter((c) => !rosterNames.has(c.name))
+        .map((c) => ({ name: c.name, url: c.url, description: c.description }));
+    }
+
     if (args.json) {
-      output({ agents: roster }, opts);
+      output({ agents: roster, ...(args.discover ? { discovered } : {}) }, opts);
       return;
     }
 
-    if (roster.length === 0) {
+    if (roster.length === 0 && discovered.length === 0) {
       info("No agents registered. Use `am agents add <url>` to add one.", opts);
       return;
     }
 
-    info(`${"Name".padEnd(24)} ${"URL".padEnd(40)} ${"Added"}`, opts);
+    info(`${"Name".padEnd(24)} ${"URL".padEnd(40)} ${"Source"}`, opts);
     info(`${"\u2500".repeat(24)} ${"\u2500".repeat(40)} ${"\u2500".repeat(20)}`, opts);
     for (const agent of roster) {
       const added = agent.addedAt.slice(0, 16).replace("T", " ");
       info(`${agent.name.padEnd(24)} ${agent.url.padEnd(40)} ${added}`, opts);
     }
-    info(`\n${roster.length} agent(s)`, opts);
+    for (const agent of discovered) {
+      info(`${agent.name.padEnd(24)} ${agent.url.padEnd(40)} [discovered]`, opts);
+    }
+    info(`\n${roster.length} registered, ${discovered.length} discovered`, opts);
   },
 });
 

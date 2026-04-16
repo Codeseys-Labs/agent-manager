@@ -101,7 +101,7 @@ export type Profile = z.infer<typeof ProfileSchema>;
 
 // --- Settings Schema ---
 /** Available MCP tool groups for settings.mcp_serve.tools */
-export const MCP_TOOL_GROUPS = ["core", "registry", "a2a", "wiki", "session"] as const;
+export const MCP_TOOL_GROUPS = ["core", "registry", "a2a", "wiki", "session", "acp"] as const;
 export type McpToolGroup = (typeof MCP_TOOL_GROUPS)[number];
 
 export const SettingsSchema = z
@@ -111,6 +111,23 @@ export const SettingsSchema = z
       .object({
         allow_push: z.boolean().optional(),
         tools: z.array(z.enum(MCP_TOOL_GROUPS)).optional(),
+      })
+      .optional(),
+    a2a: z
+      .object({
+        auth_token: z.string().optional(),
+        discovery_sources: z.array(z.string()).optional(),
+      })
+      .optional(),
+    acp: z
+      .object({
+        session_dir: z.string().optional(),
+        agents: z
+          .record(
+            z.string(),
+            z.object({ command: z.string() }),
+          )
+          .optional(),
       })
       .optional(),
     env: z.record(z.string(), z.string()).optional(),
