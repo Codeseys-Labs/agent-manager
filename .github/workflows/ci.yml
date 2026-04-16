@@ -84,7 +84,7 @@ jobs:
       - run: bun install --frozen-lockfile
 
       - name: Build binary
-        run: VERSION=ci-test bun run build
+        run: VERSION=ci-test bun run build -- --target bun-linux-x64
 
       - name: Seed IDE configs
         run: |
