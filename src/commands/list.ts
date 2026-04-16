@@ -22,7 +22,12 @@ function parseEntityType(raw: string | undefined): EntityType {
     profile: "profiles",
     profiles: "profiles",
   };
-  return singular[normalized] ?? "servers";
+  const result = singular[normalized];
+  if (!result) {
+    const valid = ENTITY_TYPES.join(", ");
+    throw new Error(`Unknown entity type "${raw}". Valid types: ${valid}`);
+  }
+  return result;
 }
 
 export const listCommand = defineCommand({

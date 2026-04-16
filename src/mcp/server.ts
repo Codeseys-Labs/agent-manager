@@ -752,7 +752,7 @@ function defineTools(): ToolEntry[] {
         const name = args.name as string;
 
         if (!config.servers?.[name]) {
-          throw new Error(`Server "${name}" not found`);
+          throw new Error(`Server "${name}" not found. Use am_list_servers to see available server names.`);
         }
 
         const existing = config.servers[name];
@@ -1225,7 +1225,7 @@ function defineTools(): ToolEntry[] {
       def: {
         name: "am_agent_delegate",
         description:
-          "Send a task to a registered A2A agent. The agent must be in the local roster (use am_agent_list to see available agents).",
+          "Send a task to a registered A2A agent. Returns immediately with a task ID while the agent works asynchronously. Use am_agent_task_status to poll for completion. The agent must be in the local roster (use am_agent_list to see available agents).",
         inputSchema: {
           type: "object",
           properties: {

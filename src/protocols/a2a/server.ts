@@ -283,12 +283,15 @@ function handleJsonRpc(
       updateTaskState(task, "working");
 
       // Run handler asynchronously — don't block the response
+      const TERMINAL_STATES: TaskState[] = ["completed", "failed", "canceled"];
       handler(p.message, config)
         .then((result) => {
+          if (TERMINAL_STATES.includes(task.status.state)) return; // guard: canceled before completion
           task.artifacts = result.artifacts ?? task.artifacts;
           updateTaskState(task, "completed", result.message);
         })
         .catch((err: unknown) => {
+          if (TERMINAL_STATES.includes(task.status.state)) return; // guard: canceled before failure
           const message = err instanceof Error ? err.message : String(err);
           updateTaskState(task, "failed", {
             role: "agent",
