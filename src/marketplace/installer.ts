@@ -259,34 +259,89 @@ export async function uninstallPlugin(pluginName: string): Promise<UninstallResu
 
 /**
  * List all installed plugins by scanning config for _marketplace provenance.
- * Returns unique plugin names with their server counts.
+ * Scans servers, skills, and agents for marketplace-installed entities.
  */
 export async function listInstalled(): Promise<
-  Array<{ plugin: string; marketplace: string; servers: string[]; installedAt: string }>
+  Array<{
+    plugin: string;
+    marketplace: string;
+    servers: string[];
+    skills: string[];
+    agents: string[];
+    installedAt: string;
+  }>
 > {
   const configDir = resolveConfigDir();
   const configPath = join(configDir, "config.toml");
   const config = await tryReadConfig(configPath);
-  if (!config?.servers) return [];
+  if (!config) return [];
 
   const pluginMap = new Map<
     string,
-    { marketplace: string; servers: string[]; installedAt: string }
+    {
+      marketplace: string;
+      servers: string[];
+      skills: string[];
+      agents: string[];
+      installedAt: string;
+    }
   >();
 
-  for (const [name, server] of Object.entries(config.servers)) {
-    const mp = server._marketplace;
-    if (mp) {
-      const existing = pluginMap.get(mp.package);
-      if (existing) {
-        existing.servers.push(name);
-      } else {
-        pluginMap.set(mp.package, {
-          marketplace: mp.install_path ? "local" : mp.source,
-          servers: [name],
-          installedAt: mp.imported_at,
-        });
-      }
+  function track(
+    pluginName: string,
+    entityType: "servers" | "skills" | "agents",
+    entityName: string,
+    mp: { source: string; install_path?: string; imported_at: string },
+  ) {
+    const existing = pluginMap.get(pluginName);
+    if (existing) {
+      existing[entityType].push(entityName);
+    } else {
+      pluginMap.set(pluginName, {
+        marketplace: mp.install_path ? "local" : mp.source,
+        servers: [],
+        skills: [],
+        agents: [],
+        installedAt: mp.imported_at,
+      });
+      pluginMap.get(pluginName)![entityType].push(entityName);
+    }
+  }
+
+  if (config.servers) {
+    for (const [name, server] of Object.entries(config.servers)) {
+      if (server._marketplace)
+        track(server._marketplace.package, "servers", name, server._marketplace);
+    }
+  }
+  if (config.skills) {
+    for (const [name, skill] of Object.entries(config.skills)) {
+      const mp = (
+        skill as {
+          _marketplace?: {
+            package: string;
+            source: string;
+            install_path?: string;
+            imported_at: string;
+          };
+        }
+      )._marketplace;
+      if (mp) track(mp.package, "skills", name, mp);
+    }
+  }
+  if (config.agents) {
+    for (const [name, agent] of Object.entries(config.agents)) {
+      const mp = (
+        agent as {
+          _marketplace?: {
+            package: string;
+            source: string;
+            install_path?: string;
+            imported_at: string;
+          };
+        }
+      )._marketplace;
+      if (mp) track(mp.package, "agents", name, mp);
     }
   }
 
