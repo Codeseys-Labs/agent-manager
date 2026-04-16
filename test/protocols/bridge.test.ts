@@ -16,6 +16,7 @@ import {
   type BridgeRequest,
   createBridgeTaskHandler,
   createBridgedTaskHandler,
+  isValidAgentName,
   parseBridgeRequest,
 } from "../../src/protocols/bridge";
 
@@ -152,6 +153,62 @@ describe("parseBridgeRequest", () => {
 
   test("returns null for text without colon separator", () => {
     const result = parseBridgeRequest(textMessage("run claude fix tests"));
+    expect(result).toBeNull();
+  });
+
+  // ── CRITICAL-1: Agent name sanitization ──────────────────────
+
+  test("rejects path traversal in agent name (text part)", () => {
+    const result = parseBridgeRequest(textMessage("run ../../../etc/passwd: test"));
+    expect(result).toBeNull();
+  });
+
+  test("rejects path traversal in agent name (data part)", () => {
+    const result = parseBridgeRequest(dataMessage({ agent: "../../../etc/passwd", prompt: "test" }));
+    expect(result).toBeNull();
+  });
+
+  test("rejects shell metacharacters in agent name", () => {
+    const result = parseBridgeRequest(textMessage("run agent;rm -rf /: test"));
+    expect(result).toBeNull();
+  });
+
+  test("rejects agent name with spaces", () => {
+    const result = parseBridgeRequest(dataMessage({ agent: "agent name", prompt: "test" }));
+    expect(result).toBeNull();
+  });
+
+  test("rejects agent name with null bytes", () => {
+    const result = parseBridgeRequest(dataMessage({ agent: "agent\x00evil", prompt: "test" }));
+    expect(result).toBeNull();
+  });
+
+  test("rejects agent name longer than 64 characters", () => {
+    const longName = "a".repeat(65);
+    const result = parseBridgeRequest(dataMessage({ agent: longName, prompt: "test" }));
+    expect(result).toBeNull();
+  });
+
+  test("accepts agent name at exactly 64 characters", () => {
+    const name64 = "a".repeat(64);
+    const result = parseBridgeRequest(dataMessage({ agent: name64, prompt: "test" }));
+    expect(result).not.toBeNull();
+    expect(result!.agent).toBe(name64);
+  });
+
+  test("accepts valid agent names with hyphens and underscores", () => {
+    const result = parseBridgeRequest(textMessage("run my-custom_agent-2: test"));
+    expect(result).not.toBeNull();
+    expect(result!.agent).toBe("my-custom_agent-2");
+  });
+
+  test("rejects agent name with dots", () => {
+    const result = parseBridgeRequest(textMessage("run agent.evil: test"));
+    expect(result).toBeNull();
+  });
+
+  test("rejects agent name with forward slashes", () => {
+    const result = parseBridgeRequest(dataMessage({ agent: "usr/bin/env", prompt: "id" }));
     expect(result).toBeNull();
   });
 });

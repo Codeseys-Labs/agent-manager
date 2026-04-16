@@ -12,6 +12,7 @@
  *   tasks/cancel        — cancel a running task
  */
 
+import { timingSafeEqual } from "node:crypto";
 import { Hono } from "hono";
 import type { ResolvedConfig } from "../../adapters/types";
 import { type GenerateCardOptions, generateAgentCard } from "./generate-card";
@@ -33,6 +34,10 @@ import type {
 // ── Task store ─────────────────────────────────────────────────
 
 const MAX_TASKS = 1000;
+/** Maximum number of history entries per task (MEDIUM-2 hardening). */
+export const MAX_HISTORY_PER_TASK = 100;
+/** Idle timeout for SSE streams in milliseconds (MEDIUM-1 hardening). */
+export const SSE_IDLE_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
 /** Tasks in terminal state older than this are eligible for TTL eviction. */
 export const TASK_TTL_MS = 3_600_000; // 1 hour
 
@@ -171,6 +176,10 @@ function updateTaskState(
   if (agentMessage) {
     task.history = task.history ?? [];
     task.history.push(agentMessage);
+    // MEDIUM-2: cap history length to prevent unbounded memory growth
+    if (task.history.length > MAX_HISTORY_PER_TASK) {
+      task.history = task.history.slice(-MAX_HISTORY_PER_TASK);
+    }
   }
   if (emitter) {
     emitter.emit({
@@ -389,6 +398,10 @@ function startTask(
   const task = getOrCreateTask(store, params.id);
   task.history = task.history ?? [];
   task.history.push(params.message);
+  // MEDIUM-2: cap history length at write time
+  if (task.history.length > MAX_HISTORY_PER_TASK) {
+    task.history = task.history.slice(-MAX_HISTORY_PER_TASK);
+  }
   updateTaskState(task, "working", undefined, emitter);
 
   const TERMINAL_STATES: TaskState[] = ["completed", "failed", "canceled"];
@@ -500,6 +513,20 @@ function handleJsonRpc(
   }
 }
 
+// ── Timing-safe token comparison ─────────────────────────────────
+
+/** Constant-time string comparison to prevent timing oracle attacks. */
+export function safeTokenCompare(a: string, b: string): boolean {
+  const ab = Buffer.from(a);
+  const bb = Buffer.from(b);
+  if (ab.length !== bb.length) {
+    // Compare against self to burn constant time, then return false
+    timingSafeEqual(ab, ab);
+    return false;
+  }
+  return timingSafeEqual(ab, bb);
+}
+
 // ── Hono route factory ──────────────────────────────────────────
 
 export interface A2AServerOptions {
@@ -564,10 +591,11 @@ export function createA2ARoutes(options: A2AServerOptions): Hono {
   });
 
   // Bearer token auth middleware for POST /a2a
+  // HIGH-3 fix: use constant-time comparison to prevent timing oracle attacks.
   if (auth_token) {
     a2aApp.use("/a2a", async (c, next) => {
       const authHeader = c.req.header("Authorization");
-      if (!authHeader || authHeader !== `Bearer ${auth_token}`) {
+      if (!authHeader || !safeTokenCompare(authHeader, `Bearer ${auth_token}`)) {
         return c.json({ error: "Unauthorized" }, 401);
       }
       await next();
@@ -608,10 +636,34 @@ export function createA2ARoutes(options: A2AServerOptions): Hono {
       const encoder = new TextEncoder();
       const stream = new ReadableStream({
         start(controller) {
+          let idleTimer: ReturnType<typeof setTimeout> | null = null;
+          let streamClosed = false;
+
+          const cleanup = () => {
+            if (streamClosed) return;
+            streamClosed = true;
+            if (idleTimer) clearTimeout(idleTimer);
+            emitter.off(task.id, listener);
+            try {
+              controller.close();
+            } catch {
+              // Stream may already be closed
+            }
+          };
+
+          const resetIdleTimer = () => {
+            if (idleTimer) clearTimeout(idleTimer);
+            idleTimer = setTimeout(() => {
+              // MEDIUM-1: close stream after idle timeout
+              cleanup();
+            }, SSE_IDLE_TIMEOUT_MS);
+          };
+
           const send = (event: string, data: unknown) => {
             controller.enqueue(
               encoder.encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`),
             );
+            resetIdleTimer();
           };
 
           // Send initial status
@@ -622,11 +674,11 @@ export function createA2ARoutes(options: A2AServerOptions): Hono {
           } satisfies TaskStatusUpdateEvent);
 
           const listener: TaskEventListener = (evt) => {
+            if (streamClosed) return;
             if (evt.type === "status") {
               send("status", evt.data);
               if ((evt.data as TaskStatusUpdateEvent).final) {
-                emitter.off(task.id, listener);
-                controller.close();
+                cleanup();
               }
             } else if (evt.type === "artifact") {
               send("artifact", evt.data);
@@ -637,12 +689,7 @@ export function createA2ARoutes(options: A2AServerOptions): Hono {
 
           // Clean up if the client disconnects
           c.req.raw.signal.addEventListener("abort", () => {
-            emitter.off(task.id, listener);
-            try {
-              controller.close();
-            } catch {
-              // Stream may already be closed
-            }
+            cleanup();
           });
         },
       });

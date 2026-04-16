@@ -42,6 +42,12 @@ export const COMMAND_GROUPS: ReadonlyArray<{
     ],
   },
   {
+    heading: "Marketplace commands",
+    commands: [
+      ["marketplace", "Manage git-based plugin marketplaces"],
+    ],
+  },
+  {
     heading: "Agent commands",
     commands: [
       ["agent", "Manage A2A agent roster"],

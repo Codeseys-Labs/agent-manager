@@ -24,15 +24,15 @@ bun install
 bun test
 ```
 
-If all 1772 tests pass, you're ready.
+If all tests pass (1864), you're ready.
 
 ## Project Structure
 
 ```
 agent-manager/
   src/
-    cli.ts                  # Entry point (citty, 30 subcommands)
-    commands/               # CLI command handlers (29 files)
+    cli.ts                  # Entry point (citty, 31 subcommands)
+    commands/               # CLI command handlers (31 files)
     core/                   # Config engine (TOML, resolver, git, schema, secrets, instructions, session)
       schema.ts             # Zod schemas (Server, Instruction, Skill, AgentProfile, Profile, Config)
       config.ts             # TOML read/write, hierarchical 4-layer merge, buildResolvedConfig
@@ -44,10 +44,12 @@ agent-manager/
       instructions.ts       # Shared instruction generation for all output formats + wiki context injection
       session.ts            # Cross-tool session harvest: types, reader interface, filter/format
       agent-registry.ts     # Unified agent registry: config + ACP built-in + A2A roster (ADR-0030)
-    adapters/               # 13 built-in IDE adapters
+    adapters/               # 13 built-in IDE adapters + community adapter loading
       types.ts              # Adapter interface + SessionReader -- start here for adapter work
-      registry.ts           # Lazy factory registry for all adapters
-      claude-code/          # Reference adapter, includes SessionReader
+      registry.ts           # Lazy factory registry for all adapters (built-in + community)
+      shared/               # Shared utilities (utils.ts, diff-utils.ts, marketplace-vscode.ts)
+      community/            # Community adapter loading (ADR-0027) — JSON-RPC proxy, loader, types
+      claude-code/          # Reference adapter, includes SessionReader + plugin marketplace scanner
       codex-cli/            # Codex CLI adapter, includes SessionReader
       copilot/              # GitHub Copilot adapter
       cursor/               # Cursor adapter
@@ -65,10 +67,11 @@ agent-manager/
       registry.ts           # Platform detection from remote URL
       github.ts, gitlab.ts, bare.ts
     registry/               # MCP package registry client (HTTP, LRU cache, retry)
+    marketplace/            # Git-based plugin marketplace (client, scanner, installer)
     protocols/              # Agent communication protocols
       bridge.ts             # A2A-ACP bridge: routes A2A tasks to local ACP agents
       a2a/                  # Agent-to-Agent protocol (ADR-0017)
-      acp/                  # Agent Communication Protocol (ADR-0026) — client, registry, types
+      acp/                  # Agent Communication Protocol (ADR-0026) — client, registry, types, flows
     wiki/                   # LLM Wiki / Knowledge Synthesis (ADR-0020)
     mcp/                    # MCP server mode (JSON-RPC over stdio)
       server.ts             # 33 tools across 6 groups, 3 permission tiers (ADR-0009, ADR-0021)
@@ -124,7 +127,7 @@ Keep changes focused. One feature or fix per PR.
 ### 5. Validate
 
 ```bash
-bun test            # All 1772 tests pass
+bun test            # All tests pass (1864)
 bun run lint        # Biome linting + formatting
 bun run typecheck   # TypeScript type checking
 ```

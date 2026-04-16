@@ -75,6 +75,8 @@ export interface ConnectOptions {
   env?: Record<string, string>;
   /** Arguments to append to the agent command. */
   args?: string[];
+  /** Allowed filesystem paths for readTextFile/writeTextFile (MEDIUM-3 hardening). Empty = unrestricted. */
+  allowedPaths?: string[];
 }
 
 /** Options for creating a new ACP session. */
@@ -134,4 +136,6 @@ export interface AcpSettings {
   session_dir?: string;
   /** Agent command overrides. */
   agents?: Record<string, { command: string }>;
+  /** Allowed filesystem paths for readTextFile/writeTextFile. Default: [cwd]. */
+  allowed_paths?: string[];
 }

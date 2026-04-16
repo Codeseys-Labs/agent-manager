@@ -6,10 +6,10 @@ every AI coding tool. Single source of truth with MCP registry integration,
 knowledge synthesis, and agent-to-agent protocol support.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Tests: 1772 pass](https://img.shields.io/badge/tests-1772%20pass-green.svg)](#testing)
+[![Tests: 1864 pass](https://img.shields.io/badge/tests-1864%20pass-green.svg)](#testing)
 [![Adapters: 13](https://img.shields.io/badge/adapters-13-purple.svg)](#adapter-support-matrix)
 [![MCP Tools: 33](https://img.shields.io/badge/MCP%20tools-33-orange.svg)](#mcp-server-mode)
-[![Commands: 30](https://img.shields.io/badge/commands-30-blue.svg)](#cli-reference)
+[![Commands: 31](https://img.shields.io/badge/commands-31-blue.svg)](#cli-reference)
 [![Bun](https://img.shields.io/badge/runtime-Bun-f9f1e1.svg)](https://bun.sh)
 
 ```bash
@@ -126,6 +126,32 @@ am install tavily-mcp                   # install with env var prompts + encrypt
 am install tavily-mcp --version 1.2.0   # pin version
 am update                               # check for newer versions
 am uninstall tavily                     # remove a package
+```
+
+### Marketplace
+
+Browse and install plugins from git-based marketplaces (community-maintained
+registries of skills, hooks, and MCP server bundles).
+
+```bash
+am marketplace add https://github.com/org/am-plugins  # add a marketplace repo
+am marketplace list                                     # list available plugins
+am marketplace search "code review"                     # search across marketplaces
+am marketplace install org/my-plugin                    # install a plugin
+am marketplace remove my-plugin                         # uninstall
+am marketplace update                                   # update marketplace repos
+```
+
+### Brownfield Import
+
+Import configs from existing tool installations with intelligent merge and
+conflict resolution:
+
+```bash
+am import claude-code                           # interactive import (default)
+am import claude-code --auto                    # auto-resolve conflicts
+am import claude-code --report                  # show conflict report only
+am import claude-code --marketplace             # include plugins/extensions
 ```
 
 ---
@@ -321,6 +347,40 @@ am run session cancel <sessionId>              # cancel active session
 ```
 
 Agents are resolved via the **Unified Agent Registry** (ADR-0030): config overrides > 16 built-in ACP agents > A2A roster entries. Register custom agents in config.toml under `[agents.<name>]` with `acp` and/or `a2a` subtables.
+
+---
+
+## Flows Engine
+
+Multi-step workflow orchestration for ACP agents. Define workflows as typed node
+graphs (acp, action, compute, checkpoint) with conditional routing, then run them
+from the CLI. Flow state is persisted for crash recovery and status inspection.
+
+```bash
+am flow run deploy-pipeline              # execute a flow
+am flow list                             # list recent runs
+am flow status <run-id>                  # inspect a run
+```
+
+See ADR-0026 Phase 3 for the design.
+
+---
+
+## Community Adapters
+
+Extend agent-manager with third-party adapters loaded as JSON-RPC subprocesses.
+Install from npm or git, and they integrate seamlessly alongside the 13 built-in
+adapters.
+
+```bash
+am adapter list                          # show all adapters (built-in + community)
+am adapter install <name>                # install from npm/git
+am adapter remove <name>                 # uninstall
+am adapter update                        # update all community adapters
+am adapter verify <name>                 # health-check
+```
+
+See ADR-0027 for the loading architecture.
 
 ---
 
@@ -531,12 +591,33 @@ agents = ["researcher"]
 | `am flow list` | List recent flow runs |
 | `am flow status <id>` | Show status of a flow run |
 
+### Marketplace
+
+| Command | Description |
+|---------|-------------|
+| `am marketplace add <url>` | Add a git-based marketplace repo |
+| `am marketplace remove <name>` | Remove a marketplace |
+| `am marketplace list` | List marketplaces and available plugins (`--installed`) |
+| `am marketplace search <query>` | Search across all marketplaces |
+| `am marketplace install <id>` | Install a plugin from a marketplace |
+| `am marketplace uninstall <name>` | Remove an installed plugin |
+| `am marketplace update` | Update marketplace repos |
+
+### Community Adapters
+
+| Command | Description |
+|---------|-------------|
+| `am adapter list` | Show all adapters (built-in + community) with install status |
+| `am adapter install <name>` | Install a community adapter from npm/git |
+| `am adapter remove <name>` | Remove a community adapter |
+| `am adapter update` | Update all community adapters |
+| `am adapter verify <name>` | Health-check a community adapter |
+
 ### Tools and Diagnostics
 
 | Command | Description |
 |---------|-------------|
-| `am import <adapter>` | Import native config (secrets auto-detected) |
-| `am adapter list` | Show all adapters with install status |
+| `am import <adapter>` | Import native config (`--auto`, `--report`, `--marketplace`) |
 | `am doctor` | Health check -- config, adapters, git, secret audit |
 | `am secret init` | Generate encryption key |
 | `am secret set\|get <key>` | Encrypt/decrypt secrets |
@@ -595,12 +676,12 @@ bun run deploy:web
 
 ```mermaid
 graph LR
-    CLI["CLI (30 commands)"] --> Core["Core Engine<br/>(TOML + Zod + Git)"]
+    CLI["CLI (31 commands)"] --> Core["Core Engine<br/>(TOML + Zod + Git)"]
     MCP["MCP Server<br/>(33 tools, 6 groups)"] --> Core
     TUI["TUI (Silvery)"] --> Core
     Web["Web UI"] --> Hono["Hono (local) /<br/>CF Workers"]
 
-    Core --> Adapters["IDE Adapters (13)<br/>detect / import /<br/>export / diff"]
+    Core --> Adapters["IDE Adapters (13)<br/>+ Community (JSON-RPC)<br/>detect / import /<br/>export / diff"]
     Core --> Platform["Platform Adapters<br/>(GitHub, GitLab, bare)"]
     Core --> Secrets["Secret Detection<br/>(gitleaks patterns)"]
     Core --> AgentReg["Unified Agent Registry<br/>(config + ACP + A2A)"]
@@ -610,6 +691,8 @@ graph LR
 
     Core --> Wiki["LLM Wiki<br/>(BM25 + NER + Graph)"]
     Core --> Registry["MCP Registry<br/>(search / install)"]
+    Core --> Marketplace["Git Marketplace<br/>(plugins / scanners)"]
+    Core --> Flows["Flows Engine<br/>(multi-step workflows)"]
 
     AgentReg --> A2A["A2A Protocol<br/>(discovery / delegation)"]
     AgentReg --> ACP["ACP Orchestration<br/>(spawn / stream)"]
@@ -624,7 +707,7 @@ Design decisions documented in [30 ADRs](ADRs/README.md).
 
 ```bash
 bun install                       # install dependencies
-bun test                          # run all 1772 tests
+bun test                          # run all tests (1864)
 bun test --watch                  # watch mode
 bun run dev -- <command> [args]   # run CLI from source
 bun run lint                      # Biome check
@@ -650,7 +733,7 @@ cache for faster downloads.
 **CI pipeline** (`.github/workflows/ci.yml` — triggers on push to main + PRs):
 1. Type check — `tsc --noEmit` filtered to `src/` errors only
 2. Lint — `biome check`
-3. Test with coverage — `bun test --coverage` (1470 tests)
+3. Test with coverage — `bun test --coverage` (1864 tests)
 4. Build smoke test — all 5 platform targets
 5. Cross-platform build verify — Ubuntu + macOS + Windows
 
@@ -671,13 +754,13 @@ cache for faster downloads.
 
 | Metric | Count |
 |--------|-------|
-| Source files | 177 |
-| Test files | 146 |
-| Tests | 1,772 |
-| Assertions | 5,336 |
-| IDE adapters | 13 |
+| Source files | 182 |
+| Test files | 151 |
+| Tests | 1,859 |
+| Assertions | 5,512 |
+| IDE adapters | 13 (+community) |
 | Platform adapters | 3 |
-| CLI commands | 30 |
+| CLI commands | 31 |
 | MCP tools | 33 |
 | ADRs | 30 |
 

@@ -72,7 +72,7 @@ All adapters: detect, import, export, drift detection. 6-file pattern.
 
 Future candidates: Gitea, Codeberg, Forgejo, BitBucket (ADR-0013 updated).
 
-### CLI (30 commands) — Complete
+### CLI (31 commands) — Complete
 
 Config: init, add, list, use, apply, status, config, profile
 Git: push, pull, undo, log
@@ -81,7 +81,8 @@ Wiki: wiki (13 subcommands)
 A2A: agents (5 subcommands)
 ACP: run (agent orchestration + session subcommands)
 Flows: flow (pipeline orchestration subcommands)
-Tools: import, adapter, doctor, secret (6 subcommands), session, version
+Marketplace: marketplace (7 subcommands)
+Tools: import, adapter (5 subcommands), doctor, secret (6 subcommands), session, version
 Interfaces: mcp-serve, tui, serve, completion (bash/zsh/fish)
 
 ### MCP Server (33 tools, 6 groups) — Complete
@@ -160,7 +161,7 @@ Search, install, uninstall, update with provenance tracking. ADR-0024.
 
 | Interface | Status | Notes |
 |-----------|--------|-------|
-| CLI (citty + clack) | Done | 28 commands, --json/--quiet everywhere |
+| CLI (citty + clack) | Done | 31 commands, --json/--quiet everywhere |
 | MCP Server | Done | 33 tools, 3 permission tiers, 6 groups |
 | TUI (Silvery + React) | Done | Dashboard, server management (D/E/I/P keys), status, profiles |
 | Local Web (Hono + Bearer auth) | Done | REST API + SSE, server CRUD, wiki endpoints |
@@ -194,10 +195,35 @@ Search, install, uninstall, update with provenance tracking. ADR-0024.
 - [ ] Multi-agent orchestration (agent chains / pipelines)
 - [ ] mDNS/DNS-SD local agent discovery
 
+### Community Adapter Loading — Complete
+
+| Component | Status | Notes |
+|-----------|--------|-------|
+| JSON-RPC subprocess protocol | Done | `src/adapters/community/proxy.ts` |
+| Adapter config (adapters.toml) | Done | `src/adapters/community/loader.ts` |
+| CLI (install/remove/update/verify) | Done | `src/commands/adapter.ts` (ADR-0027) |
+
+### Brownfield Import Merge — Complete
+
+| Component | Status | Notes |
+|-----------|--------|-------|
+| Two-tier identity matching | Done | Name + command matching |
+| Conflict resolution (--auto, --report) | Done | ADR-0028 |
+| Marketplace scanning (--marketplace) | Done | Plugins + VS Code extensions |
+
+### Git-Based Marketplace — Complete
+
+| Component | Status | Notes |
+|-----------|--------|-------|
+| Marketplace client | Done | `src/marketplace/client.ts` |
+| Plugin scanner | Done | `src/marketplace/scanner.ts` |
+| Plugin installer | Done | `src/marketplace/installer.ts` |
+| CLI (7 subcommands) | Done | `am marketplace add/remove/list/search/install/uninstall/update` |
+
 ### Phase 2: Adapters
 
 - [ ] Full skill/agent drift detection across all 13 adapters
-- [ ] Remaining adapters migrated to shared utils
+- [x] All adapters migrated to shared utils — done in iteration 9
 - [ ] Adapter-specific instruction scope translation tests
 
 ### Infrastructure
@@ -282,13 +308,13 @@ am-cli as a runtime MCP proxy — accept tool calls, route to configured servers
 
 | Metric | Count |
 |--------|-------|
-| Source files | 177 |
-| Test files | 146 |
-| Tests | 1,772 |
-| Assertions | 5,336 |
-| IDE adapters | 13 |
+| Source files | 182 |
+| Test files | 151 |
+| Tests | 1,864 |
+| Assertions | 5,512 |
+| IDE adapters | 13 (+community) |
 | Platform adapters | 3 |
-| CLI commands | 30 |
+| CLI commands | 31 |
 | MCP tools | 33 |
 | ADRs | 30 |
 | `as any` in src/ | 0 |

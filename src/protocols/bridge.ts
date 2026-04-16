@@ -28,6 +28,14 @@ export interface BridgeRequest {
   prompt: string;
 }
 
+/** Strict allowlist for agent names: alphanumeric, hyphens, underscores, max 64 chars. */
+const AGENT_NAME_RE = /^[a-zA-Z0-9_-]{1,64}$/;
+
+/** Validate an agent name against the strict allowlist. */
+export function isValidAgentName(name: string): boolean {
+  return AGENT_NAME_RE.test(name);
+}
+
 /**
  * Parse a bridge request from an A2A user message.
  *
@@ -35,7 +43,8 @@ export interface BridgeRequest {
  *   1. Text part matching "run <agent>: <prompt>"
  *   2. Data part with { agent, prompt } fields
  *
- * Returns null if the message doesn't match either format.
+ * Returns null if the message doesn't match either format, or if the
+ * agent name fails the strict allowlist validation (CRITICAL-1 fix).
  */
 export function parseBridgeRequest(message: Message): BridgeRequest | null {
   // Check data parts first (more explicit)
@@ -43,6 +52,7 @@ export function parseBridgeRequest(message: Message): BridgeRequest | null {
     if (part.type === "data") {
       const data = part.data as Record<string, unknown>;
       if (typeof data.agent === "string" && typeof data.prompt === "string") {
+        if (!isValidAgentName(data.agent)) return null;
         return { agent: data.agent, prompt: data.prompt };
       }
     }
@@ -52,7 +62,7 @@ export function parseBridgeRequest(message: Message): BridgeRequest | null {
   for (const part of message.parts) {
     if (part.type === "text") {
       const match = part.text.match(/^run\s+(\S+):\s*(.+)$/is);
-      if (match) {
+      if (match && isValidAgentName(match[1])) {
         return { agent: match[1], prompt: match[2].trim() };
       }
     }
@@ -63,6 +73,9 @@ export function parseBridgeRequest(message: Message): BridgeRequest | null {
 
 // ── Bridge handler ────────────────────────────────────────────
 
+/** Permission policy for ACP agent subprocesses. */
+export type PermissionPolicy = "auto-approve" | "deny";
+
 export interface BridgeConfig {
   /** Working directory for ACP sessions. Defaults to process.cwd(). */
   cwd?: string;
@@ -72,6 +85,8 @@ export interface BridgeConfig {
   registryConfig?: UnifiedRegistryConfig;
   /** Pre-loaded A2A roster agents (avoids disk reads). */
   rosterAgents?: Record<string, { url: string; description?: string }>;
+  /** Permission policy for spawned agents. Default: "auto-approve". */
+  permissionPolicy?: PermissionPolicy;
 }
 
 /**

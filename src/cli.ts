@@ -52,6 +52,7 @@ const main = defineCommand({
     run: () => import("./commands/run").then((m) => m.runCommand),
     flow: () => import("./commands/flow").then((m) => m.flowCommand),
     completion: () => import("./commands/completion").then((m) => m.completionCommand),
+    marketplace: () => import("./commands/marketplace").then((m) => m.marketplaceCommand),
   },
 });
 

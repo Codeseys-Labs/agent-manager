@@ -143,6 +143,7 @@ export const SettingsSchema = z
       .object({
         session_dir: z.string().optional(),
         agents: z.record(z.string(), z.object({ command: z.string() })).optional(),
+        allowed_paths: z.array(z.string()).optional(),
       })
       .optional(),
     wiki: z

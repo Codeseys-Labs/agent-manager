@@ -35,6 +35,33 @@ All notable changes to agent-manager are documented in this file.
 - `am completion bash|zsh|fish` — generate shell completion scripts
 - Covers all top-level commands and subcommands
 
+**Flows Engine (ADR-0026 Phase 3)**
+- `am flow run <name>` — execute multi-step workflows from TOML definitions
+- `am flow list` / `am flow status <id>` — inspect workflow runs
+- `src/protocols/acp/flows.ts` — typed node graphs (acp, action, compute, checkpoint)
+- Conditional routing between nodes, crash recovery via persisted run state
+
+**Community Adapter Loading (ADR-0027)**
+- `am adapter install/remove/update/verify` — manage third-party adapters
+- JSON-RPC subprocess protocol for community adapters (`src/adapters/community/`)
+- `adapters.toml` config for installed community adapters
+- Lazy proxy loading with `CommunityAdapterProxy` wrapping the JSON-RPC bridge
+
+**Brownfield Import Merge (ADR-0028)**
+- `am import --auto` — auto-resolve conflicts without prompting
+- `am import --report` — show conflict report without making changes
+- Two-tier identity matching for intelligent merge of existing configs
+
+**Marketplace Import**
+- `am import --marketplace` — scan installed plugins and extensions for MCP servers
+- `src/adapters/shared/marketplace-vscode.ts` — shared VS Code extension scanner (Cursor, Copilot, Kiro, Windsurf)
+- `src/adapters/claude-code/marketplace.ts` — Claude Code plugin scanner
+
+**Git-Based Marketplace**
+- `am marketplace add/remove/list/search/install/uninstall/update` — full plugin lifecycle
+- `src/marketplace/` — client, scanner, installer, types modules
+- Clone git-based plugin registries, search across them, install plugins
+
 **ACP Agent Orchestration (ADR-0026)**
 - `am run <agent> "<prompt>"` drives ACP-compatible coding agents headlessly
 - Session management via `am run session list|cancel`
@@ -64,6 +91,7 @@ All notable changes to agent-manager are documented in this file.
 - Windsurf: skills and AGENTS.md support
 - Gemini CLI: migrated to 6-file adapter pattern
 - ForgeCode: migrated to 6-file adapter pattern with model support
+- All 13 adapters now use shared utilities (`src/adapters/shared/utils.ts`, `diff-utils.ts`)
 
 ### Bug Fixes
 - Fix MCP error messages: all errors now include recovery hints
@@ -94,7 +122,7 @@ All notable changes to agent-manager are documented in this file.
 - Security hardening review of bridge + ACP + streaming
 
 ### Tests
-- 1,772 tests across 146 files, 5,336 assertions (up from 1,335/132/3,901)
+- 1,864 tests across 151 files, 5,512 assertions (up from 1,335/132/3,901)
 
 ### Distribution
 - Release workflow: CHANGELOG-based release notes, Homebrew formula auto-update, version stamping

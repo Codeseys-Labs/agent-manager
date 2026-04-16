@@ -76,6 +76,7 @@ interface RunAgentArgs {
   session?: string;
   cwd?: string;
   timeout?: string;
+  noAutoApprove: boolean;
   json: boolean;
   quiet: boolean;
   verbose: boolean;
@@ -102,6 +103,11 @@ async function runAgent(args: RunAgentArgs): Promise<void> {
   debug(`Resolved agent: ${agentName} -> ${entry.acp.command} (${entry.source})`, opts);
 
   const client = createAcpClient();
+
+  // HIGH-1 fix: when --no-auto-approve is set, deny all permission requests
+  if (args.noAutoApprove) {
+    client.setPermissionPolicy("deny");
+  }
 
   // Accumulate text for streaming output (non-JSON mode)
   if (!args.json && !args.quiet) {
@@ -362,6 +368,11 @@ export const runCommand = defineCommand({
       type: "string",
       description: "Timeout in seconds for the agent response (default: 300)",
     },
+    "no-auto-approve": {
+      type: "boolean",
+      description: "Deny all permission requests from the agent (default: auto-approve)",
+      default: false,
+    },
     json: { type: "boolean", description: "JSON output", default: false },
     quiet: { type: "boolean", alias: "q", description: "Suppress progress output", default: false },
     verbose: {
@@ -393,6 +404,7 @@ export const runCommand = defineCommand({
       session: args.session as string | undefined,
       cwd: args.cwd as string | undefined,
       timeout: args.timeout as string | undefined,
+      noAutoApprove: (args as Record<string, unknown>)["no-auto-approve"] as boolean ?? false,
       json: args.json,
       quiet: args.quiet,
       verbose: args.verbose,

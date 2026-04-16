@@ -13,7 +13,7 @@ describe("grouped help output (ADR-0029)", () => {
         "init", "add", "list", "use", "apply", "status", "config", "profile",
         "doctor", "import", "push", "pull", "undo", "log", "secret", "version",
         "adapter", "mcp-serve", "serve", "tui", "session", "search", "install",
-        "uninstall", "update", "wiki", "agent", "run", "completion",
+        "uninstall", "update", "wiki", "agent", "run", "completion", "marketplace",
       ];
       for (const cmd of registeredCommands) {
         expect(groupedNames.has(cmd)).toBe(true);
@@ -30,8 +30,8 @@ describe("grouped help output (ADR-0029)", () => {
       }
     });
 
-    it("has 7 groups", () => {
-      expect(COMMAND_GROUPS).toHaveLength(7);
+    it("has 8 groups", () => {
+      expect(COMMAND_GROUPS).toHaveLength(8);
     });
   });
 
@@ -73,12 +73,13 @@ describe("grouped help output (ADR-0029)", () => {
       expect(output).toContain("am <command> --help");
     });
 
-    it("groups are ordered: Config, Git, Registry, Agent, Knowledge, Tool, Interface", () => {
+    it("groups are ordered: Config, Git, Registry, Marketplace, Agent, Knowledge, Tool, Interface", () => {
       const headings = COMMAND_GROUPS.map((g) => g.heading);
       expect(headings).toEqual([
         "Config commands",
         "Git commands",
         "Registry commands",
+        "Marketplace commands",
         "Agent commands",
         "Knowledge commands",
         "Tool commands",

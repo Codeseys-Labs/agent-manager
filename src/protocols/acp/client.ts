@@ -39,6 +39,7 @@ import {
   ndJsonStream,
 } from "@agentclientprotocol/sdk";
 
+import path from "node:path";
 import { parseCommand, resolveAgent } from "./registry";
 import type {
   AcpConnection,
@@ -49,6 +50,9 @@ import type {
   SessionUpdateHandler,
 } from "./types";
 import type { AcpSettings } from "./types";
+
+/** Permission policy for ACP permission requests. */
+export type PermissionPolicy = "auto-approve" | "deny";
 
 // ── Error types ────────────────────────────────────────────────
 
@@ -69,6 +73,8 @@ export class AmAcpClient {
   private subprocess: { kill(): void } | null = null;
   private connInfo: AcpConnection | null = null;
   private updateHandler: SessionUpdateHandler | null = null;
+  private permissionPolicy: PermissionPolicy = "auto-approve";
+  private allowedPaths: string[] = [];
 
   /**
    * Set a handler for session update notifications.
@@ -76,6 +82,24 @@ export class AmAcpClient {
    */
   onSessionUpdate(handler: SessionUpdateHandler): void {
     this.updateHandler = handler;
+  }
+
+  /**
+   * Set the permission policy for ACP permission requests.
+   * "auto-approve" (default): auto-approve all permission requests (headless mode).
+   * "deny": reject all permission requests (--no-auto-approve flag).
+   */
+  setPermissionPolicy(policy: PermissionPolicy): void {
+    this.permissionPolicy = policy;
+  }
+
+  /**
+   * Set the allowed filesystem paths for readTextFile/writeTextFile.
+   * When non-empty, file operations are restricted to these directories.
+   * Default: [] (unrestricted — for backwards compatibility; callers should set [cwd]).
+   */
+  setAllowedPaths(paths: string[]): void {
+    this.allowedPaths = paths;
   }
 
   /**
@@ -110,8 +134,11 @@ export class AmAcpClient {
 
     // Create the client-side connection
     const updateHandler = this.updateHandler;
+    const policy = this.permissionPolicy;
+    // MEDIUM-3: pass allowed paths for file operation restrictions
+    const paths = [...this.allowedPaths, ...(opts?.allowedPaths ?? [])];
     this.connection = new ClientSideConnection(
-      (_agent) => createClientHandler(updateHandler),
+      (_agent) => createClientHandler(updateHandler, policy, paths),
       stream,
     );
 
@@ -298,6 +325,20 @@ export class AmAcpClient {
   }
 }
 
+// ── Path validation (MEDIUM-3 hardening) ────────────────────────
+
+/**
+ * Check whether a requested path is within any of the allowed directories.
+ * Uses path.resolve() to normalize traversal sequences before comparison.
+ */
+export function isPathAllowed(requestedPath: string, allowedPaths: string[]): boolean {
+  const resolved = path.resolve(requestedPath);
+  return allowedPaths.some((allowed) => {
+    const resolvedAllowed = path.resolve(allowed);
+    return resolved === resolvedAllowed || resolved.startsWith(resolvedAllowed + path.sep);
+  });
+}
+
 // ── Client handler (agent-to-client callbacks) ─────────────────
 
 /**
@@ -305,11 +346,23 @@ export class AmAcpClient {
  * This is the "client side" of the ACP protocol — the agent calls
  * these methods to request permission, read/write files, etc.
  */
-function createClientHandler(updateHandler: SessionUpdateHandler | null): Client {
+function createClientHandler(
+  updateHandler: SessionUpdateHandler | null,
+  permissionPolicy: PermissionPolicy = "auto-approve",
+  allowedPaths: string[] = [],
+): Client {
   return {
     async requestPermission(params: RequestPermissionRequest): Promise<RequestPermissionResponse> {
-      // Auto-approve all permissions in headless mode.
-      // Future: configurable permission policy.
+      if (permissionPolicy === "deny") {
+        // HIGH-1 fix: reject all permission requests when --no-auto-approve is set.
+        const denyOption = params.options.find((o) => o.kind === "deny");
+        if (denyOption) {
+          return { selectedOptionId: denyOption.optionId };
+        }
+        // If no deny option exists, use the first option (safest available).
+        return { selectedOptionId: params.options[0].optionId };
+      }
+      // Auto-approve all permissions in headless mode (default).
       const allowOption = params.options.find((o) => o.kind === "allow_once");
       return {
         selectedOptionId: allowOption?.optionId ?? params.options[0].optionId,
@@ -325,6 +378,13 @@ function createClientHandler(updateHandler: SessionUpdateHandler | null): Client
     },
 
     async readTextFile(params: ReadTextFileRequest): Promise<ReadTextFileResponse> {
+      // MEDIUM-3: restrict file reads to allowed paths
+      if (allowedPaths.length > 0 && !isPathAllowed(params.path, allowedPaths)) {
+        throw new AcpClientError(
+          `Path "${params.path}" is outside the allowed directories`,
+          "PATH_NOT_ALLOWED",
+        );
+      }
       try {
         const content = await Bun.file(params.path).text();
         return { content };
@@ -334,13 +394,22 @@ function createClientHandler(updateHandler: SessionUpdateHandler | null): Client
     },
 
     async writeTextFile(params: WriteTextFileRequest): Promise<WriteTextFileResponse> {
+      // MEDIUM-3: restrict file writes to allowed paths
+      if (allowedPaths.length > 0 && !isPathAllowed(params.path, allowedPaths)) {
+        throw new AcpClientError(
+          `Path "${params.path}" is outside the allowed directories`,
+          "PATH_NOT_ALLOWED",
+        );
+      }
       await Bun.write(params.path, params.content);
       return {};
     },
 
     async createTerminal(params: CreateTerminalRequest): Promise<CreateTerminalResponse> {
-      // Headless terminal support: spawn the command and track it
-      const proc = Bun.spawn(["sh", "-c", params.command], {
+      // Headless terminal support: spawn the command directly (no shell).
+      // HIGH-2 fix: avoid sh -c to prevent shell metacharacter injection.
+      const { executable, args } = parseCommand(params.command);
+      const proc = Bun.spawn([executable, ...args], {
         cwd: params.cwd ?? undefined,
         env: params.env ? Object.fromEntries(params.env.map((e) => [e.name, e.value])) : undefined,
         stdout: "pipe",
