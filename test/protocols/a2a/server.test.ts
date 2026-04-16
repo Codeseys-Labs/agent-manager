@@ -350,6 +350,80 @@ describe("A2A Server", () => {
       expect(data.error).toBeDefined();
       expect(data.error.code).toBe(-32602);
     });
+
+    test("historyLength=1 returns only the last message", async () => {
+      const store = createTaskStore();
+      const app = makeApp({}, { taskStore: store });
+
+      // Send 3 messages to the same task
+      for (let i = 0; i < 3; i++) {
+        await jsonRpcRequest(app, {
+          jsonrpc: "2.0",
+          id: i + 10,
+          method: "tasks/send",
+          params: {
+            id: "task-history-trim",
+            message: {
+              role: "user",
+              parts: [{ type: "text", text: `message-${i}` }],
+            },
+          },
+        });
+      }
+
+      // Wait for all handlers to complete
+      await waitForTask(store, "task-history-trim");
+
+      // Verify full history has more than 1 entry
+      const task = store.get("task-history-trim");
+      expect(task!.history!.length).toBeGreaterThan(1);
+
+      // Query with historyLength=1
+      const res = await jsonRpcRequest(app, {
+        jsonrpc: "2.0",
+        id: 20,
+        method: "tasks/get",
+        params: { id: "task-history-trim", historyLength: 1 },
+      });
+
+      const data = (await res.json()) as {
+        result: { id: string; history: Array<{ role: string; parts: unknown[] }> };
+      };
+      expect(data.result.history).toHaveLength(1);
+    });
+
+    test("historyLength=0 returns no history", async () => {
+      const store = createTaskStore();
+      const app = makeApp({}, { taskStore: store });
+
+      await jsonRpcRequest(app, {
+        jsonrpc: "2.0",
+        id: 30,
+        method: "tasks/send",
+        params: {
+          id: "task-history-zero",
+          message: {
+            role: "user",
+            parts: [{ type: "text", text: "status" }],
+          },
+        },
+      });
+
+      await waitForTask(store, "task-history-zero");
+
+      // Query with historyLength=0
+      const res = await jsonRpcRequest(app, {
+        jsonrpc: "2.0",
+        id: 31,
+        method: "tasks/get",
+        params: { id: "task-history-zero", historyLength: 0 },
+      });
+
+      const data = (await res.json()) as {
+        result: { id: string; history: unknown[] };
+      };
+      expect(data.result.history).toHaveLength(0);
+    });
   });
 
   // ── tasks/cancel ───────────────────────────────────────────
@@ -444,6 +518,72 @@ describe("A2A Server", () => {
       expect(data.error).toBeDefined();
       expect(data.error.code).toBe(-32003);
       expect(data.error.message).toContain("Cannot cancel task in state");
+    });
+
+    test("cancel while async handler is working, handler completion does not overwrite canceled state", async () => {
+      let resolveHandler!: () => void;
+      const handlerPromise = new Promise<void>((r) => {
+        resolveHandler = r;
+      });
+
+      const store = createTaskStore();
+      const app = makeApp(
+        {},
+        {
+          taskStore: store,
+          taskHandler: async () => {
+            await handlerPromise;
+            return {
+              message: {
+                role: "agent" as const,
+                parts: [{ type: "text" as const, text: "handler finished" }],
+              },
+            };
+          },
+        },
+      );
+
+      // Send a task — handler blocks on our promise
+      await jsonRpcRequest(app, {
+        jsonrpc: "2.0",
+        id: 1,
+        method: "tasks/send",
+        params: {
+          id: "task-cancel-guard",
+          message: {
+            role: "user",
+            parts: [{ type: "text", text: "slow work" }],
+          },
+        },
+      });
+
+      // Verify task is working
+      const task = store.get("task-cancel-guard");
+      expect(task).toBeDefined();
+      expect(task!.status.state).toBe("working");
+
+      // Cancel while handler is still running
+      const cancelRes = await jsonRpcRequest(app, {
+        jsonrpc: "2.0",
+        id: 2,
+        method: "tasks/cancel",
+        params: { id: "task-cancel-guard" },
+      });
+
+      const cancelData = (await cancelRes.json()) as {
+        result: { status: { state: string } };
+      };
+      expect(cancelData.result.status.state).toBe("canceled");
+
+      // Now let the handler complete
+      resolveHandler();
+
+      // Give the handler's .then() a chance to run
+      await new Promise((r) => setTimeout(r, 50));
+
+      // The terminal state guard should prevent overwrite — task stays "canceled"
+      const finalTask = store.get("task-cancel-guard");
+      expect(finalTask!.status.state).toBe("canceled");
     });
 
     test("returns error for non-existent task", async () => {

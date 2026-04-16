@@ -86,6 +86,10 @@ const TOOL_GROUP_MAP: Record<string, McpToolGroup> = {
   am_wiki_synthesize: "wiki",
   am_wiki_briefing: "wiki",
   am_wiki_harvest: "wiki",
+  // session group (extracted from core per ADR-0021)
+  am_session_list: "session",
+  am_session_export: "session",
+  am_session_search: "session",
   // All other tools (am_list_servers, am_list_profiles, am_status, etc.) default to "core"
 };
 
@@ -209,7 +213,7 @@ function defineTools(): ToolEntry[] {
       def: {
         name: "am_status",
         description:
-          "Check drift detection and sync state. Returns profile, server count, git status, and per-tool drift status.",
+          "Check if IDE tool configs are in sync with the agent-manager catalog. Use after adding/removing servers to see if am_apply is needed. Returns profile, server count, git status, and per-tool drift status.",
         inputSchema: { type: "object", properties: {} },
       },
       tier: "read-only",
@@ -833,7 +837,7 @@ function defineTools(): ToolEntry[] {
       def: {
         name: "am_import",
         description:
-          "Import MCP servers from a tool's native config (e.g., 'claude-code', 'cursor', or 'auto' for all detected tools).",
+          "Import existing MCP servers from an IDE's native config into agent-manager. Use 'auto' to scan all detected tools, or specify an adapter name. Skips servers that already exist in the catalog.",
         inputSchema: {
           type: "object",
           properties: {
@@ -1068,7 +1072,7 @@ function defineTools(): ToolEntry[] {
       def: {
         name: "am_apply",
         description:
-          "Generate native IDE/tool configs from the agent-manager catalog. Writes config files for detected tools (Claude Code, Cursor, etc.).",
+          "Sync the agent-manager catalog to IDE-native config files (Claude Code, Cursor, etc.). WARNING: writes files outside the am config directory. Run after am_add_server or am_remove_server to propagate changes. Set dryRun=true to preview without writing.",
         inputSchema: {
           type: "object",
           properties: {
@@ -1397,7 +1401,7 @@ function defineTools(): ToolEntry[] {
       def: {
         name: "am_wiki_synthesize",
         description:
-          "Generate a context block from the knowledge base for a given query. Returns relevant entries formatted as markdown.",
+          "Generate a markdown summary of relevant knowledge entries for a topic. Use this to build context for an agent before starting a task.",
         inputSchema: {
           type: "object",
           properties: {
@@ -1447,7 +1451,7 @@ function defineTools(): ToolEntry[] {
       def: {
         name: "am_wiki_harvest",
         description:
-          "Trigger knowledge extraction from a specific session. Extracts facts, procedures, preferences, and capabilities.",
+          "Extract facts, procedures, preferences, and capabilities from a completed coding session and store them in the wiki. Use am_session_list to find session IDs.",
         inputSchema: {
           type: "object",
           properties: {

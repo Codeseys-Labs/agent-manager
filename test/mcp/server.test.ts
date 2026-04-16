@@ -75,10 +75,11 @@ describe("MCP server", () => {
     expect(names).toContain("am_apply");
     expect(names).toContain("am_sync_push");
     expect(names).toContain("am_sync_pull");
-    expect(names).toContain("am_session_list");
-    expect(names).toContain("am_session_export");
-    expect(names).toContain("am_session_search");
-    expect(names.length).toBe(17);
+    expect(names.length).toBe(14);
+    // Session tools are in their own group now (ADR-0021), not core
+    expect(names).not.toContain("am_session_list");
+    expect(names).not.toContain("am_session_export");
+    expect(names).not.toContain("am_session_search");
     // Non-core tools should NOT be present by default
     expect(names).not.toContain("am_registry_search");
     expect(names).not.toContain("am_wiki_search");
@@ -88,7 +89,7 @@ describe("MCP server", () => {
   test("tools/list returns all groups when configured (ADR-0021)", async () => {
     await setupConfig({
       settings: {
-        mcp_serve: { tools: ["core", "registry", "a2a", "wiki"] },
+        mcp_serve: { tools: ["core", "registry", "a2a", "wiki", "session"] },
       },
     });
     const server = new McpServer();
@@ -115,6 +116,10 @@ describe("MCP server", () => {
     expect(names).toContain("am_agent_list");
     expect(names).toContain("am_agent_delegate");
     expect(names).toContain("am_agent_task_status");
+    // Session tools (ADR-0021 — own group)
+    expect(names).toContain("am_session_list");
+    expect(names).toContain("am_session_export");
+    expect(names).toContain("am_session_search");
     expect(names.length).toBe(29);
   });
 
@@ -133,8 +138,8 @@ describe("MCP server", () => {
     expect(resp).not.toBeNull();
     const tools = (resp?.result as JsonRpcResult).tools;
     const names = tools.map((t: { name: string }) => t.name);
-    // Core + wiki = 17 + 5 = 22
-    expect(names.length).toBe(22);
+    // Core + wiki = 14 + 5 = 19
+    expect(names.length).toBe(19);
     expect(names).toContain("am_list_servers");
     expect(names).toContain("am_wiki_search");
     expect(names).not.toContain("am_registry_search");

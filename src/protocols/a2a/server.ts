@@ -224,6 +224,34 @@ export const defaultTaskHandler: TaskHandler = async (userMessage, config) => {
     };
   }
 
+  if (command === "config.write") {
+    return {
+      message: {
+        role: "agent" as const,
+        parts: [
+          {
+            type: "text" as const,
+            text: "Config write is a write operation. Use the MCP server (`am mcp-serve`) or the CLI (`am config edit`) to modify configuration.",
+          },
+        ],
+      },
+    };
+  }
+
+  if (command === "registry.install") {
+    return {
+      message: {
+        role: "agent" as const,
+        parts: [
+          {
+            type: "text" as const,
+            text: "Registry install is a write operation. Use the MCP server (`am mcp-serve`) or the CLI (`am install <package>`) to install from the registry.",
+          },
+        ],
+      },
+    };
+  }
+
   // Default: unrecognized command
   return {
     message: {
@@ -231,7 +259,7 @@ export const defaultTaskHandler: TaskHandler = async (userMessage, config) => {
       parts: [
         {
           type: "text" as const,
-          text: `Unrecognized command: "${command}". Available: status, config, servers, agents, apply`,
+          text: `Unrecognized command: "${command}". Available: status, config, servers, agents, apply, config.read, config.write, registry.search, registry.install, adapter.apply, adapter.status`,
         },
       ],
     },
@@ -319,7 +347,10 @@ function handleJsonRpc(
 
       // Optionally trim history
       if (p.historyLength != null && task.history) {
-        const trimmed = { ...task, history: task.history.slice(-p.historyLength) };
+        const trimmed = {
+          ...task,
+          history: p.historyLength === 0 ? [] : task.history.slice(-p.historyLength),
+        };
         return jsonRpcSuccess(id, trimmed);
       }
 

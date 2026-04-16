@@ -1,13 +1,14 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import {
   addToRoster,
+  discoverFromRoster,
   loadRoster,
   removeFromRoster,
   saveRoster,
 } from "../../../src/protocols/a2a/discovery";
-import type { AgentRosterEntry } from "../../../src/protocols/a2a/types";
+import type { AgentCard, AgentRosterEntry } from "../../../src/protocols/a2a/types";
 import { resolveProjectName } from "../../../src/wiki/storage";
 import { type TestDir, createTestDir } from "../../helpers/tmp";
 
@@ -134,6 +135,85 @@ describe("protocols/a2a/discovery", () => {
       // Original roster should be unchanged
       const roster = await loadRoster(configDir);
       expect(roster).toHaveLength(1);
+    });
+  });
+
+  // ── discoverFromRoster ──────────────────────────────────────
+
+  describe("discoverFromRoster", () => {
+    const originalFetch = globalThis.fetch;
+
+    afterEach(() => {
+      globalThis.fetch = originalFetch;
+    });
+
+    const MOCK_CARD: AgentCard = {
+      name: "test-agent",
+      description: "A test agent",
+      version: "1.0.0",
+      url: "https://example.com",
+      capabilities: { streaming: false },
+      skills: [{ id: "s1", name: "Skill", description: "A skill" }],
+    };
+
+    function makeCard(overrides: Partial<AgentCard> = {}): AgentCard {
+      return { ...MOCK_CARD, ...overrides };
+    }
+
+    test("returns cards for reachable agents, skips failures", async () => {
+      // Write a roster with 3 agents
+      const rosterPath = join(configDir, "roster.toml");
+      await writeFile(
+        rosterPath,
+        [
+          "[agents.alpha]",
+          'url = "https://alpha.example.com"',
+          'added_at = "2026-01-01T00:00:00Z"',
+          "",
+          "[agents.beta]",
+          'url = "https://beta.example.com"',
+          'added_at = "2026-01-01T00:00:00Z"',
+          "",
+          "[agents.gamma]",
+          'url = "https://gamma.example.com"',
+          'added_at = "2026-01-01T00:00:00Z"',
+        ].join("\n"),
+      );
+
+      // Mock fetch: alpha and beta succeed, gamma fails (network error)
+      const alphaCard = makeCard({ name: "alpha", url: "https://alpha.example.com" });
+      const betaCard = makeCard({ name: "beta", url: "https://beta.example.com" });
+
+      const mockFetch = mock((url: string) => {
+        if (url.includes("alpha.example.com")) {
+          return Promise.resolve(new Response(JSON.stringify(alphaCard), { status: 200 }));
+        }
+        if (url.includes("beta.example.com")) {
+          return Promise.resolve(new Response(JSON.stringify(betaCard), { status: 200 }));
+        }
+        // gamma: network error
+        return Promise.reject(new Error("Connection refused"));
+      });
+      globalThis.fetch = mockFetch as unknown as typeof fetch;
+
+      const cards = await discoverFromRoster(rosterPath);
+
+      expect(cards).toHaveLength(2);
+      const names = cards.map((c) => c.name).sort();
+      expect(names).toEqual(["alpha", "beta"]);
+    });
+
+    test("returns empty array for empty roster", async () => {
+      const rosterPath = join(configDir, "empty-roster.toml");
+      await writeFile(rosterPath, "# empty roster\n");
+
+      const cards = await discoverFromRoster(rosterPath);
+      expect(cards).toEqual([]);
+    });
+
+    test("returns empty array when roster file does not exist", async () => {
+      const cards = await discoverFromRoster(join(configDir, "nonexistent-roster.toml"));
+      expect(cards).toEqual([]);
     });
   });
 

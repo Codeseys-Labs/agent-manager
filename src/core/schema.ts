@@ -101,7 +101,7 @@ export type Profile = z.infer<typeof ProfileSchema>;
 
 // --- Settings Schema ---
 /** Available MCP tool groups for settings.mcp_serve.tools */
-export const MCP_TOOL_GROUPS = ["core", "registry", "a2a", "wiki"] as const;
+export const MCP_TOOL_GROUPS = ["core", "registry", "a2a", "wiki", "session"] as const;
 export type McpToolGroup = (typeof MCP_TOOL_GROUPS)[number];
 
 export const SettingsSchema = z

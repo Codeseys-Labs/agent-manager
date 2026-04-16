@@ -2,11 +2,13 @@
  * CLI: am agents — Manage A2A agent discovery, delegation, and roster.
  *
  * Subcommands:
- *   am agents list             — list all discovered A2A agents
- *   am agents add <url>        — add agent by fetching its Agent Card
- *   am agents remove <name>    — remove from roster
- *   am agents ping <name>      — verify reachable, show capabilities
- *   am agents delegate <name> <task> — send task, show response
+ *   am agents list                        — list all discovered A2A agents
+ *   am agents add <url> [--name alias]    — add agent by fetching its Agent Card
+ *   am agents remove <name>               — remove from roster
+ *   am agents ping <name>                 — verify reachable, show capabilities, update lastSeen
+ *   am agents delegate <name> <task>      — send task, show response
+ *   am agents delegate --url <url> <task> — one-off delegation without roster
+ *   am agents cancel <name> <taskId>      — cancel a running task
  */
 
 import { defineCommand } from "citty";
@@ -18,6 +20,7 @@ import {
   discoverFromUrl,
   loadRoster,
   removeFromRoster,
+  saveRoster,
 } from "../protocols/a2a/discovery";
 import type { AgentRosterEntry } from "../protocols/a2a/types";
 
@@ -59,6 +62,7 @@ const addSubcommand = defineCommand({
   meta: { name: "add", description: "Add an A2A agent by URL" },
   args: {
     url: { type: "positional", description: "Agent base URL", required: true },
+    name: { type: "string", description: "Override the Agent Card name for the roster key" },
     json: { type: "boolean", description: "JSON output", default: false },
     quiet: { type: "boolean", alias: "q", default: false },
     verbose: { type: "boolean", alias: "v", default: false },
@@ -76,9 +80,10 @@ const addSubcommand = defineCommand({
       return;
     }
 
+    const rosterName = (args.name as string) || card.name;
     const configDir = resolveConfigDir();
     const entry: AgentRosterEntry = {
-      name: card.name,
+      name: rosterName,
       url: card.url || url,
       description: card.description,
       addedAt: new Date().toISOString(),
@@ -93,7 +98,10 @@ const addSubcommand = defineCommand({
       return;
     }
 
-    info(`Added agent: ${card.name}`, opts);
+    info(`Added agent: ${rosterName}`, opts);
+    if (rosterName !== card.name) {
+      info(`  Card name: ${card.name}`, opts);
+    }
     info(`  URL: ${entry.url}`, opts);
     info(`  Description: ${card.description}`, opts);
     info(`  Skills: ${card.skills.map((s) => s.id).join(", ")}`, opts);
@@ -173,6 +181,15 @@ const pingSubcommand = defineCommand({
       return;
     }
 
+    // Update lastSeen in the roster after successful ping
+    entry.lastSeen = new Date().toISOString();
+    const fullRoster = await loadRoster(configDir);
+    const idx = fullRoster.findIndex((r) => r.name === name);
+    if (idx >= 0) {
+      fullRoster[idx].lastSeen = entry.lastSeen;
+      await saveRoster(configDir, fullRoster);
+    }
+
     if (args.json) {
       output(
         {
@@ -203,36 +220,62 @@ const pingSubcommand = defineCommand({
 const delegateSubcommand = defineCommand({
   meta: { name: "delegate", description: "Send a task to an A2A agent" },
   args: {
-    name: { type: "positional", description: "Agent name", required: true },
+    name: { type: "positional", description: "Agent name (optional if --url is provided)" },
     task: { type: "positional", description: "Task message to send", required: true },
+    url: { type: "string", description: "Agent URL for one-off delegation (skips roster lookup)" },
     json: { type: "boolean", description: "JSON output", default: false },
     quiet: { type: "boolean", alias: "q", default: false },
     verbose: { type: "boolean", alias: "v", default: false },
   },
   async run({ args }) {
     const opts = { json: args.json, quiet: args.quiet, verbose: args.verbose };
-    const name = args.name as string;
+    const directUrl = args.url as string | undefined;
+    const name = args.name as string | undefined;
     const taskText = args.task as string;
-    const configDir = resolveConfigDir();
-    const roster = await loadRoster(configDir);
-    const entry = roster.find((r) => r.name === name);
 
-    if (!entry) {
-      error(
-        `Agent "${name}" not found in roster. Use \`am agents list\` to see registered agents.`,
-        opts,
-      );
+    let agentUrl: string;
+    let agentName: string;
+
+    if (directUrl) {
+      // One-off delegation via --url — discover the card but don't add to roster
+      info(`Discovering agent at ${directUrl}...`, opts);
+      const card = await discoverFromUrl(directUrl);
+      if (!card) {
+        error(`No A2A Agent Card found at ${directUrl}/.well-known/agent.json`, opts);
+        process.exitCode = 1;
+        return;
+      }
+      agentUrl = card.url || directUrl;
+      agentName = name || card.name;
+    } else if (name) {
+      // Roster-based delegation
+      const configDir = resolveConfigDir();
+      const roster = await loadRoster(configDir);
+      const entry = roster.find((r) => r.name === name);
+
+      if (!entry) {
+        error(
+          `Agent "${name}" not found in roster. Use \`am agents list\` to see registered agents, or use --url for one-off delegation.`,
+          opts,
+        );
+        process.exitCode = 1;
+        return;
+      }
+      agentUrl = entry.url;
+      agentName = name;
+    } else {
+      error("Either provide an agent name or use --url for one-off delegation.", opts);
       process.exitCode = 1;
       return;
     }
 
-    info(`Delegating to ${name} (${entry.url})...`, opts);
+    info(`Delegating to ${agentName} (${agentUrl})...`, opts);
 
     const client = new A2AClient({ timeout: 60_000 });
     const taskId = `am-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
     try {
-      const result = await client.sendTask(entry.url, {
+      const result = await client.sendTask(agentUrl, {
         id: taskId,
         message: {
           role: "user",
@@ -241,7 +284,7 @@ const delegateSubcommand = defineCommand({
       });
 
       if (args.json) {
-        output({ action: "delegate", agent: name, task: result }, opts);
+        output({ action: "delegate", agent: agentName, task: result }, opts);
         return;
       }
 
@@ -277,6 +320,51 @@ const delegateSubcommand = defineCommand({
   },
 });
 
+const cancelSubcommand = defineCommand({
+  meta: { name: "cancel", description: "Cancel a running task on an A2A agent" },
+  args: {
+    name: { type: "positional", description: "Agent name", required: true },
+    taskId: { type: "positional", description: "Task ID to cancel", required: true },
+    json: { type: "boolean", description: "JSON output", default: false },
+    quiet: { type: "boolean", alias: "q", default: false },
+    verbose: { type: "boolean", alias: "v", default: false },
+  },
+  async run({ args }) {
+    const opts = { json: args.json, quiet: args.quiet, verbose: args.verbose };
+    const name = args.name as string;
+    const taskId = args.taskId as string;
+    const configDir = resolveConfigDir();
+    const roster = await loadRoster(configDir);
+    const entry = roster.find((r) => r.name === name);
+
+    if (!entry) {
+      error(
+        `Agent "${name}" not found in roster. Use \`am agents list\` to see registered agents.`,
+        opts,
+      );
+      process.exitCode = 1;
+      return;
+    }
+
+    const client = new A2AClient({ timeout: 30_000 });
+
+    try {
+      const result = await client.cancelTask(entry.url, { id: taskId });
+
+      if (args.json) {
+        output({ action: "cancel", agent: name, task: result }, opts);
+        return;
+      }
+
+      info(`Task ${result.id}: ${result.status.state}`, opts);
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
+      error(`Cancel failed: ${message}`, opts);
+      process.exitCode = 1;
+    }
+  },
+});
+
 // ── Main Command ────────────────────────────────────────────────
 
 export const agentsCommand = defineCommand({
@@ -287,5 +375,6 @@ export const agentsCommand = defineCommand({
     remove: () => Promise.resolve(removeSubcommand),
     ping: () => Promise.resolve(pingSubcommand),
     delegate: () => Promise.resolve(delegateSubcommand),
+    cancel: () => Promise.resolve(cancelSubcommand),
   },
 });
