@@ -236,10 +236,9 @@ async function addInstruction(
 
   const instruction: Instruction = {
     scope: scope as Instruction["scope"],
-  } as Instruction;
-
-  if (content) (instruction as Record<string, unknown>).content = content;
-  if (contentFile) (instruction as Record<string, unknown>).content_file = contentFile;
+    ...(content ? { content } : {}),
+    ...(contentFile ? { content_file: contentFile } : {}),
+  };
   if (args.description) instruction.description = args.description as string;
   if (args.globs) instruction.globs = (args.globs as string).split(",").map((s) => s.trim());
   if (args.targets) instruction.targets = (args.targets as string).split(",").map((s) => s.trim());

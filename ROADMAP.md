@@ -231,7 +231,7 @@ am-cli as a runtime MCP proxy — accept tool calls, route to configured servers
 
 ## ADR Index
 
-28 architectural decisions.
+30 architectural decisions.
 
 | ADR | Title | Date |
 |-----|-------|------|
@@ -263,6 +263,8 @@ am-cli as a runtime MCP proxy — accept tool calls, route to configured servers
 | 0026 | ACP Runtime Integration via ACPX | 2026-04-15 |
 | 0027 | Community Adapter Loading | 2026-04-15 |
 | 0028 | Brownfield Import Merge | 2026-04-15 |
+| 0029 | Command Grouping | 2026-04-15 |
+| 0030 | Unified Agent Registry | 2026-04-16 |
 
 ---
 
