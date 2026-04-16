@@ -267,6 +267,54 @@ describe("AmAcpClient", () => {
       expect(handler).not.toHaveBeenCalled();
     });
   });
+
+  describe("_handleSessionUpdate state accumulation", () => {
+    test("resets collected text/toolCalls between prompts (no cross-prompt bleed)", () => {
+      const client = new AmAcpClient();
+
+      // Simulate first prompt's updates
+      client._handleSessionUpdate({
+        sessionId: "s1",
+        update: {
+          sessionUpdate: "agent_message_chunk",
+          content: { type: "text", text: "first reply" },
+        },
+      } as any);
+      client._handleSessionUpdate({
+        sessionId: "s1",
+        update: {
+          sessionUpdate: "tool_call",
+          toolCallId: "tc-1",
+          title: "Edit file",
+          status: "completed",
+          kind: "edit",
+        },
+      } as any);
+
+      // Verify state was accumulated
+      expect((client as any).collectedText).toBe("first reply");
+      expect((client as any).collectedToolCalls).toHaveLength(1);
+
+      // Calling resetCollected (as prompt() does at the start) should clear state
+      (client as any).resetCollected();
+
+      expect((client as any).collectedText).toBe("");
+      expect((client as any).collectedToolCalls).toHaveLength(0);
+
+      // Simulate second prompt's updates
+      client._handleSessionUpdate({
+        sessionId: "s1",
+        update: {
+          sessionUpdate: "agent_message_chunk",
+          content: { type: "text", text: "second reply" },
+        },
+      } as any);
+
+      // Should only contain second prompt's data
+      expect((client as any).collectedText).toBe("second reply");
+      expect((client as any).collectedToolCalls).toHaveLength(0);
+    });
+  });
 });
 
 // ── AcpClientError ─────────────────────────────────────────────

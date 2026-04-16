@@ -125,6 +125,11 @@ export const SettingsSchema = z
         agents: z.record(z.string(), z.object({ command: z.string() })).optional(),
       })
       .optional(),
+    wiki: z
+      .object({
+        inject_on_apply: z.boolean().optional(),
+      })
+      .optional(),
     env: z.record(z.string(), z.string()).optional(),
   })
   .passthrough();

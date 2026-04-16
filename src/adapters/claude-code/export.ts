@@ -7,6 +7,7 @@
 
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { generateWikiContext, spliceWikiBlock } from "../../core/instructions.ts";
 import type {
   ExportOptions,
   ExportResult,
@@ -21,11 +22,11 @@ const AM_END = "<!-- am:end -->";
 /**
  * Export resolved config to Claude Code native files.
  */
-export function exportConfig(
+export async function exportConfig(
   config: ResolvedConfig,
   options: ExportOptions = {},
   homeDir?: string,
-): ExportResult {
+): Promise<ExportResult> {
   const home = homeDir ?? homedir();
   const files: WrittenFile[] = [];
   const warnings: string[] = [];
@@ -60,12 +61,20 @@ export function exportConfig(
     files.push({ path: mcpPath, content: mcpContent, written: false });
   }
 
-  // 3. Generate CLAUDE.md (instructions)
+  // 3. Generate CLAUDE.md (instructions + optional wiki context)
   if (options.projectPath) {
     const instructionContent = generateInstructionBlock(config);
     if (instructionContent) {
       const claudeMdPath = join(options.projectPath, "CLAUDE.md");
-      const claudeMdContent = generateClaudeMd(claudeMdPath, instructionContent, warnings);
+      let claudeMdContent = generateClaudeMd(claudeMdPath, instructionContent, warnings);
+
+      // Inject wiki context if enabled
+      const configDir = options.projectPath;
+      const wikiBlock = await generateWikiContext(configDir, config.settings);
+      if (wikiBlock) {
+        claudeMdContent = spliceWikiBlock(wikiBlock, claudeMdContent);
+      }
+
       files.push({
         path: claudeMdPath,
         content: claudeMdContent,

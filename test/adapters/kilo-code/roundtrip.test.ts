@@ -71,7 +71,7 @@ describe("Kilo Code adapter roundtrip", () => {
     };
 
     // 4. Export (writes to disk)
-    const exported = exportConfig(resolved, {}, dir.path);
+    const exported = await exportConfig(resolved, {}, dir.path);
     expect(exported.warnings).toHaveLength(0);
     const globalFile = exported.files.find((f) => f.path.endsWith("kilo.jsonc"));
     expect(globalFile).toBeDefined();
@@ -147,7 +147,7 @@ describe("Kilo Code adapter roundtrip", () => {
     };
 
     // Export (writes new format)
-    const exported = exportConfig(resolved, {}, dir.path);
+    const exported = await exportConfig(resolved, {}, dir.path);
     const globalFile = exported.files.find((f) => f.path.endsWith("kilo.jsonc"));
     const outputJson = JSON.parse(globalFile?.content) as Record<string, unknown>;
 

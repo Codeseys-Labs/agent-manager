@@ -154,6 +154,22 @@ export interface A2AJsonRpcError {
   data?: unknown;
 }
 
+// ── SSE Streaming Events (tasks/sendSubscribe) ────────────────────
+
+/** SSE event sent when a task's status changes. */
+export interface TaskStatusUpdateEvent {
+  id: string;
+  status: TaskStatus;
+  /** True when the task has reached a terminal state and the stream will close. */
+  final: boolean;
+}
+
+/** SSE event sent when a task produces an artifact. */
+export interface TaskArtifactUpdateEvent {
+  id: string;
+  artifact: Artifact;
+}
+
 // ── Agent Roster (local discovery) ──────────────────────────────
 
 export interface AgentRosterEntry {

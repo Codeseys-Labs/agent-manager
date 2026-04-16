@@ -29,10 +29,6 @@ export function resolveProjectConfig(startDir: string): string | null {
   for (;;) {
     const candidate = join(dir, ".agent-manager.toml");
     try {
-      // Synchronous existence check via Bun.file
-      const f = Bun.file(candidate);
-      // Bun.file doesn't throw on missing — check size synchronously won't work.
-      // Use a simple approach: try require("fs").accessSync
       require("node:fs").accessSync(candidate);
       return candidate;
     } catch {
@@ -285,6 +281,7 @@ export function buildResolvedConfig(
     agents,
     profile: profileName,
     adapters: (config.adapters as Record<string, Record<string, unknown>>) ?? {},
+    settings: config.settings as Record<string, unknown> | undefined,
   };
 
   // Apply profile filtering when the named profile exists

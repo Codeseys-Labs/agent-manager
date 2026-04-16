@@ -132,6 +132,78 @@ export function generateGeminiMd(
   return spliceMarkerBlock(block, existingContent);
 }
 
+// ── Wiki Context Injection ──────────────────────────────────────
+
+const WIKI_BEGIN = "<!-- am:wiki:begin -->";
+const WIKI_END = "<!-- am:wiki:end -->";
+
+/**
+ * Generate wiki context for injection into instruction files.
+ * Returns a formatted markdown section, or empty string if wiki is empty
+ * or inject_on_apply is not enabled.
+ */
+export async function generateWikiContext(
+  configDir: string,
+  settings?: Record<string, unknown>,
+): Promise<string> {
+  // Check if inject_on_apply is enabled
+  const wikiSettings = settings?.wiki as Record<string, unknown> | undefined;
+  if (!wikiSettings?.inject_on_apply) {
+    return "";
+  }
+
+  // Dynamically import wiki modules to avoid circular dependencies
+  try {
+    const { listPages } = await import("../wiki/storage.ts");
+    const pages = await listPages();
+
+    if (pages.length === 0) {
+      return "";
+    }
+
+    const { synthesizeContext } = await import("../wiki/synthesizer.ts");
+    const context = await synthesizeContext("project knowledge", { topK: 5 });
+
+    if (!context || context.startsWith("No knowledge found")) {
+      return "";
+    }
+
+    return `${WIKI_BEGIN}\n## Agent Knowledge\n\n${context}\n${WIKI_END}`;
+  } catch {
+    // Wiki not available (no entries, missing directory, etc.)
+    return "";
+  }
+}
+
+/**
+ * Splice a wiki context block into existing content, preserving content
+ * outside wiki markers. If no wiki block exists, appends before the am:end marker.
+ */
+export function spliceWikiBlock(wikiBlock: string, content: string): string {
+  if (!wikiBlock) return content;
+
+  const beginIdx = content.indexOf(WIKI_BEGIN);
+  const endIdx = content.indexOf(WIKI_END);
+
+  if (beginIdx !== -1 && endIdx !== -1) {
+    // Replace existing wiki block
+    const before = content.slice(0, beginIdx);
+    const after = content.slice(endIdx + WIKI_END.length);
+    return before + wikiBlock + after;
+  }
+
+  // Insert before the am:end marker if present
+  const amEndIdx = content.indexOf(AM_END);
+  if (amEndIdx !== -1) {
+    const before = content.slice(0, amEndIdx);
+    const after = content.slice(amEndIdx);
+    return `${before}\n${wikiBlock}\n${after}`;
+  }
+
+  // Append to end
+  return `${content.trimEnd()}\n\n${wikiBlock}\n`;
+}
+
 // ── Cursor .mdc Format ──────────────────────────────────────────
 
 /**

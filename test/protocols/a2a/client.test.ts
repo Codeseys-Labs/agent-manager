@@ -1,6 +1,11 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { A2AClient, A2AClientError, createA2AClient } from "../../../src/protocols/a2a/client";
-import type { A2AJsonRpcResponse, AgentCard } from "../../../src/protocols/a2a/types";
+import type {
+  A2AJsonRpcResponse,
+  AgentCard,
+  TaskArtifactUpdateEvent,
+  TaskStatusUpdateEvent,
+} from "../../../src/protocols/a2a/types";
 
 // ── Helpers ─────────────────────────────────────────────────────
 
@@ -339,6 +344,262 @@ describe("A2AClient", () => {
       const fetchOpts = (mockFetch.mock.calls[0] as unknown[])[1] as RequestInit;
       const body = JSON.parse(fetchOpts.body as string);
       expect(body.method).toBe("tasks/cancel");
+    });
+  });
+
+  // ── sendSubscribe ───────────────────────────────────────────
+
+  describe("sendSubscribe", () => {
+    /** Build an SSE response body from a list of events. */
+    function buildSSEBody(events: Array<{ event: string; data: unknown }>): string {
+      return events.map((e) => `event: ${e.event}\ndata: ${JSON.stringify(e.data)}\n\n`).join("");
+    }
+
+    test("parses SSE stream and calls onStatus callbacks", async () => {
+      const sseBody = buildSSEBody([
+        {
+          event: "status",
+          data: {
+            id: "task-sse-1",
+            status: { state: "working", timestamp: "2026-01-01T00:00:00Z" },
+            final: false,
+          },
+        },
+        {
+          event: "status",
+          data: {
+            id: "task-sse-1",
+            status: { state: "completed", timestamp: "2026-01-01T00:00:01Z" },
+            final: true,
+          },
+        },
+      ]);
+
+      mockFetch = mock(() =>
+        Promise.resolve(
+          new Response(sseBody, {
+            status: 200,
+            headers: { "Content-Type": "text/event-stream" },
+          }),
+        ),
+      );
+      globalThis.fetch = mockFetch as unknown as typeof fetch;
+
+      const client = new A2AClient({ timeout: 5000 });
+      const statusEvents: TaskStatusUpdateEvent[] = [];
+
+      const final = await client.sendSubscribe(
+        "https://agent.example.com",
+        {
+          id: "task-sse-1",
+          message: { role: "user", parts: [{ type: "text", text: "status" }] },
+        },
+        {
+          onStatus: (evt) => statusEvents.push(evt),
+        },
+      );
+
+      expect(statusEvents).toHaveLength(2);
+      expect(statusEvents[0].status.state).toBe("working");
+      expect(statusEvents[0].final).toBe(false);
+      expect(statusEvents[1].status.state).toBe("completed");
+      expect(statusEvents[1].final).toBe(true);
+      expect(final.status.state).toBe("completed");
+      expect(final.final).toBe(true);
+    });
+
+    test("parses artifact events in SSE stream", async () => {
+      const sseBody = buildSSEBody([
+        {
+          event: "status",
+          data: {
+            id: "task-art-1",
+            status: { state: "working", timestamp: "2026-01-01T00:00:00Z" },
+            final: false,
+          },
+        },
+        {
+          event: "artifact",
+          data: {
+            id: "task-art-1",
+            artifact: {
+              name: "output.json",
+              parts: [{ type: "data", data: { result: 42 } }],
+            },
+          },
+        },
+        {
+          event: "status",
+          data: {
+            id: "task-art-1",
+            status: { state: "completed", timestamp: "2026-01-01T00:00:01Z" },
+            final: true,
+          },
+        },
+      ]);
+
+      mockFetch = mock(() =>
+        Promise.resolve(
+          new Response(sseBody, {
+            status: 200,
+            headers: { "Content-Type": "text/event-stream" },
+          }),
+        ),
+      );
+      globalThis.fetch = mockFetch as unknown as typeof fetch;
+
+      const client = new A2AClient({ timeout: 5000 });
+      const artifacts: TaskArtifactUpdateEvent[] = [];
+
+      await client.sendSubscribe(
+        "https://agent.example.com",
+        {
+          id: "task-art-1",
+          message: { role: "user", parts: [{ type: "text", text: "test" }] },
+        },
+        {
+          onArtifact: (evt) => artifacts.push(evt),
+        },
+      );
+
+      expect(artifacts).toHaveLength(1);
+      expect(artifacts[0].artifact.name).toBe("output.json");
+    });
+
+    test("handles JSON response (task already terminal) instead of SSE", async () => {
+      const jsonResponse: A2AJsonRpcResponse = {
+        jsonrpc: "2.0",
+        id: 1,
+        result: {
+          id: "task-already-done",
+          status: { state: "completed", timestamp: "2026-01-01T00:00:00Z" },
+        },
+      };
+
+      mockFetch = mock(() =>
+        Promise.resolve(
+          new Response(JSON.stringify(jsonResponse), {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          }),
+        ),
+      );
+      globalThis.fetch = mockFetch as unknown as typeof fetch;
+
+      const client = new A2AClient({ timeout: 5000 });
+      const statusEvents: TaskStatusUpdateEvent[] = [];
+
+      const final = await client.sendSubscribe(
+        "https://agent.example.com",
+        {
+          id: "task-already-done",
+          message: { role: "user", parts: [{ type: "text", text: "status" }] },
+        },
+        {
+          onStatus: (evt) => statusEvents.push(evt),
+        },
+      );
+
+      expect(statusEvents).toHaveLength(1);
+      expect(final.status.state).toBe("completed");
+      expect(final.final).toBe(true);
+    });
+
+    test("throws on JSON-RPC error response", async () => {
+      const errorResponse: A2AJsonRpcResponse = {
+        jsonrpc: "2.0",
+        id: 1,
+        error: { code: -32602, message: "Invalid params" },
+      };
+
+      mockFetch = mock(() =>
+        Promise.resolve(
+          new Response(JSON.stringify(errorResponse), {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          }),
+        ),
+      );
+      globalThis.fetch = mockFetch as unknown as typeof fetch;
+
+      const client = new A2AClient({ timeout: 5000 });
+      try {
+        await client.sendSubscribe(
+          "https://agent.example.com",
+          {
+            id: "task-err",
+            message: { role: "user", parts: [{ type: "text", text: "test" }] },
+          },
+          {},
+        );
+        expect(true).toBe(false);
+      } catch (err) {
+        expect(err).toBeInstanceOf(A2AClientError);
+        expect((err as A2AClientError).message).toBe("Invalid params");
+        expect((err as A2AClientError).code).toBe(-32602);
+      }
+    });
+
+    test("throws on HTTP error", async () => {
+      mockFetch = mock(() =>
+        Promise.resolve(new Response("Internal Server Error", { status: 500, statusText: "Internal Server Error" })),
+      );
+      globalThis.fetch = mockFetch as unknown as typeof fetch;
+
+      const client = new A2AClient({ timeout: 5000 });
+      try {
+        await client.sendSubscribe(
+          "https://agent.example.com",
+          {
+            id: "task-http-err",
+            message: { role: "user", parts: [{ type: "text", text: "test" }] },
+          },
+          {},
+        );
+        expect(true).toBe(false);
+      } catch (err) {
+        expect(err).toBeInstanceOf(A2AClientError);
+        expect((err as A2AClientError).message).toContain("500");
+      }
+    });
+
+    test("sends correct JSON-RPC method tasks/sendSubscribe", async () => {
+      const sseBody = buildSSEBody([
+        {
+          event: "status",
+          data: {
+            id: "task-method-check",
+            status: { state: "completed", timestamp: "2026-01-01T00:00:00Z" },
+            final: true,
+          },
+        },
+      ]);
+
+      mockFetch = mock(() =>
+        Promise.resolve(
+          new Response(sseBody, {
+            status: 200,
+            headers: { "Content-Type": "text/event-stream" },
+          }),
+        ),
+      );
+      globalThis.fetch = mockFetch as unknown as typeof fetch;
+
+      const client = new A2AClient({ timeout: 5000 });
+      await client.sendSubscribe(
+        "https://agent.example.com",
+        {
+          id: "task-method-check",
+          message: { role: "user", parts: [{ type: "text", text: "test" }] },
+        },
+        {},
+      );
+
+      const fetchOpts = (mockFetch.mock.calls[0] as unknown[])[1] as RequestInit;
+      const body = JSON.parse(fetchOpts.body as string);
+      expect(body.method).toBe("tasks/sendSubscribe");
+      expect(body.jsonrpc).toBe("2.0");
+      expect(body.params.id).toBe("task-method-check");
     });
   });
 

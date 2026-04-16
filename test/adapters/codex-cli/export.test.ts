@@ -51,7 +51,7 @@ describe("codex-cli exportConfig()", () => {
       },
     });
 
-    const result = exportConfig(cfg, { dryRun: true }, dir.path);
+    const result = await exportConfig(cfg, { dryRun: true }, dir.path);
     expect(result.files.length).toBeGreaterThanOrEqual(1);
 
     const globalFile = result.files.find((f) => f.path.endsWith("config.toml"));
@@ -81,7 +81,7 @@ describe("codex-cli exportConfig()", () => {
       },
     });
 
-    const result = exportConfig(cfg, { dryRun: true }, dir.path);
+    const result = await exportConfig(cfg, { dryRun: true }, dir.path);
     const globalFile = result.files.find((f) => f.path.endsWith("config.toml"));
     const parsed = parseTOML(globalFile?.content) as any;
     expect(parsed.mcp_servers.figma.url).toBe("https://mcp.figma.com/mcp");
@@ -109,7 +109,7 @@ describe("codex-cli exportConfig()", () => {
       },
     });
 
-    const result = exportConfig(cfg, { dryRun: true }, dir.path);
+    const result = await exportConfig(cfg, { dryRun: true }, dir.path);
     const globalFile = result.files.find((f) => f.path.endsWith("config.toml"));
     const parsed = parseTOML(globalFile?.content) as any;
     expect(parsed.mcp_servers.context7.enabled_tools).toEqual(["search", "summarize"]);
@@ -134,7 +134,7 @@ describe("codex-cli exportConfig()", () => {
       },
     });
 
-    const result = exportConfig(cfg, { projectPath: projectDir, dryRun: true }, dir.path);
+    const result = await exportConfig(cfg, { projectPath: projectDir, dryRun: true }, dir.path);
     const agentsMdFile = result.files.find((f) => f.path.endsWith("AGENTS.md"));
     expect(agentsMdFile).toBeDefined();
     expect(agentsMdFile?.content).toContain("<!-- am:begin -->");
@@ -150,7 +150,7 @@ describe("codex-cli exportConfig()", () => {
       },
     });
 
-    const result = exportConfig(cfg, { dryRun: true }, dir.path);
+    const result = await exportConfig(cfg, { dryRun: true }, dir.path);
     for (const file of result.files) {
       expect(file.written).toBe(false);
     }
@@ -170,7 +170,7 @@ describe("codex-cli exportConfig()", () => {
       },
     });
 
-    const result = exportConfig(cfg, { dryRun: true }, dir.path);
+    const result = await exportConfig(cfg, { dryRun: true }, dir.path);
     const globalFile = result.files.find((f) => f.path.endsWith("config.toml"));
     const parsed = parseTOML(globalFile?.content) as any;
     expect(parsed.mcp_servers.enabled_one).toBeDefined();
@@ -196,7 +196,7 @@ command = "old-mcp"
       },
     });
 
-    const result = exportConfig(cfg, {}, dir.path);
+    const result = await exportConfig(cfg, {}, dir.path);
     const globalFile = result.files.find((f) => f.path.endsWith("config.toml"));
     const parsed = parseTOML(globalFile?.content) as any;
     // Non-MCP fields preserved
@@ -216,7 +216,7 @@ command = "old-mcp"
       },
     });
 
-    const result = exportConfig(cfg, {}, dir.path);
+    const result = await exportConfig(cfg, {}, dir.path);
     const globalFile = result.files.find((f) => f.path.endsWith("config.toml"));
     expect(globalFile?.written).toBe(true);
     expect(await dir.exists(".codex/config.toml")).toBe(true);

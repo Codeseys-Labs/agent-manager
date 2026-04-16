@@ -446,7 +446,7 @@ export function createApp() {
 
       for (const adapter of adapters) {
         try {
-          const result = adapter.export(resolved, { dryRun: false });
+          const result = await adapter.export(resolved, { dryRun: false });
           results.push({
             adapter: adapter.meta.name,
             files: result.files.map((f) => ({

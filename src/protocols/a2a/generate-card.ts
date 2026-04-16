@@ -125,7 +125,7 @@ export function generateAgentCard(config: ResolvedConfig, options: GenerateCardO
   const allSkills = [...BUILTIN_SKILLS, ...agentSkills];
 
   const capabilities: AgentCapabilities = {
-    streaming: false,
+    streaming: true,
     pushNotifications: false,
     stateTransitionHistory: true,
   };

@@ -24,11 +24,7 @@ export function error(message: string, opts: OutputOptions): void {
  */
 export function amError(err: unknown, opts: OutputOptions): void {
   const formatted = formatError(err, !!opts.json);
-  if (opts.json) {
-    console.error(formatted);
-  } else {
-    console.error(formatted);
-  }
+  console.error(formatted);
 }
 
 export function debug(message: string, opts: OutputOptions): void {

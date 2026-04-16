@@ -8,6 +8,7 @@
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { parse as parseTOML } from "@iarna/toml";
+import { generateWikiContext, spliceWikiBlock } from "../../core/instructions.ts";
 import { tomlStringify as stringifyTOML } from "../../lib/toml";
 import type {
   ExportOptions,
@@ -23,11 +24,11 @@ const AM_END = "<!-- am:end -->";
 /**
  * Export resolved config to Codex CLI native files.
  */
-export function exportConfig(
+export async function exportConfig(
   config: ResolvedConfig,
   options: ExportOptions = {},
   homeDir?: string,
-): ExportResult {
+): Promise<ExportResult> {
   const home = homeDir ?? homedir();
   const files: WrittenFile[] = [];
   const warnings: string[] = [];
@@ -58,12 +59,20 @@ export function exportConfig(
     files.push({ path: projectPath, content: projectContent, written: false });
   }
 
-  // 3. Generate AGENTS.md (instructions)
+  // 3. Generate AGENTS.md (instructions + optional wiki context)
   if (options.projectPath) {
     const instructionContent = generateInstructionBlock(config);
     if (instructionContent) {
       const agentsMdPath = join(options.projectPath, "AGENTS.md");
-      const agentsMdContent = generateAgentsMd(agentsMdPath, instructionContent, warnings);
+      let agentsMdContent = generateAgentsMd(agentsMdPath, instructionContent, warnings);
+
+      // Inject wiki context if enabled
+      const configDir = options.projectPath;
+      const wikiBlock = await generateWikiContext(configDir, config.settings);
+      if (wikiBlock) {
+        agentsMdContent = spliceWikiBlock(wikiBlock, agentsMdContent);
+      }
+
       files.push({ path: agentsMdPath, content: agentsMdContent, written: false });
     }
   }

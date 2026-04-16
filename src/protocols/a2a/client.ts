@@ -13,10 +13,12 @@ import type {
   A2AJsonRpcResponse,
   AgentCard,
   Task,
+  TaskArtifactUpdateEvent,
   TaskCancelParams,
   TaskQueryParams,
   TaskSendParams,
   TaskState,
+  TaskStatusUpdateEvent,
 } from "./types";
 
 // ── Error types ─────────────────────────────────────────────────
@@ -222,6 +224,153 @@ export class A2AClient {
   async pollTask(baseUrl: string, taskId: string, opts?: PollTaskOptions): Promise<Task> {
     return pollTaskImpl(this, baseUrl, taskId, opts);
   }
+
+  /**
+   * Send a task and subscribe to real-time SSE updates via tasks/sendSubscribe.
+   * The returned promise resolves when the stream closes (task reaches terminal state).
+   *
+   * @param baseUrl The agent's base URL.
+   * @param params Task send parameters (id, message, optional metadata).
+   * @param callbacks Callbacks for status and artifact updates.
+   * @returns The final TaskStatusUpdateEvent when the stream closes.
+   */
+  async sendSubscribe(
+    baseUrl: string,
+    params: TaskSendParams,
+    callbacks: SubscribeCallbacks,
+  ): Promise<TaskStatusUpdateEvent> {
+    const endpoint = this.resolveEndpoint(baseUrl);
+    const timeout = this.opts.timeout ?? 30_000;
+
+    const request: A2AJsonRpcRequest = {
+      jsonrpc: "2.0",
+      id: nextRpcId(),
+      method: "tasks/sendSubscribe",
+      params: params as unknown as Record<string, unknown>,
+    };
+
+    let resp: Response;
+    try {
+      resp = await fetch(endpoint, {
+        method: "POST",
+        headers: buildAuthHeaders(this.opts),
+        body: JSON.stringify(request),
+        signal: callbacks.signal ?? AbortSignal.timeout(timeout),
+      });
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
+      throw new A2AClientError(`A2A sendSubscribe to ${endpoint} failed: ${message}`);
+    }
+
+    if (!resp.ok) {
+      throw new A2AClientError(
+        `A2A sendSubscribe request failed: ${resp.status} ${resp.statusText}`,
+        resp.status,
+      );
+    }
+
+    const contentType = resp.headers.get("Content-Type") ?? "";
+
+    // If the server returned JSON instead of SSE (e.g., task already terminal), parse it
+    if (contentType.includes("application/json")) {
+      const json = (await resp.json()) as A2AJsonRpcResponse;
+      if (json.error) {
+        throw new A2AClientError(json.error.message, json.error.code, json.error.data);
+      }
+      const task = json.result as Task;
+      const finalEvent: TaskStatusUpdateEvent = {
+        id: task.id,
+        status: task.status,
+        final: true,
+      };
+      callbacks.onStatus?.(finalEvent);
+      return finalEvent;
+    }
+
+    // Parse the SSE stream
+    return parseSSEStream(resp, callbacks);
+  }
+}
+
+// ── Subscribe callbacks ───────────────────────────────────────
+
+export interface SubscribeCallbacks {
+  /** Called for each status update event. */
+  onStatus?: (event: TaskStatusUpdateEvent) => void;
+  /** Called for each artifact event. */
+  onArtifact?: (event: TaskArtifactUpdateEvent) => void;
+  /** Abort signal to cancel the subscription. */
+  signal?: AbortSignal;
+}
+
+/**
+ * Parse an SSE response body and dispatch events to callbacks.
+ * Returns the final TaskStatusUpdateEvent when the stream closes.
+ */
+async function parseSSEStream(
+  resp: Response,
+  callbacks: SubscribeCallbacks,
+): Promise<TaskStatusUpdateEvent> {
+  const reader = resp.body!.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let lastStatusEvent: TaskStatusUpdateEvent | undefined;
+
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      buffer += decoder.decode(value, { stream: true });
+
+      // Process complete SSE messages (delimited by double newlines)
+      const parts = buffer.split("\n\n");
+      buffer = parts.pop()!; // Keep incomplete message in buffer
+
+      for (const part of parts) {
+        if (!part.trim()) continue;
+
+        let eventType = "message";
+        let dataStr = "";
+
+        for (const line of part.split("\n")) {
+          if (line.startsWith("event: ")) {
+            eventType = line.slice(7).trim();
+          } else if (line.startsWith("data: ")) {
+            dataStr += line.slice(6);
+          }
+        }
+
+        if (!dataStr) continue;
+
+        try {
+          const data = JSON.parse(dataStr);
+
+          if (eventType === "status") {
+            const statusEvent = data as TaskStatusUpdateEvent;
+            lastStatusEvent = statusEvent;
+            callbacks.onStatus?.(statusEvent);
+            if (statusEvent.final) {
+              reader.cancel();
+              return statusEvent;
+            }
+          } else if (eventType === "artifact") {
+            callbacks.onArtifact?.(data as TaskArtifactUpdateEvent);
+          }
+        } catch {
+          // Skip malformed JSON in SSE data
+        }
+      }
+    }
+  } catch (err: unknown) {
+    if (err instanceof Error && err.name === "AbortError") {
+      throw new A2AClientError("Subscription aborted");
+    }
+    throw err;
+  }
+
+  if (lastStatusEvent) return lastStatusEvent;
+  throw new A2AClientError("SSE stream ended without a final status event");
 }
 
 // ── Poll options ───────────────────────────────────────────────

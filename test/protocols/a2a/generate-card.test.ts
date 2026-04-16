@@ -63,7 +63,7 @@ describe("generateAgentCard", () => {
       const config = makeResolvedConfig();
       const card = generateAgentCard(config, DEFAULT_OPTIONS);
 
-      expect(card.capabilities.streaming).toBe(false);
+      expect(card.capabilities.streaming).toBe(true);
       expect(card.capabilities.pushNotifications).toBe(false);
       expect(card.capabilities.stateTransitionHistory).toBe(true);
     });

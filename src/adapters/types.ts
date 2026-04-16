@@ -159,6 +159,7 @@ export interface ResolvedConfig {
   agents: Record<string, ResolvedAgent>;
   profile: string;
   adapters: Record<string, Record<string, unknown>>;
+  settings?: Record<string, unknown>;
 }
 
 // ── Adapter Schema (Zod-based validation) ────────────────────────
@@ -175,7 +176,7 @@ export interface Adapter {
   meta: AdapterMeta;
   detect(): DetectResult;
   import(options: ImportOptions): ImportResult;
-  export(config: ResolvedConfig, options: ExportOptions): ExportResult;
+  export(config: ResolvedConfig, options: ExportOptions): ExportResult | Promise<ExportResult>;
   diff(config: ResolvedConfig): DiffResult;
   schema: AdapterSchema;
   sessionReader?: SessionReader;

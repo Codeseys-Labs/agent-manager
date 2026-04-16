@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
-import { debug, error, info, output } from "../../src/lib/output";
+import { debug, error, info, output, parsePositiveInt } from "../../src/lib/output";
 
 describe("output()", () => {
   let logSpy: ReturnType<typeof spyOn>;
@@ -114,5 +114,31 @@ describe("debug()", () => {
   test("verbose=true but json=true suppresses output", () => {
     debug("trace info", { verbose: true, json: true });
     expect(logSpy).not.toHaveBeenCalled();
+  });
+});
+
+describe("parsePositiveInt()", () => {
+  test("parses valid positive integer", () => {
+    expect(parsePositiveInt("42", "timeout")).toBe(42);
+  });
+
+  test("returns default when value is undefined", () => {
+    expect(parsePositiveInt(undefined, "timeout", 300)).toBe(300);
+  });
+
+  test("throws when value is undefined and no default", () => {
+    expect(() => parsePositiveInt(undefined, "timeout")).toThrow("positive integer");
+  });
+
+  test("throws on non-numeric string", () => {
+    expect(() => parsePositiveInt("abc", "timeout")).toThrow("positive integer");
+  });
+
+  test("throws on negative value", () => {
+    expect(() => parsePositiveInt("-1", "timeout")).toThrow("positive integer");
+  });
+
+  test("zero should throw — parsePositiveInt requires > 0", () => {
+    expect(() => parsePositiveInt("0", "timeout")).toThrow("positive integer");
   });
 });

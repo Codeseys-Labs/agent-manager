@@ -107,7 +107,7 @@ export const applyCommand = defineCommand({
         }
 
         try {
-          const result = adapter.export(resolved, {
+          const result = await adapter.export(resolved, {
             projectPath: projectFile ? join(projectFile, "..") : undefined,
             dryRun: args["dry-run"],
           });

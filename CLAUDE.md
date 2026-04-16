@@ -151,6 +151,7 @@ CLI flags -> ENV vars -> .agent-manager.local.toml -> .agent-manager.toml -> con
 - Use `bun:test` for all tests (`describe`, `it`, `expect`)
 - Use `Bun.file()`, `Bun.write()`, `Bun.spawn()` where appropriate
 - Node `fs/promises` is acceptable for read/write operations (used in config.ts)
+- Adapter files use inline `require("node:fs")` for lazy synchronous filesystem access within try/catch blocks. This is intentional — adapters need synchronous operations and lazy loading. Top-level ESM imports are preferred elsewhere.
 
 ### TDD
 

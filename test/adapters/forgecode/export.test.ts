@@ -56,7 +56,7 @@ describe("forgecode exportConfig()", () => {
       },
     });
 
-    const result = exportConfig(cfg, { projectPath: projectDir, dryRun: true });
+    const result = await exportConfig(cfg, { projectPath: projectDir, dryRun: true });
     const mcpFile = result.files.find((f) => f.path.endsWith(".mcp.json"));
     expect(mcpFile).toBeDefined();
 
@@ -83,7 +83,7 @@ describe("forgecode exportConfig()", () => {
       },
     });
 
-    const result = exportConfig(cfg, { projectPath: projectDir, dryRun: true });
+    const result = await exportConfig(cfg, { projectPath: projectDir, dryRun: true });
     const agentsMdFile = result.files.find((f) => f.path.endsWith("AGENTS.md"));
     expect(agentsMdFile).toBeDefined();
     expect(agentsMdFile?.content).toContain("<!-- am:begin -->");
@@ -104,7 +104,7 @@ describe("forgecode exportConfig()", () => {
       },
     });
 
-    const result = exportConfig(cfg, { projectPath: projectDir, dryRun: true });
+    const result = await exportConfig(cfg, { projectPath: projectDir, dryRun: true });
     for (const file of result.files) {
       expect(file.written).toBe(false);
     }
@@ -124,7 +124,7 @@ describe("forgecode exportConfig()", () => {
       },
     });
 
-    const result = exportConfig(cfg, { projectPath: projectDir, dryRun: true });
+    const result = await exportConfig(cfg, { projectPath: projectDir, dryRun: true });
     const mcpFile = result.files.find((f) => f.path.endsWith(".mcp.json"));
     const parsed = JSON.parse(mcpFile?.content);
     expect(parsed.mcpServers.enabled_one).toBeDefined();
@@ -144,7 +144,7 @@ describe("forgecode exportConfig()", () => {
       },
     });
 
-    const result = exportConfig(cfg, { projectPath: projectDir });
+    const result = await exportConfig(cfg, { projectPath: projectDir });
     const mcpFile = result.files.find((f) => f.path.endsWith(".mcp.json"));
     expect(mcpFile?.written).toBe(true);
     expect(await dir.exists("project/.mcp.json")).toBe(true);
@@ -171,7 +171,7 @@ describe("forgecode exportConfig()", () => {
       },
     });
 
-    const result = exportConfig(cfg, { projectPath: projectDir, dryRun: true });
+    const result = await exportConfig(cfg, { projectPath: projectDir, dryRun: true });
     const agentsMdFile = result.files.find((f) => f.path.endsWith("AGENTS.md"));
     expect(agentsMdFile?.content).toContain("My Custom Rules");
     expect(agentsMdFile?.content).toContain("Do not delete this.");
@@ -195,7 +195,7 @@ describe("forgecode exportConfig()", () => {
       },
     });
 
-    const result = exportConfig(cfg, { projectPath: projectDir, dryRun: true });
+    const result = await exportConfig(cfg, { projectPath: projectDir, dryRun: true });
     const agentsMdFile = result.files.find((f) => f.path.endsWith("AGENTS.md"));
     // Should not generate AGENTS.md since instruction is targeted elsewhere
     expect(agentsMdFile).toBeUndefined();

@@ -58,162 +58,134 @@ function formatUpdate(update: SessionUpdate, opts: { verbose?: boolean }): strin
   }
 }
 
-// ── Main run command ───────────────────────────────────────────
+// ── Core run logic ────────────────────────────────────────────
 
-const runMainCommand = defineCommand({
-  meta: {
-    name: "run",
-    description: "Run an ACP-compatible coding agent",
-  },
-  args: {
-    agent: {
-      type: "positional",
-      description: "Agent name (e.g., claude, codex, gemini) or full command",
-      required: true,
-    },
-    prompt: {
-      type: "positional",
-      description: "Prompt to send to the agent",
-      required: true,
-    },
-    session: {
-      type: "string",
-      alias: "s",
-      description: "Named session ID (resume or create)",
-    },
-    cwd: {
-      type: "string",
-      description: "Working directory for the agent session",
-    },
-    timeout: {
-      type: "string",
-      description: "Timeout in seconds for the agent response (default: 300)",
-    },
-    json: { type: "boolean", description: "JSON output", default: false },
-    quiet: { type: "boolean", alias: "q", description: "Suppress progress output", default: false },
-    verbose: {
-      type: "boolean",
-      alias: "v",
-      description: "Show thinking and usage details",
-      default: false,
-    },
-  },
-  async run({ args }) {
-    const opts = { json: args.json, quiet: args.quiet, verbose: args.verbose };
-    const agentName = args.agent as string;
-    const promptText = args.prompt as string;
-    const sessionName = args.session as string | undefined;
-    const cwd = (args.cwd as string) || process.cwd();
-    const timeoutSecs = parsePositiveInt(args.timeout as string | undefined, "timeout", 300);
+interface RunAgentArgs {
+  agent: string;
+  prompt: string;
+  session?: string;
+  cwd?: string;
+  timeout?: string;
+  json: boolean;
+  quiet: boolean;
+  verbose: boolean;
+}
 
-    const acpSettings = await loadAcpSettings();
+async function runAgent(args: RunAgentArgs): Promise<void> {
+  const opts = { json: args.json, quiet: args.quiet, verbose: args.verbose };
+  const agentName = args.agent;
+  const promptText = args.prompt;
+  const sessionName = args.session;
+  const cwd = args.cwd || process.cwd();
+  const timeoutSecs = parsePositiveInt(args.timeout, "timeout", 300);
 
-    // Resolve the agent command
-    const entry = resolveAgent(agentName, acpSettings);
-    if (!entry) {
-      error(`Unknown agent "${agentName}". Run \`am run agents\` to list available agents.`, opts);
-      process.exitCode = 1;
-      return;
-    }
+  const acpSettings = await loadAcpSettings();
 
-    debug(`Resolved agent: ${agentName} -> ${entry.command} (${entry.source})`, opts);
+  // Resolve the agent command
+  const entry = resolveAgent(agentName, acpSettings);
+  if (!entry) {
+    error(`Unknown agent "${agentName}". Run \`am run agents\` to list available agents.`, opts);
+    process.exitCode = 1;
+    return;
+  }
 
-    const client = createAcpClient();
+  debug(`Resolved agent: ${agentName} -> ${entry.command} (${entry.source})`, opts);
 
-    // Accumulate text for streaming output (non-JSON mode)
-    if (!args.json && !args.quiet) {
-      client.onSessionUpdate((update: SessionUpdate) => {
-        const text = formatUpdate(update, { verbose: args.verbose });
-        if (text !== null) {
-          // For agent text, write without newline to stream
-          if (update.sessionUpdate === "agent_message_chunk") {
-            process.stdout.write(text);
-          } else {
-            console.log(text);
-          }
+  const client = createAcpClient();
+
+  // Accumulate text for streaming output (non-JSON mode)
+  if (!args.json && !args.quiet) {
+    client.onSessionUpdate((update: SessionUpdate) => {
+      const text = formatUpdate(update, { verbose: args.verbose });
+      if (text !== null) {
+        // For agent text, write without newline to stream
+        if (update.sessionUpdate === "agent_message_chunk") {
+          process.stdout.write(text);
+        } else {
+          console.log(text);
         }
-      });
+      }
+    });
+  }
+
+  try {
+    // 1. Connect
+    info(`Connecting to ${agentName}...`, opts);
+    const conn = await client.connect(entry.command, {
+      initTimeout: 30_000,
+    });
+    debug(
+      `Connected: ${conn.agentInfo?.name ?? "unknown"} v${conn.agentInfo?.version ?? "?"}`,
+      opts,
+    );
+
+    // 2. Create or load session
+    let sessionId: string;
+    if (sessionName) {
+      // Try to load existing session first
+      try {
+        await client.loadSession(sessionName, { cwd });
+        sessionId = sessionName;
+        debug(`Loaded session: ${sessionId}`, opts);
+      } catch {
+        // Session doesn't exist — create new with the given name
+        sessionId = await client.newSession({ cwd });
+        debug(`Created new session: ${sessionId} (named: ${sessionName})`, opts);
+      }
+    } else {
+      sessionId = await client.newSession({ cwd });
+      debug(`Created session: ${sessionId}`, opts);
     }
 
-    try {
-      // 1. Connect
-      info(`Connecting to ${agentName}...`, opts);
-      const conn = await client.connect(entry.command, {
-        initTimeout: 30_000,
-      });
-      debug(
-        `Connected: ${conn.agentInfo?.name ?? "unknown"} v${conn.agentInfo?.version ?? "?"}`,
+    // 3. Send prompt with timeout
+    info("", opts); // blank line before agent output
+    const result = await Promise.race([
+      client.prompt(sessionId, [{ type: "text", text: promptText }]),
+      new Promise<never>((_, reject) =>
+        setTimeout(
+          () => reject(new AcpClientError("Prompt timed out", "TIMEOUT")),
+          timeoutSecs * 1000,
+        ),
+      ),
+    ]);
+
+    // Ensure newline after streamed text
+    if (!args.json && !args.quiet) {
+      process.stdout.write("\n");
+    }
+
+    // 4. Output result
+    if (args.json) {
+      output(
+        {
+          agent: agentName,
+          sessionId,
+          stopReason: result.stopReason,
+          text: result.text,
+          toolCalls: result.toolCalls.map((tc) => ({
+            id: tc.toolCallId,
+            title: tc.title,
+            status: tc.status,
+            kind: tc.kind,
+          })),
+          usage: result.usage ?? null,
+        },
         opts,
       );
-
-      // 2. Create or load session
-      let sessionId: string;
-      if (sessionName) {
-        // Try to load existing session first
-        try {
-          await client.loadSession(sessionName, { cwd });
-          sessionId = sessionName;
-          debug(`Loaded session: ${sessionId}`, opts);
-        } catch {
-          // Session doesn't exist — create new with the given name
-          sessionId = await client.newSession({ cwd });
-          debug(`Created new session: ${sessionId} (named: ${sessionName})`, opts);
-        }
-      } else {
-        sessionId = await client.newSession({ cwd });
-        debug(`Created session: ${sessionId}`, opts);
+    } else {
+      if (result.toolCalls.length > 0) {
+        info(`\n${result.toolCalls.length} tool call(s)`, opts);
       }
-
-      // 3. Send prompt with timeout
-      info("", opts); // blank line before agent output
-      const result = await Promise.race([
-        client.prompt(sessionId, [{ type: "text", text: promptText }]),
-        new Promise<never>((_, reject) =>
-          setTimeout(
-            () => reject(new AcpClientError("Prompt timed out", "TIMEOUT")),
-            timeoutSecs * 1000,
-          ),
-        ),
-      ]);
-
-      // Ensure newline after streamed text
-      if (!args.json && !args.quiet) {
-        process.stdout.write("\n");
-      }
-
-      // 4. Output result
-      if (args.json) {
-        output(
-          {
-            agent: agentName,
-            sessionId,
-            stopReason: result.stopReason,
-            text: result.text,
-            toolCalls: result.toolCalls.map((tc) => ({
-              id: tc.toolCallId,
-              title: tc.title,
-              status: tc.status,
-              kind: tc.kind,
-            })),
-            usage: result.usage ?? null,
-          },
-          opts,
-        );
-      } else {
-        if (result.toolCalls.length > 0) {
-          info(`\n${result.toolCalls.length} tool call(s)`, opts);
-        }
-        info(`\nStop reason: ${result.stopReason}`, opts);
-      }
-    } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : String(err);
-      error(`Agent run failed: ${message}`, opts);
-      process.exitCode = 1;
-    } finally {
-      await client.disconnect();
+      info(`\nStop reason: ${result.stopReason}`, opts);
     }
-  },
-});
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err);
+    error(`Agent run failed: ${message}`, opts);
+    process.exitCode = 1;
+  } finally {
+    await client.disconnect();
+  }
+}
 
 // ── Subcommand: am run agents ──────────────────────────────────
 
@@ -403,7 +375,15 @@ export const runCommand = defineCommand({
       return;
     }
 
-    // Delegate to the main run logic
-    await runMainCommand.run!({ args: args as any });
+    await runAgent({
+      agent: args.agent as string,
+      prompt: promptText,
+      session: args.session as string | undefined,
+      cwd: args.cwd as string | undefined,
+      timeout: args.timeout as string | undefined,
+      json: args.json,
+      quiet: args.quiet,
+      verbose: args.verbose,
+    });
   },
 });

@@ -51,7 +51,7 @@ describe("exportConfig()", () => {
       },
     });
 
-    const result = exportConfig(cfg, { dryRun: true }, dir.path);
+    const result = await exportConfig(cfg, { dryRun: true }, dir.path);
     expect(result.files.length).toBeGreaterThanOrEqual(1);
 
     const globalFile = result.files.find((f) => f.path.endsWith(".claude.json"));
@@ -79,7 +79,7 @@ describe("exportConfig()", () => {
       },
     });
 
-    const result = exportConfig(cfg, { dryRun: true }, dir.path);
+    const result = await exportConfig(cfg, { dryRun: true }, dir.path);
     const globalFile = result.files.find((f) => f.path.endsWith(".claude.json"));
     const parsed = JSON.parse(globalFile?.content);
     expect(parsed.mcpServers.outlook.always_allow).toEqual(["email_search", "calendar_view"]);
@@ -102,7 +102,7 @@ describe("exportConfig()", () => {
       },
     });
 
-    const result = exportConfig(cfg, { projectPath: projectDir, dryRun: true }, dir.path);
+    const result = await exportConfig(cfg, { projectPath: projectDir, dryRun: true }, dir.path);
     const claudeMdFile = result.files.find((f) => f.path.endsWith("CLAUDE.md"));
     expect(claudeMdFile).toBeDefined();
     expect(claudeMdFile?.content).toContain("<!-- am:begin -->");
@@ -118,7 +118,7 @@ describe("exportConfig()", () => {
       },
     });
 
-    const result = exportConfig(cfg, { dryRun: true }, dir.path);
+    const result = await exportConfig(cfg, { dryRun: true }, dir.path);
     for (const file of result.files) {
       expect(file.written).toBe(false);
     }
@@ -139,7 +139,7 @@ describe("exportConfig()", () => {
       },
     });
 
-    const result = exportConfig(cfg, { dryRun: true }, dir.path);
+    const result = await exportConfig(cfg, { dryRun: true }, dir.path);
     const globalFile = result.files.find((f) => f.path.endsWith(".claude.json"));
     const parsed = JSON.parse(globalFile?.content);
     expect(parsed.mcpServers.enabled_one).toBeDefined();
@@ -164,7 +164,7 @@ describe("exportConfig()", () => {
       },
     });
 
-    const result = exportConfig(cfg, {}, dir.path);
+    const result = await exportConfig(cfg, {}, dir.path);
     const globalFile = result.files.find((f) => f.path.endsWith(".claude.json"));
     const parsed = JSON.parse(globalFile?.content);
     // Non-MCP fields preserved
@@ -183,7 +183,7 @@ describe("exportConfig()", () => {
       },
     });
 
-    const result = exportConfig(cfg, {}, dir.path);
+    const result = await exportConfig(cfg, {}, dir.path);
     const globalFile = result.files.find((f) => f.path.endsWith(".claude.json"));
     expect(globalFile?.written).toBe(true);
     expect(await dir.exists(".claude.json")).toBe(true);

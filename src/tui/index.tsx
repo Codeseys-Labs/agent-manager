@@ -170,7 +170,7 @@ export async function launchTui(): Promise<void> {
 
     const adapters = await getDetectedAdapters();
     for (const adapter of adapters) {
-      adapter.export(resolved, {
+      await adapter.export(resolved, {
         projectPath: projectFile ? projectFile.replace(/[/\\][^/\\]+$/, "") : undefined,
       });
     }

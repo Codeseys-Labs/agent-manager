@@ -6,9 +6,10 @@
  *   POST /a2a                     — JSON-RPC 2.0 endpoint
  *
  * Supported methods:
- *   tasks/send   — create/update a task (returns immediately, runs handler async)
- *   tasks/get    — query task status (used for polling)
- *   tasks/cancel — cancel a running task
+ *   tasks/send          — create/update a task (returns immediately, runs handler async)
+ *   tasks/sendSubscribe — create/update a task, returns SSE stream of status updates
+ *   tasks/get           — query task status (used for polling)
+ *   tasks/cancel        — cancel a running task
  */
 
 import { Hono } from "hono";
@@ -20,10 +21,12 @@ import type {
   Artifact,
   Message,
   Task,
+  TaskArtifactUpdateEvent,
   TaskCancelParams,
   TaskQueryParams,
   TaskSendParams,
   TaskState,
+  TaskStatusUpdateEvent,
   TextPart,
 } from "./types";
 
@@ -45,6 +48,57 @@ export interface TaskStore {
 
 export function createTaskStore(): TaskStore {
   return new Map<string, Task>();
+}
+
+// ── Task event emitter ────────────────────────────────────────
+
+export type TaskEventType = "status" | "artifact";
+
+export interface TaskEvent {
+  type: TaskEventType;
+  taskId: string;
+  data: TaskStatusUpdateEvent | TaskArtifactUpdateEvent;
+}
+
+export type TaskEventListener = (event: TaskEvent) => void;
+
+/**
+ * Simple event emitter for task state changes. Listeners subscribe per-task
+ * and receive status/artifact events as they happen.
+ */
+export class TaskEventEmitter {
+  private listeners = new Map<string, Set<TaskEventListener>>();
+
+  on(taskId: string, listener: TaskEventListener): void {
+    let set = this.listeners.get(taskId);
+    if (!set) {
+      set = new Set();
+      this.listeners.set(taskId, set);
+    }
+    set.add(listener);
+  }
+
+  off(taskId: string, listener: TaskEventListener): void {
+    const set = this.listeners.get(taskId);
+    if (set) {
+      set.delete(listener);
+      if (set.size === 0) this.listeners.delete(taskId);
+    }
+  }
+
+  emit(event: TaskEvent): void {
+    const set = this.listeners.get(event.taskId);
+    if (set) {
+      for (const listener of set) {
+        listener(event);
+      }
+    }
+  }
+
+  /** Remove all listeners for a task (used after stream closes). */
+  removeAll(taskId: string): void {
+    this.listeners.delete(taskId);
+  }
 }
 
 function isTerminalState(state: TaskState): boolean {
@@ -103,7 +157,12 @@ function getOrCreateTask(store: TaskStore, id: string): Task {
   return task;
 }
 
-function updateTaskState(task: Task, state: TaskState, agentMessage?: Message): void {
+function updateTaskState(
+  task: Task,
+  state: TaskState,
+  agentMessage?: Message,
+  emitter?: TaskEventEmitter,
+): void {
   task.status = {
     state,
     message: agentMessage,
@@ -112,6 +171,17 @@ function updateTaskState(task: Task, state: TaskState, agentMessage?: Message): 
   if (agentMessage) {
     task.history = task.history ?? [];
     task.history.push(agentMessage);
+  }
+  if (emitter) {
+    emitter.emit({
+      type: "status",
+      taskId: task.id,
+      data: {
+        id: task.id,
+        status: task.status,
+        final: isTerminalState(state),
+      } satisfies TaskStatusUpdateEvent,
+    });
   }
 }
 
@@ -305,11 +375,59 @@ function jsonRpcSuccess(id: string | number | null, result: unknown): A2AJsonRpc
   };
 }
 
+/**
+ * Start a task: record user message, set state to working, run handler async.
+ * Shared by both tasks/send and tasks/sendSubscribe.
+ */
+function startTask(
+  store: TaskStore,
+  params: TaskSendParams,
+  config: ResolvedConfig,
+  handler: TaskHandler,
+  emitter: TaskEventEmitter,
+): Task {
+  const task = getOrCreateTask(store, params.id);
+  task.history = task.history ?? [];
+  task.history.push(params.message);
+  updateTaskState(task, "working", undefined, emitter);
+
+  const TERMINAL_STATES: TaskState[] = ["completed", "failed", "canceled"];
+  handler(params.message, config)
+    .then((result) => {
+      if (TERMINAL_STATES.includes(task.status.state)) return;
+      if (result.artifacts) {
+        task.artifacts = result.artifacts;
+        for (const artifact of result.artifacts) {
+          emitter.emit({
+            type: "artifact",
+            taskId: task.id,
+            data: { id: task.id, artifact } satisfies TaskArtifactUpdateEvent,
+          });
+        }
+      }
+      updateTaskState(task, "completed", result.message, emitter);
+    })
+    .catch((err: unknown) => {
+      if (TERMINAL_STATES.includes(task.status.state)) return;
+      const message = err instanceof Error ? err.message : String(err);
+      updateTaskState(task, "failed", {
+        role: "agent",
+        parts: [{ type: "text", text: `Task failed: ${message}` }],
+      }, emitter);
+    })
+    .finally(() => {
+      evictStaleTasks(store);
+    });
+
+  return task;
+}
+
 function handleJsonRpc(
   req: A2AJsonRpcRequest,
   config: ResolvedConfig,
   handler: TaskHandler,
   store: TaskStore,
+  emitter: TaskEventEmitter,
 ): A2AJsonRpcResponse {
   const { id, method, params } = req;
 
@@ -320,31 +438,7 @@ function handleJsonRpc(
         return jsonRpcError(id, -32602, "Invalid params: id and message required");
       }
 
-      const task = getOrCreateTask(store, p.id);
-      // Record the user message
-      task.history = task.history ?? [];
-      task.history.push(p.message);
-      updateTaskState(task, "working");
-
-      // Run handler asynchronously — don't block the response
-      const TERMINAL_STATES: TaskState[] = ["completed", "failed", "canceled"];
-      handler(p.message, config)
-        .then((result) => {
-          if (TERMINAL_STATES.includes(task.status.state)) return; // guard: canceled before completion
-          task.artifacts = result.artifacts ?? task.artifacts;
-          updateTaskState(task, "completed", result.message);
-        })
-        .catch((err: unknown) => {
-          if (TERMINAL_STATES.includes(task.status.state)) return; // guard: canceled before failure
-          const message = err instanceof Error ? err.message : String(err);
-          updateTaskState(task, "failed", {
-            role: "agent",
-            parts: [{ type: "text", text: `Task failed: ${message}` }],
-          });
-        })
-        .finally(() => {
-          evictStaleTasks(store);
-        });
+      const task = startTask(store, p, config, handler, emitter);
 
       // Return immediately with state: "working"
       return jsonRpcSuccess(id, task);
@@ -396,7 +490,7 @@ function handleJsonRpc(
       updateTaskState(task, "canceled", {
         role: "agent",
         parts: [{ type: "text", text: "Task canceled by client." }],
-      });
+      }, emitter);
 
       return jsonRpcSuccess(id, task);
     }
@@ -417,6 +511,8 @@ export interface A2AServerOptions {
   taskHandler?: TaskHandler;
   /** Optional task store. Each call creates its own store if not provided. */
   taskStore?: TaskStore;
+  /** Optional event emitter. Each call creates its own emitter if not provided. */
+  taskEventEmitter?: TaskEventEmitter;
   /** Optional bearer token for auth. When set, POST /a2a requires Authorization: Bearer <token>. */
   auth_token?: string;
 }
@@ -437,9 +533,11 @@ export function createA2ARoutes(options: A2AServerOptions): Hono {
     cardOptions,
     taskHandler = defaultTaskHandler,
     taskStore: externalStore,
+    taskEventEmitter: externalEmitter,
     auth_token,
   } = options;
   const store = externalStore ?? createTaskStore();
+  const emitter = externalEmitter ?? new TaskEventEmitter();
   const a2aApp = new Hono();
 
   // Agent Card endpoint — public by design (A2A spec)
@@ -473,12 +571,84 @@ export function createA2ARoutes(options: A2AServerOptions): Hono {
       return c.json(jsonRpcError(req?.id ?? null, -32600, "Invalid JSON-RPC request"), 400);
     }
 
-    const response = handleJsonRpc(req, config, taskHandler, store);
+    // tasks/sendSubscribe returns an SSE stream instead of a JSON-RPC response
+    if (req.method === "tasks/sendSubscribe") {
+      const p = req.params as unknown as TaskSendParams | undefined;
+      if (!p?.id || !p?.message) {
+        return c.json(
+          jsonRpcError(req.id, -32602, "Invalid params: id and message required"),
+          200,
+        );
+      }
+
+      const task = startTask(store, p, config, taskHandler, emitter);
+
+      // If the task already completed synchronously (very fast handler), return JSON
+      if (isTerminalState(task.status.state)) {
+        return c.json(jsonRpcSuccess(req.id, task));
+      }
+
+      const encoder = new TextEncoder();
+      const stream = new ReadableStream({
+        start(controller) {
+          const send = (event: string, data: unknown) => {
+            controller.enqueue(
+              encoder.encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`),
+            );
+          };
+
+          // Send initial status
+          send("status", {
+            id: task.id,
+            status: task.status,
+            final: false,
+          } satisfies TaskStatusUpdateEvent);
+
+          const listener: TaskEventListener = (evt) => {
+            if (evt.type === "status") {
+              send("status", evt.data);
+              if ((evt.data as TaskStatusUpdateEvent).final) {
+                emitter.off(task.id, listener);
+                controller.close();
+              }
+            } else if (evt.type === "artifact") {
+              send("artifact", evt.data);
+            }
+          };
+
+          emitter.on(task.id, listener);
+
+          // Clean up if the client disconnects
+          c.req.raw.signal.addEventListener("abort", () => {
+            emitter.off(task.id, listener);
+            try {
+              controller.close();
+            } catch {
+              // Stream may already be closed
+            }
+          });
+        },
+      });
+
+      return new Response(stream, {
+        headers: {
+          "Content-Type": "text/event-stream",
+          "Cache-Control": "no-cache",
+          Connection: "keep-alive",
+        },
+      });
+    }
+
+    const response = handleJsonRpc(req, config, taskHandler, store, emitter);
     return c.json(response);
   });
 
-  // Expose store for testing
-  (a2aApp as Hono & { _taskStore: TaskStore })._taskStore = store;
+  // Expose store and emitter for testing
+  (a2aApp as Hono & { _taskStore: TaskStore; _taskEventEmitter: TaskEventEmitter })._taskStore =
+    store;
+  (
+    a2aApp as Hono & { _taskStore: TaskStore; _taskEventEmitter: TaskEventEmitter }
+  )._taskEventEmitter = emitter;
 
   return a2aApp;
 }
@@ -486,4 +656,9 @@ export function createA2ARoutes(options: A2AServerOptions): Hono {
 /** Get the task store from a Hono app created by createA2ARoutes. */
 export function getAppTaskStore(app: Hono): TaskStore {
   return (app as Hono & { _taskStore: TaskStore })._taskStore;
+}
+
+/** Get the event emitter from a Hono app created by createA2ARoutes. */
+export function getAppTaskEventEmitter(app: Hono): TaskEventEmitter {
+  return (app as Hono & { _taskEventEmitter: TaskEventEmitter })._taskEventEmitter;
 }

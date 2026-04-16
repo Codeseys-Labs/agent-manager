@@ -33,7 +33,7 @@ export const codexCliAdapter: Adapter = {
     return importConfig(options);
   },
 
-  export(config: ResolvedConfig, options: ExportOptions): ExportResult {
+  export(config: ResolvedConfig, options: ExportOptions): Promise<ExportResult> {
     return exportConfig(config, options);
   },
 

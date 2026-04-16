@@ -1122,7 +1122,7 @@ function defineTools(): ToolEntry[] {
         const results: Array<{ adapter: string; files: number; warnings: string[] }> = [];
         for (const adapter of adapters) {
           try {
-            const result = adapter.export(resolved, {
+            const result = await adapter.export(resolved, {
               projectPath: projectFile ? join(projectFile, "..") : undefined,
               dryRun: !!args.dryRun,
             });

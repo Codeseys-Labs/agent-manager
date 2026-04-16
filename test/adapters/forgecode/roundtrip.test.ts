@@ -63,7 +63,7 @@ describe("ForgeCode adapter roundtrip", () => {
     };
 
     // 4. Export (writes to disk)
-    const exported = exportConfig(resolved, { projectPath: projectDir });
+    const exported = await exportConfig(resolved, { projectPath: projectDir });
     expect(exported.warnings).toHaveLength(0);
     const mcpFile = exported.files.find((f) => f.path.endsWith(".mcp.json"));
     expect(mcpFile).toBeDefined();
@@ -140,7 +140,7 @@ describe("ForgeCode adapter roundtrip", () => {
     };
 
     // Export
-    const exported = exportConfig(resolved, {
+    const exported = await exportConfig(resolved, {
       projectPath: projectDir,
       dryRun: true,
     });

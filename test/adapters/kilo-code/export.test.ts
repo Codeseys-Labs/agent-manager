@@ -56,7 +56,7 @@ describe("exportConfig()", () => {
       },
     });
 
-    const result = exportConfig(cfg, { dryRun: true }, dir.path);
+    const result = await exportConfig(cfg, { dryRun: true }, dir.path);
     expect(result.files.length).toBeGreaterThanOrEqual(1);
 
     const globalFile = result.files.find((f) => f.path.endsWith("kilo.jsonc"));
@@ -82,7 +82,7 @@ describe("exportConfig()", () => {
       },
     });
 
-    const result = exportConfig(cfg, { dryRun: true }, dir.path);
+    const result = await exportConfig(cfg, { dryRun: true }, dir.path);
     const globalFile = result.files.find((f) => f.path.endsWith("kilo.jsonc"));
     const parsed = JSON.parse(globalFile?.content) as Record<string, unknown>;
     const mcp = parsed.mcp as Record<string, Record<string, unknown>>;
@@ -108,7 +108,7 @@ describe("exportConfig()", () => {
       },
     });
 
-    const result = exportConfig(cfg, { projectPath: projectDir, dryRun: true }, dir.path);
+    const result = await exportConfig(cfg, { projectPath: projectDir, dryRun: true }, dir.path);
     const agentsFile = result.files.find((f) => f.path.endsWith("AGENTS.md"));
     expect(agentsFile).toBeDefined();
     expect(agentsFile?.content).toContain("<!-- am:begin -->");
@@ -124,7 +124,7 @@ describe("exportConfig()", () => {
       },
     });
 
-    const result = exportConfig(cfg, { dryRun: true }, dir.path);
+    const result = await exportConfig(cfg, { dryRun: true }, dir.path);
     for (const file of result.files) {
       expect(file.written).toBe(false);
     }
@@ -143,7 +143,7 @@ describe("exportConfig()", () => {
       },
     });
 
-    const result = exportConfig(cfg, { dryRun: true }, dir.path);
+    const result = await exportConfig(cfg, { dryRun: true }, dir.path);
     const globalFile = result.files.find((f) => f.path.endsWith("kilo.jsonc"));
     const parsed = JSON.parse(globalFile?.content) as Record<string, unknown>;
     const mcp = parsed.mcp as Record<string, unknown>;
@@ -167,7 +167,7 @@ describe("exportConfig()", () => {
       },
     });
 
-    const result = exportConfig(cfg, {}, dir.path);
+    const result = await exportConfig(cfg, {}, dir.path);
     const globalFile = result.files.find((f) => f.path.endsWith("kilo.jsonc"));
     const parsed = JSON.parse(globalFile?.content) as Record<string, unknown>;
     expect(parsed.model).toBe("anthropic/claude-sonnet-4-20250514");
@@ -192,7 +192,7 @@ describe("exportConfig()", () => {
       },
     });
 
-    const result = exportConfig(cfg, {}, dir.path);
+    const result = await exportConfig(cfg, {}, dir.path);
     const globalFile = result.files.find((f) => f.path.endsWith("kilo.jsonc"));
     const parsed = JSON.parse(globalFile?.content) as Record<string, unknown>;
     expect(parsed.mcpServers).toBeUndefined();
@@ -207,7 +207,7 @@ describe("exportConfig()", () => {
       },
     });
 
-    const result = exportConfig(cfg, {}, dir.path);
+    const result = await exportConfig(cfg, {}, dir.path);
     const globalFile = result.files.find((f) => f.path.endsWith("kilo.jsonc"));
     expect(globalFile?.written).toBe(true);
     expect(await dir.exists(".config/kilo/kilo.jsonc")).toBe(true);
@@ -229,7 +229,7 @@ describe("exportConfig()", () => {
       },
     });
 
-    const result = exportConfig(cfg, { projectPath: projectDir, dryRun: true }, dir.path);
+    const result = await exportConfig(cfg, { projectPath: projectDir, dryRun: true }, dir.path);
     const projFile = result.files.find(
       (f) => f.path.endsWith("kilo.jsonc") && f.path.includes("project"),
     );

@@ -62,7 +62,7 @@ describe("Claude Code adapter roundtrip", () => {
     };
 
     // 4. Export (writes to disk)
-    const exported = exportConfig(resolved, {}, dir.path);
+    const exported = await exportConfig(resolved, {}, dir.path);
     expect(exported.warnings).toHaveLength(0);
     const globalFile = exported.files.find((f) => f.path.endsWith(".claude.json"));
     expect(globalFile).toBeDefined();

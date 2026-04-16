@@ -7,11 +7,14 @@ import type { ResolvedConfig } from "../../../src/adapters/types";
 import {
   type A2AServerOptions,
   TASK_TTL_MS,
+  TaskEventEmitter,
   type TaskStore,
   createA2ARoutes,
   createTaskStore,
   getAppTaskStore,
+  getAppTaskEventEmitter,
 } from "../../../src/protocols/a2a/server";
+import type { TaskStatusUpdateEvent, TaskArtifactUpdateEvent } from "../../../src/protocols/a2a/types";
 
 // ── Helpers ─────────────────────────────────────────────────────
 
@@ -976,6 +979,301 @@ describe("A2A Server", () => {
 
       // Working task should NOT be evicted (not in terminal state)
       expect(store.get("ttl-working-old")).toBeDefined();
+    });
+  });
+
+  // ── TaskEventEmitter unit tests ───────────────────────────────
+
+  describe("TaskEventEmitter", () => {
+    test("emits events to registered listeners", () => {
+      const emitter = new TaskEventEmitter();
+      const events: unknown[] = [];
+      emitter.on("task-1", (evt) => events.push(evt));
+
+      emitter.emit({
+        type: "status",
+        taskId: "task-1",
+        data: { id: "task-1", status: { state: "working", timestamp: new Date().toISOString() }, final: false },
+      });
+
+      expect(events).toHaveLength(1);
+    });
+
+    test("does not emit to listeners for other tasks", () => {
+      const emitter = new TaskEventEmitter();
+      const events: unknown[] = [];
+      emitter.on("task-1", (evt) => events.push(evt));
+
+      emitter.emit({
+        type: "status",
+        taskId: "task-2",
+        data: { id: "task-2", status: { state: "working", timestamp: new Date().toISOString() }, final: false },
+      });
+
+      expect(events).toHaveLength(0);
+    });
+
+    test("off removes listener", () => {
+      const emitter = new TaskEventEmitter();
+      const events: unknown[] = [];
+      const listener = (evt: unknown) => events.push(evt);
+      emitter.on("task-1", listener);
+      emitter.off("task-1", listener);
+
+      emitter.emit({
+        type: "status",
+        taskId: "task-1",
+        data: { id: "task-1", status: { state: "working", timestamp: new Date().toISOString() }, final: false },
+      });
+
+      expect(events).toHaveLength(0);
+    });
+
+    test("removeAll clears all listeners for a task", () => {
+      const emitter = new TaskEventEmitter();
+      const events: unknown[] = [];
+      emitter.on("task-1", (evt) => events.push(evt));
+      emitter.on("task-1", (evt) => events.push(evt));
+      emitter.removeAll("task-1");
+
+      emitter.emit({
+        type: "status",
+        taskId: "task-1",
+        data: { id: "task-1", status: { state: "working", timestamp: new Date().toISOString() }, final: false },
+      });
+
+      expect(events).toHaveLength(0);
+    });
+  });
+
+  // ── tasks/sendSubscribe (SSE streaming) ───────────────────────
+
+  describe("POST /a2a — tasks/sendSubscribe", () => {
+    /** Helper to parse SSE events from a Response body. */
+    async function readSSEEvents(res: Response): Promise<Array<{ event: string; data: unknown }>> {
+      const text = await res.text();
+      const events: Array<{ event: string; data: unknown }> = [];
+
+      for (const block of text.split("\n\n")) {
+        if (!block.trim()) continue;
+        let eventType = "message";
+        let dataStr = "";
+        for (const line of block.split("\n")) {
+          if (line.startsWith("event: ")) eventType = line.slice(7).trim();
+          else if (line.startsWith("data: ")) dataStr += line.slice(6);
+        }
+        if (dataStr) {
+          try {
+            events.push({ event: eventType, data: JSON.parse(dataStr) });
+          } catch {
+            // skip malformed
+          }
+        }
+      }
+
+      return events;
+    }
+
+    test("returns SSE stream with status updates for a completing task", async () => {
+      const store = createTaskStore();
+      const app = makeApp({}, { taskStore: store });
+
+      const res = await jsonRpcRequest(app, {
+        jsonrpc: "2.0",
+        id: 1,
+        method: "tasks/sendSubscribe",
+        params: {
+          id: "stream-task-001",
+          message: {
+            role: "user",
+            parts: [{ type: "text", text: "status" }],
+          },
+        },
+      });
+
+      expect(res.status).toBe(200);
+      expect(res.headers.get("Content-Type")).toBe("text/event-stream");
+
+      const events = await readSSEEvents(res);
+
+      // Should have at least 2 status events: initial "working" + final "completed"
+      const statusEvents = events.filter((e) => e.event === "status");
+      expect(statusEvents.length).toBeGreaterThanOrEqual(2);
+
+      // First event should be working
+      const first = statusEvents[0].data as TaskStatusUpdateEvent;
+      expect(first.id).toBe("stream-task-001");
+      expect(first.status.state).toBe("working");
+      expect(first.final).toBe(false);
+
+      // Last event should be completed with final=true
+      const last = statusEvents[statusEvents.length - 1].data as TaskStatusUpdateEvent;
+      expect(last.status.state).toBe("completed");
+      expect(last.final).toBe(true);
+    });
+
+    test("returns SSE stream with failed status on handler error", async () => {
+      const store = createTaskStore();
+      const app = makeApp(
+        {},
+        {
+          taskStore: store,
+          taskHandler: async () => {
+            throw new Error("stream handler boom");
+          },
+        },
+      );
+
+      const res = await jsonRpcRequest(app, {
+        jsonrpc: "2.0",
+        id: 1,
+        method: "tasks/sendSubscribe",
+        params: {
+          id: "stream-fail-001",
+          message: {
+            role: "user",
+            parts: [{ type: "text", text: "crash" }],
+          },
+        },
+      });
+
+      expect(res.status).toBe(200);
+      expect(res.headers.get("Content-Type")).toBe("text/event-stream");
+
+      const events = await readSSEEvents(res);
+      const statusEvents = events.filter((e) => e.event === "status");
+
+      // Last event should be failed
+      const last = statusEvents[statusEvents.length - 1].data as TaskStatusUpdateEvent;
+      expect(last.status.state).toBe("failed");
+      expect(last.final).toBe(true);
+    });
+
+    test("emits artifact events when handler produces artifacts", async () => {
+      const store = createTaskStore();
+      const app = makeApp(
+        {},
+        {
+          taskStore: store,
+          taskHandler: async () => ({
+            message: {
+              role: "agent" as const,
+              parts: [{ type: "text" as const, text: "done with artifact" }],
+            },
+            artifacts: [
+              {
+                name: "result.json",
+                description: "Test artifact",
+                parts: [{ type: "data" as const, data: { key: "value" } }],
+              },
+            ],
+          }),
+        },
+      );
+
+      const res = await jsonRpcRequest(app, {
+        jsonrpc: "2.0",
+        id: 1,
+        method: "tasks/sendSubscribe",
+        params: {
+          id: "stream-artifact-001",
+          message: {
+            role: "user",
+            parts: [{ type: "text", text: "produce artifact" }],
+          },
+        },
+      });
+
+      const events = await readSSEEvents(res);
+      const artifactEvents = events.filter((e) => e.event === "artifact");
+
+      expect(artifactEvents.length).toBeGreaterThanOrEqual(1);
+      const artifact = (artifactEvents[0].data as TaskArtifactUpdateEvent).artifact;
+      expect(artifact.name).toBe("result.json");
+    });
+
+    test("returns JSON-RPC error for missing params", async () => {
+      const app = makeApp();
+      const res = await jsonRpcRequest(app, {
+        jsonrpc: "2.0",
+        id: 1,
+        method: "tasks/sendSubscribe",
+        params: {},
+      });
+
+      expect(res.status).toBe(200);
+      const data = (await res.json()) as { error: { code: number; message: string } };
+      expect(data.error).toBeDefined();
+      expect(data.error.code).toBe(-32602);
+      expect(data.error.message).toContain("id and message required");
+    });
+
+    test("tasks/send still works unchanged (non-streaming path)", async () => {
+      const app = makeApp();
+      const res = await jsonRpcRequest(app, {
+        jsonrpc: "2.0",
+        id: 1,
+        method: "tasks/send",
+        params: {
+          id: "non-stream-001",
+          message: {
+            role: "user",
+            parts: [{ type: "text", text: "status" }],
+          },
+        },
+      });
+
+      expect(res.status).toBe(200);
+      const data = (await res.json()) as {
+        jsonrpc: string;
+        result: { id: string; status: { state: string } };
+      };
+      expect(data.jsonrpc).toBe("2.0");
+      expect(data.result.id).toBe("non-stream-001");
+      expect(data.result.status.state).toBe("working");
+    });
+
+    test("SSE stream respects bearer token auth", async () => {
+      const app = makeApp({}, { auth_token: "secret-token-123" });
+
+      // Without token — should fail
+      const res = await jsonRpcRequest(app, {
+        jsonrpc: "2.0",
+        id: 1,
+        method: "tasks/sendSubscribe",
+        params: {
+          id: "stream-auth-001",
+          message: { role: "user", parts: [{ type: "text", text: "status" }] },
+        },
+      });
+      expect(res.status).toBe(401);
+
+      // With valid token — should succeed
+      const authRes = await app.request("/a2a", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: "Bearer secret-token-123",
+        },
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: 2,
+          method: "tasks/sendSubscribe",
+          params: {
+            id: "stream-auth-002",
+            message: { role: "user", parts: [{ type: "text", text: "status" }] },
+          },
+        }),
+      });
+      expect(authRes.status).toBe(200);
+      expect(authRes.headers.get("Content-Type")).toBe("text/event-stream");
+    });
+
+    test("getAppTaskEventEmitter returns the emitter", () => {
+      const app = makeApp();
+      const emitter = getAppTaskEventEmitter(app);
+      expect(emitter).toBeDefined();
+      expect(emitter).toBeInstanceOf(TaskEventEmitter);
     });
   });
 });
