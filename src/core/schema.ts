@@ -77,6 +77,7 @@ export const SkillSchema = z.object({
   path: z.string(),
   description: z.string(),
   tags: z.array(z.string()).optional(),
+  _marketplace: MarketplaceProvenanceSchema.optional(),
   adapters: adaptersPassthrough,
 });
 export type Skill = z.infer<typeof SkillSchema>;
@@ -98,6 +99,7 @@ export const AgentProfileSchema = z
     max_turns: z.number().optional(),
     acp: z.object({ command: z.string() }).optional(),
     a2a: z.object({ url: z.string() }).optional(),
+    _marketplace: MarketplaceProvenanceSchema.optional(),
     adapters: adaptersPassthrough,
   })
   .refine((data) => !(data.prompt && data.prompt_file), {

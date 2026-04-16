@@ -41,6 +41,8 @@ export const TOP_LEVEL_COMMANDS = [
   "mcp-serve",
   "tui",
   "serve",
+  "flow",
+  "marketplace",
   "completion",
 ] as const;
 
@@ -57,6 +59,8 @@ export const SUBCOMMANDS: Record<string, readonly string[]> = {
   session: ["list", "export", "search"],
   adapter: ["list"],
   run: ["agents", "session"],
+  flow: ["run", "list", "status"],
+  marketplace: ["add", "list", "install", "update", "remove", "search", "uninstall"],
 };
 
 /** Global flags shared across all commands. */

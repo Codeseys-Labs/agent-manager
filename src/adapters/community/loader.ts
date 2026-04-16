@@ -5,6 +5,7 @@
  * CommunityAdapterProxy for each enabled adapter, and caches them.
  */
 
+import { createHash } from "node:crypto";
 import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import * as TOML from "@iarna/toml";
@@ -17,6 +18,44 @@ import type { AdaptersToml, CommunityAdapterConfig } from "./types.ts";
 const ADAPTERS_TOML = "adapters.toml";
 
 const proxyCache = new Map<string, CommunityAdapterProxy>();
+
+/**
+ * Verify the SHA256 checksum of an adapter binary against the stored checksum.
+ * Throws if the checksum doesn't match. Warns (returns) if no checksum is stored.
+ */
+export async function verifyChecksum(name: string, command: string, storedChecksum: string | undefined): Promise<void> {
+  if (!storedChecksum) {
+    console.error(`warning: community adapter "${name}" has no checksum in adapters.toml — skipping integrity check`);
+    return;
+  }
+
+  // Expected format: "sha256:<hex>"
+  const colonIdx = storedChecksum.indexOf(":");
+  if (colonIdx === -1) {
+    throw new Error(
+      `Adapter binary checksum format invalid for "${name}". Expected "sha256:<hex>", got "${storedChecksum}"`,
+    );
+  }
+  const expectedHash = storedChecksum.slice(colonIdx + 1);
+
+  let binaryData: Buffer;
+  try {
+    binaryData = await readFile(command);
+  } catch (err) {
+    if (isNotFound(err)) {
+      throw new Error(`Adapter binary not found for "${name}": ${command}`);
+    }
+    throw err;
+  }
+
+  const actualHash = createHash("sha256").update(binaryData).digest("hex");
+
+  if (actualHash !== expectedHash) {
+    throw new Error(
+      `Adapter binary checksum mismatch for ${name}. Expected ${expectedHash}, got ${actualHash}. The adapter may have been tampered with.`,
+    );
+  }
+}
 
 /** Read and parse adapters.toml. Returns empty record if file doesn't exist. */
 export async function readAdaptersToml(configDir: string): Promise<AdaptersToml> {
@@ -51,14 +90,22 @@ export async function loadCommunityAdapters(
   for (const [name, config] of Object.entries(toml.adapters)) {
     if (config.enabled === false) continue;
 
-    // Return cached proxy if available
+    // Return cached proxy if alive
     const cached = proxyCache.get(name);
     if (cached) {
-      loaded.set(name, cached);
-      continue;
+      if (cached.isAlive()) {
+        loaded.set(name, cached);
+        continue;
+      }
+      // Dead proxy — evict from cache and respawn below
+      cached.kill();
+      proxyCache.delete(name);
     }
 
     try {
+      // Verify binary integrity before spawning
+      await verifyChecksum(name, config.command, config.checksum);
+
       const proxy = await CommunityAdapterProxy.create(config.command);
       proxyCache.set(name, proxy);
       loaded.set(name, proxy);

@@ -96,6 +96,8 @@ describe("marketplace/installer", () => {
       expect(result.skills).toEqual(["my-skill", "other-skill"]);
       expect(config.skills?.["my-skill"]).toBeDefined();
       expect(config.skills?.["my-skill"].path).toBe("/fake/path/skill-plugin/skills/my-skill/");
+      expect(config.skills?.["my-skill"]._marketplace).toBeDefined();
+      expect(config.skills?.["my-skill"]._marketplace?.package).toBe("skill-plugin");
     });
 
     test("adds agents from plugin manifest to config", () => {
@@ -123,6 +125,8 @@ describe("marketplace/installer", () => {
       expect(result.agents).toEqual(["research-agent"]);
       expect(config.agents?.["research-agent"]).toBeDefined();
       expect(config.agents?.["research-agent"].name).toBe("Research Agent");
+      expect(config.agents?.["research-agent"]._marketplace).toBeDefined();
+      expect(config.agents?.["research-agent"]._marketplace?.package).toBe("agent-plugin");
     });
 
     test("initializes config sections if missing", () => {
@@ -327,6 +331,71 @@ describe("marketplace/installer", () => {
       // Verify adapters.toml was cleaned up
       const adaptersToml = await readAdaptersToml(configDir);
       expect(adaptersToml.adapters["adapter-plugin"]).toBeUndefined();
+    });
+
+    test("removes skills and agents with matching _marketplace provenance", async () => {
+      const configDir = dir.path;
+      await initRepo(configDir);
+
+      const config: Config = {
+        servers: {
+          "mp-server": {
+            command: "cmd",
+            transport: "stdio",
+            enabled: true,
+            _marketplace: {
+              source: "claude-plugin",
+              package: "full-plugin",
+              version: "1.0.0",
+              imported_at: "2024-01-01T00:00:00Z",
+            },
+          },
+        },
+        skills: {
+          "mp-skill": {
+            path: "/some/path",
+            description: "From plugin: full-plugin",
+            _marketplace: {
+              source: "claude-plugin",
+              package: "full-plugin",
+              version: "1.0.0",
+              imported_at: "2024-01-01T00:00:00Z",
+            },
+          },
+          "manual-skill": {
+            path: "/other/path",
+            description: "Manually added",
+          },
+        },
+        agents: {
+          "mp-agent": {
+            name: "MP Agent",
+            description: "From plugin: full-plugin",
+            _marketplace: {
+              source: "claude-plugin",
+              package: "full-plugin",
+              version: "1.0.0",
+              imported_at: "2024-01-01T00:00:00Z",
+            },
+          },
+          "manual-agent": {
+            name: "Manual Agent",
+          },
+        },
+      };
+      await writeConfig(join(configDir, "config.toml"), config);
+
+      const result = await uninstallPlugin("full-plugin");
+
+      expect(result.removedServers).toEqual(["mp-server"]);
+      expect(result.removedSkills).toEqual(["mp-skill"]);
+      expect(result.removedAgents).toEqual(["mp-agent"]);
+
+      const updated = await readConfig(join(configDir, "config.toml"));
+      expect(updated.skills?.["mp-skill"]).toBeUndefined();
+      expect(updated.skills?.["manual-skill"]).toBeDefined();
+      expect(updated.agents?.["mp-agent"]).toBeUndefined();
+      expect(updated.agents?.["manual-agent"]).toBeDefined();
     });
 
     test("throws when no entities found for plugin", async () => {

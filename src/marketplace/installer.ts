@@ -144,6 +144,13 @@ export function applyPlugin(config: Config, plugin: DiscoveredPlugin): InstallRe
       const skill: Skill = {
         path: join(plugin.pluginDir, skillPath),
         description: `From plugin: ${manifest.name}`,
+        _marketplace: {
+          source: "claude-plugin",
+          package: manifest.name,
+          version: manifest.version ?? "0.0.0",
+          imported_at: provenance.installed_at,
+          install_path: plugin.pluginDir,
+        },
       };
       config.skills[skillName] = skill;
       result.skills.push(skillName);
@@ -161,6 +168,13 @@ export function applyPlugin(config: Config, plugin: DiscoveredPlugin): InstallRe
         prompt_file: agentDef.prompt_file,
         model: agentDef.model,
         tools: agentDef.tools,
+        _marketplace: {
+          source: "claude-plugin",
+          package: manifest.name,
+          version: manifest.version ?? "0.0.0",
+          imported_at: provenance.installed_at,
+          install_path: plugin.pluginDir,
+        },
       };
       config.agents[name] = agent;
       result.agents.push(name);
@@ -197,22 +211,20 @@ export async function uninstallPlugin(pluginName: string): Promise<UninstallResu
     }
   }
 
-  // For skills and agents, we check description convention
-  // since they don't have _marketplace provenance fields
+  // Remove skills with matching provenance
   if (config.skills) {
     for (const [name, skill] of Object.entries(config.skills)) {
-      if (skill.description === `From plugin: ${pluginName}`) {
+      if (skill._marketplace?.package === pluginName) {
         delete config.skills[name];
         result.removedSkills.push(name);
       }
     }
   }
 
+  // Remove agents with matching provenance
   if (config.agents) {
-    for (const [name, _agent] of Object.entries(config.agents)) {
-      // Check if this was installed from the plugin
-      // We use a description-based convention check
-      if (config.agents[name].description === `From plugin: ${pluginName}`) {
+    for (const [name, agent] of Object.entries(config.agents)) {
+      if (agent._marketplace?.package === pluginName) {
         delete config.agents[name];
         result.removedAgents.push(name);
       }

@@ -214,6 +214,9 @@ export function interpolateTemplate(template: string, input: Record<string, unkn
 
 // ── Flow Runner ───────────────────────────────────────────────
 
+/** Default maximum steps before aborting a flow run. */
+export const DEFAULT_MAX_FLOW_STEPS = 1000;
+
 export interface FlowRunnerOptions {
   /** Working directory for action/acp nodes. */
   cwd?: string;
@@ -225,6 +228,8 @@ export interface FlowRunnerOptions {
   acpExecutor?: AcpNodeExecutor;
   /** Checkpoint handler (required if flow contains checkpoint nodes). */
   checkpointHandler?: CheckpointHandler;
+  /** Maximum steps before aborting (guards against infinite loops). */
+  maxSteps?: number;
 }
 
 /** Generate a unique run ID. */
@@ -251,6 +256,77 @@ function findEntryNode(flow: FlowDefinition): string {
   }
   // Fallback: first node
   return nodeIds[0];
+}
+
+/**
+ * Detect cycles in a flow graph using DFS.
+ * Returns the cycle path (e.g. ["A", "B", "A"]) if found, or null if acyclic.
+ */
+export function detectCycles(flow: FlowDefinition): string[] | null {
+  const adjacency = new Map<string, string[]>();
+  for (const nodeId of Object.keys(flow.nodes)) {
+    adjacency.set(nodeId, []);
+  }
+  for (const edge of flow.edges) {
+    const targets: string[] = [];
+    if (isConditionalEdge(edge)) {
+      for (const target of Object.values(edge.cases)) targets.push(target);
+      if (edge.default) targets.push(edge.default);
+    } else {
+      targets.push(edge.to);
+    }
+    const existing = adjacency.get(edge.from) ?? [];
+    existing.push(...targets);
+    adjacency.set(edge.from, existing);
+  }
+
+  const visited = new Set<string>();
+  const inStack = new Set<string>();
+  const parent = new Map<string, string>();
+
+  for (const startNode of adjacency.keys()) {
+    if (visited.has(startNode)) continue;
+
+    const stack: string[] = [startNode];
+    while (stack.length > 0) {
+      const node = stack[stack.length - 1];
+
+      if (!visited.has(node)) {
+        visited.add(node);
+        inStack.add(node);
+      }
+
+      const neighbors = adjacency.get(node) ?? [];
+      let pushed = false;
+      for (const neighbor of neighbors) {
+        if (!visited.has(neighbor)) {
+          parent.set(neighbor, node);
+          stack.push(neighbor);
+          pushed = true;
+          break;
+        }
+        if (inStack.has(neighbor)) {
+          // Reconstruct cycle path
+          const cycle: string[] = [neighbor, node];
+          let cur = node;
+          while (cur !== neighbor) {
+            cur = parent.get(cur)!;
+            if (cur === undefined) break;
+            cycle.push(cur);
+          }
+          cycle.reverse();
+          return cycle;
+        }
+      }
+
+      if (!pushed) {
+        inStack.delete(node);
+        stack.pop();
+      }
+    }
+  }
+
+  return null;
 }
 
 /** Find the next node after the current one, following edges. */
@@ -282,6 +358,16 @@ export async function runFlow(
   flow: FlowDefinition,
   opts?: FlowRunnerOptions,
 ): Promise<FlowRunState> {
+  // Pre-flight: detect cycles before starting
+  const cycle = detectCycles(flow);
+  if (cycle) {
+    throw new FlowError(
+      `Cycle detected in flow: ${cycle.join(" \u2192 ")}`,
+      "CYCLE_DETECTED",
+    );
+  }
+
+  const maxSteps = opts?.maxSteps ?? DEFAULT_MAX_FLOW_STEPS;
   const runsDir = opts?.runsDir ?? defaultRunsDir();
   const cwd = opts?.cwd ?? process.cwd();
   const runId = generateRunId();
@@ -313,8 +399,20 @@ export async function runFlow(
   // Find the entry node
   let currentId: string | null = findEntryNode(flow);
   let currentInput: Record<string, unknown> = opts?.input ?? {};
+  let stepCount = 0;
 
   while (currentId !== null) {
+    stepCount++;
+    if (stepCount > maxSteps) {
+      state.status = "failed";
+      state.updatedAt = new Date().toISOString();
+      await saveRunState(state, runsDir);
+      throw new FlowError(
+        `Flow exceeded maximum steps (${maxSteps}). Possible infinite loop.`,
+        "MAX_STEPS_EXCEEDED",
+      );
+    }
+
     const node = flow.nodes[currentId];
     if (!node) {
       state.status = "failed";
@@ -332,7 +430,7 @@ export async function runFlow(
     await saveRunState(state, runsDir);
 
     try {
-      const output = await executeNode(node, currentInput, cwd, opts);
+      const output = await executeNode(node, currentInput, cwd, opts, currentId);
 
       nodeState.status = "completed";
       nodeState.output = output;
@@ -383,7 +481,8 @@ async function executeNode(
   node: FlowNode,
   input: Record<string, unknown>,
   cwd: string,
-  opts?: FlowRunnerOptions,
+  opts: FlowRunnerOptions | undefined,
+  nodeId: string,
 ): Promise<unknown> {
   switch (node.type) {
     case "acp":
@@ -393,7 +492,7 @@ async function executeNode(
     case "compute":
       return executeComputeNode(node, input);
     case "checkpoint":
-      return executeCheckpointNode(node, input, opts);
+      return executeCheckpointNode(node, input, opts, nodeId);
   }
 }
 
@@ -452,11 +551,12 @@ async function executeComputeNode(
 async function executeCheckpointNode(
   node: CheckpointNode,
   _input: Record<string, unknown>,
-  opts?: FlowRunnerOptions,
+  opts: FlowRunnerOptions | undefined,
+  nodeId: string,
 ): Promise<unknown> {
   if (opts?.checkpointHandler) {
     // Handler returns external input to continue the flow
-    return opts.checkpointHandler(node.message ?? "checkpoint", node.message);
+    return opts.checkpointHandler(nodeId, node.message);
   }
   // No handler — pause the flow
   throw new FlowPausedError(node.message ?? "Flow paused at checkpoint");

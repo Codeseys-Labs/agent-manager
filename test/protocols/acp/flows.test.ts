@@ -5,6 +5,7 @@ import { join } from "node:path";
 import {
   type AcpNodeExecutor,
   type CheckpointHandler,
+  DEFAULT_MAX_FLOW_STEPS,
   type FlowDefinition,
   FlowError,
   FlowPausedError,
@@ -12,6 +13,7 @@ import {
   action,
   checkpoint,
   compute,
+  detectCycles,
   defineFlow,
   interpolateTemplate,
   listRuns,
@@ -652,6 +654,271 @@ describe("FlowPausedError", () => {
   test("works without data", () => {
     const err = new FlowPausedError("paused");
     expect(err.data).toBeUndefined();
+  });
+});
+
+// ── Cycle detection ──────────────────────────────────────────
+
+describe("detectCycles", () => {
+  test("returns null for acyclic linear graph", () => {
+    const flow = defineFlow({
+      name: "linear",
+      nodes: {
+        a: compute({ fn: () => ({}) }),
+        b: compute({ fn: () => ({}) }),
+        c: compute({ fn: () => ({}) }),
+      },
+      edges: [
+        { from: "a", to: "b" },
+        { from: "b", to: "c" },
+      ],
+    });
+    expect(detectCycles(flow)).toBeNull();
+  });
+
+  test("returns null for single node with no edges", () => {
+    const flow = defineFlow({
+      name: "single",
+      nodes: { a: compute({ fn: () => ({}) }) },
+      edges: [],
+    });
+    expect(detectCycles(flow)).toBeNull();
+  });
+
+  test("detects simple A->B->A cycle", () => {
+    const flow = defineFlow({
+      name: "cycle-ab",
+      nodes: {
+        a: compute({ fn: () => ({}) }),
+        b: compute({ fn: () => ({}) }),
+      },
+      edges: [
+        { from: "a", to: "b" },
+        { from: "b", to: "a" },
+      ],
+    });
+    const cycle = detectCycles(flow);
+    expect(cycle).not.toBeNull();
+    expect(cycle!.length).toBeGreaterThanOrEqual(2);
+    expect(cycle!).toContain("a");
+    expect(cycle!).toContain("b");
+  });
+
+  test("detects self-loop", () => {
+    const flow = defineFlow({
+      name: "self-loop",
+      nodes: { a: compute({ fn: () => ({}) }) },
+      edges: [{ from: "a", to: "a" }],
+    });
+    const cycle = detectCycles(flow);
+    expect(cycle).not.toBeNull();
+    expect(cycle!).toContain("a");
+  });
+
+  test("detects cycle in larger graph", () => {
+    const flow = defineFlow({
+      name: "larger-cycle",
+      nodes: {
+        a: compute({ fn: () => ({}) }),
+        b: compute({ fn: () => ({}) }),
+        c: compute({ fn: () => ({}) }),
+        d: compute({ fn: () => ({}) }),
+      },
+      edges: [
+        { from: "a", to: "b" },
+        { from: "b", to: "c" },
+        { from: "c", to: "d" },
+        { from: "d", to: "b" }, // cycle: b -> c -> d -> b
+      ],
+    });
+    const cycle = detectCycles(flow);
+    expect(cycle).not.toBeNull();
+  });
+
+  test("detects cycle through conditional edges", () => {
+    const flow = defineFlow({
+      name: "conditional-cycle",
+      nodes: {
+        a: compute({ fn: () => ({}) }),
+        b: compute({ fn: () => ({}) }),
+      },
+      edges: [
+        {
+          from: "a",
+          switch: () => "loop",
+          cases: { loop: "b" },
+        },
+        { from: "b", to: "a" },
+      ],
+    });
+    const cycle = detectCycles(flow);
+    expect(cycle).not.toBeNull();
+  });
+
+  test("returns null for diamond graph (no cycle)", () => {
+    const flow = defineFlow({
+      name: "diamond",
+      nodes: {
+        a: compute({ fn: () => ({}) }),
+        b: compute({ fn: () => ({}) }),
+        c: compute({ fn: () => ({}) }),
+        d: compute({ fn: () => ({}) }),
+      },
+      edges: [
+        { from: "a", to: "b" },
+        { from: "a", to: "c" },
+        { from: "b", to: "d" },
+        { from: "c", to: "d" },
+      ],
+    });
+    expect(detectCycles(flow)).toBeNull();
+  });
+});
+
+describe("runFlow rejects cyclic flows", () => {
+  test("throws FlowError with CYCLE_DETECTED code", async () => {
+    const flow = defineFlow({
+      name: "cyclic-flow",
+      nodes: {
+        a: compute({ fn: () => ({}) }),
+        b: compute({ fn: () => ({}) }),
+      },
+      edges: [
+        { from: "a", to: "b" },
+        { from: "b", to: "a" },
+      ],
+    });
+
+    try {
+      await runFlow(flow, { runsDir });
+      expect(true).toBe(false); // should not reach
+    } catch (err) {
+      expect(err).toBeInstanceOf(FlowError);
+      expect((err as FlowError).code).toBe("CYCLE_DETECTED");
+      expect((err as FlowError).message).toContain("Cycle detected in flow");
+    }
+  });
+});
+
+// ── Max steps guard ──────────────────────────────────────────
+
+describe("Max steps guard", () => {
+  test("DEFAULT_MAX_FLOW_STEPS is 1000", () => {
+    expect(DEFAULT_MAX_FLOW_STEPS).toBe(1000);
+  });
+
+  test("throws FlowError when maxSteps exceeded", async () => {
+    // Create a long chain that exceeds a low maxSteps
+    const nodes: Record<string, import("../../../src/protocols/acp/flows").FlowNode> = {};
+    const edges: import("../../../src/protocols/acp/flows").FlowEdge[] = [];
+    for (let i = 0; i < 6; i++) {
+      nodes[`n${i}`] = compute({ fn: () => ({}) });
+      if (i > 0) edges.push({ from: `n${i - 1}`, to: `n${i}` });
+    }
+
+    const flow = defineFlow({ name: "long-chain", nodes, edges });
+
+    try {
+      await runFlow(flow, { runsDir, maxSteps: 3 });
+      expect(true).toBe(false); // should not reach
+    } catch (err) {
+      expect(err).toBeInstanceOf(FlowError);
+      expect((err as FlowError).code).toBe("MAX_STEPS_EXCEEDED");
+      expect((err as FlowError).message).toContain("maximum steps (3)");
+    }
+  });
+
+  test("flow completes when under maxSteps limit", async () => {
+    const flow = defineFlow({
+      name: "short-flow",
+      nodes: {
+        a: compute({ fn: () => ({ x: 1 }) }),
+        b: compute({ fn: () => ({ x: 2 }) }),
+      },
+      edges: [{ from: "a", to: "b" }],
+    });
+
+    const result = await runFlow(flow, { runsDir, maxSteps: 5 });
+    expect(result.status).toBe("completed");
+    expect(result.executionOrder).toEqual(["a", "b"]);
+  });
+
+  test("maxSteps persists failed state", async () => {
+    const nodes: Record<string, import("../../../src/protocols/acp/flows").FlowNode> = {};
+    const edges: import("../../../src/protocols/acp/flows").FlowEdge[] = [];
+    for (let i = 0; i < 5; i++) {
+      nodes[`n${i}`] = compute({ fn: () => ({}) });
+      if (i > 0) edges.push({ from: `n${i - 1}`, to: `n${i}` });
+    }
+
+    const flow = defineFlow({ name: "exceed-persist", nodes, edges });
+
+    try {
+      await runFlow(flow, { runsDir, maxSteps: 2 });
+    } catch {
+      // expected
+    }
+
+    const runs = await listRuns(runsDir);
+    expect(runs).toHaveLength(1);
+    expect(runs[0].status).toBe("failed");
+  });
+});
+
+// ── Checkpoint handler receives correct nodeId ───────────────
+
+describe("Checkpoint handler nodeId", () => {
+  test("checkpoint handler receives the node ID, not the message", async () => {
+    let receivedNodeId: string | undefined;
+    let receivedMessage: string | undefined;
+
+    const handler: CheckpointHandler = async (nodeId, message) => {
+      receivedNodeId = nodeId;
+      receivedMessage = message;
+      return { approved: true };
+    };
+
+    const flow = defineFlow({
+      name: "checkpoint-nodeid",
+      nodes: {
+        step1: compute({ fn: () => ({ ready: true }) }),
+        myCheckpoint: checkpoint({ message: "Please review this" }),
+        step3: compute({ fn: () => ({ done: true }) }),
+      },
+      edges: [
+        { from: "step1", to: "myCheckpoint" },
+        { from: "myCheckpoint", to: "step3" },
+      ],
+    });
+
+    await runFlow(flow, { runsDir, checkpointHandler: handler });
+
+    expect(receivedNodeId).toBe("myCheckpoint");
+    expect(receivedMessage).toBe("Please review this");
+  });
+
+  test("checkpoint handler receives undefined message when not set", async () => {
+    let receivedNodeId: string | undefined;
+    let receivedMessage: string | undefined;
+
+    const handler: CheckpointHandler = async (nodeId, message) => {
+      receivedNodeId = nodeId;
+      receivedMessage = message;
+      return {};
+    };
+
+    const flow = defineFlow({
+      name: "checkpoint-no-message",
+      nodes: {
+        review: checkpoint(),
+      },
+      edges: [],
+    });
+
+    await runFlow(flow, { runsDir, checkpointHandler: handler });
+
+    expect(receivedNodeId).toBe("review");
+    expect(receivedMessage).toBeUndefined();
   });
 });
 

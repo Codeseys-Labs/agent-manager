@@ -175,6 +175,34 @@ describe("scanClaudePlugins()", () => {
     expect(result.items[0].version).toBe("0.1.0");
   });
 
+  test("skips plugin IDs with path traversal sequences", async () => {
+    dir = await createTestDir("am-marketplace-");
+    await dir.write(
+      ".claude/settings.json",
+      JSON.stringify({
+        enabledPlugins: [
+          "../../../etc/passwd",
+          "..\\windows\\system32",
+          "/absolute/path",
+          "",
+          "valid-plugin",
+        ],
+      }),
+    );
+    await dir.write(
+      ".claude/plugins/valid-plugin/plugin.json",
+      JSON.stringify({ name: "valid", version: "1.0.0" }),
+    );
+
+    const result = scanClaudePlugins(dir.path);
+    // Only the valid plugin should be scanned
+    expect(result.items).toHaveLength(1);
+    expect(result.items[0].name).toBe("valid");
+    // Path traversal IDs should produce warnings
+    const traversalWarnings = result.warnings.filter((w) => w.includes("invalid plugin ID"));
+    expect(traversalWarnings).toHaveLength(4);
+  });
+
   test("defaults version to unknown when not in manifest", async () => {
     dir = await createTestDir("am-marketplace-");
     await dir.write(

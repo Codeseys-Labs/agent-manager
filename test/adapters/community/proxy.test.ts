@@ -95,6 +95,20 @@ describe("CommunityAdapterProxy", () => {
   });
 });
 
+describe("CommunityAdapterProxy.isAlive()", () => {
+  it("returns true when subprocess is running", async () => {
+    const p = await CommunityAdapterProxy.create("bun", [MOCK_ADAPTER]);
+    expect(p.isAlive()).toBe(true);
+    p.kill();
+  });
+
+  it("returns false after kill()", async () => {
+    const p = await CommunityAdapterProxy.create("bun", [MOCK_ADAPTER]);
+    p.kill();
+    expect(p.isAlive()).toBe(false);
+  });
+});
+
 describe("CommunityAdapterProxy error handling", () => {
   it("fails to create with invalid command", async () => {
     await expect(

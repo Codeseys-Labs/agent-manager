@@ -271,6 +271,22 @@ describe("marketplace/scanner", () => {
       const names = plugins.map((p) => p.manifest.name).sort();
       expect(names).toEqual(["am-native", "claude-native"]);
     });
+
+    test("discovers .claude-plugin format with only name and description", async () => {
+      const mpDir = join(dir.path, "claude-minimal-marketplace");
+      await createClaudePlugin(mpDir, "minimal-claude-plugin", {
+        name: "minimal-claude",
+        description: "A minimal Claude Code plugin with no servers or agents",
+      });
+
+      const plugins = await scanMarketplace("claude-min-mp", mpDir);
+      expect(plugins).toHaveLength(1);
+      expect(plugins[0].manifest.name).toBe("minimal-claude");
+      expect(plugins[0].manifest.description).toBe("A minimal Claude Code plugin with no servers or agents");
+      expect(plugins[0].manifest.servers).toBeUndefined();
+      expect(plugins[0].manifest.agents).toBeUndefined();
+      expect(plugins[0].manifestPath).toContain(".claude-plugin");
+    });
   });
 
   // ── searchPlugins ──────────────────────────────────────────────

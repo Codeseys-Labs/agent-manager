@@ -13,7 +13,7 @@ describe("am completion", () => {
       "init", "add", "list", "use", "apply", "status", "config", "profile",
       "push", "pull", "undo", "log", "search", "install", "uninstall", "update",
       "agent", "run", "wiki", "import", "adapter", "doctor", "secret", "session",
-      "version", "mcp-serve", "tui", "serve", "completion",
+      "version", "mcp-serve", "tui", "serve", "flow", "marketplace", "completion",
     ];
 
     for (const cmd of expected) {
@@ -83,6 +83,22 @@ describe("am completion", () => {
     it("has run subcommands", () => {
       expect(SUBCOMMANDS.run).toContain("agents");
       expect(SUBCOMMANDS.run).toContain("session");
+    });
+
+    it("has flow subcommands", () => {
+      expect(SUBCOMMANDS.flow).toContain("run");
+      expect(SUBCOMMANDS.flow).toContain("list");
+      expect(SUBCOMMANDS.flow).toContain("status");
+    });
+
+    it("has marketplace subcommands", () => {
+      expect(SUBCOMMANDS.marketplace).toContain("add");
+      expect(SUBCOMMANDS.marketplace).toContain("list");
+      expect(SUBCOMMANDS.marketplace).toContain("install");
+      expect(SUBCOMMANDS.marketplace).toContain("update");
+      expect(SUBCOMMANDS.marketplace).toContain("remove");
+      expect(SUBCOMMANDS.marketplace).toContain("search");
+      expect(SUBCOMMANDS.marketplace).toContain("uninstall");
     });
   });
 

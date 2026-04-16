@@ -210,6 +210,11 @@ export class CommunityAdapterProxy implements Adapter {
     return result as DiffResult;
   }
 
+  /** Check if the subprocess is still alive. */
+  isAlive(): boolean {
+    return this.process !== null && this.process.exitCode === null;
+  }
+
   /** Kill the child process. Called when am exits. */
   kill(): void {
     if (this.process) {

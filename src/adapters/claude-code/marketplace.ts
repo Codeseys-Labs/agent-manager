@@ -50,6 +50,17 @@ export function scanClaudePlugins(homeDir?: string): MarketplaceResult {
 
   // 2. For each enabled plugin, read its plugin.json
   for (const pluginId of enabledPlugins) {
+    // Validate pluginId to prevent path traversal
+    if (
+      !pluginId ||
+      typeof pluginId !== "string" ||
+      pluginId.includes("..") ||
+      pluginId.includes("\\") ||
+      pluginId.startsWith("/")
+    ) {
+      warnings.push(`Plugin "${pluginId}": skipped — invalid plugin ID`);
+      continue;
+    }
     const pluginDir = join(home, ".claude", "plugins", pluginId);
     const manifestPath = join(pluginDir, "plugin.json");
 
