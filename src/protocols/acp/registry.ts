@@ -60,7 +60,7 @@ export function resolveAgent(name: string, acpSettings?: AcpSettings): AgentRegi
  * List all known agents (built-in + config overrides).
  * Config overrides replace built-in entries with the same name.
  */
-export function listAgents(acpSettings?: AcpSettings): AgentRegistryEntry & { name: string }[] {
+export function listAgents(acpSettings?: AcpSettings): (AgentRegistryEntry & { name: string })[] {
   const result = new Map<string, AgentRegistryEntry & { name: string }>();
 
   // Add built-in entries

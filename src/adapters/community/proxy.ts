@@ -68,7 +68,8 @@ export class CommunityAdapterProxy implements Adapter {
 
   private readLoop(): void {
     if (!this.process?.stdout) return;
-    const reader = this.process.stdout.getReader();
+    const stdout = this.process.stdout as ReadableStream<Uint8Array>;
+    const reader = stdout.getReader();
 
     const read = async () => {
       try {
@@ -143,7 +144,7 @@ export class CommunityAdapterProxy implements Adapter {
         },
       });
 
-      this.process!.stdin!.write(line);
+      (this.process!.stdin as import("bun").FileSink).write(line);
     });
   }
 
@@ -191,7 +192,7 @@ export class CommunityAdapterProxy implements Adapter {
 
   /** Async version of import() for community adapters. */
   async importAsync(options: ImportOptions): Promise<ImportResult> {
-    const result = await this.call("adapter/import", options);
+    const result = await this.call("adapter/import", options as unknown as Record<string, unknown>);
     return result as ImportResult;
   }
 

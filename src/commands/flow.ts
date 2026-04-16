@@ -75,14 +75,14 @@ const flowRunCommand = defineCommand({
         cwd: (args.cwd as string) ?? process.cwd(),
         input: initialInput,
         runsDir: args.runsDir as string | undefined,
-        acpExecutor: async (agentName, prompt) => {
+        acpExecutor: async (agentName, prompt, cwd) => {
           const { AmAcpClient } = await import("../protocols/acp/client");
           const client = new AmAcpClient();
           try {
             await client.connectByName(agentName);
-            const sessionId = await client.newSession({ cwd: process.cwd() });
-            const result = await client.prompt(sessionId, [{ text: prompt }]);
-            return result.text;
+            const sessionId = await client.newSession({ cwd });
+            const result = await client.prompt(sessionId, [{ type: "text", text: prompt }]);
+            return { text: result.text };
           } finally {
             await client.disconnect().catch(() => {});
           }

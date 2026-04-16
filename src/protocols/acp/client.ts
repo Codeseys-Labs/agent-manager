@@ -153,7 +153,7 @@ export class AmAcpClient {
           terminal: true,
         },
       }),
-      timeoutPromise(initTimeout, "Agent initialization timed out"),
+      timeoutPromise<Awaited<ReturnType<ClientSideConnection["initialize"]>>>(initTimeout, "Agent initialization timed out"),
     ]);
 
     this.connInfo = {
@@ -355,17 +355,17 @@ function createClientHandler(
     async requestPermission(params: RequestPermissionRequest): Promise<RequestPermissionResponse> {
       if (permissionPolicy === "deny") {
         // HIGH-1 fix: reject all permission requests when --no-auto-approve is set.
-        const denyOption = params.options.find((o) => o.kind === "deny");
+        const denyOption = params.options.find((o) => o.kind === "reject_once" || o.kind === "reject_always");
         if (denyOption) {
-          return { selectedOptionId: denyOption.optionId };
+          return { outcome: { outcome: "selected", optionId: denyOption.optionId } };
         }
         // If no deny option exists, use the first option (safest available).
-        return { selectedOptionId: params.options[0].optionId };
+        return { outcome: { outcome: "selected", optionId: params.options[0].optionId } };
       }
       // Auto-approve all permissions in headless mode (default).
       const allowOption = params.options.find((o) => o.kind === "allow_once");
       return {
-        selectedOptionId: allowOption?.optionId ?? params.options[0].optionId,
+        outcome: { outcome: "selected", optionId: allowOption?.optionId ?? params.options[0].optionId },
       };
     },
 
@@ -423,11 +423,11 @@ function createClientHandler(
     async terminalOutput(params: TerminalOutputRequest): Promise<TerminalOutputResponse> {
       const proc = terminalStore.get(params.terminalId);
       if (!proc) {
-        return { output: "", exitStatus: { exitCode: -1 } };
+        return { output: "", exitStatus: { exitCode: -1 }, truncated: false };
       }
       // Read whatever is available
-      const output = proc.stdout ? await new Response(proc.stdout).text() : "";
-      return { output };
+      const output = proc.stdout ? await new Response(proc.stdout as ReadableStream).text() : "";
+      return { output, truncated: false };
     },
 
     async releaseTerminal(params: ReleaseTerminalRequest): Promise<ReleaseTerminalResponse> {

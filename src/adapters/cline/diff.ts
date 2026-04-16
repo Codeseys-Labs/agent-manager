@@ -14,6 +14,7 @@ interface NativeServer {
   command: string;
   args: string[];
   env: Record<string, string>;
+  [key: string]: unknown;
 }
 
 /**
