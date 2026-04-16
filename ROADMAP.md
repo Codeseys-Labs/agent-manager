@@ -72,24 +72,27 @@ All adapters: detect, import, export, drift detection. 6-file pattern.
 
 Future candidates: Gitea, Codeberg, Forgejo, BitBucket (ADR-0013 updated).
 
-### CLI (27 commands) — Complete
+### CLI (28 commands) — Complete
 
 Config: init, add, list, use, apply, status, config, profile
 Git: push, pull, undo, log
 Registry: search, install, uninstall, update
 Wiki: wiki (13 subcommands)
 A2A: agents (5 subcommands)
+ACP: run (agent orchestration + session subcommands)
 Tools: import, adapter, doctor, secret (6 subcommands), session, version
 Interfaces: mcp-serve, tui, serve
 
-### MCP Server (26 tools, 4 groups) — Complete
+### MCP Server (33 tools, 6 groups) — Complete
 
 | Group | Tools | Default |
 |-------|-------|---------|
-| core (14) | servers, profiles, status, config, add/remove, apply, import, push/pull, sessions | Yes |
+| core (14) | servers, profiles, status, config, doctor, add/remove/update, undo, apply, import, push/pull | Yes |
 | registry (3) | search, install, list_installed | No |
 | a2a (4) | discover, list, delegate, task_status | No |
 | wiki (5) | search, add, synthesize, briefing, harvest | No |
+| session (3) | list, export, search | No |
+| acp (4) | run_agent, list_agents, session_list, session_cancel | No |
 
 Controlled via `settings.mcp_serve.tools` (ADR-0021).
 
@@ -118,16 +121,28 @@ Search, install, uninstall, update with provenance tracking. ADR-0024.
 | Session harvesting | Done | Jaccard dedup, pattern extraction |
 | Wiki CLI (13 subcommands) | Done | init, search, add, show, delete, harvest, ingest, lint, graph, synthesize, briefing, export, import |
 
-### A2A Protocol — Complete (Phase 1)
+### A2A Protocol — Complete (Phase 1+)
 
 | Component | Status | Notes |
 |-----------|--------|-------|
 | A2A types (v0.3.0) | Done | AgentCard, Task, Message, Artifact |
-| A2A client | Done | Discover, sendTask, getTask, cancelTask |
-| A2A server | Done | JSON-RPC endpoint, Agent Card |
+| A2A client | Done | Discover, sendTask, getTask, cancelTask, pollTask, sendAndPoll |
+| A2A server | Done | JSON-RPC endpoint, Agent Card, async tasks |
+| Bearer token auth | Done | Optional auth_token for A2A server endpoints |
+| TTL eviction | Done | Terminal tasks expire after 1hr, two-phase eviction |
+| Auto-discovery | Done | settings.a2a.discovery_sources[] config-based discovery |
 | Discovery (URL + local roster) | Done | TOML roster at ~/.config/agent-manager/ |
 | CLI (5 subcommands) | Done | list, add, remove, ping, delegate |
-| ACP types (config-only) | Done | For IDE adapter config generation |
+
+### ACP Agent Orchestration — Complete (Phase 1)
+
+| Component | Status | Notes |
+|-----------|--------|-------|
+| ACP types | Done | Agent definitions, session types, update events |
+| ACP client | Done | Spawn, stream, cancel agents headlessly |
+| ACP registry | Done | Agent resolution from config + auto-detection |
+| CLI (am run) | Done | `am run <agent> "<prompt>"` + session subcommands |
+| MCP tools (4) | Done | run_agent, list_agents, session_list, session_cancel |
 
 ### Distribution — Complete
 
@@ -144,8 +159,8 @@ Search, install, uninstall, update with provenance tracking. ADR-0024.
 
 | Interface | Status | Notes |
 |-----------|--------|-------|
-| CLI (citty + clack) | Done | 27 commands, --json/--quiet everywhere |
-| MCP Server | Done | 26 tools, 3 permission tiers, 4 groups |
+| CLI (citty + clack) | Done | 28 commands, --json/--quiet everywhere |
+| MCP Server | Done | 33 tools, 3 permission tiers, 6 groups |
 | TUI (Silvery + React) | Done | Dashboard, server management (D/E/I/P keys), status, profiles |
 | Local Web (Hono + Bearer auth) | Done | REST API + SSE, server CRUD, wiki endpoints |
 | Stateless Web (CF Workers) | Done | Multi-backend git auth (ADR-0025), wiki browsing, git-backed config |
@@ -164,10 +179,10 @@ Search, install, uninstall, update with provenance tracking. ADR-0024.
 
 ### Phase 2: A2A Protocol
 
+- [x] A2A agent authentication (Bearer tokens for roster entries) — done in iteration 3
 - [ ] Streaming task responses (SSE from A2A server)
 - [ ] Multi-agent orchestration (agent chains / pipelines)
 - [ ] mDNS/DNS-SD local agent discovery
-- [ ] A2A agent authentication (Bearer tokens for roster entries)
 
 ### Phase 2: Adapters
 
@@ -255,14 +270,14 @@ am-cli as a runtime MCP proxy — accept tool calls, route to configured servers
 
 | Metric | Count |
 |--------|-------|
-| Source files | 161 |
-| Test files | 132 |
-| Tests | 1,335 |
-| Assertions | 3,901 |
+| Source files | 165 |
+| Test files | 134 |
+| Tests | 1,470 |
+| Assertions | 4,312 |
 | IDE adapters | 13 |
 | Platform adapters | 3 |
-| CLI commands | 27 |
-| MCP tools | 26 |
-| ADRs | 25 |
+| CLI commands | 28 |
+| MCP tools | 33 |
+| ADRs | 28 |
 | `as any` in src/ | 0 |
 | `err: any` in src/ | 0 |

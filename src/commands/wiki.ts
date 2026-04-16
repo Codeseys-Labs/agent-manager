@@ -21,7 +21,7 @@ import { defineCommand } from "citty";
 import { getAdapter, listAdapters } from "../adapters/registry";
 import { resolveProjectConfig } from "../core/config";
 import { errorCode, errorMessage } from "../lib/errors";
-import { error, info, output } from "../lib/output";
+import { error, info, output, parsePositiveInt } from "../lib/output";
 import { exportGraphForViz, findOrphans, loadGraph } from "../wiki/graph";
 import { harvestSession, harvestSessionAsPages } from "../wiki/harvester";
 import {
@@ -68,7 +68,7 @@ const searchSubcommand = defineCommand({
   async run({ args }) {
     const opts = { json: args.json, quiet: args.quiet, verbose: args.verbose };
     const query = args.query as string;
-    const limit = Number.parseInt(args.limit, 10) || 20;
+    const limit = parsePositiveInt(args.limit, "limit", 20);
     const wikiDir = args.global ? resolveWikiDir({ global: true }) : undefined;
 
     const results = await searchPages(query, limit, wikiDir);
@@ -347,7 +347,7 @@ const ingestSubcommand = defineCommand({
   },
   async run({ args }) {
     const opts = { json: args.json, quiet: args.quiet, verbose: args.verbose };
-    const maxSessions = Number.parseInt(args.limit, 10) || 10;
+    const maxSessions = parsePositiveInt(args.limit, "limit", 10);
 
     if (args.session) {
       const colonIdx = (args.session as string).indexOf(":");
@@ -455,7 +455,7 @@ const harvestSubcommand = defineCommand({
   },
   async run({ args }) {
     const opts = { json: args.json, quiet: args.quiet, verbose: args.verbose };
-    const maxSessions = Number.parseInt(args.limit, 10) || 10;
+    const maxSessions = parsePositiveInt(args.limit, "limit", 10);
 
     if (args.session) {
       const colonIdx = (args.session as string).indexOf(":");
@@ -566,7 +566,7 @@ const synthesizeSubcommand = defineCommand({
   async run({ args }) {
     const opts = { json: args.json, quiet: args.quiet, verbose: args.verbose };
     const query = args.query as string;
-    const topK = Number.parseInt(args["top-k"], 10) || 10;
+    const topK = parsePositiveInt(args["top-k"], "top-k", 10);
 
     const context = await synthesizeContext(query, {
       agentId: args.agent as string | undefined,

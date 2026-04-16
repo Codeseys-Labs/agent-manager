@@ -56,8 +56,8 @@ in TOML, decrypted at apply time.
 
 ```
 src/
-  cli.ts                    # Entry point -- 27 subcommands via citty
-  commands/                 # One file per CLI command (includes session.ts, wiki.ts, agents.ts)
+  cli.ts                    # Entry point -- 28 subcommands via citty
+  commands/                 # One file per CLI command (includes session.ts, wiki.ts, agents.ts, run.ts)
   core/
     schema.ts               # Zod schemas (Server, Instruction, Skill, AgentProfile, Profile, Config)
     config.ts               # TOML read/write, 4-layer hierarchical merge, buildResolvedConfig
@@ -94,8 +94,10 @@ src/
       server.ts             # A2A server endpoint handling
       discovery.ts          # Agent roster management, URL-based discovery
       generate-card.ts      # Generate Agent Card from am config
-    acp/                    # Agent Communication Protocol types (config-only)
-      types.ts              # ACP type definitions
+    acp/                    # Agent Communication Protocol (ADR-0026)
+      types.ts              # ACP type definitions (agent, session, update events)
+      client.ts             # ACP client: spawn, stream, cancel agents headlessly
+      registry.ts           # Agent resolution from config + auto-detection
   wiki/                     # LLM Wiki / Knowledge Synthesis (ADR-0020)
     types.ts                # Wiki entry, page, index types
     storage.ts              # TOML-backed wiki storage with symlinks
@@ -108,7 +110,7 @@ src/
     registry.ts             # Platform detection (GitHub > GitLab > bare)
     github.ts, gitlab.ts, bare.ts
   mcp/
-    server.ts               # MCP server: JSON-RPC 2.0, 14 tools, 3 permission tiers
+    server.ts               # MCP server: JSON-RPC 2.0, 33 tools, 6 groups, 3 permission tiers
   tui/
     index.tsx, App.tsx      # Silvery/React terminal UI with dashboard, server management (D/E/I/P keys)
   web/
@@ -116,8 +118,8 @@ src/
     worker.ts               # Cloudflare Workers (stateless, multi-backend git auth — ADR-0025)
     public/                 # Static HTML
   lib/                      # Shared utilities (errors.ts, output.ts)
-test/                       # 132 files, 1373 tests, 3988 assertions
-ADRs/                       # 25 architectural decision records
+test/                       # 134 files, 1470 tests, 4312 assertions
+ADRs/                       # 28 architectural decision records
 scripts/
   build.ts                  # Cross-platform build (5 targets)
   install.sh                # curl-based installer
@@ -156,6 +158,8 @@ scripts/
 | `am update` | Check for and apply MCP registry updates (`--dry-run`) |
 | `am wiki <subcommand>` | LLM Wiki: search, add, show, delete, ingest, synthesize, briefing, export, import, lint, graph |
 | `am agents <subcommand>` | A2A agent management: list, add, remove, ping, delegate |
+| `am run <agent> "<prompt>"` | ACP agent orchestration: drive coding agents headlessly |
+| `am run session list\|cancel` | Manage active ACP sessions |
 
 Global flags: `--profile <name>`, `--json`, `--verbose`, `--quiet`
 
@@ -218,6 +222,11 @@ through config merges and profile resolution.
 Codeberg, and self-hosted Gitea via a `GitProvider` interface that normalizes OAuth
 flows and API access. Provider detection is automatic from the configured remote URL.
 
+**ACP runtime integration (ADR-0026):** Headless agent orchestration via `am run`.
+Spawn, stream output, and cancel ACP-compatible coding agents (Claude Code, Codex CLI).
+4-phase design: Phase 1 (done) covers one-shot execution, session management, and
+MCP tool exposure.
+
 ## MCP Registry Integration
 
 The `registry/` module provides an HTTP client for the public MCP package registry.
@@ -255,7 +264,7 @@ Workflow: `am wiki ingest --session <id>` → `am wiki search <query>` → `am w
 
 ```bash
 bun install              # Install dependencies
-bun test                 # Run all 1373 tests
+bun test                 # Run all 1470 tests
 bun test --watch         # Watch mode
 bun run dev              # Run CLI in dev mode
 bun run build            # Single binary (macOS arm64)

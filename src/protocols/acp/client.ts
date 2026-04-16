@@ -13,32 +13,33 @@
  */
 
 import {
-  ClientSideConnection,
-  ndJsonStream,
+  type McpServer as AcpMcpServer,
   type Client,
-  type SessionNotification,
-  type RequestPermissionRequest,
-  type RequestPermissionResponse,
-  type ReadTextFileRequest,
-  type ReadTextFileResponse,
-  type WriteTextFileRequest,
-  type WriteTextFileResponse,
+  ClientSideConnection,
+  type ContentBlock,
   type CreateTerminalRequest,
   type CreateTerminalResponse,
-  type TerminalOutputRequest,
-  type TerminalOutputResponse,
-  type ReleaseTerminalRequest,
-  type ReleaseTerminalResponse,
-  type WaitForTerminalExitRequest,
-  type WaitForTerminalExitResponse,
   type KillTerminalRequest,
   type KillTerminalResponse,
-  type ContentBlock,
-  type McpServer as AcpMcpServer,
-  type ToolCall,
   PROTOCOL_VERSION,
+  type ReadTextFileRequest,
+  type ReadTextFileResponse,
+  type ReleaseTerminalRequest,
+  type ReleaseTerminalResponse,
+  type RequestPermissionRequest,
+  type RequestPermissionResponse,
+  type SessionNotification,
+  type TerminalOutputRequest,
+  type TerminalOutputResponse,
+  type ToolCall,
+  type WaitForTerminalExitRequest,
+  type WaitForTerminalExitResponse,
+  type WriteTextFileRequest,
+  type WriteTextFileResponse,
+  ndJsonStream,
 } from "@agentclientprotocol/sdk";
 
+import { parseCommand, resolveAgent } from "./registry";
 import type {
   AcpConnection,
   ConnectOptions,
@@ -47,7 +48,6 @@ import type {
   PromptResult,
   SessionUpdateHandler,
 } from "./types";
-import { parseCommand, resolveAgent } from "./registry";
 import type { AcpSettings } from "./types";
 
 // ── Error types ────────────────────────────────────────────────
@@ -306,9 +306,7 @@ export class AmAcpClient {
  */
 function createClientHandler(updateHandler: SessionUpdateHandler | null): Client {
   return {
-    async requestPermission(
-      params: RequestPermissionRequest,
-    ): Promise<RequestPermissionResponse> {
+    async requestPermission(params: RequestPermissionRequest): Promise<RequestPermissionResponse> {
       // Auto-approve all permissions in headless mode.
       // Future: configurable permission policy.
       const allowOption = params.options.find((o) => o.kind === "allow_once");
@@ -325,9 +323,7 @@ function createClientHandler(updateHandler: SessionUpdateHandler | null): Client
       updateHandler?.(params.update);
     },
 
-    async readTextFile(
-      params: ReadTextFileRequest,
-    ): Promise<ReadTextFileResponse> {
+    async readTextFile(params: ReadTextFileRequest): Promise<ReadTextFileResponse> {
       try {
         const content = await Bun.file(params.path).text();
         return { content };
@@ -336,22 +332,16 @@ function createClientHandler(updateHandler: SessionUpdateHandler | null): Client
       }
     },
 
-    async writeTextFile(
-      params: WriteTextFileRequest,
-    ): Promise<WriteTextFileResponse> {
+    async writeTextFile(params: WriteTextFileRequest): Promise<WriteTextFileResponse> {
       await Bun.write(params.path, params.content);
       return {};
     },
 
-    async createTerminal(
-      params: CreateTerminalRequest,
-    ): Promise<CreateTerminalResponse> {
+    async createTerminal(params: CreateTerminalRequest): Promise<CreateTerminalResponse> {
       // Headless terminal support: spawn the command and track it
       const proc = Bun.spawn(["sh", "-c", params.command], {
         cwd: params.cwd ?? undefined,
-        env: params.env
-          ? Object.fromEntries(params.env.map((e) => [e.name, e.value]))
-          : undefined,
+        env: params.env ? Object.fromEntries(params.env.map((e) => [e.name, e.value])) : undefined,
         stdout: "pipe",
         stderr: "pipe",
       });
@@ -360,9 +350,7 @@ function createClientHandler(updateHandler: SessionUpdateHandler | null): Client
       return { terminalId };
     },
 
-    async terminalOutput(
-      params: TerminalOutputRequest,
-    ): Promise<TerminalOutputResponse> {
+    async terminalOutput(params: TerminalOutputRequest): Promise<TerminalOutputResponse> {
       const proc = terminalStore.get(params.terminalId);
       if (!proc) {
         return { output: "", exitStatus: { exitCode: -1 } };
@@ -372,9 +360,7 @@ function createClientHandler(updateHandler: SessionUpdateHandler | null): Client
       return { output };
     },
 
-    async releaseTerminal(
-      params: ReleaseTerminalRequest,
-    ): Promise<ReleaseTerminalResponse> {
+    async releaseTerminal(params: ReleaseTerminalRequest): Promise<ReleaseTerminalResponse> {
       const proc = terminalStore.get(params.terminalId);
       if (proc) {
         proc.kill();
@@ -394,9 +380,7 @@ function createClientHandler(updateHandler: SessionUpdateHandler | null): Client
       return { exitCode };
     },
 
-    async killTerminal(
-      params: KillTerminalRequest,
-    ): Promise<KillTerminalResponse> {
+    async killTerminal(params: KillTerminalRequest): Promise<KillTerminalResponse> {
       const proc = terminalStore.get(params.terminalId);
       if (proc) {
         proc.kill();

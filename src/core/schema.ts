@@ -122,12 +122,7 @@ export const SettingsSchema = z
     acp: z
       .object({
         session_dir: z.string().optional(),
-        agents: z
-          .record(
-            z.string(),
-            z.object({ command: z.string() }),
-          )
-          .optional(),
+        agents: z.record(z.string(), z.object({ command: z.string() })).optional(),
       })
       .optional(),
     env: z.record(z.string(), z.string()).optional(),

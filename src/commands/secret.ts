@@ -1,7 +1,7 @@
 import { copyFile, mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import { defineCommand } from "citty";
-import { readConfig, resolveConfigDir, writeConfig } from "../core/config";
+import { resolveConfigDir, tryReadConfig, writeConfig } from "../core/config";
 import { commitAll } from "../core/git";
 import {
   formatScanReport,
@@ -18,7 +18,8 @@ import {
   loadKey,
   saveKey,
 } from "../core/secrets";
-import { error, info, output } from "../lib/output";
+import { requireConfig } from "../lib/errors";
+import { amError, error, info, output } from "../lib/output";
 
 export const secretCommand = defineCommand({
   meta: { name: "secret", description: "Manage encrypted secrets" },
@@ -53,55 +54,54 @@ const setCommand = defineCommand({
   },
   async run({ args }) {
     const opts = { json: args.json, quiet: args.quiet, verbose: args.verbose };
-    const configDir = resolveConfigDir();
-    const configPath = join(configDir, "config.toml");
-
-    const key = await loadKey(configDir);
-    if (!key) {
-      error("No encryption key found. Run `am secret generate-key` first.", opts);
-      process.exitCode = 1;
-      return;
-    }
-
-    let config;
     try {
-      config = await readConfig(configPath);
-    } catch {
-      error("Config not found. Run `am init` first.", opts);
-      process.exitCode = 1;
-      return;
-    }
+      const configDir = resolveConfigDir();
+      const configPath = join(configDir, "config.toml");
 
-    const encrypted = await encryptValue(args.value, key);
-
-    if (args.server) {
-      // Set in server env
-      const server = config.servers?.[args.server];
-      if (!server) {
-        error(`Server "${args.server}" not found.`, opts);
+      const key = await loadKey(configDir);
+      if (!key) {
+        error("No encryption key found. Run `am secret generate-key` first.", opts);
         process.exitCode = 1;
         return;
       }
-      if (!server.env) server.env = {};
-      server.env[args.name] = encrypted;
-    } else {
-      // Set in settings.env (top-level env for profiles/global use)
-      if (!config.settings) config.settings = {};
-      config.settings.env = config.settings.env ?? {};
-      config.settings.env[args.name] = encrypted;
-    }
 
-    await writeConfig(configPath, config);
+      const config = await tryReadConfig(configPath);
+      requireConfig(config);
 
-    try {
-      await commitAll(configDir, `secret: set ${args.name}`);
-    } catch {
-      // Nothing to commit
-    }
+      const encrypted = await encryptValue(args.value, key);
 
-    info(`Secret "${args.name}" set.`, opts);
-    if (args.json) {
-      output({ action: "set", name: args.name, server: args.server ?? null }, opts);
+      if (args.server) {
+        // Set in server env
+        const server = config.servers?.[args.server];
+        if (!server) {
+          error(`Server "${args.server}" not found.`, opts);
+          process.exitCode = 1;
+          return;
+        }
+        if (!server.env) server.env = {};
+        server.env[args.name] = encrypted;
+      } else {
+        // Set in settings.env (top-level env for profiles/global use)
+        if (!config.settings) config.settings = {};
+        config.settings.env = config.settings.env ?? {};
+        config.settings.env[args.name] = encrypted;
+      }
+
+      await writeConfig(configPath, config);
+
+      try {
+        await commitAll(configDir, `secret: set ${args.name}`);
+      } catch {
+        // Nothing to commit
+      }
+
+      info(`Secret "${args.name}" set.`, opts);
+      if (args.json) {
+        output({ action: "set", name: args.name, server: args.server ?? null }, opts);
+      }
+    } catch (err) {
+      amError(err, opts);
+      process.exitCode = 1;
     }
   },
 });
@@ -117,45 +117,44 @@ const getCommand = defineCommand({
   },
   async run({ args }) {
     const opts = { json: args.json, quiet: args.quiet, verbose: args.verbose };
-    const configDir = resolveConfigDir();
-    const configPath = join(configDir, "config.toml");
-
-    const key = await loadKey(configDir);
-    if (!key) {
-      error("No encryption key found.", opts);
-      process.exitCode = 1;
-      return;
-    }
-
-    let config;
     try {
-      config = await readConfig(configPath);
-    } catch {
-      error("Config not found. Run `am init` first.", opts);
+      const configDir = resolveConfigDir();
+      const configPath = join(configDir, "config.toml");
+
+      const key = await loadKey(configDir);
+      if (!key) {
+        error("No encryption key found.", opts);
+        process.exitCode = 1;
+        return;
+      }
+
+      const config = await tryReadConfig(configPath);
+      requireConfig(config);
+
+      let value: string | undefined;
+
+      if (args.server) {
+        value = config.servers?.[args.server]?.env?.[args.name];
+      } else {
+        value = config.settings?.env?.[args.name];
+      }
+
+      if (!value) {
+        error(`Secret "${args.name}" not found.`, opts);
+        process.exitCode = 1;
+        return;
+      }
+
+      const decrypted = await decryptValue(value, key);
+
+      if (args.json) {
+        output({ name: args.name, value: decrypted }, opts);
+      } else {
+        console.log(decrypted);
+      }
+    } catch (err) {
+      amError(err, opts);
       process.exitCode = 1;
-      return;
-    }
-
-    let value: string | undefined;
-
-    if (args.server) {
-      value = config.servers?.[args.server]?.env?.[args.name];
-    } else {
-      value = config.settings?.env?.[args.name];
-    }
-
-    if (!value) {
-      error(`Secret "${args.name}" not found.`, opts);
-      process.exitCode = 1;
-      return;
-    }
-
-    const decrypted = await decryptValue(value, key);
-
-    if (args.json) {
-      output({ name: args.name, value: decrypted }, opts);
-    } else {
-      console.log(decrypted);
     }
   },
 });
@@ -169,55 +168,54 @@ const listCommand = defineCommand({
   },
   async run({ args }) {
     const opts = { json: args.json, quiet: args.quiet, verbose: args.verbose };
-    const configDir = resolveConfigDir();
-    const configPath = join(configDir, "config.toml");
-
-    let config;
     try {
-      config = await readConfig(configPath);
-    } catch {
-      error("Config not found. Run `am init` first.", opts);
+      const configDir = resolveConfigDir();
+      const configPath = join(configDir, "config.toml");
+
+      const config = await tryReadConfig(configPath);
+      requireConfig(config);
+
+      const secrets: Array<{ name: string; location: string }> = [];
+
+      // Check settings.env
+      const settingsEnv = config.settings?.env;
+      if (settingsEnv) {
+        for (const [name, value] of Object.entries(settingsEnv)) {
+          if (typeof value === "string" && isEncrypted(value)) {
+            secrets.push({ name, location: "settings" });
+          }
+        }
+      }
+
+      // Check server env fields
+      for (const [serverName, server] of Object.entries(config.servers ?? {})) {
+        for (const [name, value] of Object.entries(server.env ?? {})) {
+          if (isEncrypted(value)) {
+            secrets.push({ name, location: `server:${serverName}` });
+          }
+        }
+      }
+
+      if (args.json) {
+        output({ secrets }, opts);
+        return;
+      }
+
+      if (secrets.length === 0) {
+        info("No secrets found.", opts);
+        return;
+      }
+
+      info(`${"Name".padEnd(30)} ${"Location"}`, opts);
+      info(`${"─".repeat(30)} ${"─".repeat(30)}`, opts);
+      for (const s of secrets) {
+        info(`${s.name.padEnd(30)} ${s.location}`, opts);
+      }
+      info(`\n${secrets.length} secret(s)`, opts);
+    } catch (err) {
+      amError(err, opts);
       process.exitCode = 1;
-      return;
     }
-
-    const secrets: Array<{ name: string; location: string }> = [];
-
-    // Check settings.env
-    const settingsEnv = config.settings?.env;
-    if (settingsEnv) {
-      for (const [name, value] of Object.entries(settingsEnv)) {
-        if (typeof value === "string" && isEncrypted(value)) {
-          secrets.push({ name, location: "settings" });
-        }
-      }
-    }
-
-    // Check server env fields
-    for (const [serverName, server] of Object.entries(config.servers ?? {})) {
-      for (const [name, value] of Object.entries(server.env ?? {})) {
-        if (isEncrypted(value)) {
-          secrets.push({ name, location: `server:${serverName}` });
-        }
-      }
-    }
-
-    if (args.json) {
-      output({ secrets }, opts);
-      return;
-    }
-
-    if (secrets.length === 0) {
-      info("No secrets found.", opts);
-      return;
-    }
-
-    info(`${"Name".padEnd(30)} ${"Location"}`, opts);
-    info(`${"─".repeat(30)} ${"─".repeat(30)}`, opts);
-    for (const s of secrets) {
-      info(`${s.name.padEnd(30)} ${s.location}`, opts);
-    }
-    info(`\n${secrets.length} secret(s)`, opts);
   },
 });
 
@@ -270,136 +268,135 @@ const scanCommand = defineCommand({
   },
   async run({ args }) {
     const opts = { json: args.json, quiet: args.quiet, verbose: args.verbose };
-    const configDir = resolveConfigDir();
-    const configPath = join(configDir, "config.toml");
-
-    let config;
     try {
-      config = await readConfig(configPath);
-    } catch {
-      error("Config not found. Run `am init` first.", opts);
-      process.exitCode = 1;
-      return;
-    }
+      const configDir = resolveConfigDir();
+      const configPath = join(configDir, "config.toml");
 
-    if (!config.servers || Object.keys(config.servers).length === 0) {
-      info("No servers configured.", opts);
-      return;
-    }
+      const config = await tryReadConfig(configPath);
+      requireConfig(config);
 
-    // Tiered scan: Tier 1 (key names) always, Tier 2 (betterleaks) when available
-    const { isBetterleaksAvailable, getBetterleaksVersion } = await import("../core/betterleaks");
-    const useBetterleaks = isBetterleaksAvailable();
-    if (useBetterleaks && !args.json) {
-      info(
-        `Using betterleaks (${getBetterleaksVersion() ?? "installed"}) for Tier 2 inline scanning`,
-        opts,
-      );
-    }
-
-    const scanResults = await scanConfigForSecrets(config.servers);
-
-    if (scanResults.length === 0) {
-      if (args.json) {
-        output({ action: "scan", secrets: [] }, opts);
-      } else {
-        info("No secrets detected.", opts);
+      if (!config.servers || Object.keys(config.servers).length === 0) {
+        info("No servers configured.", opts);
+        return;
       }
-      if (!useBetterleaks) {
-        info("", opts);
-        info("Tip: Install betterleaks for Tier 2 inline secret scanning:", opts);
-        info("  am secret install-scanner", opts);
-      }
-      return;
-    }
 
-    const totalSecrets = scanResults.reduce((sum, r) => sum + r.secrets.length, 0);
-
-    if (!args.fix) {
-      if (args.json) {
-        output(
-          {
-            action: "scan",
-            secrets: scanResults.map((r) => ({
-              server: r.serverName,
-              secrets: r.secrets.map((s) => ({
-                location: s.location,
-                key: s.key,
-                value: redactSecret(s.value),
-                source: s.source,
-                suggestedEnvVar: s.suggestedEnvVar,
-              })),
-            })),
-          },
+      // Tiered scan: Tier 1 (key names) always, Tier 2 (betterleaks) when available
+      const { isBetterleaksAvailable, getBetterleaksVersion } = await import("../core/betterleaks");
+      const useBetterleaks = isBetterleaksAvailable();
+      if (useBetterleaks && !args.json) {
+        info(
+          `Using betterleaks (${getBetterleaksVersion() ?? "installed"}) for Tier 2 inline scanning`,
           opts,
         );
+      }
+
+      const scanResults = await scanConfigForSecrets(config.servers);
+
+      if (scanResults.length === 0) {
+        if (args.json) {
+          output({ action: "scan", secrets: [] }, opts);
+        } else {
+          info("No secrets detected.", opts);
+        }
+        if (!useBetterleaks) {
+          info("", opts);
+          info("Tip: Install betterleaks for Tier 2 inline secret scanning:", opts);
+          info("  am secret install-scanner", opts);
+        }
+        return;
+      }
+
+      const totalSecrets = scanResults.reduce((sum, r) => sum + r.secrets.length, 0);
+
+      if (!args.fix) {
+        if (args.json) {
+          output(
+            {
+              action: "scan",
+              secrets: scanResults.map((r) => ({
+                server: r.serverName,
+                secrets: r.secrets.map((s) => ({
+                  location: s.location,
+                  key: s.key,
+                  value: redactSecret(s.value),
+                  source: s.source,
+                  suggestedEnvVar: s.suggestedEnvVar,
+                })),
+              })),
+            },
+            opts,
+          );
+        } else {
+          info(formatScanReport(scanResults), opts);
+          info("", opts);
+          info("Run `am secret scan --fix` to auto-substitute and encrypt.", opts);
+        }
+        if (!useBetterleaks) {
+          info("", opts);
+          info("Tip: Install betterleaks for Tier 2 inline secret scanning:", opts);
+          info("  am secret install-scanner", opts);
+        }
+        return;
+      }
+
+      // Fix mode: substitute and encrypt
+      let key = await loadKey(configDir);
+      if (!key) {
+        // Auto-generate key
+        const base64Key = await generateKey();
+        await saveKey(configDir, base64Key);
+        key = await importKey(base64Key);
+        info("Generated encryption key (stored in .agent-manager/key.txt)", opts);
+      }
+
+      let substituted = 0;
+      const fixedSecrets: Array<{ server: string; key: string; envVar: string }> = [];
+
+      for (const result of scanResults) {
+        const server = config.servers![result.serverName];
+        if (!server) continue;
+
+        for (const secret of result.secrets) {
+          const envVar = secret.suggestedEnvVar;
+          substituteSecret(server, secret, envVar);
+
+          // Store the original value encrypted in settings.env
+          if (!config.settings) config.settings = {};
+          if (!config.settings.env) config.settings.env = {};
+          config.settings.env[envVar] = await encryptValue(secret.value, key);
+
+          fixedSecrets.push({
+            server: result.serverName,
+            key: secret.key ?? `args[${secret.index}]`,
+            envVar,
+          });
+          substituted++;
+        }
+      }
+
+      await writeConfig(configPath, config);
+
+      try {
+        await commitAll(configDir, `secret: auto-encrypt ${substituted} secret(s)`);
+      } catch {
+        // Nothing to commit
+      }
+
+      if (args.json) {
+        output({ action: "scan-fix", substituted, fixed: fixedSecrets }, opts);
       } else {
-        info(formatScanReport(scanResults), opts);
-        info("", opts);
-        info("Run `am secret scan --fix` to auto-substitute and encrypt.", opts);
+        info(`Substituted and encrypted ${substituted} secret(s):`, opts);
+        for (const f of fixedSecrets) {
+          info(`  ${f.server}: ${f.key} -> \${${f.envVar}}`, opts);
+        }
+        info(
+          `\nOriginal values stored encrypted in settings.env. Skipped ${totalSecrets - substituted} low-confidence finding(s).`,
+          opts,
+        );
       }
-      if (!useBetterleaks) {
-        info("", opts);
-        info("Tip: Install betterleaks for Tier 2 inline secret scanning:", opts);
-        info("  am secret install-scanner", opts);
-      }
-      return;
-    }
-
-    // Fix mode: substitute and encrypt
-    let key = await loadKey(configDir);
-    if (!key) {
-      // Auto-generate key
-      const base64Key = await generateKey();
-      await saveKey(configDir, base64Key);
-      key = await importKey(base64Key);
-      info("Generated encryption key (stored in .agent-manager/key.txt)", opts);
-    }
-
-    let substituted = 0;
-    const fixedSecrets: Array<{ server: string; key: string; envVar: string }> = [];
-
-    for (const result of scanResults) {
-      const server = config.servers![result.serverName];
-      if (!server) continue;
-
-      for (const secret of result.secrets) {
-        const envVar = secret.suggestedEnvVar;
-        substituteSecret(server, secret, envVar);
-
-        // Store the original value encrypted in settings.env
-        if (!config.settings) config.settings = {};
-        if (!config.settings.env) config.settings.env = {};
-        config.settings.env[envVar] = await encryptValue(secret.value, key);
-
-        fixedSecrets.push({
-          server: result.serverName,
-          key: secret.key ?? `args[${secret.index}]`,
-          envVar,
-        });
-        substituted++;
-      }
-    }
-
-    await writeConfig(configPath, config);
-
-    try {
-      await commitAll(configDir, `secret: auto-encrypt ${substituted} secret(s)`);
-    } catch {
-      // Nothing to commit
-    }
-
-    if (args.json) {
-      output({ action: "scan-fix", substituted, fixed: fixedSecrets }, opts);
-    } else {
-      info(`Substituted and encrypted ${substituted} secret(s):`, opts);
-      for (const f of fixedSecrets) {
-        info(`  ${f.server}: ${f.key} -> \${${f.envVar}}`, opts);
-      }
-      info(
-        `\nOriginal values stored encrypted in settings.env. Skipped ${totalSecrets - substituted} low-confidence finding(s).`,
-        opts,
-      );
+    } catch (err) {
+      amError(err, opts);
+      process.exitCode = 1;
     }
   },
 });

@@ -1100,7 +1100,12 @@ describe("MCP ACP tools", () => {
   test("ACP tools belong to the 'acp' group", () => {
     const server = new McpServer();
     const tools = server.getTools();
-    const acpToolNames = ["am_run_agent", "am_acp_list_agents", "am_acp_session_list", "am_acp_session_cancel"];
+    const acpToolNames = [
+      "am_run_agent",
+      "am_acp_list_agents",
+      "am_acp_session_list",
+      "am_acp_session_cancel",
+    ];
     for (const name of acpToolNames) {
       const tool = tools.find((t) => t.def.name === name);
       expect(tool).toBeDefined();

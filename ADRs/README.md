@@ -30,7 +30,10 @@ This folder contains the architectural decisions for agent-manager.
 | [0022](0022-wiki-location-strategy.md) | Wiki Location Strategy — Global Store with Project Symlinks | Accepted | 2026-04-10 |
 | [0023](0023-tiered-secret-detection.md) | Tiered Secret Detection with BetterLeaks Integration | Accepted | 2026-04-10 |
 | [0024](0024-mcp-registry-integration.md) | MCP Registry Integration | Accepted | 2026-04-10 |
-| [0025](0025-worker-multi-backend-git-auth.md) | Worker Multi-Backend Git Authentication | Accepted | 2026-04-13 |
+| [0025](0025-worker-multi-backend-auth.md) | Worker Multi-Backend Git Authentication | Accepted | 2026-04-13 |
+| [0026](0026-acpx-acp-runtime-integration.md) | ACP Runtime Integration via ACPX | Accepted | 2026-04-15 |
+| [0027](0027-community-adapter-loading.md) | Community Adapter Loading | Proposed | 2026-04-15 |
+| [0028](0028-brownfield-import-merge.md) | Brownfield Import Merge Strategy | Proposed | 2026-04-15 |
 
 ## Template
 

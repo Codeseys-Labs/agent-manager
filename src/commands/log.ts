@@ -1,7 +1,7 @@
 import { defineCommand } from "citty";
 import { resolveConfigDir } from "../core/config";
 import { type LogEntry, log as gitLog } from "../core/git";
-import { error, info, output } from "../lib/output";
+import { error, info, output, parsePositiveInt } from "../lib/output";
 
 /**
  * Format a log entry with a prefix icon based on the commit message:
@@ -37,7 +37,7 @@ export const logCommand = defineCommand({
 
     let entries;
     try {
-      entries = await gitLog(configDir, Number.parseInt(args.count, 10));
+      entries = await gitLog(configDir, parsePositiveInt(args.count, "count", 20));
     } catch {
       error("Cannot read git log. Run `am init` first.", opts);
       process.exitCode = 1;

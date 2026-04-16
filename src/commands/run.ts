@@ -14,12 +14,12 @@
  * See ADR-0026 Phase 2.
  */
 
+import { join } from "node:path";
 import { defineCommand } from "citty";
 import { resolveConfigDir } from "../core/config";
 import { tryReadConfig } from "../core/config";
-import { join } from "node:path";
-import { debug, error, info, output } from "../lib/output";
-import { AmAcpClient, AcpClientError, createAcpClient } from "../protocols/acp/client";
+import { debug, error, info, output, parsePositiveInt } from "../lib/output";
+import { AcpClientError, AmAcpClient, createAcpClient } from "../protocols/acp/client";
 import { listAgents, resolveAgent } from "../protocols/acp/registry";
 import type { AcpSettings, SessionUpdate } from "../protocols/acp/types";
 
@@ -39,7 +39,8 @@ function formatUpdate(update: SessionUpdate, opts: { verbose?: boolean }): strin
       if (update.content.type === "text") return update.content.text;
       return null;
     case "agent_thought_chunk":
-      if (opts.verbose && update.content.type === "text") return `[thinking] ${update.content.text}`;
+      if (opts.verbose && update.content.type === "text")
+        return `[thinking] ${update.content.text}`;
       return null;
     case "tool_call":
       return `[tool] ${update.title}`;
@@ -103,17 +104,14 @@ const runMainCommand = defineCommand({
     const promptText = args.prompt as string;
     const sessionName = args.session as string | undefined;
     const cwd = (args.cwd as string) || process.cwd();
-    const timeoutSecs = Number.parseInt(args.timeout as string) || 300;
+    const timeoutSecs = parsePositiveInt(args.timeout as string | undefined, "timeout", 300);
 
     const acpSettings = await loadAcpSettings();
 
     // Resolve the agent command
     const entry = resolveAgent(agentName, acpSettings);
     if (!entry) {
-      error(
-        `Unknown agent "${agentName}". Run \`am run agents\` to list available agents.`,
-        opts,
-      );
+      error(`Unknown agent "${agentName}". Run \`am run agents\` to list available agents.`, opts);
       process.exitCode = 1;
       return;
     }
@@ -397,10 +395,10 @@ export const runCommand = defineCommand({
     // If we reach here, it's the main `am run <agent> <prompt>` form
     const promptText = args.prompt as string | undefined;
     if (!promptText) {
-      error(
-        'Usage: am run <agent> "<prompt>" or am run agents|session',
-        { json: args.json, quiet: args.quiet },
-      );
+      error('Usage: am run <agent> "<prompt>" or am run agents|session', {
+        json: args.json,
+        quiet: args.quiet,
+      });
       process.exitCode = 1;
       return;
     }

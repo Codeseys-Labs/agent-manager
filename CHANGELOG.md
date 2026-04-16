@@ -4,10 +4,15 @@ All notable changes to agent-manager are documented in this file.
 
 ## [Unreleased]
 
-### 5-Agent Review + Implementation Session (2026-04-15)
+### Iteration 3: ACP + A2A Hardening + MCP Expansion (2026-04-15)
 
 #### New Features
-- **MCP tools:** `am_server_update` (enable/disable, merge env, replace args/tags), `am_undo` (revert last config change), `am_doctor` (8 health checks). Tool count: 26 → 29.
+- **ACP Agent Orchestration (ADR-0026):** `am run <agent> "<prompt>"` drives ACP-compatible coding agents headlessly. Session management via `am run session list|cancel`. New module: `src/protocols/acp/` (client.ts, registry.ts, types.ts).
+- **MCP tools:** 7 new tools — `am_server_update` (enable/disable, merge env, replace args/tags), `am_undo` (revert last config change), `am_doctor` (8 health checks), `am_run_agent` (ACP agent orchestration), `am_acp_list_agents`, `am_acp_session_list`, `am_acp_session_cancel`. Tool count: 26 → 33 across 6 groups.
+- **MCP tool groups:** 4 → 6 — added `session` (extracted from core: am_session_list/export/search) and `acp` (am_run_agent, am_acp_list_agents, am_acp_session_list, am_acp_session_cancel).
+- **A2A auth middleware:** Bearer token authentication for A2A server endpoints via `auth_token` option.
+- **A2A TTL eviction:** Terminal tasks auto-expire after 1 hour (TASK_TTL_MS). Two-phase eviction: TTL cleanup then capacity-based LRU.
+- **A2A auto-discovery:** `settings.a2a.discovery_sources[]` config for URL-based agent discovery. `discoverFromConfig()` scans configured sources.
 - **Entity-aware CLI:** `am list` accepts entity type (servers, instructions, skills, agents, profiles). `am add` accepts entity type (server, instruction, skill, agent). Backwards compatible.
 - **A2A async tasks:** `tasks/send` returns immediately with `state: "working"`. Clients poll with `tasks/get`. Per-instance task store (no more global singleton).
 - **A2A client polling:** `pollTask()` and `sendAndPoll()` convenience methods on A2AClient.
@@ -35,7 +40,7 @@ All notable changes to agent-manager are documented in this file.
 - Phase 4 cross-review: 4 medium issues found and fixed
 
 #### Tests
-- 1385 tests across 132 files, 4090 assertions (up from 1335/132/3901)
+- 1470 tests across 134 files, 4312 assertions (up from 1335/132/3901)
 
 #### Distribution
 - Release workflow: CHANGELOG-based release notes (replaces --generate-notes)

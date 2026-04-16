@@ -37,7 +37,7 @@ describe("serve command", () => {
     test("NaN port sets exitCode = 1", async () => {
       await serveCommand.run?.({ args: { port: "abc" } } as any);
       expect(process.exitCode).toBe(1);
-      expect(errSpy).toHaveBeenCalledWith("error: Invalid port number");
+      expect(errSpy).toHaveBeenCalledWith(expect.stringContaining("expected a positive integer"));
     });
 
     test("port 0 sets exitCode = 1", async () => {

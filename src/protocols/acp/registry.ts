@@ -8,7 +8,7 @@
  * See ADR-0026 for rationale.
  */
 
-import type { AgentRegistryEntry, AcpSettings } from "./types";
+import type { AcpSettings, AgentRegistryEntry } from "./types";
 
 // ── Built-in registry ──────────────────────────────────────────
 
@@ -40,10 +40,7 @@ const BUILT_IN_REGISTRY: Record<string, string> = {
  * Checks config overrides first, then the built-in registry.
  * Returns null if the agent is unknown.
  */
-export function resolveAgent(
-  name: string,
-  acpSettings?: AcpSettings,
-): AgentRegistryEntry | null {
+export function resolveAgent(name: string, acpSettings?: AcpSettings): AgentRegistryEntry | null {
   // 1. Config override
   const configAgent = acpSettings?.agents?.[name];
   if (configAgent?.command) {

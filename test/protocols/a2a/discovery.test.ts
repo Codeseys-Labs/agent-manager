@@ -246,8 +246,16 @@ describe("protocols/a2a/discovery", () => {
         ].join("\n"),
       );
 
-      const card1: AgentCard = { ...MOCK_CARD, name: "agent-one", url: "https://agent-one.example.com" };
-      const card2: AgentCard = { ...MOCK_CARD, name: "agent-two", url: "https://agent-two.example.com" };
+      const card1: AgentCard = {
+        ...MOCK_CARD,
+        name: "agent-one",
+        url: "https://agent-one.example.com",
+      };
+      const card2: AgentCard = {
+        ...MOCK_CARD,
+        name: "agent-two",
+        url: "https://agent-two.example.com",
+      };
 
       const mockFetch = mock((url: string) => {
         if (url.includes("agent-one.example.com")) {
@@ -267,7 +275,7 @@ describe("protocols/a2a/discovery", () => {
     });
 
     test("returns empty array when no discovery_sources configured", async () => {
-      await tmp.write("config.toml", "[settings]\ndefault_profile = \"default\"\n");
+      await tmp.write("config.toml", '[settings]\ndefault_profile = "default"\n');
 
       const cards = await discoverFromConfig(configDir);
       expect(cards).toEqual([]);

@@ -9,10 +9,10 @@
  */
 
 import type {
+  McpServer as AcpMcpServer,
   AgentCapabilities,
   ContentBlock,
   InitializeResponse,
-  McpServer as AcpMcpServer,
   SessionId,
   SessionInfo,
   SessionNotification,

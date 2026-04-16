@@ -1,5 +1,5 @@
 import { defineCommand } from "citty";
-import { error, info, output } from "../lib/output";
+import { error, info, output, parsePositiveInt } from "../lib/output";
 import { RegistryError, search } from "../registry/client";
 import type { RegistryPackage, RegistrySearchFilters } from "../registry/types";
 
@@ -22,7 +22,7 @@ export const searchCommand = defineCommand({
     const filters: RegistrySearchFilters = {};
     if (args.tag) filters.tag = args.tag;
     if (args.verified) filters.verified = true;
-    if (args.limit) filters.limit = Number.parseInt(args.limit, 10) || 20;
+    if (args.limit) filters.limit = parsePositiveInt(args.limit, "limit", 20);
     if (!filters.limit) filters.limit = 20;
 
     let result;

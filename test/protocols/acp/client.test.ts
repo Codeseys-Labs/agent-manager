@@ -1,6 +1,6 @@
-import { describe, expect, test, mock, beforeEach } from "bun:test";
-import { AmAcpClient, AcpClientError, createAcpClient } from "../../../src/protocols/acp/client";
-import { resolveAgent, listAgents, parseCommand } from "../../../src/protocols/acp/registry";
+import { beforeEach, describe, expect, mock, test } from "bun:test";
+import { AcpClientError, AmAcpClient, createAcpClient } from "../../../src/protocols/acp/client";
+import { listAgents, parseCommand, resolveAgent } from "../../../src/protocols/acp/registry";
 import type { AcpSettings } from "../../../src/protocols/acp/types";
 
 // ── Registry Tests ─────────────────────────────────────────────
@@ -135,7 +135,9 @@ describe("ACP Agent Registry", () => {
     });
 
     test("parses executable with args", () => {
-      const { executable, args } = parseCommand("npx -y @agentclientprotocol/claude-agent-acp@latest");
+      const { executable, args } = parseCommand(
+        "npx -y @agentclientprotocol/claude-agent-acp@latest",
+      );
       expect(executable).toBe("npx");
       expect(args).toEqual(["-y", "@agentclientprotocol/claude-agent-acp@latest"]);
     });

@@ -1,11 +1,12 @@
 import { join } from "node:path";
 import { defineCommand } from "citty";
-import { readConfig, resolveConfigDir, writeConfig } from "../core/config";
+import { resolveConfigDir, tryReadConfig, writeConfig } from "../core/config";
 import { commitAll } from "../core/git";
 import type { Instruction, Server } from "../core/schema";
 import { scanServerForSecrets, substituteSecret } from "../core/secret-detection";
 import { encryptValue, generateKey, importKey, loadKey, saveKey } from "../core/secrets";
-import { error, info, output } from "../lib/output";
+import { requireConfig } from "../lib/errors";
+import { amError, error, info, output } from "../lib/output";
 
 const ENTITY_TYPES = ["server", "instruction", "skill", "agent"] as const;
 type EntityType = (typeof ENTITY_TYPES)[number];
@@ -75,15 +76,20 @@ export const addCommand = defineCommand({
       return;
     }
 
-    switch (entity) {
-      case "server":
-        return addServer(name, args, opts);
-      case "instruction":
-        return addInstruction(name, args, opts);
-      case "skill":
-        return addStub("skill", name, opts);
-      case "agent":
-        return addStub("agent", name, opts);
+    try {
+      switch (entity) {
+        case "server":
+          return await addServer(name, args, opts);
+        case "instruction":
+          return await addInstruction(name, args, opts);
+        case "skill":
+          return addStub("skill", name, opts);
+        case "agent":
+          return addStub("agent", name, opts);
+      }
+    } catch (err) {
+      amError(err, opts);
+      process.exitCode = 1;
     }
   },
 });
@@ -102,14 +108,8 @@ async function addServer(
     return;
   }
 
-  let config;
-  try {
-    config = await readConfig(configPath);
-  } catch {
-    error("Config not found. Run `am init` first.", opts);
-    process.exitCode = 1;
-    return;
-  }
+  const config = await tryReadConfig(configPath);
+  requireConfig(config);
 
   // Check for duplicate
   if (config.servers?.[name]) {
@@ -225,14 +225,8 @@ async function addInstruction(
     return;
   }
 
-  let config;
-  try {
-    config = await readConfig(configPath);
-  } catch {
-    error("Config not found. Run `am init` first.", opts);
-    process.exitCode = 1;
-    return;
-  }
+  const config = await tryReadConfig(configPath);
+  requireConfig(config);
 
   if (config.instructions?.[name]) {
     error(`Instruction "${name}" already exists. Remove it first or use a different name.`, opts);

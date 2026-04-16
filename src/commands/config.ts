@@ -5,8 +5,8 @@ import { defineCommand } from "citty";
 import { listAdapters } from "../adapters/registry";
 import { loadResolvedConfig, resolveConfigDir, resolveProjectConfig } from "../core/config";
 import { ConfigSchema } from "../core/schema";
-import { errorMessage, isNotFound } from "../lib/errors";
-import { error, info, output } from "../lib/output";
+import { AmError, errorMessage, isNotFound } from "../lib/errors";
+import { amError, error, info, output } from "../lib/output";
 import { tomlStringify } from "../lib/toml";
 
 export const configCommand = defineCommand({
@@ -131,42 +131,53 @@ export const showCommand = defineCommand({
   },
   async run({ args }) {
     const opts = { json: args.json, quiet: args.quiet, verbose: args.verbose };
-    const configDir = resolveConfigDir();
-    const configPath = join(configDir, "config.toml");
+    try {
+      const configDir = resolveConfigDir();
+      const configPath = join(configDir, "config.toml");
 
-    if (args.resolved) {
-      const projectFile = resolveProjectConfig(process.cwd());
-      let config;
-      try {
-        config = await loadResolvedConfig({ configDir, projectFile });
-      } catch {
-        error("Config not found. Run `am init` first.", opts);
+      if (args.resolved) {
+        const projectFile = resolveProjectConfig(process.cwd());
+        let config;
+        try {
+          config = await loadResolvedConfig({ configDir, projectFile });
+        } catch {
+          throw new AmError(
+            "Config not found",
+            "Run `am init` to initialize agent-manager",
+            "CONFIG_NOT_FOUND",
+          );
+        }
+
+        if (args.json) {
+          output(config, opts);
+        } else {
+          info(tomlStringify(config as Record<string, unknown>), opts);
+        }
         return;
       }
 
-      if (args.json) {
-        output(config, opts);
-      } else {
-        info(tomlStringify(config as Record<string, unknown>), opts);
+      // Raw config
+      try {
+        const raw = await readFile(configPath, "utf-8");
+        if (args.json) {
+          const parsed = TOML.parse(raw);
+          output(parsed, opts);
+        } else {
+          info(raw, opts);
+        }
+      } catch (err: unknown) {
+        if (isNotFound(err)) {
+          throw new AmError(
+            "Config not found",
+            "Run `am init` to initialize agent-manager",
+            "CONFIG_NOT_FOUND",
+          );
+        }
+        throw err;
       }
-      return;
-    }
-
-    // Raw config
-    try {
-      const raw = await readFile(configPath, "utf-8");
-      if (args.json) {
-        const parsed = TOML.parse(raw);
-        output(parsed, opts);
-      } else {
-        info(raw, opts);
-      }
-    } catch (err: unknown) {
-      if (isNotFound(err)) {
-        error("config.toml not found. Run `am init` first.", opts);
-      } else {
-        error(`Failed to read config: ${errorMessage(err)}`, opts);
-      }
+    } catch (err) {
+      amError(err, opts);
+      process.exitCode = 1;
     }
   },
 });

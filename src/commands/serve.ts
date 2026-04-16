@@ -1,4 +1,5 @@
 import { defineCommand } from "citty";
+import { parsePositiveInt } from "../lib/output";
 import { createApp } from "../web/server";
 
 export const serveCommand = defineCommand({
@@ -11,8 +12,15 @@ export const serveCommand = defineCommand({
     },
   },
   async run({ args }) {
-    const port = Number.parseInt(args.port, 10);
-    if (Number.isNaN(port) || port < 1 || port > 65535) {
+    let port: number;
+    try {
+      port = parsePositiveInt(args.port, "port", 3456);
+    } catch (e) {
+      console.error(`error: ${(e as Error).message}`);
+      process.exitCode = 1;
+      return;
+    }
+    if (port < 1 || port > 65535) {
       console.error("error: Invalid port number");
       process.exitCode = 1;
       return;

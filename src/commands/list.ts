@@ -1,7 +1,8 @@
 import { defineCommand } from "citty";
 import { loadResolvedConfig, resolveConfigDir, resolveProjectConfig } from "../core/config";
 import type { Config } from "../core/schema";
-import { error, info, output } from "../lib/output";
+import { AmError } from "../lib/errors";
+import { amError, error, info, output } from "../lib/output";
 
 const ENTITY_TYPES = ["servers", "instructions", "skills", "agents", "profiles"] as const;
 type EntityType = (typeof ENTITY_TYPES)[number];
@@ -50,34 +51,41 @@ export const listCommand = defineCommand({
   },
   async run({ args }) {
     const opts = { json: args.json, quiet: args.quiet, verbose: args.verbose };
-    const configDir = resolveConfigDir();
-    const entityType = parseEntityType(args.entity as string | undefined);
-
-    const projectFile = args.global ? null : resolveProjectConfig(process.cwd());
-
-    let config;
     try {
-      config = await loadResolvedConfig({
-        configDir,
-        projectFile,
-      });
-    } catch {
-      error("Config not found. Run `am init` first.", opts);
-      process.exitCode = 1;
-      return;
-    }
+      const configDir = resolveConfigDir();
+      const entityType = parseEntityType(args.entity as string | undefined);
 
-    switch (entityType) {
-      case "servers":
-        return listServers(config, opts);
-      case "instructions":
-        return listInstructions(config, opts);
-      case "skills":
-        return listSkills(config, opts);
-      case "agents":
-        return listAgents(config, opts);
-      case "profiles":
-        return listProfiles(config, opts);
+      const projectFile = args.global ? null : resolveProjectConfig(process.cwd());
+
+      let config;
+      try {
+        config = await loadResolvedConfig({
+          configDir,
+          projectFile,
+        });
+      } catch {
+        throw new AmError(
+          "Config not found",
+          "Run `am init` to initialize agent-manager",
+          "CONFIG_NOT_FOUND",
+        );
+      }
+
+      switch (entityType) {
+        case "servers":
+          return listServers(config, opts);
+        case "instructions":
+          return listInstructions(config, opts);
+        case "skills":
+          return listSkills(config, opts);
+        case "agents":
+          return listAgents(config, opts);
+        case "profiles":
+          return listProfiles(config, opts);
+      }
+    } catch (err) {
+      amError(err, opts);
+      process.exitCode = 1;
     }
   },
 });

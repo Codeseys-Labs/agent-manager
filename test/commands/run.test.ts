@@ -1,5 +1,5 @@
-import { describe, expect, test, mock, beforeEach } from "bun:test";
-import { resolveAgent, listAgents, parseCommand } from "../../src/protocols/acp/registry";
+import { beforeEach, describe, expect, mock, test } from "bun:test";
+import { listAgents, parseCommand, resolveAgent } from "../../src/protocols/acp/registry";
 import type { AcpSettings } from "../../src/protocols/acp/types";
 
 /**

@@ -761,7 +761,9 @@ function defineTools(): ToolEntry[] {
         const name = args.name as string;
 
         if (!config.servers?.[name]) {
-          throw new Error(`Server "${name}" not found. Use am_list_servers to see available server names.`);
+          throw new Error(
+            `Server "${name}" not found. Use am_list_servers to see available server names.`,
+          );
         }
 
         const existing = config.servers[name];
@@ -1520,15 +1522,20 @@ function defineTools(): ToolEntry[] {
         inputSchema: {
           type: "object",
           properties: {
-            agent: { type: "string", description: "Agent name (e.g., 'claude', 'codex', 'gemini')" },
+            agent: {
+              type: "string",
+              description: "Agent name (e.g., 'claude', 'codex', 'gemini')",
+            },
             prompt: { type: "string", description: "Prompt text to send to the agent" },
             session: {
               type: "string",
-              description: "Named session to create or resume. If omitted, a new anonymous session is created.",
+              description:
+                "Named session to create or resume. If omitted, a new anonymous session is created.",
             },
             cwd: {
               type: "string",
-              description: "Working directory for the agent session. Defaults to current working directory.",
+              description:
+                "Working directory for the agent session. Defaults to current working directory.",
             },
           },
           required: ["agent", "prompt"],
@@ -1557,7 +1564,8 @@ function defineTools(): ToolEntry[] {
         const client = createAcpClient();
         try {
           await client.connect(entry.command);
-          const sessionId = sessionName ?? `am-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+          const sessionId =
+            sessionName ?? `am-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
           await client.newSession({ cwd });
           const result = await client.prompt(sessionId, [{ type: "text", text: promptText }]);
           await client.disconnect();
@@ -1612,8 +1620,8 @@ function defineTools(): ToolEntry[] {
         const { readdir, stat } = await import("node:fs/promises");
         const { join } = await import("node:path");
         const { config } = await loadConfigAndProfile();
-        const sessionDir = config.settings?.acp?.session_dir
-          ?? join(resolveConfigDir(), "sessions");
+        const sessionDir =
+          config.settings?.acp?.session_dir ?? join(resolveConfigDir(), "sessions");
 
         const sessions: Array<{
           id: string;
@@ -1664,8 +1672,8 @@ function defineTools(): ToolEntry[] {
         const { rm } = await import("node:fs/promises");
         const { join } = await import("node:path");
         const { config } = await loadConfigAndProfile();
-        const sessionDir = config.settings?.acp?.session_dir
-          ?? join(resolveConfigDir(), "sessions");
+        const sessionDir =
+          config.settings?.acp?.session_dir ?? join(resolveConfigDir(), "sessions");
         const sessionPath = join(sessionDir, sessionId);
 
         try {

@@ -6,10 +6,10 @@ every AI coding tool. Single source of truth with MCP registry integration,
 knowledge synthesis, and agent-to-agent protocol support.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Tests: 1373 pass](https://img.shields.io/badge/tests-1373%20pass-green.svg)](#testing)
+[![Tests: 1470 pass](https://img.shields.io/badge/tests-1470%20pass-green.svg)](#testing)
 [![Adapters: 13](https://img.shields.io/badge/adapters-13-purple.svg)](#adapter-support-matrix)
-[![MCP Tools: 26](https://img.shields.io/badge/MCP%20tools-26-orange.svg)](#mcp-server-mode)
-[![Commands: 27](https://img.shields.io/badge/commands-27-blue.svg)](#cli-reference)
+[![MCP Tools: 33](https://img.shields.io/badge/MCP%20tools-33-orange.svg)](#mcp-server-mode)
+[![Commands: 28](https://img.shields.io/badge/commands-28-blue.svg)](#cli-reference)
 [![Bun](https://img.shields.io/badge/runtime-Bun-f9f1e1.svg)](https://bun.sh)
 
 ```bash
@@ -285,11 +285,34 @@ am agents remove my-agent                 # remove from roster
 
 Agent Cards are served at `/.well-known/agent.json` on the local web server. The A2A server handles `tasks/send`, `tasks/get`, and `tasks/cancel` via JSON-RPC.
 
+**Security & reliability features:**
+- **Bearer token auth:** Optional `auth_token` protects A2A server endpoints
+- **TTL eviction:** Terminal tasks auto-expire after 1 hour, two-phase eviction (TTL then capacity-based LRU)
+- **Auto-discovery:** Configure `settings.a2a.discovery_sources` URLs for automatic agent roster population
+- **Async polling:** `sendAndPoll()` convenience method for fire-and-wait task delegation
+
+---
+
+## ACP Agent Orchestration
+
+Drive ACP-compatible coding agents headlessly through a unified interface (ADR-0026).
+
+```bash
+am run claude "fix the failing tests"          # one-shot: spawn, prompt, wait, exit
+am run codex "add error handling to api.ts"    # different agent, same interface
+am run --session backend claude "continue"     # named session (resume previous work)
+am run --cwd /path/to/project claude "refactor" # override working directory
+am run session list                            # list active ACP sessions
+am run session cancel <sessionId>              # cancel active session
+```
+
+Agents are registered in config.toml under `[settings.acp.agents]` or discovered automatically from installed tools.
+
 ---
 
 ## MCP Server Mode
 
-`am mcp-serve` turns agent-manager into an MCP server that AI agents can call to manage their own configuration. 26 tools across 3 permission tiers, grouped by function:
+`am mcp-serve` turns agent-manager into an MCP server that AI agents can call to manage their own configuration. 33 tools across 3 permission tiers, grouped by function:
 
 ### Tool Grouping
 
@@ -298,15 +321,17 @@ Control which tools are exposed via `settings.mcp_serve.tools`. Default: `["core
 ```toml
 [settings.mcp_serve]
 allow_push = false
-tools = ["core", "registry", "a2a", "wiki"]   # expose all 26 tools
+tools = ["core", "registry", "a2a", "wiki", "session", "acp"]   # expose all 33 tools
 ```
 
 | Group | Tools | Tier |
 |-------|-------|------|
-| **core** (14) | `am_list_servers`, `am_list_profiles`, `am_status`, `am_config_show`, `am_session_list`, `am_session_export`, `am_session_search`, `am_add_server`, `am_remove_server`, `am_use_profile`, `am_import`, `am_apply`, `am_sync_push`, `am_sync_pull` | read/write-local/write-remote |
+| **core** (14) | `am_list_servers`, `am_list_profiles`, `am_status`, `am_config_show`, `am_doctor`, `am_add_server`, `am_remove_server`, `am_server_update`, `am_undo`, `am_use_profile`, `am_import`, `am_apply`, `am_sync_push`, `am_sync_pull` | read/write-local/write-remote |
 | **registry** (3) | `am_registry_search`, `am_registry_install`, `am_registry_list_installed` | read/write-local |
 | **a2a** (4) | `am_agent_discover`, `am_agent_list`, `am_agent_delegate`, `am_agent_task_status` | read/write-remote |
 | **wiki** (5) | `am_wiki_search`, `am_wiki_add`, `am_wiki_synthesize`, `am_wiki_briefing`, `am_wiki_harvest` | read/write-local |
+| **session** (3) | `am_session_list`, `am_session_export`, `am_session_search` | read-only |
+| **acp** (4) | `am_run_agent`, `am_acp_list_agents`, `am_acp_session_list`, `am_acp_session_cancel` | write-local |
 
 Add to any tool's MCP config:
 
@@ -474,6 +499,16 @@ agents = ["researcher"]
 | `am agents ping <name>` | Verify reachable, show capabilities |
 | `am agents delegate <name> <task>` | Send task, stream response |
 
+### ACP Agent Orchestration
+
+| Command | Description |
+|---------|-------------|
+| `am run <agent> "<prompt>"` | Drive an ACP-compatible agent headlessly |
+| `am run --session <name> <agent> "<prompt>"` | Named session (resume previous work) |
+| `am run --cwd <path> <agent> "<prompt>"` | Override working directory |
+| `am run session list` | List active ACP sessions |
+| `am run session cancel <id>` | Cancel an active session |
+
 ### Tools and Diagnostics
 
 | Command | Description |
@@ -537,8 +572,8 @@ bun run deploy:web
 
 ```mermaid
 graph LR
-    CLI["CLI (27 commands)"] --> Core["Core Engine<br/>(TOML + Zod + Git)"]
-    MCP["MCP Server<br/>(26 tools, 4 groups)"] --> Core
+    CLI["CLI (28 commands)"] --> Core["Core Engine<br/>(TOML + Zod + Git)"]
+    MCP["MCP Server<br/>(33 tools, 6 groups)"] --> Core
     TUI["TUI (Silvery)"] --> Core
     Web["Web UI"] --> Hono["Hono (local) /<br/>CF Workers"]
 
@@ -554,7 +589,7 @@ graph LR
     Core --> A2A["A2A Protocol<br/>(discovery / delegation)"]
 ```
 
-Design decisions documented in [25 ADRs](ADRs/README.md).
+Design decisions documented in [28 ADRs](ADRs/README.md).
 
 ---
 
@@ -562,7 +597,7 @@ Design decisions documented in [25 ADRs](ADRs/README.md).
 
 ```bash
 bun install                       # install dependencies
-bun test                          # run all 1373 tests
+bun test                          # run all 1470 tests
 bun test --watch                  # watch mode
 bun run dev -- <command> [args]   # run CLI from source
 bun run lint                      # Biome check
@@ -588,7 +623,7 @@ cache for faster downloads.
 **CI pipeline** (`.github/workflows/ci.yml` — triggers on push to main + PRs):
 1. Type check — `tsc --noEmit` filtered to `src/` errors only
 2. Lint — `biome check`
-3. Test with coverage — `bun test --coverage` (1373 tests)
+3. Test with coverage — `bun test --coverage` (1470 tests)
 4. Build smoke test — all 5 platform targets
 5. Cross-platform build verify — Ubuntu + macOS + Windows
 
@@ -609,15 +644,15 @@ cache for faster downloads.
 
 | Metric | Count |
 |--------|-------|
-| Source files | 161 |
-| Test files | 132 |
-| Tests | 1,373 |
-| Assertions | 3,988 |
+| Source files | 165 |
+| Test files | 134 |
+| Tests | 1,470 |
+| Assertions | 4,312 |
 | IDE adapters | 13 |
 | Platform adapters | 3 |
-| CLI commands | 27 |
-| MCP tools | 26 |
-| ADRs | 22 |
+| CLI commands | 28 |
+| MCP tools | 33 |
+| ADRs | 28 |
 
 ### Tech Stack
 

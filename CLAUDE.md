@@ -17,7 +17,7 @@ every AI coding tool.
 | TUI | Silvery + React (terminal dashboard) |
 | Encryption | Web Crypto API (AES-256-GCM) |
 | Output | @clack/prompts (interactive) |
-| Testing | bun:test (1134 tests across 118 files) |
+| Testing | bun:test (1470 tests across 134 files) |
 | Search | MiniSearch (BM25 for wiki full-text search) |
 | Secret detection | Tiered: key-name patterns (built-in) + BetterLeaks (optional) |
 | Linting | Biome |
@@ -25,14 +25,14 @@ every AI coding tool.
 ## Directory Layout
 
 ```
-src/                                 # 161 TypeScript files
-  cli.ts                             # Entry point -- citty command routing with 27 lazy subcommands
+src/                                 # 165 TypeScript files
+  cli.ts                             # Entry point -- citty command routing with 28 lazy subcommands
   commands/                          # CLI command handlers (one file per command)
     init.ts, add.ts, list.ts, use.ts, apply.ts, status.ts,
     config.ts, profile.ts, doctor.ts, import.ts, push.ts, pull.ts,
     undo.ts, log.ts, secret.ts, version.ts, adapter.ts,
     mcp-serve.ts, serve.ts, tui.ts, session.ts, init-project.ts,
-    search.ts, install.ts, uninstall.ts, update.ts, wiki.ts, agents.ts
+    search.ts, install.ts, uninstall.ts, update.ts, wiki.ts, agents.ts, run.ts
   core/                              # Core engine -- config, resolution, git, validation, encryption
     schema.ts                        # Zod schemas: Server, Instruction, Skill, AgentProfile, Profile, Config, ProjectConfig
     config.ts                        # TOML read/write, hierarchical merge (4 layers), project config, buildResolvedConfig
@@ -72,8 +72,10 @@ src/                                 # 161 TypeScript files
       server.ts                      # A2A server endpoint handling
       discovery.ts                   # Agent roster management, URL-based discovery
       generate-card.ts               # Generate Agent Card from am config
-    acp/                             # Agent Communication Protocol (config-only)
-      types.ts                       # ACP type definitions
+    acp/                             # Agent Communication Protocol (ADR-0026)
+      types.ts                       # ACP type definitions (agent, session, update events)
+      client.ts                      # ACP client: spawn, stream, cancel agents headlessly
+      registry.ts                    # Agent resolution from config + auto-detection
   wiki/                              # LLM Wiki / Knowledge Synthesis (ADR-0020)
     types.ts                         # Wiki entry, page, index types
     storage.ts                       # TOML-backed wiki storage with symlinks
@@ -88,7 +90,7 @@ src/                                 # 161 TypeScript files
     gitlab.ts                        # GitLab platform adapter
     bare.ts                          # Bare git fallback
   mcp/                               # MCP server mode
-    server.ts                        # JSON-RPC 2.0 over stdio, 17 tools, 3 permission tiers (ADR-0009)
+    server.ts                        # JSON-RPC 2.0 over stdio, 33 tools, 6 groups, 3 permission tiers (ADR-0009)
   tui/                               # Terminal UI (Silvery + React)
     index.tsx                        # TUI launcher
     App.tsx                          # Root component with tab navigation
@@ -106,7 +108,7 @@ src/                                 # 161 TypeScript files
     output.ts                        # JSON/text output helpers (--json, --quiet, --verbose)
     toml.ts                          # TOML parsing/serialization helpers
 
-test/                                # 118 test files, 1134 tests, 2967 assertions
+test/                                # 134 test files, 1470 tests, 4312 assertions
   core/                              # Unit tests for core modules
   adapters/                          # Adapter-specific tests (per-adapter directories)
   commands/                          # CLI command integration tests
@@ -114,7 +116,7 @@ test/                                # 118 test files, 1134 tests, 2967 assertio
   helpers/                           # Test utilities (tmp dirs, config builders)
   integration/                       # End-to-end tests
 
-ADRs/                                # 24 architectural decision records
+ADRs/                                # 28 architectural decision records
 docs/                                # Design specs and guides
 scripts/
   build.ts                           # Cross-platform build (5 targets via Bun.spawn)
@@ -129,7 +131,7 @@ scripts/
 2. **IDE adapters** (13) bridge core TOML to each tool's native format: detect, import, export, diff
 3. **Platform adapters** (3) handle git remote URL detection and auth: GitHub, GitLab, bare
 4. **Two-phase validation** (ADR-0007): Core validates core fields strictly; adapter sections are `z.record(z.string(), z.unknown())` at the core level, then each adapter validates its own section
-5. **MCP server mode** (ADR-0009): agent-manager as an MCP tool server with 3 permission tiers
+5. **MCP server mode** (ADR-0009): agent-manager as an MCP tool server with 33 tools across 6 groups and 3 permission tiers
 6. **Stateless web UI** (ADR-0015): Cloudflare Workers with GitHub OAuth, encrypted cookies, no persistent storage
 
 **Config hierarchy** (highest wins):
@@ -277,7 +279,7 @@ All git operations use **isomorphic-git** (pure JS). No dependency on system `gi
 ## Testing
 
 ```bash
-bun test                          # Run all 1134 tests
+bun test                          # Run all 1470 tests
 bun test:unit                     # Core + adapter unit tests only
 bun test:integration              # Integration tests only
 bun test --watch                  # Watch mode
@@ -336,6 +338,10 @@ bun run deploy:web                # Deploy to Cloudflare Workers
 | [0022](ADRs/0022-wiki-location-strategy.md) | Wiki Location Strategy -- dual global + project wiki with symlinks |
 | [0023](ADRs/0023-tiered-secret-detection.md) | Tiered Secret Detection -- key-name patterns + BetterLeaks |
 | [0024](ADRs/0024-mcp-registry-integration.md) | MCP Registry Integration -- package install with provenance tracking |
+| [0025](ADRs/0025-worker-multi-backend-auth.md) | Worker Multi-Backend Git Auth -- GitHub, GitLab, Codeberg, self-hosted Gitea |
+| [0026](ADRs/0026-acpx-acp-runtime-integration.md) | ACP Runtime Integration via ACPX -- 4-phase plan for headless agent orchestration |
+| [0027](ADRs/0027-community-adapter-loading.md) | Community Adapter Loading -- JSON-RPC subprocess, npm/git install, adapters.toml |
+| [0028](ADRs/0028-brownfield-import-merge.md) | Brownfield Import Merge -- two-tier identity matching, interactive conflict resolution |
 
 ## Git Commit Style
 

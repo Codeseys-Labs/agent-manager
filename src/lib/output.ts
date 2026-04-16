@@ -34,3 +34,19 @@ export function amError(err: unknown, opts: OutputOptions): void {
 export function debug(message: string, opts: OutputOptions): void {
   if (opts.verbose && !opts.json) console.log(`  [debug] ${message}`);
 }
+
+export function parsePositiveInt(
+  value: string | undefined,
+  flagName: string,
+  defaultValue?: number,
+): number {
+  if (value === undefined) {
+    if (defaultValue !== undefined) return defaultValue;
+    throw new Error(`Invalid value for --${flagName}: expected a positive integer, got "${value}"`);
+  }
+  const parsed = Number.parseInt(value, 10);
+  if (Number.isNaN(parsed) || parsed < 0) {
+    throw new Error(`Invalid value for --${flagName}: expected a positive integer, got "${value}"`);
+  }
+  return parsed;
+}

@@ -3,16 +3,16 @@ import { confirm, isCancel } from "@clack/prompts";
 import { defineCommand } from "citty";
 import {
   loadResolvedConfig,
-  readConfig,
   resolveConfigDir,
   resolveProjectConfig,
+  tryReadConfig,
   writeConfig,
 } from "../core/config";
 import { commitAll } from "../core/git";
 import { resolveProfile } from "../core/resolver";
 import type { Config, Profile } from "../core/schema";
-import { errorMessage } from "../lib/errors";
-import { error, info, output } from "../lib/output";
+import { AmError, errorMessage, requireConfig } from "../lib/errors";
+import { amError, error, info, output } from "../lib/output";
 import { readActiveProfile } from "./use";
 
 export const profileCommand = defineCommand({
@@ -34,49 +34,48 @@ export const profileListCommand = defineCommand({
   },
   async run({ args }) {
     const opts = { json: args.json, quiet: args.quiet, verbose: args.verbose };
-    const configDir = resolveConfigDir();
-    const configPath = join(configDir, "config.toml");
-
-    let config: Config;
     try {
-      config = await readConfig(configPath);
-    } catch {
+      const configDir = resolveConfigDir();
+      const configPath = join(configDir, "config.toml");
+
+      const config = await tryReadConfig(configPath);
+      requireConfig(config);
+
+      const profiles = config.profiles ?? {};
+      const activeProfile =
+        (await readActiveProfile(configDir)) ?? config.settings?.default_profile ?? "default";
+
+      const entries = Object.entries(profiles).map(([name, profile]) => ({
+        name,
+        description: profile.description ?? "",
+        inherits: profile.inherits ?? null,
+        active: name === activeProfile,
+      }));
+
+      if (args.json) {
+        output({ profiles: entries, activeProfile }, opts);
+        return;
+      }
+
+      if (entries.length === 0) {
+        info("No profiles configured.", opts);
+        return;
+      }
+
+      info(`${"Name".padEnd(20)} ${"Inherits".padEnd(15)} ${"Description"}`, opts);
+      info(`${"─".repeat(20)} ${"─".repeat(15)} ${"─".repeat(30)}`, opts);
+      for (const p of entries) {
+        const marker = p.active ? " *" : "";
+        info(
+          `${(p.name + marker).padEnd(20)} ${(p.inherits ?? "—").padEnd(15)} ${p.description}`,
+          opts,
+        );
+      }
+      info(`\n${entries.length} profile(s), active: ${activeProfile}`, opts);
+    } catch (err) {
+      amError(err, opts);
       process.exitCode = 1;
-      error("Config not found. Run `am init` first.", opts);
-      return;
     }
-
-    const profiles = config.profiles ?? {};
-    const activeProfile =
-      (await readActiveProfile(configDir)) ?? config.settings?.default_profile ?? "default";
-
-    const entries = Object.entries(profiles).map(([name, profile]) => ({
-      name,
-      description: profile.description ?? "",
-      inherits: profile.inherits ?? null,
-      active: name === activeProfile,
-    }));
-
-    if (args.json) {
-      output({ profiles: entries, activeProfile }, opts);
-      return;
-    }
-
-    if (entries.length === 0) {
-      info("No profiles configured.", opts);
-      return;
-    }
-
-    info(`${"Name".padEnd(20)} ${"Inherits".padEnd(15)} ${"Description"}`, opts);
-    info(`${"─".repeat(20)} ${"─".repeat(15)} ${"─".repeat(30)}`, opts);
-    for (const p of entries) {
-      const marker = p.active ? " *" : "";
-      info(
-        `${(p.name + marker).padEnd(20)} ${(p.inherits ?? "—").padEnd(15)} ${p.description}`,
-        opts,
-      );
-    }
-    info(`\n${entries.length} profile(s), active: ${activeProfile}`, opts);
   },
 });
 
@@ -90,46 +89,46 @@ export const profileShowCommand = defineCommand({
   },
   async run({ args }) {
     const opts = { json: args.json, quiet: args.quiet, verbose: args.verbose };
-    const configDir = resolveConfigDir();
-    const projectFile = resolveProjectConfig(process.cwd());
-
-    let config: Config;
     try {
-      config = await loadResolvedConfig({ configDir, projectFile });
-    } catch {
-      process.exitCode = 1;
-      error("Config not found. Run `am init` first.", opts);
-      return;
-    }
+      const configDir = resolveConfigDir();
+      const projectFile = resolveProjectConfig(process.cwd());
 
-    let resolved;
-    try {
-      resolved = resolveProfile(args.name, config);
-    } catch (err: unknown) {
-      process.exitCode = 1;
-      error(errorMessage(err), opts);
-      return;
-    }
-
-    if (args.json) {
-      output(resolved, opts);
-      return;
-    }
-
-    info(`Profile: ${resolved.name}`, opts);
-    info(`Servers: ${resolved.servers.length > 0 ? resolved.servers.join(", ") : "none"}`, opts);
-    info(`Skills: ${resolved.skills.length > 0 ? resolved.skills.join(", ") : "none"}`, opts);
-    info(
-      `Instructions: ${resolved.instructions.length > 0 ? resolved.instructions.join(", ") : "none"}`,
-      opts,
-    );
-
-    const envEntries = Object.entries(resolved.env);
-    if (envEntries.length > 0) {
-      info("Env:", opts);
-      for (const [k, v] of envEntries) {
-        info(`  ${k}=${v}`, opts);
+      let config: Config;
+      try {
+        config = await loadResolvedConfig({ configDir, projectFile });
+      } catch {
+        throw new AmError(
+          "Config not found",
+          "Run `am init` to initialize agent-manager",
+          "CONFIG_NOT_FOUND",
+        );
       }
+
+      const resolved = resolveProfile(args.name, config);
+
+      if (args.json) {
+        output(resolved, opts);
+        return;
+      }
+
+      info(`Profile: ${resolved.name}`, opts);
+      info(`Servers: ${resolved.servers.length > 0 ? resolved.servers.join(", ") : "none"}`, opts);
+      info(`Skills: ${resolved.skills.length > 0 ? resolved.skills.join(", ") : "none"}`, opts);
+      info(
+        `Instructions: ${resolved.instructions.length > 0 ? resolved.instructions.join(", ") : "none"}`,
+        opts,
+      );
+
+      const envEntries = Object.entries(resolved.env);
+      if (envEntries.length > 0) {
+        info("Env:", opts);
+        for (const [k, v] of envEntries) {
+          info(`  ${k}=${v}`, opts);
+        }
+      }
+    } catch (err) {
+      amError(err, opts);
+      process.exitCode = 1;
     }
   },
 });
@@ -146,51 +145,50 @@ export const profileCreateCommand = defineCommand({
   },
   async run({ args }) {
     const opts = { json: args.json, quiet: args.quiet, verbose: args.verbose };
-    const configDir = resolveConfigDir();
-    const configPath = join(configDir, "config.toml");
-
-    let config: Config;
     try {
-      config = await readConfig(configPath);
-    } catch {
+      const configDir = resolveConfigDir();
+      const configPath = join(configDir, "config.toml");
+
+      const config = await tryReadConfig(configPath);
+      requireConfig(config);
+
+      const name = args.name;
+
+      if (config.profiles?.[name]) {
+        process.exitCode = 1;
+        error(`Profile "${name}" already exists.`, opts);
+        return;
+      }
+
+      // Validate parent exists if specified
+      if (args.inherits && !config.profiles?.[args.inherits]) {
+        process.exitCode = 1;
+        error(`Parent profile "${args.inherits}" does not exist.`, opts);
+        return;
+      }
+
+      const profile: Profile = {};
+      if (args.description) profile.description = args.description;
+      if (args.inherits) profile.inherits = args.inherits;
+
+      if (!config.profiles) config.profiles = {};
+      config.profiles[name] = profile;
+
+      await writeConfig(configPath, config);
+
+      try {
+        await commitAll(configDir, `add profile: ${name}`);
+      } catch {
+        // Nothing to commit
+      }
+
+      info(`Created profile "${name}"`, opts);
+      if (args.json) {
+        output({ action: "create", profile: name, config: profile }, opts);
+      }
+    } catch (err) {
+      amError(err, opts);
       process.exitCode = 1;
-      error("Config not found. Run `am init` first.", opts);
-      return;
-    }
-
-    const name = args.name;
-
-    if (config.profiles?.[name]) {
-      process.exitCode = 1;
-      error(`Profile "${name}" already exists.`, opts);
-      return;
-    }
-
-    // Validate parent exists if specified
-    if (args.inherits && !config.profiles?.[args.inherits]) {
-      process.exitCode = 1;
-      error(`Parent profile "${args.inherits}" does not exist.`, opts);
-      return;
-    }
-
-    const profile: Profile = {};
-    if (args.description) profile.description = args.description;
-    if (args.inherits) profile.inherits = args.inherits;
-
-    if (!config.profiles) config.profiles = {};
-    config.profiles[name] = profile;
-
-    await writeConfig(configPath, config);
-
-    try {
-      await commitAll(configDir, `add profile: ${name}`);
-    } catch {
-      // Nothing to commit
-    }
-
-    info(`Created profile "${name}"`, opts);
-    if (args.json) {
-      output({ action: "create", profile: name, config: profile }, opts);
     }
   },
 });
@@ -206,59 +204,58 @@ export const profileDeleteCommand = defineCommand({
   },
   async run({ args }) {
     const opts = { json: args.json, quiet: args.quiet, verbose: args.verbose };
-    const configDir = resolveConfigDir();
-    const configPath = join(configDir, "config.toml");
-
-    let config: Config;
     try {
-      config = await readConfig(configPath);
-    } catch {
-      process.exitCode = 1;
-      error("Config not found. Run `am init` first.", opts);
-      return;
-    }
+      const configDir = resolveConfigDir();
+      const configPath = join(configDir, "config.toml");
 
-    const name = args.name;
+      const config = await tryReadConfig(configPath);
+      requireConfig(config);
 
-    if (!config.profiles?.[name]) {
-      process.exitCode = 1;
-      error(`Profile "${name}" does not exist.`, opts);
-      return;
-    }
+      const name = args.name;
 
-    // Check if any other profile inherits from this one
-    for (const [otherName, otherProfile] of Object.entries(config.profiles ?? {})) {
-      if (otherProfile.inherits === name) {
+      if (!config.profiles?.[name]) {
         process.exitCode = 1;
-        error(`Cannot delete "${name}": profile "${otherName}" inherits from it.`, opts);
+        error(`Profile "${name}" does not exist.`, opts);
         return;
       }
-    }
 
-    // Confirmation prompt (skip if --yes flag or non-interactive)
-    if (!args.yes) {
-      const confirmed = await confirm({
-        message: `Delete profile '${name}'? This cannot be undone.`,
-      });
-      if (isCancel(confirmed) || !confirmed) {
-        info("Aborted.", opts);
-        return;
+      // Check if any other profile inherits from this one
+      for (const [otherName, otherProfile] of Object.entries(config.profiles ?? {})) {
+        if (otherProfile.inherits === name) {
+          process.exitCode = 1;
+          error(`Cannot delete "${name}": profile "${otherName}" inherits from it.`, opts);
+          return;
+        }
       }
-    }
 
-    delete config.profiles[name];
+      // Confirmation prompt (skip if --yes flag or non-interactive)
+      if (!args.yes) {
+        const confirmed = await confirm({
+          message: `Delete profile '${name}'? This cannot be undone.`,
+        });
+        if (isCancel(confirmed) || !confirmed) {
+          info("Aborted.", opts);
+          return;
+        }
+      }
 
-    await writeConfig(configPath, config);
+      delete config.profiles[name];
 
-    try {
-      await commitAll(configDir, `delete profile: ${name}`);
-    } catch {
-      // Nothing to commit
-    }
+      await writeConfig(configPath, config);
 
-    info(`Deleted profile "${name}"`, opts);
-    if (args.json) {
-      output({ action: "delete", profile: name }, opts);
+      try {
+        await commitAll(configDir, `delete profile: ${name}`);
+      } catch {
+        // Nothing to commit
+      }
+
+      info(`Deleted profile "${name}"`, opts);
+      if (args.json) {
+        output({ action: "delete", profile: name }, opts);
+      }
+    } catch (err) {
+      amError(err, opts);
+      process.exitCode = 1;
     }
   },
 });

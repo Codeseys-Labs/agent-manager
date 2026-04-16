@@ -2,8 +2,8 @@ import { defineCommand } from "citty";
 import { resolveConfigDir } from "../core/config";
 import { getStatus, push } from "../core/git";
 import { loadKey } from "../core/secrets";
-import { errorMessage } from "../lib/errors";
-import { error, info, output } from "../lib/output";
+import { AmError } from "../lib/errors";
+import { amError, info, output } from "../lib/output";
 import { detectPlatform } from "../platforms/registry";
 
 export const pushCommand = defineCommand({
@@ -15,34 +15,28 @@ export const pushCommand = defineCommand({
   },
   async run({ args }) {
     const opts = { json: args.json, quiet: args.quiet, verbose: args.verbose };
-    const configDir = resolveConfigDir();
-
-    let status;
     try {
-      status = await getStatus(configDir);
-    } catch {
-      error("Config not found. Run `am init` first.", opts);
-      process.exitCode = 1;
-      return;
-    }
+      const configDir = resolveConfigDir();
 
-    if (status.remotes.length === 0) {
-      if (args.json) {
-        console.error(
-          JSON.stringify({
-            error: "No remote configured",
-            suggestion: "Add a remote URL to your config repo",
-          }),
+      let status;
+      try {
+        status = await getStatus(configDir);
+      } catch {
+        throw new AmError(
+          "Config not found",
+          "Run `am init` to initialize agent-manager",
+          "CONFIG_NOT_FOUND",
         );
-      } else {
-        console.error("error: No remote configured");
-        console.error("  suggestion: Add a remote URL to your config repo");
       }
-      process.exitCode = 1;
-      return;
-    }
 
-    try {
+      if (status.remotes.length === 0) {
+        throw new AmError(
+          "No remote configured",
+          "Add a remote URL to your config repo",
+          "NO_REMOTE",
+        );
+      }
+
       await push(configDir);
       info(`Pushed to ${status.remotes[0].url}`, opts);
 
@@ -66,8 +60,8 @@ export const pushCommand = defineCommand({
       if (args.json) {
         output({ action: "push", remote: remoteUrl, branch: status.branch }, opts);
       }
-    } catch (e: unknown) {
-      error(`Push failed: ${errorMessage(e) || "unknown error"}`, opts);
+    } catch (err) {
+      amError(err, opts);
       process.exitCode = 1;
     }
   },
