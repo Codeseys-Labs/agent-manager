@@ -50,6 +50,9 @@ jobs:
     runs-on: blacksmith-2vcpu-ubuntu-2404
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Download all artifacts
         uses: actions/download-artifact@v4
@@ -64,6 +67,22 @@ jobs:
           echo "--- checksums.sha256 ---"
           cat checksums.sha256
 
+      - name: Extract release notes from CHANGELOG.md
+        id: changelog
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          # Extract the [Unreleased] section (everything between ## [Unreleased] and the next ## heading)
+          NOTES=$(sed -n '/^## \[Unreleased\]/,/^## \[/{/^## \[Unreleased\]/d;/^## \[/d;p}' CHANGELOG.md)
+          if [ -z "$NOTES" ]; then
+            # Fallback: try to extract a versioned section
+            NOTES=$(sed -n "/^## \\[${VERSION}\\]/,/^## \\[/{/^## \\[${VERSION}\\]/d;/^## \\[/d;p}" CHANGELOG.md)
+          fi
+          if [ -z "$NOTES" ]; then
+            NOTES="Release ${GITHUB_REF_NAME}"
+          fi
+          # Write to file for gh release (avoids delimiter escaping issues)
+          echo "$NOTES" > /tmp/release-notes.md
+
       - name: Create GitHub Release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -71,8 +90,98 @@ jobs:
           gh release create "$GITHUB_REF_NAME" \
             --repo "$GITHUB_REPOSITORY" \
             --title "$GITHUB_REF_NAME" \
-            --generate-notes \
+            --notes-file /tmp/release-notes.md \
             ./artifacts/*
+
+      - name: Update Homebrew formula
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+
+          # Read checksums from artifacts
+          SHA_DARWIN_ARM64=$(grep 'am-darwin-arm64$' ./artifacts/checksums.sha256 | cut -d' ' -f1)
+          SHA_DARWIN_X64=$(grep 'am-darwin-x64$' ./artifacts/checksums.sha256 | cut -d' ' -f1)
+          SHA_LINUX_ARM64=$(grep 'am-linux-arm64$' ./artifacts/checksums.sha256 | cut -d' ' -f1)
+          SHA_LINUX_X64=$(grep 'am-linux-x64$' ./artifacts/checksums.sha256 | cut -d' ' -f1)
+
+          # Regenerate formula from scratch (avoids fragile sed-on-previous-values)
+          # Use 'RUBY' (quoted) to prevent shell expansion of Ruby's #{} interpolation
+          cat > Formula/am.rb << 'RUBY'
+          class Am < Formula
+            desc "chezmoi for AI agent configs — define once in TOML, sync via git, generate native configs for every tool"
+            homepage "https://github.com/Codeseys-Labs/agent-manager"
+            version "RELEASE_VERSION"
+            license "MIT"
+
+            on_macos do
+              on_arm do
+                url "https://github.com/Codeseys-Labs/agent-manager/releases/download/v#{version}/am-darwin-arm64"
+                sha256 "RELEASE_SHA_DARWIN_ARM64"
+              end
+              on_intel do
+                url "https://github.com/Codeseys-Labs/agent-manager/releases/download/v#{version}/am-darwin-x64"
+                sha256 "RELEASE_SHA_DARWIN_X64"
+              end
+            end
+
+            on_linux do
+              on_arm do
+                url "https://github.com/Codeseys-Labs/agent-manager/releases/download/v#{version}/am-linux-arm64"
+                sha256 "RELEASE_SHA_LINUX_ARM64"
+              end
+              on_intel do
+                url "https://github.com/Codeseys-Labs/agent-manager/releases/download/v#{version}/am-linux-x64"
+                sha256 "RELEASE_SHA_LINUX_X64"
+              end
+            end
+
+            def install
+              binary_name = stable.url.split("/").last
+              bin.install binary_name => "am"
+            end
+
+            test do
+              assert_match version.to_s, shell_output("#{bin}/am version")
+            end
+
+            def caveats
+              <<~EOS
+                To get started:
+                  am init
+
+                Then sync your config:
+                  am apply
+              EOS
+            end
+          end
+          RUBY
+          # Remove leading whitespace from heredoc and substitute values
+          sed -i 's/^          //' Formula/am.rb
+          sed -i "s/RELEASE_VERSION/${VERSION}/" Formula/am.rb
+          sed -i "s/RELEASE_SHA_DARWIN_ARM64/${SHA_DARWIN_ARM64}/" Formula/am.rb
+          sed -i "s/RELEASE_SHA_DARWIN_X64/${SHA_DARWIN_X64}/" Formula/am.rb
+          sed -i "s/RELEASE_SHA_LINUX_ARM64/${SHA_LINUX_ARM64}/" Formula/am.rb
+          sed -i "s/RELEASE_SHA_LINUX_X64/${SHA_LINUX_X64}/" Formula/am.rb
+
+          echo "Updated formula:"
+          cat Formula/am.rb
+
+      - name: Stamp CHANGELOG.md with version
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          DATE=$(date -u +%Y-%m-%d)
+          # Replace [Unreleased] with [VERSION] - DATE
+          sed -i "s/^## \[Unreleased\]/## [${VERSION}] - ${DATE}/" CHANGELOG.md
+          # Add a fresh Unreleased section after the title line
+          sed -i "/^# Changelog/a\\\n## [Unreleased]" CHANGELOG.md
+
+      - name: Commit formula + changelog update
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add Formula/am.rb CHANGELOG.md
+          git commit -m "chore(release): update formula + changelog for v${VERSION}" || echo "No changes to commit"
+          git push origin HEAD:main
 
       - uses: useblacksmith/setup-bun@v1
         with:
