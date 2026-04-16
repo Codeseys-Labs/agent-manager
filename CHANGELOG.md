@@ -1,8 +1,10 @@
 # Changelog
 
+## [Unreleased]
+
 All notable changes to agent-manager are documented in this file.
 
-## [Unreleased] — 0.4.0
+## [0.4.0] - 2026-04-16 — 0.4.0
 
 ### New Features
 
