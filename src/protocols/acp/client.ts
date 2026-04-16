@@ -185,6 +185,7 @@ export class AmAcpClient {
    */
   async prompt(sessionId: string, parts: PromptPart[]): Promise<PromptResult> {
     const conn = this.requireConnection();
+    this.resetCollected(); // Clear accumulated state from previous prompts
 
     // Convert PromptParts to ContentBlocks
     const contentBlocks: ContentBlock[] = parts.map((p) => ({

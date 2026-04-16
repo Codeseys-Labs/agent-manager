@@ -1,14 +1,14 @@
 /**
- * CLI: am agents — Manage A2A agent discovery, delegation, and roster.
+ * CLI: am agent — Manage A2A agent discovery, delegation, and roster.
  *
  * Subcommands:
- *   am agents list                        — list all discovered A2A agents
- *   am agents add <url> [--name alias]    — add agent by fetching its Agent Card
- *   am agents remove <name>               — remove from roster
- *   am agents ping <name>                 — verify reachable, show capabilities, update lastSeen
- *   am agents delegate <name> <task>      — send task, show response
- *   am agents delegate --url <url> <task> — one-off delegation without roster
- *   am agents cancel <name> <taskId>      — cancel a running task
+ *   am agent list                        — list all discovered A2A agents
+ *   am agent add <url> [--name alias]    — add agent by fetching its Agent Card
+ *   am agent remove <name>               — remove from roster
+ *   am agent ping <name>                 — verify reachable, show capabilities, update lastSeen
+ *   am agent delegate <name> <task>      — send task, show response
+ *   am agent delegate --url <url> <task> — one-off delegation without roster
+ *   am agent cancel <name> <taskId>      — cancel a running task
  */
 
 import { defineCommand } from "citty";
@@ -60,7 +60,7 @@ const listSubcommand = defineCommand({
     }
 
     if (roster.length === 0 && discovered.length === 0) {
-      info("No agents registered. Use `am agents add <url>` to add one.", opts);
+      info("No agents registered. Use `am agent add <url>` to add one.", opts);
       return;
     }
 
@@ -177,7 +177,7 @@ const pingSubcommand = defineCommand({
 
     if (!entry) {
       error(
-        `Agent "${name}" not found in roster. Use \`am agents list\` to see registered agents.`,
+        `Agent "${name}" not found in roster. Use \`am agent list\` to see registered agents.`,
         opts,
       );
       process.exitCode = 1;
@@ -274,7 +274,7 @@ const delegateSubcommand = defineCommand({
 
       if (!entry) {
         error(
-          `Agent "${name}" not found in roster. Use \`am agents list\` to see registered agents, or use --url for one-off delegation.`,
+          `Agent "${name}" not found in roster. Use \`am agent list\` to see registered agents, or use --url for one-off delegation.`,
           opts,
         );
         process.exitCode = 1;
@@ -358,7 +358,7 @@ const cancelSubcommand = defineCommand({
 
     if (!entry) {
       error(
-        `Agent "${name}" not found in roster. Use \`am agents list\` to see registered agents.`,
+        `Agent "${name}" not found in roster. Use \`am agent list\` to see registered agents.`,
         opts,
       );
       process.exitCode = 1;
@@ -387,7 +387,7 @@ const cancelSubcommand = defineCommand({
 // ── Main Command ────────────────────────────────────────────────
 
 export const agentsCommand = defineCommand({
-  meta: { name: "agents", description: "Manage A2A agent discovery and delegation" },
+  meta: { name: "agent", description: "Manage A2A agent discovery and delegation" },
   subCommands: {
     list: () => Promise.resolve(listSubcommand),
     add: () => Promise.resolve(addSubcommand),

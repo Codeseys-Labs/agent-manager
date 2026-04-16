@@ -1346,7 +1346,7 @@ function defineTools(): ToolEntry[] {
         inputSchema: {
           type: "object",
           properties: {
-            type: {
+            entity_type: {
               type: "string",
               enum: ["fact", "procedure", "preference", "relationship", "capability"],
               description: "Entity type",
@@ -1363,7 +1363,7 @@ function defineTools(): ToolEntry[] {
               description: "Confidence score 0.0-1.0 (default: 0.7)",
             },
           },
-          required: ["type", "content"],
+          required: ["entity_type", "content"],
         },
       },
       tier: "write-local",
@@ -1375,7 +1375,7 @@ function defineTools(): ToolEntry[] {
           source: { type: "manual" as const, timestamp: now },
           extracted_at: now,
           confidence: (args.confidence as number) ?? 0.7,
-          entity_type: args.type as
+          entity_type: args.entity_type as
             | "fact"
             | "procedure"
             | "preference"
@@ -1401,7 +1401,7 @@ function defineTools(): ToolEntry[] {
           },
         };
         await addEntry(entry);
-        return { action: "add", entry };
+        return { action: "add", id: entry.id, entity_type: entry.entity_type, title: entry.content.split("\n")[0].slice(0, 120) };
       },
     },
     {

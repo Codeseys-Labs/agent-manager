@@ -1,5 +1,6 @@
 #!/usr/bin/env bun
 import { defineCommand, runMain } from "citty";
+import { showGroupedUsage } from "./help";
 
 const main = defineCommand({
   meta: {
@@ -46,9 +47,10 @@ const main = defineCommand({
     uninstall: () => import("./commands/uninstall").then((m) => m.uninstallCommand),
     update: () => import("./commands/update").then((m) => m.updateCommand),
     wiki: () => import("./commands/wiki").then((m) => m.wikiCommand),
+    agent: () => import("./commands/agents").then((m) => m.agentsCommand),
     agents: () => import("./commands/agents").then((m) => m.agentsCommand),
     run: () => import("./commands/run").then((m) => m.runCommand),
   },
 });
 
-runMain(main);
+runMain(main, { showUsage: showGroupedUsage });

@@ -45,7 +45,7 @@ export function parsePositiveInt(
     throw new Error(`Invalid value for --${flagName}: expected a positive integer, got "${value}"`);
   }
   const parsed = Number.parseInt(value, 10);
-  if (Number.isNaN(parsed) || parsed < 0) {
+  if (Number.isNaN(parsed) || parsed <= 0) {
     throw new Error(`Invalid value for --${flagName}: expected a positive integer, got "${value}"`);
   }
   return parsed;

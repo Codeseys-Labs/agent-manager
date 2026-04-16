@@ -441,7 +441,9 @@ const ingestSubcommand = defineCommand({
   },
 });
 
-// Keep "harvest" as an alias for backward compat
+// harvest produces legacy KnowledgeEntry objects via harvestSession(),
+// while ingest produces WikiPage objects via harvestSessionAsPages().
+// Similar arg parsing but different data pipelines — not worth extracting shared code.
 const harvestSubcommand = defineCommand({
   meta: { name: "harvest", description: "Extract knowledge from sessions (alias for ingest)" },
   args: {

@@ -27,6 +27,7 @@ every AI coding tool.
 ```
 src/                                 # 165 TypeScript files
   cli.ts                             # Entry point -- citty command routing with 28 lazy subcommands
+  help.ts                            # Grouped help output for root command (ADR-0029)
   commands/                          # CLI command handlers (one file per command)
     init.ts, add.ts, list.ts, use.ts, apply.ts, status.ts,
     config.ts, profile.ts, doctor.ts, import.ts, push.ts, pull.ts,
@@ -116,7 +117,7 @@ test/                                # 134 test files, 1470 tests, 4312 assertio
   helpers/                           # Test utilities (tmp dirs, config builders)
   integration/                       # End-to-end tests
 
-ADRs/                                # 28 architectural decision records
+ADRs/                                # 29 architectural decision records
 docs/                                # Design specs and guides
 scripts/
   build.ts                           # Cross-platform build (5 targets via Bun.spawn)
@@ -342,6 +343,7 @@ bun run deploy:web                # Deploy to Cloudflare Workers
 | [0026](ADRs/0026-acpx-acp-runtime-integration.md) | ACP Runtime Integration via ACPX -- 4-phase plan for headless agent orchestration |
 | [0027](ADRs/0027-community-adapter-loading.md) | Community Adapter Loading -- JSON-RPC subprocess, npm/git install, adapters.toml |
 | [0028](ADRs/0028-brownfield-import-merge.md) | Brownfield Import Merge -- two-tier identity matching, interactive conflict resolution |
+| [0029](ADRs/0029-command-grouping.md) | Command Grouping -- grouped help output for root command, gh CLI pattern |
 
 ## Git Commit Style
 
