@@ -295,14 +295,9 @@ export function detectCycles(flow: FlowDefinition): string[] | null {
       }
 
       const neighbors = adjacency.get(node) ?? [];
-      let pushed = false;
+
+      // Check ALL neighbors for back-edges BEFORE pushing any unvisited
       for (const neighbor of neighbors) {
-        if (!visited.has(neighbor)) {
-          parent.set(neighbor, node);
-          stack.push(neighbor);
-          pushed = true;
-          break;
-        }
         if (inStack.has(neighbor)) {
           // Reconstruct cycle path
           const cycle: string[] = [neighbor, node];
@@ -314,6 +309,16 @@ export function detectCycles(flow: FlowDefinition): string[] | null {
           }
           cycle.reverse();
           return cycle;
+        }
+      }
+
+      let pushed = false;
+      for (const neighbor of neighbors) {
+        if (!visited.has(neighbor)) {
+          parent.set(neighbor, node);
+          stack.push(neighbor);
+          pushed = true;
+          break;
         }
       }
 
