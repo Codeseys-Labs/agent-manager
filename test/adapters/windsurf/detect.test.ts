@@ -59,4 +59,35 @@ describe("windsurf detect()", () => {
     expect(result.installed).toBe(true);
     expect(result.paths.globalRules).toContain("global_rules.md");
   });
+
+  test("includes project .windsurf/skills/ path", async () => {
+    dir = await createTestDir("am-ws-detect-");
+    await dir.write(".codeium/windsurf/.keep", "");
+    const projectDir = `${dir.path}/project`;
+    await dir.write("project/.windsurf/skills/my-skill/SKILL.md", "# My Skill");
+
+    const result = detect(dir.path, projectDir);
+    expect(result.paths.skillsDir).toContain(".windsurf/skills");
+  });
+
+  test("includes AGENTS.md path when present", async () => {
+    dir = await createTestDir("am-ws-detect-");
+    await dir.write(".codeium/windsurf/.keep", "");
+    const projectDir = `${dir.path}/project`;
+    await dir.write("project/AGENTS.md", "# Agent Instructions");
+
+    const result = detect(dir.path, projectDir);
+    expect(result.paths.agentsMd).toContain("AGENTS.md");
+  });
+
+  test("does not include skills/agents paths when absent", async () => {
+    dir = await createTestDir("am-ws-detect-");
+    await dir.write(".codeium/windsurf/.keep", "");
+    const projectDir = `${dir.path}/project`;
+    await dir.write("project/.keep", "");
+
+    const result = detect(dir.path, projectDir);
+    expect(result.paths.skillsDir).toBeUndefined();
+    expect(result.paths.agentsMd).toBeUndefined();
+  });
 });

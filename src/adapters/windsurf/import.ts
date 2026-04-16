@@ -7,7 +7,13 @@
 
 import { homedir } from "node:os";
 import { join } from "node:path";
-import type { ImportOptions, ImportResult, ImportedInstruction, ImportedServer } from "../types.ts";
+import type {
+  ImportOptions,
+  ImportResult,
+  ImportedInstruction,
+  ImportedServer,
+  ImportedSkill,
+} from "../types.ts";
 import { extractPackageId } from "./identity.ts";
 
 interface WindsurfServer {
@@ -28,10 +34,11 @@ interface WindsurfMcpConfig {
  */
 export function importConfig(options: ImportOptions = {}, homeDir?: string): ImportResult {
   const home = homeDir ?? homedir();
-  const entities = options.entities ?? ["servers", "instructions"];
+  const entities = options.entities ?? ["servers", "instructions", "skills"];
   const warnings: string[] = [];
   const servers: ImportedServer[] = [];
   const instructions: ImportedInstruction[] = [];
+  const skills: ImportedSkill[] = [];
 
   if (entities.includes("servers")) {
     const mcpPath = join(home, ".codeium", "windsurf", "mcp_config.json");
@@ -43,6 +50,12 @@ export function importConfig(options: ImportOptions = {}, homeDir?: string): Imp
     const projectInstructions = readRulesDir(options.projectPath, warnings);
     instructions.push(...projectInstructions);
 
+    // AGENTS.md (Windsurf 2.0.44+)
+    const agentsMd = readAgentsMd(options.projectPath, warnings);
+    if (agentsMd) {
+      instructions.push(agentsMd);
+    }
+
     // Legacy .windsurfrules
     const legacy = readLegacyRules(options.projectPath, warnings);
     if (legacy) {
@@ -50,7 +63,12 @@ export function importConfig(options: ImportOptions = {}, homeDir?: string): Imp
     }
   }
 
-  return { servers, instructions, skills: [], warnings };
+  if (entities.includes("skills") && options.projectPath) {
+    const projectSkills = readSkillsDir(options.projectPath, warnings);
+    skills.push(...projectSkills);
+  }
+
+  return { servers, instructions, skills, warnings };
 }
 
 const CORE_FIELDS = new Set(["command", "args", "env", "disabled"]);
@@ -216,6 +234,91 @@ function readLegacyRules(projectPath: string, warnings: string[]): ImportedInstr
     warnings.push(`Cannot read legacy rules: ${legacyPath}`);
     return null;
   }
+}
+
+function readAgentsMd(projectPath: string, warnings: string[]): ImportedInstruction | null {
+  const fs = require("node:fs");
+  const agentsMdPath = join(projectPath, "AGENTS.md");
+
+  if (!fileExistsSync(agentsMdPath)) return null;
+
+  try {
+    const content = fs.readFileSync(agentsMdPath, "utf-8");
+    return {
+      name: "agents-md",
+      content: content.trim(),
+      scope: "always",
+      description: "Project instructions from AGENTS.md",
+      sourcePath: agentsMdPath,
+    };
+  } catch {
+    warnings.push(`Cannot read AGENTS.md: ${agentsMdPath}`);
+    return null;
+  }
+}
+
+function readSkillsDir(projectPath: string, warnings: string[]): ImportedSkill[] {
+  const fs = require("node:fs");
+  const path = require("node:path");
+  const skillsDir = join(projectPath, ".windsurf", "skills");
+
+  if (!fileExistsSync(skillsDir)) {
+    return [];
+  }
+
+  let entries: string[];
+  try {
+    entries = fs.readdirSync(skillsDir);
+  } catch {
+    warnings.push(`Cannot read skills directory: ${skillsDir}`);
+    return [];
+  }
+
+  const skills: ImportedSkill[] = [];
+  for (const entry of entries) {
+    const entryPath = join(skillsDir, entry);
+    let stat: { isDirectory(): boolean };
+    try {
+      stat = fs.statSync(entryPath);
+    } catch {
+      continue;
+    }
+
+    if (stat.isDirectory()) {
+      // Skill directories contain a SKILL.md file
+      const skillMd = join(entryPath, "SKILL.md");
+      if (fileExistsSync(skillMd)) {
+        let description: string | undefined;
+        try {
+          const content = fs.readFileSync(skillMd, "utf-8");
+          // Extract first line or heading as description
+          const firstLine = content.split("\n").find((l: string) => l.trim().length > 0);
+          if (firstLine) {
+            description = firstLine.replace(/^#\s+/, "").trim();
+          }
+        } catch {
+          // Description is optional
+        }
+        skills.push({ name: entry, path: entryPath, description });
+      }
+    } else if (entry.endsWith(".md")) {
+      // Standalone skill files
+      const name = path.basename(entry, ".md");
+      let description: string | undefined;
+      try {
+        const content = fs.readFileSync(entryPath, "utf-8");
+        const firstLine = content.split("\n").find((l: string) => l.trim().length > 0);
+        if (firstLine) {
+          description = firstLine.replace(/^#\s+/, "").trim();
+        }
+      } catch {
+        // Description is optional
+      }
+      skills.push({ name, path: entryPath, description });
+    }
+  }
+
+  return skills;
 }
 
 function fileExistsSync(path: string): boolean {

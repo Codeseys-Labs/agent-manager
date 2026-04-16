@@ -27,6 +27,14 @@ export const claudeCodeGlobalSchema = z
     model: z.string().optional().describe("Primary model alias"),
     ANTHROPIC_MODEL: z.string().optional().describe("Direct model ID override"),
     plugins: z.array(z.string()).optional().describe("Enabled Claude Code plugins"),
+    hooks: z
+      .record(z.string(), z.array(z.object({ command: z.string() }).passthrough()))
+      .optional()
+      .describe("Lifecycle hooks (PreCompact, UserPromptSubmit, PostToolUse, Stop, etc.)"),
+    monitors: z
+      .array(z.object({ command: z.string() }).passthrough())
+      .optional()
+      .describe("Monitor scripts that observe all tool calls (v2.1.105+)"),
   })
   .passthrough();
 

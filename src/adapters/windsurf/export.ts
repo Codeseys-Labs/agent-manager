@@ -7,6 +7,8 @@
 
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
+import { generateAgentsMd } from "../../core/instructions.ts";
+import { filterByTarget } from "../../core/instructions.ts";
 import type {
   ExportOptions,
   ExportResult,
@@ -36,6 +38,31 @@ export function exportConfig(
   if (options.projectPath) {
     const ruleFiles = generateRuleFiles(config, options.projectPath);
     files.push(...ruleFiles);
+  }
+
+  // 3. Generate AGENTS.md (Windsurf 2.0.44+)
+  if (options.projectPath) {
+    const targetInstructions = filterByTarget(config.instructions, "windsurf");
+    if (Object.keys(targetInstructions).length > 0) {
+      const agentsMdPath = join(options.projectPath, "AGENTS.md");
+      let existingContent: string | undefined;
+      try {
+        const fs = require("node:fs");
+        existingContent = fs.readFileSync(agentsMdPath, "utf-8");
+      } catch {
+        // No existing file
+      }
+      const agentsMdContent = generateAgentsMd(targetInstructions, existingContent);
+      if (agentsMdContent) {
+        files.push({ path: agentsMdPath, content: agentsMdContent, written: false });
+      }
+    }
+  }
+
+  // 4. Generate .windsurf/skills/ (Windsurf 2.0.44+)
+  if (options.projectPath && Object.keys(config.skills).length > 0) {
+    const skillFiles = generateSkillFiles(config, options.projectPath);
+    files.push(...skillFiles);
   }
 
   // Write files unless dryRun
@@ -108,6 +135,27 @@ function scopeToTrigger(scope: "always" | "glob" | "agent-decision" | "manual"):
     case "manual":
       return "manual";
   }
+}
+
+/** Generate .windsurf/skills/ files from resolved skills. */
+function generateSkillFiles(config: ResolvedConfig, projectPath: string): WrittenFile[] {
+  const files: WrittenFile[] = [];
+
+  for (const [name, skill] of Object.entries(config.skills)) {
+    // Check if skill targets windsurf (or has no specific targets)
+    const wsAdapter = skill.adapters?.windsurf ?? {};
+    const targets = (wsAdapter.targets as string[]) ?? [];
+    if (targets.length > 0 && !targets.includes("windsurf")) {
+      continue;
+    }
+
+    const skillDir = join(projectPath, ".windsurf", "skills", name);
+    const skillMdPath = join(skillDir, "SKILL.md");
+    const content = `# ${name}\n\n${skill.description}\n`;
+    files.push({ path: skillMdPath, content, written: false });
+  }
+
+  return files;
 }
 
 /** Generate .windsurf/rules/*.md files from instructions. */

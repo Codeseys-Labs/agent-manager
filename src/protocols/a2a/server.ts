@@ -515,6 +515,15 @@ export interface A2AServerOptions {
   taskEventEmitter?: TaskEventEmitter;
   /** Optional bearer token for auth. When set, POST /a2a requires Authorization: Bearer <token>. */
   auth_token?: string;
+  /**
+   * Enable the A2A-ACP bridge (ADR-0026 Phase 4).
+   * When true, incoming messages matching "run <agent>: <prompt>" or data parts
+   * with {agent, prompt} are routed to a local ACP agent. Non-matching messages
+   * fall through to the default (or custom) task handler.
+   */
+  enableBridge?: boolean;
+  /** Bridge configuration (cwd, timeout, ACP settings). Only used when enableBridge is true. */
+  bridgeConfig?: import("../bridge").BridgeConfig;
 }
 
 /**
@@ -531,11 +540,19 @@ export function createA2ARoutes(options: A2AServerOptions): Hono {
   const {
     config,
     cardOptions,
-    taskHandler = defaultTaskHandler,
     taskStore: externalStore,
     taskEventEmitter: externalEmitter,
     auth_token,
+    enableBridge,
+    bridgeConfig,
   } = options;
+
+  // Determine effective task handler: bridge wraps the base handler when enabled
+  let taskHandler = options.taskHandler ?? defaultTaskHandler;
+  if (enableBridge) {
+    const { createBridgedTaskHandler } = require("../bridge") as typeof import("../bridge");
+    taskHandler = createBridgedTaskHandler(taskHandler, bridgeConfig);
+  }
   const store = externalStore ?? createTaskStore();
   const emitter = externalEmitter ?? new TaskEventEmitter();
   const a2aApp = new Hono();

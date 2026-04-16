@@ -7,7 +7,13 @@
 
 import { homedir } from "node:os";
 import { join } from "node:path";
-import type { ImportOptions, ImportResult, ImportedInstruction, ImportedServer } from "../types.ts";
+import type {
+  ImportOptions,
+  ImportResult,
+  ImportedInstruction,
+  ImportedServer,
+  ImportedSkill,
+} from "../types.ts";
 import { extractPackageId } from "./identity.ts";
 
 interface ClaudeJsonServer {
@@ -28,10 +34,11 @@ interface ClaudeJson {
  */
 export function importConfig(options: ImportOptions = {}, homeDir?: string): ImportResult {
   const home = homeDir ?? homedir();
-  const entities = options.entities ?? ["servers", "instructions"];
+  const entities = options.entities ?? ["servers", "instructions", "skills"];
   const warnings: string[] = [];
   const servers: ImportedServer[] = [];
   const instructions: ImportedInstruction[] = [];
+  const skills: ImportedSkill[] = [];
 
   if (entities.includes("servers")) {
     // Global servers from ~/.claude.json
@@ -54,7 +61,22 @@ export function importConfig(options: ImportOptions = {}, homeDir?: string): Imp
     }
   }
 
-  return { servers, instructions, skills: [], warnings };
+  if (entities.includes("skills")) {
+    // Global skills from ~/.claude/skills/
+    const globalSkills = readSkillsDir(join(home, ".claude", "skills"), warnings);
+    skills.push(...globalSkills);
+
+    // Project skills from <project>/.claude/skills/
+    if (options.projectPath) {
+      const projectSkills = readSkillsDir(
+        join(options.projectPath, ".claude", "skills"),
+        warnings,
+      );
+      skills.push(...projectSkills);
+    }
+  }
+
+  return { servers, instructions, skills, warnings };
 }
 
 /** Core fields that are part of ImportedServer — everything else goes to adapterExtras. */
@@ -153,6 +175,53 @@ function readClaudeMdFile(filePath: string): ImportedInstruction | null {
   } catch {
     return null;
   }
+}
+
+function readSkillsDir(skillsDir: string, warnings: string[]): ImportedSkill[] {
+  if (!fileExistsSync(skillsDir)) {
+    return [];
+  }
+
+  const fs = require("node:fs");
+  let entries: string[];
+  try {
+    entries = fs.readdirSync(skillsDir);
+  } catch {
+    warnings.push(`Cannot read skills directory: ${skillsDir}`);
+    return [];
+  }
+
+  const skills: ImportedSkill[] = [];
+  for (const entry of entries) {
+    const entryPath = join(skillsDir, entry);
+    let stat: { isDirectory(): boolean };
+    try {
+      stat = fs.statSync(entryPath);
+    } catch {
+      continue;
+    }
+
+    if (!stat.isDirectory()) continue;
+
+    // Claude Code skills are directories with a SKILL.md file
+    const skillMd = join(entryPath, "SKILL.md");
+    if (!fileExistsSync(skillMd)) continue;
+
+    let description: string | undefined;
+    try {
+      const content = fs.readFileSync(skillMd, "utf-8");
+      const firstLine = content.split("\n").find((l: string) => l.trim().length > 0);
+      if (firstLine) {
+        description = firstLine.replace(/^#\s+/, "").trim();
+      }
+    } catch {
+      // Description is optional
+    }
+
+    skills.push({ name: entry, path: entryPath, description });
+  }
+
+  return skills;
 }
 
 function fileExistsSync(path: string): boolean {

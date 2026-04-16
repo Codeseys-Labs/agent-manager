@@ -10,6 +10,11 @@ export const serveCommand = defineCommand({
       description: "Port to listen on",
       default: "3456",
     },
+    bridge: {
+      type: "boolean",
+      description: "Enable A2A-ACP bridge: route incoming A2A tasks to local ACP agents",
+      default: false,
+    },
   },
   async run({ args }) {
     let port: number;
@@ -26,7 +31,7 @@ export const serveCommand = defineCommand({
       return;
     }
 
-    const app = createApp();
+    const app = await createApp({ enableBridge: args.bridge });
 
     Bun.serve({
       port,
@@ -34,5 +39,8 @@ export const serveCommand = defineCommand({
     });
 
     console.log(`Dashboard running at http://localhost:${port}`);
+    if (args.bridge) {
+      console.log("A2A-ACP bridge enabled: incoming A2A tasks will route to local ACP agents");
+    }
   },
 });

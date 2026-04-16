@@ -82,4 +82,34 @@ describe("claude-code detect()", () => {
     expect(result.paths.globalConfig).toBe(join(tempHome, ".claude.json"));
     expect(result.paths.configDir).toBe(join(tempHome, ".claude"));
   });
+
+  test("includes settings.local.json path when present", async () => {
+    await mkdir(join(tempHome, ".claude"), { recursive: true });
+    await writeFile(join(tempHome, ".claude", "settings.local.json"), "{}");
+    const result = detect(tempHome);
+    expect(result.installed).toBe(true);
+    expect(result.paths.settingsLocal).toBe(join(tempHome, ".claude", "settings.local.json"));
+  });
+
+  test("includes ~/.claude/skills/ path when present", async () => {
+    await mkdir(join(tempHome, ".claude", "skills", "my-skill"), { recursive: true });
+    await writeFile(join(tempHome, ".claude", "skills", "my-skill", "SKILL.md"), "# My Skill");
+    const result = detect(tempHome);
+    expect(result.installed).toBe(true);
+    expect(result.paths.skillsDir).toBe(join(tempHome, ".claude", "skills"));
+  });
+
+  test("includes project-level settings and skills paths", async () => {
+    await writeFile(join(tempHome, ".claude.json"), "{}");
+    const projectDir = join(tempHome, "my-project");
+    await mkdir(join(projectDir, ".claude", "skills", "test-skill"), { recursive: true });
+    await writeFile(join(projectDir, ".claude", "settings.local.json"), "{}");
+    await writeFile(join(projectDir, ".claude", "skills", "test-skill", "SKILL.md"), "# Test");
+
+    const result = detect(tempHome, projectDir);
+    expect(result.paths.projectSettingsLocal).toBe(
+      join(projectDir, ".claude", "settings.local.json"),
+    );
+    expect(result.paths.projectSkillsDir).toBe(join(projectDir, ".claude", "skills"));
+  });
 });

@@ -57,7 +57,7 @@ afterAll(async () => {
   await rm(tmpDir, { recursive: true, force: true });
 });
 
-function request(app: ReturnType<typeof createApp>, path: string, init?: RequestInit) {
+function request(app: Awaited<ReturnType<typeof createApp>>, path: string, init?: RequestInit) {
   // Inject auth header for API routes (except health which is unauthenticated)
   const headers = new Headers(init?.headers);
   if (!headers.has("authorization") && path.startsWith("/api/") && path !== "/api/health") {
@@ -67,12 +67,12 @@ function request(app: ReturnType<typeof createApp>, path: string, init?: Request
 }
 
 describe("Web API", () => {
-  let app: ReturnType<typeof createApp>;
+  let app: Awaited<ReturnType<typeof createApp>>;
 
-  beforeAll(() => {
+  beforeAll(async () => {
     // createApp() must be called AFTER AM_CONFIG_DIR is set so the auth
     // token is generated in the test temp directory.
-    app = createApp();
+    app = await createApp();
   });
 
   it("GET /api/health returns 200 with version", async () => {

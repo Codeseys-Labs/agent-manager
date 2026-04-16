@@ -192,6 +192,53 @@ describe("windsurf exportConfig()", () => {
     expect(content.mcpServers.fetch.command).toBe("uvx");
   });
 
+  test("generates AGENTS.md with am markers", async () => {
+    dir = await createTestDir("am-ws-export-");
+    const projectDir = `${dir.path}/project`;
+    const cfg = config({
+      instructions: {
+        "ws-rules": {
+          name: "ws-rules",
+          content: "Use strict TypeScript.",
+          scope: "always",
+          globs: [],
+          description: "",
+          targets: ["windsurf"],
+          adapters: {},
+        },
+      },
+    });
+
+    const result = exportConfig(cfg, { projectPath: projectDir, dryRun: true }, dir.path);
+    const agentsMdFile = result.files.find((f) => f.path.endsWith("AGENTS.md"));
+    expect(agentsMdFile).toBeDefined();
+    expect(agentsMdFile?.content).toContain("<!-- am:begin -->");
+    expect(agentsMdFile?.content).toContain("Use strict TypeScript.");
+    expect(agentsMdFile?.content).toContain("<!-- am:end -->");
+  });
+
+  test("generates .windsurf/skills/ from resolved skills", async () => {
+    dir = await createTestDir("am-ws-export-");
+    const projectDir = `${dir.path}/project`;
+    const cfg = config({
+      skills: {
+        research: {
+          name: "research",
+          path: "/tmp/skills/research",
+          description: "Multi-agent research skill",
+          tags: [],
+          adapters: {},
+        },
+      },
+    });
+
+    const result = exportConfig(cfg, { projectPath: projectDir, dryRun: true }, dir.path);
+    const skillFile = result.files.find((f) => f.path.includes(".windsurf/skills/research/SKILL.md"));
+    expect(skillFile).toBeDefined();
+    expect(skillFile?.content).toContain("# research");
+    expect(skillFile?.content).toContain("Multi-agent research skill");
+  });
+
   test("preserves existing non-MCP fields in mcp_config.json", async () => {
     dir = await createTestDir("am-ws-export-");
     await dir.write(

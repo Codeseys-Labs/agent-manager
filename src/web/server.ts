@@ -75,7 +75,12 @@ function redactSecrets(obj: unknown): unknown {
   return obj;
 }
 
-export function createApp() {
+export interface CreateAppOptions {
+  /** Enable A2A-ACP bridge for incoming A2A tasks. */
+  enableBridge?: boolean;
+}
+
+export async function createApp(options?: CreateAppOptions) {
   const app = new Hono();
   const configDir = resolveConfigDir();
   const authToken = ensureAuthToken(configDir);
@@ -542,34 +547,50 @@ export function createApp() {
     });
   });
 
-  // ── A2A Agent Card endpoint ────────────────────────────────────
-  app.get("/.well-known/agent.json", async (c) => {
-    try {
-      const { config, configDir, profileName } = await getConfigAndProfile();
-      const resolved = buildResolvedConfig(config, profileName, configDir);
+  // ── A2A endpoints ──────────────────────────────────────────────
+  // When bridge is enabled, mount full A2A routes (Agent Card + JSON-RPC with bridge handler).
+  // Otherwise, serve just the Agent Card endpoint.
+  if (options?.enableBridge) {
+    const { createA2ARoutes } = await import("../protocols/a2a/server");
+    const { config: bridgeFullConfig, configDir: bridgeCfgDir, profileName: bridgeProfile } =
+      await getConfigAndProfile();
+    const bridgeResolved = buildResolvedConfig(bridgeFullConfig, bridgeProfile, bridgeCfgDir);
+    const a2aApp = createA2ARoutes({
+      config: bridgeResolved,
+      cardOptions: { baseUrl: "http://localhost:3456" },
+      enableBridge: true,
+      auth_token: authToken,
+    });
+    app.route("/", a2aApp);
+  } else {
+    app.get("/.well-known/agent.json", async (c) => {
+      try {
+        const { config, configDir, profileName } = await getConfigAndProfile();
+        const resolved = buildResolvedConfig(config, profileName, configDir);
 
-      // Read provider settings from settings.a2a.publish passthrough
-      const a2aSettings = (config.settings as Record<string, unknown> | undefined)?.a2a as
-        | Record<string, unknown>
-        | undefined;
-      const publishSettings = a2aSettings?.publish as Record<string, unknown> | undefined;
+        // Read provider settings from settings.a2a.publish passthrough
+        const a2aSettings = (config.settings as Record<string, unknown> | undefined)?.a2a as
+          | Record<string, unknown>
+          | undefined;
+        const publishSettings = a2aSettings?.publish as Record<string, unknown> | undefined;
 
-      const { generateAgentCard } = await import("../protocols/a2a/generate-card");
-      const card = generateAgentCard(resolved, {
-        baseUrl: `http://localhost:${c.req.header("host")?.split(":")[1] ?? "3000"}`,
-        provider: publishSettings
-          ? {
-              name: publishSettings.name as string | undefined,
-              description: publishSettings.description as string | undefined,
-              organization: publishSettings.provider as string | undefined,
-            }
-          : undefined,
-      });
-      return c.json(card);
-    } catch {
-      return c.json({ error: "Failed to generate Agent Card" }, 500);
-    }
-  });
+        const { generateAgentCard } = await import("../protocols/a2a/generate-card");
+        const card = generateAgentCard(resolved, {
+          baseUrl: `http://localhost:${c.req.header("host")?.split(":")[1] ?? "3000"}`,
+          provider: publishSettings
+            ? {
+                name: publishSettings.name as string | undefined,
+                description: publishSettings.description as string | undefined,
+                organization: publishSettings.provider as string | undefined,
+              }
+            : undefined,
+        });
+        return c.json(card);
+      } catch {
+        return c.json({ error: "Failed to generate Agent Card" }, 500);
+      }
+    });
+  }
 
   // ── Wiki endpoints ───────────────────────────────────────────
 

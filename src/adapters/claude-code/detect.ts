@@ -33,6 +33,18 @@ export function detect(homeDir?: string, projectPath?: string): DetectResult {
     version = getClaudeVersion();
   }
 
+  // Settings: ~/.claude/settings.local.json (hooks, permissions, monitors)
+  const settingsLocal = join(home, ".claude", "settings.local.json");
+  if (existsSync(settingsLocal)) {
+    paths.settingsLocal = settingsLocal;
+  }
+
+  // Skills directory: ~/.claude/skills/
+  const skillsDir = join(home, ".claude", "skills");
+  if (existsSync(skillsDir)) {
+    paths.skillsDir = skillsDir;
+  }
+
   // Project-level paths
   if (projectPath) {
     const mcpJson = join(projectPath, ".mcp.json");
@@ -48,6 +60,18 @@ export function detect(homeDir?: string, projectPath?: string): DetectResult {
     const claudeMdDotDir = join(projectPath, ".claude", "CLAUDE.md");
     if (existsSync(claudeMdDotDir)) {
       paths.claudeMdDotDir = claudeMdDotDir;
+    }
+
+    // Project-level settings: <project>/.claude/settings.local.json
+    const projectSettingsLocal = join(projectPath, ".claude", "settings.local.json");
+    if (existsSync(projectSettingsLocal)) {
+      paths.projectSettingsLocal = projectSettingsLocal;
+    }
+
+    // Project-level skills: <project>/.claude/skills/
+    const projectSkillsDir = join(projectPath, ".claude", "skills");
+    if (existsSync(projectSkillsDir)) {
+      paths.projectSkillsDir = projectSkillsDir;
     }
   }
 

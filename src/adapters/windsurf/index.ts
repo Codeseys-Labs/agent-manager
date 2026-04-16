@@ -14,7 +14,7 @@ import { exportConfig } from "./export.ts";
 import { importConfig } from "./import.ts";
 import { windsurfSchema } from "./schema.ts";
 
-const CAPABILITIES: Capability[] = ["mcp", "instructions"];
+const CAPABILITIES: Capability[] = ["mcp", "instructions", "skills"];
 
 export const windsurfAdapter: Adapter = {
   meta: {

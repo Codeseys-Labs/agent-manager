@@ -190,4 +190,55 @@ describe("importConfig()", () => {
     expect(result.instructions).toHaveLength(1);
     expect(result.instructions[0].content).toContain("Hidden instructions");
   });
+
+  test("imports global skills from ~/.claude/skills/", async () => {
+    dir = await createTestDir("am-import-");
+    await dir.write(".claude/skills/research-rabbithole/SKILL.md", "# Research Rabbithole\n\nDeep research.");
+    await dir.write(".claude/skills/admin-lint/SKILL.md", "# Admin Lint\n\nVault health check.");
+
+    const result = importConfig({ entities: ["skills"] }, dir.path);
+    expect(result.skills).toHaveLength(2);
+    const research = result.skills.find((s) => s.name === "research-rabbithole");
+    expect(research).toBeDefined();
+    expect(research?.description).toBe("Research Rabbithole");
+    expect(research?.path).toContain(".claude/skills/research-rabbithole");
+  });
+
+  test("imports project skills from <project>/.claude/skills/", async () => {
+    dir = await createTestDir("am-import-");
+    const projectDir = `${dir.path}/project`;
+    await dir.write("project/.claude/skills/deploy/SKILL.md", "# Deploy Skill\n\nDeploys things.");
+
+    const result = importConfig({ projectPath: projectDir, entities: ["skills"] }, dir.path);
+    expect(result.skills).toHaveLength(1);
+    expect(result.skills[0].name).toBe("deploy");
+    expect(result.skills[0].description).toBe("Deploy Skill");
+  });
+
+  test("imports both global and project skills", async () => {
+    dir = await createTestDir("am-import-");
+    await dir.write(".claude/skills/global-skill/SKILL.md", "# Global Skill\n\nGlobal.");
+    const projectDir = `${dir.path}/project`;
+    await dir.write("project/.claude/skills/project-skill/SKILL.md", "# Project Skill\n\nProject.");
+
+    const result = importConfig({ projectPath: projectDir, entities: ["skills"] }, dir.path);
+    expect(result.skills).toHaveLength(2);
+    expect(result.skills.find((s) => s.name === "global-skill")).toBeDefined();
+    expect(result.skills.find((s) => s.name === "project-skill")).toBeDefined();
+  });
+
+  test("skips skill directories without SKILL.md", async () => {
+    dir = await createTestDir("am-import-");
+    await dir.write(".claude/skills/broken/.keep", "");
+
+    const result = importConfig({ entities: ["skills"] }, dir.path);
+    expect(result.skills).toHaveLength(0);
+  });
+
+  test("returns empty skills when ~/.claude/skills/ does not exist", async () => {
+    dir = await createTestDir("am-import-");
+    // No skills dir at all
+    const result = importConfig({ entities: ["skills"] }, dir.path);
+    expect(result.skills).toHaveLength(0);
+  });
 });

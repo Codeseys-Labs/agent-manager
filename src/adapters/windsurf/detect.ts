@@ -41,6 +41,18 @@ export function detect(homeDir?: string, projectPath?: string): DetectResult {
       paths.rulesDir = rulesDir;
     }
 
+    // .windsurf/skills/ directory (Windsurf 2.0.44+)
+    const skillsDir = join(projectPath, ".windsurf", "skills");
+    if (existsSync(skillsDir)) {
+      paths.skillsDir = skillsDir;
+    }
+
+    // AGENTS.md instruction file (Windsurf 2.0.44+)
+    const agentsMd = join(projectPath, "AGENTS.md");
+    if (existsSync(agentsMd)) {
+      paths.agentsMd = agentsMd;
+    }
+
     // Legacy .windsurfrules
     const legacyRules = join(projectPath, ".windsurfrules");
     if (existsSync(legacyRules)) {

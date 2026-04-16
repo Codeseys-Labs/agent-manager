@@ -121,4 +121,60 @@ describe("windsurf importConfig()", () => {
     const result = importConfig({ projectPath: projectDir, entities: ["instructions"] }, dir.path);
     expect(result.instructions[0].scope).toBe("agent-decision");
   });
+
+  test("imports AGENTS.md as instruction", async () => {
+    dir = await createTestDir("am-ws-import-");
+    const projectDir = `${dir.path}/project`;
+    await dir.write("project/AGENTS.md", "# Agent Instructions\n\nUse strict mode.");
+
+    const result = importConfig({ projectPath: projectDir, entities: ["instructions"] }, dir.path);
+    const agentsMd = result.instructions.find((i) => i.name === "agents-md");
+    expect(agentsMd).toBeDefined();
+    expect(agentsMd?.content).toContain("Use strict mode.");
+    expect(agentsMd?.scope).toBe("always");
+    expect(agentsMd?.sourcePath).toContain("AGENTS.md");
+  });
+
+  test("imports skill directories from .windsurf/skills/", async () => {
+    dir = await createTestDir("am-ws-import-");
+    const projectDir = `${dir.path}/project`;
+    await dir.write("project/.windsurf/skills/research/SKILL.md", "# Research Skill\n\nDoes research.");
+    await dir.write("project/.windsurf/skills/deploy/SKILL.md", "# Deploy Skill\n\nDeploys things.");
+
+    const result = importConfig({ projectPath: projectDir, entities: ["skills"] }, dir.path);
+    expect(result.skills).toHaveLength(2);
+    const research = result.skills.find((s) => s.name === "research");
+    expect(research).toBeDefined();
+    expect(research?.description).toBe("Research Skill");
+    expect(research?.path).toContain(".windsurf/skills/research");
+  });
+
+  test("imports standalone skill .md files", async () => {
+    dir = await createTestDir("am-ws-import-");
+    const projectDir = `${dir.path}/project`;
+    await dir.write("project/.windsurf/skills/quick-task.md", "# Quick Task\n\nA simple skill.");
+
+    const result = importConfig({ projectPath: projectDir, entities: ["skills"] }, dir.path);
+    expect(result.skills).toHaveLength(1);
+    expect(result.skills[0].name).toBe("quick-task");
+    expect(result.skills[0].description).toBe("Quick Task");
+  });
+
+  test("skips skill directories without SKILL.md", async () => {
+    dir = await createTestDir("am-ws-import-");
+    const projectDir = `${dir.path}/project`;
+    await dir.write("project/.windsurf/skills/broken/.keep", "");
+
+    const result = importConfig({ projectPath: projectDir, entities: ["skills"] }, dir.path);
+    expect(result.skills).toHaveLength(0);
+  });
+
+  test("returns empty skills when .windsurf/skills/ does not exist", async () => {
+    dir = await createTestDir("am-ws-import-");
+    const projectDir = `${dir.path}/project`;
+    await dir.write("project/.keep", "");
+
+    const result = importConfig({ projectPath: projectDir, entities: ["skills"] }, dir.path);
+    expect(result.skills).toHaveLength(0);
+  });
 });
