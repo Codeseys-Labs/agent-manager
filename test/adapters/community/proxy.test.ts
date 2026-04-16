@@ -111,8 +111,6 @@ describe("CommunityAdapterProxy.isAlive()", () => {
 
 describe("CommunityAdapterProxy error handling", () => {
   it("fails to create with invalid command", async () => {
-    await expect(
-      CommunityAdapterProxy.create("/nonexistent/binary"),
-    ).rejects.toThrow();
+    await expect(CommunityAdapterProxy.create("/nonexistent/binary")).rejects.toThrow();
   });
 });

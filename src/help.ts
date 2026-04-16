@@ -43,9 +43,7 @@ export const COMMAND_GROUPS: ReadonlyArray<{
   },
   {
     heading: "Marketplace commands",
-    commands: [
-      ["marketplace", "Manage git-based plugin marketplaces"],
-    ],
+    commands: [["marketplace", "Manage git-based plugin marketplaces"]],
   },
   {
     heading: "Agent commands",
@@ -57,9 +55,7 @@ export const COMMAND_GROUPS: ReadonlyArray<{
   },
   {
     heading: "Knowledge commands",
-    commands: [
-      ["wiki", "Knowledge base management"],
-    ],
+    commands: [["wiki", "Knowledge base management"]],
   },
   {
     heading: "Tool commands",

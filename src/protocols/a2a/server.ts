@@ -423,10 +423,15 @@ function startTask(
     .catch((err: unknown) => {
       if (TERMINAL_STATES.includes(task.status.state)) return;
       const message = err instanceof Error ? err.message : String(err);
-      updateTaskState(task, "failed", {
-        role: "agent",
-        parts: [{ type: "text", text: `Task failed: ${message}` }],
-      }, emitter);
+      updateTaskState(
+        task,
+        "failed",
+        {
+          role: "agent",
+          parts: [{ type: "text", text: `Task failed: ${message}` }],
+        },
+        emitter,
+      );
     })
     .finally(() => {
       evictStaleTasks(store);
@@ -500,10 +505,15 @@ function handleJsonRpc(
         return jsonRpcError(id, -32003, `Cannot cancel task in state: ${task.status.state}`);
       }
 
-      updateTaskState(task, "canceled", {
-        role: "agent",
-        parts: [{ type: "text", text: "Task canceled by client." }],
-      }, emitter);
+      updateTaskState(
+        task,
+        "canceled",
+        {
+          role: "agent",
+          parts: [{ type: "text", text: "Task canceled by client." }],
+        },
+        emitter,
+      );
 
       return jsonRpcSuccess(id, task);
     }
@@ -620,10 +630,7 @@ export function createA2ARoutes(options: A2AServerOptions): Hono {
     if (req.method === "tasks/sendSubscribe") {
       const p = req.params as unknown as TaskSendParams | undefined;
       if (!p?.id || !p?.message) {
-        return c.json(
-          jsonRpcError(req.id, -32602, "Invalid params: id and message required"),
-          200,
-        );
+        return c.json(jsonRpcError(req.id, -32602, "Invalid params: id and message required"), 200);
       }
 
       const task = startTask(store, p, config, taskHandler, emitter);

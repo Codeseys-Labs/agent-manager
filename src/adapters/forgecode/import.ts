@@ -197,4 +197,3 @@ function readSkills(projectPath: string, warnings: string[]): ImportedSkill[] {
 
   return skills;
 }
-

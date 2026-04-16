@@ -74,11 +74,7 @@ describe("spliceWikiBlock", () => {
   });
 
   test("inserts before am:end marker when no wiki block exists", () => {
-    const content = [
-      "<!-- am:begin -->",
-      "Use strict TypeScript.",
-      AM_END,
-    ].join("\n");
+    const content = ["<!-- am:begin -->", "Use strict TypeScript.", AM_END].join("\n");
 
     const wikiBlock = `${WIKI_BEGIN}\n## Agent Knowledge\n\nWiki content\n${WIKI_END}`;
     const result = spliceWikiBlock(wikiBlock, content);
@@ -103,17 +99,16 @@ describe("spliceWikiBlock", () => {
   });
 
   test("does not duplicate wiki block when applied twice", () => {
-    const content = [
-      "<!-- am:begin -->",
-      "Use strict TypeScript.",
-      AM_END,
-    ].join("\n");
+    const content = ["<!-- am:begin -->", "Use strict TypeScript.", AM_END].join("\n");
 
     const wikiBlock = `${WIKI_BEGIN}\n## Agent Knowledge\n\nWiki content\n${WIKI_END}`;
 
     // First application
     const first = spliceWikiBlock(wikiBlock, content);
-    expect((first.match(new RegExp(WIKI_BEGIN.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "g")) || []).length).toBe(1);
+    expect(
+      (first.match(new RegExp(WIKI_BEGIN.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "g")) || [])
+        .length,
+    ).toBe(1);
 
     // Second application with updated content
     const updatedBlock = `${WIKI_BEGIN}\n## Agent Knowledge\n\nUpdated wiki\n${WIKI_END}`;
@@ -122,7 +117,10 @@ describe("spliceWikiBlock", () => {
     expect(second).toContain("Updated wiki");
     expect(second).not.toContain("Wiki content");
     // Still only one wiki block
-    expect((second.match(new RegExp(WIKI_BEGIN.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "g")) || []).length).toBe(1);
+    expect(
+      (second.match(new RegExp(WIKI_BEGIN.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "g")) || [])
+        .length,
+    ).toBe(1);
   });
 
   test("preserves content before and after wiki block on replacement", () => {

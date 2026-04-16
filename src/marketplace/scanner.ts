@@ -7,7 +7,7 @@
  */
 import * as fs from "node:fs";
 import { join, relative } from "node:path";
-import { resolveMarketplacesDir, readMarketplacesFile } from "./client";
+import { readMarketplacesFile, resolveMarketplacesDir } from "./client";
 import type { DiscoveredPlugin, PluginManifest } from "./types";
 
 /** Manifest directory names to scan, in priority order. */
@@ -28,9 +28,7 @@ export async function readPluginManifest(pluginDir: string): Promise<PluginManif
       // Validate required fields
       if (!parsed.name || !parsed.description) continue;
       return parsed;
-    } catch {
-      continue;
-    }
+    } catch {}
   }
   return null;
 }
@@ -45,9 +43,7 @@ export async function resolveManifestPath(pluginDir: string): Promise<string | n
     try {
       await fs.promises.access(manifestPath);
       return manifestPath;
-    } catch {
-      continue;
-    }
+    } catch {}
   }
   return null;
 }

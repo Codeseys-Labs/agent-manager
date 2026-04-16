@@ -1,10 +1,10 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { join } from "node:path";
 import * as fs from "node:fs";
-import { readPluginManifest, scanMarketplace, searchPlugins } from "../../src/marketplace/scanner";
+import { join } from "node:path";
 import { addMarketplace, resolveMarketplacesDir } from "../../src/marketplace/client";
-import { type TestDir, createTestDir } from "../helpers/tmp";
+import { readPluginManifest, scanMarketplace, searchPlugins } from "../../src/marketplace/scanner";
 import type { PluginManifest } from "../../src/marketplace/types";
+import { type TestDir, createTestDir } from "../helpers/tmp";
 
 /** Create a mock plugin directory with a manifest under .am-plugin/. */
 async function createMockPlugin(
@@ -15,10 +15,7 @@ async function createMockPlugin(
   const pluginDir = join(baseDir, pluginName);
   const manifestDir = join(pluginDir, ".am-plugin");
   await fs.promises.mkdir(manifestDir, { recursive: true });
-  await fs.promises.writeFile(
-    join(manifestDir, "plugin.json"),
-    JSON.stringify(manifest, null, 2),
-  );
+  await fs.promises.writeFile(join(manifestDir, "plugin.json"), JSON.stringify(manifest, null, 2));
   return pluginDir;
 }
 
@@ -31,10 +28,7 @@ async function createClaudePlugin(
   const pluginDir = join(baseDir, pluginName);
   const manifestDir = join(pluginDir, ".claude-plugin");
   await fs.promises.mkdir(manifestDir, { recursive: true });
-  await fs.promises.writeFile(
-    join(manifestDir, "plugin.json"),
-    JSON.stringify(manifest, null, 2),
-  );
+  await fs.promises.writeFile(join(manifestDir, "plugin.json"), JSON.stringify(manifest, null, 2));
   return pluginDir;
 }
 
@@ -282,7 +276,9 @@ describe("marketplace/scanner", () => {
       const plugins = await scanMarketplace("claude-min-mp", mpDir);
       expect(plugins).toHaveLength(1);
       expect(plugins[0].manifest.name).toBe("minimal-claude");
-      expect(plugins[0].manifest.description).toBe("A minimal Claude Code plugin with no servers or agents");
+      expect(plugins[0].manifest.description).toBe(
+        "A minimal Claude Code plugin with no servers or agents",
+      );
       expect(plugins[0].manifest.servers).toBeUndefined();
       expect(plugins[0].manifest.agents).toBeUndefined();
       expect(plugins[0].manifestPath).toContain(".claude-plugin");

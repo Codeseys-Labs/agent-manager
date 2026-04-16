@@ -5,10 +5,6 @@
  * and community adapters to the am config with provenance tracking.
  */
 import { join } from "node:path";
-import { resolveConfigDir, tryReadConfig, writeConfig } from "../core/config";
-import { commitAll } from "../core/git";
-import type { Config, Server, Skill, AgentProfile } from "../core/schema";
-import { requireConfig } from "../lib/errors";
 import {
   readAdaptersToml,
   removeCommunityAdapterConfig,
@@ -16,9 +12,13 @@ import {
   writeAdaptersToml,
 } from "../adapters/community/loader";
 import type { CommunityAdapterConfig } from "../adapters/community/types";
-import type { DiscoveredPlugin, MarketplaceProvenance, PluginManifest } from "./types";
-import { scanAllMarketplaces } from "./scanner";
+import { resolveConfigDir, tryReadConfig, writeConfig } from "../core/config";
+import { commitAll } from "../core/git";
+import type { AgentProfile, Config, Server, Skill } from "../core/schema";
+import { requireConfig } from "../lib/errors";
 import { MarketplaceError } from "./client";
+import { scanAllMarketplaces } from "./scanner";
+import type { DiscoveredPlugin, MarketplaceProvenance, PluginManifest } from "./types";
 
 /** Result of an install operation. */
 export interface InstallResult {
@@ -244,9 +244,7 @@ export async function uninstallPlugin(pluginName: string): Promise<UninstallResu
     (result.removedAdapter ? 1 : 0);
 
   if (totalRemoved === 0) {
-    throw new MarketplaceError(
-      `No installed entities found for plugin "${pluginName}".`,
-    );
+    throw new MarketplaceError(`No installed entities found for plugin "${pluginName}".`);
   }
 
   await writeConfig(configPath, config);

@@ -1,4 +1,5 @@
 import { defineCommand } from "citty";
+import { amError, debug, error, info, output } from "../lib/output";
 import {
   MarketplaceError,
   addMarketplace,
@@ -9,7 +10,6 @@ import {
 } from "../marketplace/client";
 import { installPlugin, listInstalled, uninstallPlugin } from "../marketplace/installer";
 import { scanAllMarketplaces, searchPlugins } from "../marketplace/scanner";
-import { amError, debug, error, info, output } from "../lib/output";
 
 // ── Subcommands ──────────────────────────────────────────────────
 
@@ -63,7 +63,10 @@ const listCommand = defineCommand({
         }
         info("Installed marketplace plugins:", opts);
         for (const entry of installed) {
-          info(`  ${entry.plugin} (${entry.servers.length} server${entry.servers.length === 1 ? "" : "s"})`, opts);
+          info(
+            `  ${entry.plugin} (${entry.servers.length} server${entry.servers.length === 1 ? "" : "s"})`,
+            opts,
+          );
         }
         return;
       }
@@ -78,16 +81,22 @@ const listCommand = defineCommand({
       const plugins = await scanAllMarketplaces();
 
       if (args.json) {
-        output({ marketplaces, plugins: plugins.map((p) => ({
-          name: p.manifest.name,
-          description: p.manifest.description,
-          version: p.manifest.version,
-          marketplace: p.marketplace,
-          servers: p.manifest.servers ? Object.keys(p.manifest.servers) : [],
-          skills: p.manifest.skills ?? [],
-          agents: p.manifest.agents ? Object.keys(p.manifest.agents) : [],
-          adapter: p.manifest.adapter ? { command: p.manifest.adapter.command } : undefined,
-        })) }, opts);
+        output(
+          {
+            marketplaces,
+            plugins: plugins.map((p) => ({
+              name: p.manifest.name,
+              description: p.manifest.description,
+              version: p.manifest.version,
+              marketplace: p.marketplace,
+              servers: p.manifest.servers ? Object.keys(p.manifest.servers) : [],
+              skills: p.manifest.skills ?? [],
+              agents: p.manifest.agents ? Object.keys(p.manifest.agents) : [],
+              adapter: p.manifest.adapter ? { command: p.manifest.adapter.command } : undefined,
+            })),
+          },
+          opts,
+        );
         return;
       }
 
@@ -145,7 +154,11 @@ const installCommand = defineCommand({
 const updateCommand = defineCommand({
   meta: { name: "update", description: "Update marketplace repos (git pull)" },
   args: {
-    name: { type: "positional", description: "Marketplace name (omit to update all)", required: false },
+    name: {
+      type: "positional",
+      description: "Marketplace name (omit to update all)",
+      required: false,
+    },
     json: { type: "boolean", default: false },
     quiet: { type: "boolean", alias: "q", default: false },
     verbose: { type: "boolean", alias: "v", default: false },
@@ -202,15 +215,18 @@ const searchCommand = defineCommand({
     try {
       const results = await searchPlugins(args.query);
       if (args.json) {
-        output({
-          query: args.query,
-          results: results.map((p) => ({
-            name: p.manifest.name,
-            description: p.manifest.description,
-            version: p.manifest.version,
-            marketplace: p.marketplace,
-          })),
-        }, opts);
+        output(
+          {
+            query: args.query,
+            results: results.map((p) => ({
+              name: p.manifest.name,
+              description: p.manifest.description,
+              version: p.manifest.version,
+              marketplace: p.marketplace,
+            })),
+          },
+          opts,
+        );
         return;
       }
 
@@ -219,7 +235,10 @@ const searchCommand = defineCommand({
         return;
       }
 
-      info(`Found ${results.length} plugin${results.length === 1 ? "" : "s"} matching "${args.query}":`, opts);
+      info(
+        `Found ${results.length} plugin${results.length === 1 ? "" : "s"} matching "${args.query}":`,
+        opts,
+      );
       for (const p of results) {
         info(`  ${p.manifest.name.padEnd(30)} ${p.manifest.description}`, opts);
         info(`    marketplace: ${p.marketplace}`, opts);
@@ -244,9 +263,12 @@ const uninstallCommand = defineCommand({
     try {
       const result = await uninstallPlugin(args.plugin);
       info(`Uninstalled plugin "${result.plugin}"`, opts);
-      if (result.removedServers.length > 0) info(`  Removed servers: ${result.removedServers.join(", ")}`, opts);
-      if (result.removedSkills.length > 0) info(`  Removed skills: ${result.removedSkills.join(", ")}`, opts);
-      if (result.removedAgents.length > 0) info(`  Removed agents: ${result.removedAgents.join(", ")}`, opts);
+      if (result.removedServers.length > 0)
+        info(`  Removed servers: ${result.removedServers.join(", ")}`, opts);
+      if (result.removedSkills.length > 0)
+        info(`  Removed skills: ${result.removedSkills.join(", ")}`, opts);
+      if (result.removedAgents.length > 0)
+        info(`  Removed agents: ${result.removedAgents.join(", ")}`, opts);
       if (result.removedAdapter) info(`  Removed adapter: ${result.removedAdapter}`, opts);
       output({ action: "uninstall", ...result }, opts);
     } catch (err) {

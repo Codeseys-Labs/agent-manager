@@ -308,10 +308,10 @@ am-cli as a runtime MCP proxy — accept tool calls, route to configured servers
 
 | Metric | Count |
 |--------|-------|
-| Source files | 182 |
-| Test files | 151 |
-| Tests | 1,864 |
-| Assertions | 5,512 |
+| Source files | 176 |
+| Test files | 152 |
+| Tests | 1,916 |
+| Assertions | 5,655 |
 | IDE adapters | 13 (+community) |
 | Platform adapters | 3 |
 | CLI commands | 31 |

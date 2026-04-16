@@ -491,7 +491,9 @@ describe("isPathAllowed (MEDIUM-3)", () => {
   });
 
   test("rejects path traversal attack (../)", () => {
-    expect(isPathAllowed("/home/user/project/../../../etc/passwd", ["/home/user/project"])).toBe(false);
+    expect(isPathAllowed("/home/user/project/../../../etc/passwd", ["/home/user/project"])).toBe(
+      false,
+    );
   });
 
   test("rejects path that is a prefix but not a child directory", () => {

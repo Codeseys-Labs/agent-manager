@@ -144,4 +144,3 @@ function readGeminiMd(projectPath: string, warnings: string[]): ImportedInstruct
     return null;
   }
 }
-

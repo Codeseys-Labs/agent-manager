@@ -13,11 +13,14 @@ import {
   type TaskStore,
   createA2ARoutes,
   createTaskStore,
-  getAppTaskStore,
   getAppTaskEventEmitter,
+  getAppTaskStore,
   safeTokenCompare,
 } from "../../../src/protocols/a2a/server";
-import type { TaskStatusUpdateEvent, TaskArtifactUpdateEvent } from "../../../src/protocols/a2a/types";
+import type {
+  TaskArtifactUpdateEvent,
+  TaskStatusUpdateEvent,
+} from "../../../src/protocols/a2a/types";
 
 // ── Helpers ─────────────────────────────────────────────────────
 
@@ -996,7 +999,11 @@ describe("A2A Server", () => {
       emitter.emit({
         type: "status",
         taskId: "task-1",
-        data: { id: "task-1", status: { state: "working", timestamp: new Date().toISOString() }, final: false },
+        data: {
+          id: "task-1",
+          status: { state: "working", timestamp: new Date().toISOString() },
+          final: false,
+        },
       });
 
       expect(events).toHaveLength(1);
@@ -1010,7 +1017,11 @@ describe("A2A Server", () => {
       emitter.emit({
         type: "status",
         taskId: "task-2",
-        data: { id: "task-2", status: { state: "working", timestamp: new Date().toISOString() }, final: false },
+        data: {
+          id: "task-2",
+          status: { state: "working", timestamp: new Date().toISOString() },
+          final: false,
+        },
       });
 
       expect(events).toHaveLength(0);
@@ -1026,7 +1037,11 @@ describe("A2A Server", () => {
       emitter.emit({
         type: "status",
         taskId: "task-1",
-        data: { id: "task-1", status: { state: "working", timestamp: new Date().toISOString() }, final: false },
+        data: {
+          id: "task-1",
+          status: { state: "working", timestamp: new Date().toISOString() },
+          final: false,
+        },
       });
 
       expect(events).toHaveLength(0);
@@ -1042,7 +1057,11 @@ describe("A2A Server", () => {
       emitter.emit({
         type: "status",
         taskId: "task-1",
-        data: { id: "task-1", status: { state: "working", timestamp: new Date().toISOString() }, final: false },
+        data: {
+          id: "task-1",
+          status: { state: "working", timestamp: new Date().toISOString() },
+          final: false,
+        },
       });
 
       expect(events).toHaveLength(0);
@@ -1416,8 +1435,8 @@ describe("A2A Server", () => {
 
       // The most recent entries should be present (agent replies from later messages)
       // The oldest entries (msg-0, msg-1) should have been trimmed
-      const historyTexts = task!.history!
-        .filter((m) => m.role === "user")
+      const historyTexts = task!
+        .history!.filter((m) => m.role === "user")
         .map((m) => (m.parts[0] as { text: string }).text);
       // Earliest messages should not be present
       expect(historyTexts).not.toContain("msg-0");

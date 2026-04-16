@@ -147,9 +147,7 @@ async function saveRunState(state: FlowRunState, runsDir: string): Promise<void>
   await mkdir(runsDir, { recursive: true });
   const serializable = {
     ...state,
-    nodes: Object.fromEntries(
-      Object.entries(state.nodes).map(([id, n]) => [id, { ...n }]),
-    ),
+    nodes: Object.fromEntries(Object.entries(state.nodes).map(([id, n]) => [id, { ...n }])),
   };
   await writeFile(runFilePath(runsDir, state.runId), JSON.stringify(serializable, null, 2));
 }
@@ -361,10 +359,7 @@ export async function runFlow(
   // Pre-flight: detect cycles before starting
   const cycle = detectCycles(flow);
   if (cycle) {
-    throw new FlowError(
-      `Cycle detected in flow: ${cycle.join(" \u2192 ")}`,
-      "CYCLE_DETECTED",
-    );
+    throw new FlowError(`Cycle detected in flow: ${cycle.join(" \u2192 ")}`, "CYCLE_DETECTED");
   }
 
   const maxSteps = opts?.maxSteps ?? DEFAULT_MAX_FLOW_STEPS;
@@ -519,8 +514,10 @@ async function executeActionNode(
 ): Promise<unknown> {
   const actionCwd = node.cwd ?? flowCwd;
   const command = interpolateTemplate(node.command, input);
+  const { parseCommand } = await import("./registry");
+  const { executable, args } = parseCommand(command);
 
-  const proc = Bun.spawn(["sh", "-c", command], {
+  const proc = Bun.spawn([executable, ...args], {
     cwd: actionCwd,
     stdout: "pipe",
     stderr: "pipe",

@@ -40,7 +40,7 @@ export async function readMarketplacesFile(): Promise<MarketplacesFile> {
 async function writeMarketplacesFile(data: MarketplacesFile): Promise<void> {
   const filePath = resolveMarketplacesFile();
   await fs.promises.mkdir(join(filePath, ".."), { recursive: true });
-  await fs.promises.writeFile(filePath, JSON.stringify(data, null, 2) + "\n");
+  await fs.promises.writeFile(filePath, `${JSON.stringify(data, null, 2)}\n`);
 }
 
 /** Detect marketplace source from URL. */
@@ -72,7 +72,9 @@ export async function addMarketplace(url: string, name?: string): Promise<Market
   // Check for duplicate
   const existing = await readMarketplacesFile();
   if (existing.marketplaces.some((m) => m.name === resolvedName)) {
-    throw new MarketplaceError(`Marketplace "${resolvedName}" already exists. Use a different --name or remove it first.`);
+    throw new MarketplaceError(
+      `Marketplace "${resolvedName}" already exists. Use a different --name or remove it first.`,
+    );
   }
 
   const cloneDir = join(marketplacesDir, resolvedName);
@@ -128,9 +130,7 @@ export async function addMarketplace(url: string, name?: string): Promise<Market
  */
 export async function updateMarketplace(name?: string): Promise<MarketplaceEntry[]> {
   const data = await readMarketplacesFile();
-  const targets = name
-    ? data.marketplaces.filter((m) => m.name === name)
-    : data.marketplaces;
+  const targets = name ? data.marketplaces.filter((m) => m.name === name) : data.marketplaces;
 
   if (name && targets.length === 0) {
     throw new MarketplaceError(`Marketplace "${name}" not found.`);
@@ -171,9 +171,7 @@ export async function updateMarketplace(name?: string): Promise<MarketplaceEntry
         entry.updated_at = new Date().toISOString();
         updated.push(entry);
       } catch {
-        throw new MarketplaceError(
-          `Failed to update "${entry.name}": ${(err as Error).message}`,
-        );
+        throw new MarketplaceError(`Failed to update "${entry.name}": ${(err as Error).message}`);
       }
     }
   }

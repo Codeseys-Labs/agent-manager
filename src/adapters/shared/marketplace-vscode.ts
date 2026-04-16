@@ -20,10 +20,7 @@ interface ExtensionPackageJson {
   publisher?: string;
   repository?: { url?: string } | string;
   contributes?: {
-    mcpServers?: Record<
-      string,
-      { command: string; args?: string[]; env?: Record<string, string> }
-    >;
+    mcpServers?: Record<string, { command: string; args?: string[]; env?: Record<string, string> }>;
   };
 }
 
@@ -77,10 +74,7 @@ export function getExtensionsDir(adapterName: string, homeDir?: string): string 
 /**
  * Scan VS Code-family extension directories for extensions that register MCP servers.
  */
-export function scanVSCodeExtensions(
-  adapterName: string,
-  homeDir?: string,
-): MarketplaceResult {
+export function scanVSCodeExtensions(adapterName: string, homeDir?: string): MarketplaceResult {
   const items: MarketplaceItem[] = [];
   const warnings: string[] = [];
   const source = SOURCE_MAP[adapterName];
@@ -144,8 +138,7 @@ export function scanVSCodeExtensions(
     }
 
     if (servers.length > 0) {
-      const repoUrl =
-        typeof pkg.repository === "string" ? pkg.repository : pkg.repository?.url;
+      const repoUrl = typeof pkg.repository === "string" ? pkg.repository : pkg.repository?.url;
 
       items.push({
         id: `${pkg.publisher}.${pkg.name}`,

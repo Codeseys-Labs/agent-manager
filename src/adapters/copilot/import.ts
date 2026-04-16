@@ -223,4 +223,3 @@ function readScopedInstructions(projectPath: string, warnings: string[]): Import
 
   return instructions;
 }
-

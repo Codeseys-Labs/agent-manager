@@ -1,11 +1,11 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { join } from "node:path";
 import * as fs from "node:fs";
+import { join } from "node:path";
 import {
+  MarketplaceError,
   addMarketplace,
   deriveMarketplaceName,
   listMarketplaces,
-  MarketplaceError,
   readMarketplacesFile,
   removeMarketplace,
   resolveMarketplacesDir,
@@ -66,7 +66,12 @@ describe("marketplace/client", () => {
         join(mpDir, "marketplaces.json"),
         JSON.stringify({
           marketplaces: [
-            { name: "test", url: "https://example.com/test.git", source: "github", added_at: "2024-01-01" },
+            {
+              name: "test",
+              url: "https://example.com/test.git",
+              source: "github",
+              added_at: "2024-01-01",
+            },
           ],
         }),
       );
@@ -108,9 +113,9 @@ describe("marketplace/client", () => {
     });
 
     test("throws on nonexistent local path", async () => {
-      await expect(
-        addMarketplace("/nonexistent/path/to/marketplace", "bad-local"),
-      ).rejects.toThrow(MarketplaceError);
+      await expect(addMarketplace("/nonexistent/path/to/marketplace", "bad-local")).rejects.toThrow(
+        MarketplaceError,
+      );
     });
   });
 

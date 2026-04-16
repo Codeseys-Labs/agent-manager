@@ -193,7 +193,10 @@ describe("importConfig()", () => {
 
   test("imports global skills from ~/.claude/skills/", async () => {
     dir = await createTestDir("am-import-");
-    await dir.write(".claude/skills/research-rabbithole/SKILL.md", "# Research Rabbithole\n\nDeep research.");
+    await dir.write(
+      ".claude/skills/research-rabbithole/SKILL.md",
+      "# Research Rabbithole\n\nDeep research.",
+    );
     await dir.write(".claude/skills/admin-lint/SKILL.md", "# Admin Lint\n\nVault health check.");
 
     const result = importConfig({ entities: ["skills"] }, dir.path);

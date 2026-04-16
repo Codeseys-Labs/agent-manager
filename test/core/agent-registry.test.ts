@@ -24,9 +24,7 @@ function makeRoster(
   return agents;
 }
 
-function rosterToToml(
-  agents: Record<string, { url: string; description?: string }>,
-): string {
+function rosterToToml(agents: Record<string, { url: string; description?: string }>): string {
   const obj: Record<string, Record<string, string>> = {};
   for (const [name, entry] of Object.entries(agents)) {
     obj[name] = {

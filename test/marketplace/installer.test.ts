@@ -1,12 +1,17 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { join } from "node:path";
 import * as fs from "node:fs";
+import { join } from "node:path";
+import { readAdaptersToml } from "../../src/adapters/community/loader";
 import { readConfig, writeConfig } from "../../src/core/config";
 import { initRepo } from "../../src/core/git";
 import type { Config } from "../../src/core/schema";
-import { applyPlugin, installPlugin, listInstalled, uninstallPlugin } from "../../src/marketplace/installer";
-import { addMarketplace, MarketplaceError } from "../../src/marketplace/client";
-import { readAdaptersToml } from "../../src/adapters/community/loader";
+import { MarketplaceError, addMarketplace } from "../../src/marketplace/client";
+import {
+  applyPlugin,
+  installPlugin,
+  listInstalled,
+  uninstallPlugin,
+} from "../../src/marketplace/installer";
 import type { DiscoveredPlugin, PluginManifest } from "../../src/marketplace/types";
 import { type TestDir, createTestDir } from "../helpers/tmp";
 
@@ -19,10 +24,7 @@ async function createMockPlugin(
   const pluginDir = join(baseDir, pluginName);
   const manifestDir = join(pluginDir, ".am-plugin");
   await fs.promises.mkdir(manifestDir, { recursive: true });
-  await fs.promises.writeFile(
-    join(manifestDir, "plugin.json"),
-    JSON.stringify(manifest, null, 2),
-  );
+  await fs.promises.writeFile(join(manifestDir, "plugin.json"), JSON.stringify(manifest, null, 2));
   return pluginDir;
 }
 
@@ -224,7 +226,9 @@ describe("marketplace/installer", () => {
       // Verify adapters.toml was updated
       const adaptersToml = await readAdaptersToml(configDir);
       expect(adaptersToml.adapters["zed-adapter-plugin"]).toBeDefined();
-      expect(adaptersToml.adapters["zed-adapter-plugin"].command).toBe("/usr/local/bin/am-adapter-zed");
+      expect(adaptersToml.adapters["zed-adapter-plugin"].command).toBe(
+        "/usr/local/bin/am-adapter-zed",
+      );
       expect(adaptersToml.adapters["zed-adapter-plugin"].source).toBe("npm:am-adapter-zed@0.2.0");
     });
 

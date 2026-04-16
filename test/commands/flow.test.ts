@@ -3,8 +3,8 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
-  defineFlow,
   compute,
+  defineFlow,
   listRuns,
   loadRunState,
   runFlow,
@@ -183,10 +183,7 @@ describe("am flow run: error handling", () => {
   test("flow module without required exports is rejected", () => {
     const flowDef = { notNodes: true, notEdges: true };
     const isValid =
-      flowDef &&
-      typeof flowDef === "object" &&
-      "nodes" in flowDef &&
-      "edges" in flowDef;
+      flowDef && typeof flowDef === "object" && "nodes" in flowDef && "edges" in flowDef;
     expect(isValid).toBe(false);
   });
 
@@ -202,10 +199,7 @@ describe("am flow run: error handling", () => {
   test("empty object is rejected as flow definition", () => {
     const flowDef = {};
     const isValid =
-      flowDef &&
-      typeof flowDef === "object" &&
-      "nodes" in flowDef &&
-      "edges" in flowDef;
+      flowDef && typeof flowDef === "object" && "nodes" in flowDef && "edges" in flowDef;
     expect(isValid).toBe(false);
   });
 });

@@ -1,8 +1,6 @@
 import { mkdir, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { defineCommand } from "citty";
-import { resolveConfigDir } from "../core/config";
-import { commitAll } from "../core/git";
 import {
   getCommunityAdapterConfig,
   listCommunityAdapterNames,
@@ -14,6 +12,8 @@ import {
 import { CommunityAdapterProxy } from "../adapters/community/proxy";
 import type { CommunityAdapterConfig } from "../adapters/community/types";
 import { getAdapter, isBuiltInAdapter, listAllAdapters } from "../adapters/registry";
+import { resolveConfigDir } from "../core/config";
+import { commitAll } from "../core/git";
 import { amError, debug, error, info, output } from "../lib/output";
 
 // ── list ───────────────────────────────────────────────────────────
@@ -405,8 +405,11 @@ const verifySubcommand = defineCommand({
         info(`  Display Name: ${meta.displayName}`, opts);
         info(`  Version:      ${meta.version}`, opts);
         info(`  Capabilities: ${meta.capabilities.join(", ")}`, opts);
-        info(`  Detected:     ${detectResult.installed ? `yes${detectResult.version ? ` (${detectResult.version})` : ""}` : "no"}`, opts);
-        info(`  Status:       ok`, opts);
+        info(
+          `  Detected:     ${detectResult.installed ? `yes${detectResult.version ? ` (${detectResult.version})` : ""}` : "no"}`,
+          opts,
+        );
+        info("  Status:       ok", opts);
       }
     } catch (err) {
       amError(err, opts);
@@ -439,7 +442,11 @@ function resolveSource(source: string): {
   if (source.startsWith("./") || source.startsWith("/") || source.startsWith("local:")) {
     const path = source.replace(/^local:/, "");
     // Derive name from directory basename
-    const name = path.split("/").pop()?.replace(/^am-adapter-/, "") ?? "unknown";
+    const name =
+      path
+        .split("/")
+        .pop()
+        ?.replace(/^am-adapter-/, "") ?? "unknown";
     return { name, sourceType: "local", installCmd: [] };
   }
 
@@ -452,7 +459,11 @@ function resolveSource(source: string): {
   ) {
     const url = source.replace(/^git\+/, "");
     // Derive name from repo basename
-    const repoName = url.split("/").pop()?.replace(/\.git$/, "") ?? "unknown";
+    const repoName =
+      url
+        .split("/")
+        .pop()
+        ?.replace(/\.git$/, "") ?? "unknown";
     const name = repoName.replace(/^am-adapter-/, "");
     return { name, sourceType: "git", installCmd: ["git", "clone", url, name] };
   }

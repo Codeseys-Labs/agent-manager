@@ -70,14 +70,23 @@ const listSubcommand = defineCommand({
     }
 
     info(`${"Name".padEnd(20)} ${"Protocol".padEnd(12)} ${"Source".padEnd(14)} Endpoint`, opts);
-    info(`${"\u2500".repeat(20)} ${"\u2500".repeat(12)} ${"\u2500".repeat(14)} ${"\u2500".repeat(44)}`, opts);
+    info(
+      `${"\u2500".repeat(20)} ${"\u2500".repeat(12)} ${"\u2500".repeat(14)} ${"\u2500".repeat(44)}`,
+      opts,
+    );
     for (const agent of agents) {
       const protocol = agent.acp && agent.a2a ? "ACP/A2A" : agent.acp ? "ACP" : "A2A";
       const endpoint = agent.acp?.command ?? agent.a2a?.url ?? "\u2014";
-      info(`${agent.name.padEnd(20)} ${protocol.padEnd(12)} ${agent.source.padEnd(14)} ${endpoint}`, opts);
+      info(
+        `${agent.name.padEnd(20)} ${protocol.padEnd(12)} ${agent.source.padEnd(14)} ${endpoint}`,
+        opts,
+      );
     }
     for (const agent of discovered) {
-      info(`${agent.name.padEnd(20)} ${"A2A".padEnd(12)} ${"[discovered]".padEnd(14)} ${agent.url}`, opts);
+      info(
+        `${agent.name.padEnd(20)} ${"A2A".padEnd(12)} ${"[discovered]".padEnd(14)} ${agent.url}`,
+        opts,
+      );
     }
     info(`\n${agents.length} registered, ${discovered.length} discovered`, opts);
   },

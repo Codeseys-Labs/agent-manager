@@ -1,3 +1,4 @@
+import { scanVSCodeExtensions } from "../shared/marketplace-vscode.ts";
 import type {
   Adapter,
   Capability,
@@ -9,7 +10,6 @@ import type {
   MarketplaceResult,
   ResolvedConfig,
 } from "../types.ts";
-import { scanVSCodeExtensions } from "../shared/marketplace-vscode.ts";
 import { detect } from "./detect.ts";
 import { diffConfig } from "./diff.ts";
 import { exportConfig } from "./export.ts";

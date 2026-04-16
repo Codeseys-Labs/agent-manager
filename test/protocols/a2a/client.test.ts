@@ -542,7 +542,12 @@ describe("A2AClient", () => {
 
     test("throws on HTTP error", async () => {
       mockFetch = mock(() =>
-        Promise.resolve(new Response("Internal Server Error", { status: 500, statusText: "Internal Server Error" })),
+        Promise.resolve(
+          new Response("Internal Server Error", {
+            status: 500,
+            statusText: "Internal Server Error",
+          }),
+        ),
       );
       globalThis.fetch = mockFetch as unknown as typeof fetch;
 

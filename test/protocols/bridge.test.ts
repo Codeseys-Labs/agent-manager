@@ -164,7 +164,9 @@ describe("parseBridgeRequest", () => {
   });
 
   test("rejects path traversal in agent name (data part)", () => {
-    const result = parseBridgeRequest(dataMessage({ agent: "../../../etc/passwd", prompt: "test" }));
+    const result = parseBridgeRequest(
+      dataMessage({ agent: "../../../etc/passwd", prompt: "test" }),
+    );
     expect(result).toBeNull();
   });
 

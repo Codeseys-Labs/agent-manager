@@ -1,6 +1,5 @@
 import { describe, expect, test } from "bun:test";
 import type { ImportedServer } from "../../src/adapters/types";
-import type { Server } from "../../src/core/schema";
 import {
   type IdentityMatch,
   type MergeStrategy,
@@ -9,6 +8,7 @@ import {
   mergeServers,
   runMergePipeline,
 } from "../../src/core/merge";
+import type { Server } from "../../src/core/schema";
 
 // ── Helpers ──────────────────────────────────────────────────────────
 
@@ -145,9 +145,7 @@ describe("identifyDuplicates", () => {
     const existing: Record<string, Server> = {
       tavily: makeServer({ command: "bunx", args: ["tavily-mcp@latest"] }),
     };
-    const incoming: ImportedServer[] = [
-      makeImported({ name: "exa", command: "exa-mcp" }),
-    ];
+    const incoming: ImportedServer[] = [makeImported({ name: "exa", command: "exa-mcp" })];
 
     const { matches, newServers } = identifyDuplicates(existing, incoming);
     expect(matches).toHaveLength(0);

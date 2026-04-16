@@ -81,5 +81,7 @@ export function diffConfig(
 function readNativeServers(filePath: string): Record<string, Record<string, unknown>> | null {
   const json = readJsonFile(filePath);
   if (json === null) return null;
-  return ((json as Record<string, unknown>).mcpServers as Record<string, Record<string, unknown>>) ?? {};
+  return (
+    ((json as Record<string, unknown>).mcpServers as Record<string, Record<string, unknown>>) ?? {}
+  );
 }

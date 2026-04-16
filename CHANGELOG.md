@@ -121,8 +121,25 @@ All notable changes to agent-manager are documented in this file.
 - Phase 4 cross-review: 4 medium issues found and fixed
 - Security hardening review of bridge + ACP + streaming
 
+### Security Hardening (Iteration 10-11)
+- **CRITICAL**: Agent name sanitization in bridge.ts — `/^[a-zA-Z0-9_-]{1,64}$/` validation
+- **CRITICAL**: Flow cycle detection via DFS before execution + MAX_FLOW_STEPS guard (1000)
+- **CRITICAL**: Adapter binary SHA256 checksum verification before subprocess spawn
+- **HIGH**: `createTerminal` uses array spawn instead of `sh -c` (prevents shell injection)
+- **HIGH**: Timing-safe bearer token comparison via `crypto.timingSafeEqual`
+- **HIGH**: `--no-auto-approve` flag for `am run` (configurable permission policy)
+- **HIGH**: Fix checkpoint handler API contract (nodeId was receiving message)
+- **HIGH**: Detect dead cached proxy (isAlive check), evict and respawn
+- **HIGH**: Validate pluginId in Claude Code scanner (reject path traversal)
+- **MEDIUM**: SSE stream 5-minute idle timeout with auto-cleanup
+- **MEDIUM**: History cap: `MAX_HISTORY_PER_TASK = 100`
+- **MEDIUM**: ACP path restriction: `readTextFile`/`writeTextFile` validated against `allowed_paths`
+- Add `_marketplace` provenance to skills and agents schemas
+- Add `flow` + `marketplace` to shell completions
+- Add Claude Code `.claude-plugin` format interop
+
 ### Tests
-- 1,864 tests across 151 files, 5,512 assertions (up from 1,335/132/3,901)
+- 1,916 tests across 152 files, 5,655 assertions (up from 1,335/132/3,901)
 
 ### Distribution
 - Release workflow: CHANGELOG-based release notes, Homebrew formula auto-update, version stamping

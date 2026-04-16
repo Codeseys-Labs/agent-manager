@@ -95,7 +95,10 @@ async function runAgent(args: RunAgentArgs): Promise<void> {
   // Resolve the agent via unified registry
   const entry = await resolveAgentAsync(agentName, registryConfig, configDir);
   if (!entry || !entry.acp) {
-    error(`Unknown agent "${agentName}" or no ACP (local) endpoint. Run \`am run agents\` to list available agents.`, opts);
+    error(
+      `Unknown agent "${agentName}" or no ACP (local) endpoint. Run \`am run agents\` to list available agents.`,
+      opts,
+    );
     process.exitCode = 1;
     return;
   }
@@ -227,7 +230,10 @@ const agentsSubcommand = defineCommand({
     for (const agent of agents) {
       const protocol = agent.acp && agent.a2a ? "ACP/A2A" : agent.acp ? "ACP" : "A2A";
       const endpoint = agent.acp?.command ?? agent.a2a?.url ?? "—";
-      info(`${agent.name.padEnd(20)} ${protocol.padEnd(12)} ${agent.source.padEnd(14)} ${endpoint}`, opts);
+      info(
+        `${agent.name.padEnd(20)} ${protocol.padEnd(12)} ${agent.source.padEnd(14)} ${endpoint}`,
+        opts,
+      );
     }
     info(`\n${agents.length} agent(s) available`, opts);
   },
@@ -404,7 +410,7 @@ export const runCommand = defineCommand({
       session: args.session as string | undefined,
       cwd: args.cwd as string | undefined,
       timeout: args.timeout as string | undefined,
-      noAutoApprove: (args as Record<string, unknown>)["no-auto-approve"] as boolean ?? false,
+      noAutoApprove: ((args as Record<string, unknown>)["no-auto-approve"] as boolean) ?? false,
       json: args.json,
       quiet: args.quiet,
       verbose: args.verbose,

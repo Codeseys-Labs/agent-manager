@@ -552,8 +552,11 @@ export async function createApp(options?: CreateAppOptions) {
   // Otherwise, serve just the Agent Card endpoint.
   if (options?.enableBridge) {
     const { createA2ARoutes } = await import("../protocols/a2a/server");
-    const { config: bridgeFullConfig, configDir: bridgeCfgDir, profileName: bridgeProfile } =
-      await getConfigAndProfile();
+    const {
+      config: bridgeFullConfig,
+      configDir: bridgeCfgDir,
+      profileName: bridgeProfile,
+    } = await getConfigAndProfile();
     const bridgeResolved = buildResolvedConfig(bridgeFullConfig, bridgeProfile, bridgeCfgDir);
     const a2aApp = createA2ARoutes({
       config: bridgeResolved,

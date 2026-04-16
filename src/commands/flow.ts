@@ -11,11 +11,7 @@
 
 import { defineCommand } from "citty";
 import { debug, error, info, output } from "../lib/output";
-import {
-  type FlowRunState,
-  listRuns,
-  loadRunState,
-} from "../protocols/acp/flows";
+import { type FlowRunState, listRuns, loadRunState } from "../protocols/acp/flows";
 
 // ── Subcommand: am flow run ───────────────────────────────────
 
@@ -51,14 +47,20 @@ const flowRunCommand = defineCommand({
     try {
       flowModule = await import(flowName);
     } catch (err) {
-      error(`Could not load flow "${flowName}": ${err instanceof Error ? err.message : String(err)}`, opts);
+      error(
+        `Could not load flow "${flowName}": ${err instanceof Error ? err.message : String(err)}`,
+        opts,
+      );
       process.exitCode = 1;
       return;
     }
 
     const flowDef = flowModule.default ?? flowModule.flow;
     if (!flowDef || typeof flowDef !== "object" || !("nodes" in flowDef) || !("edges" in flowDef)) {
-      error(`Flow module "${flowName}" must export a default FlowDefinition (use defineFlow())`, opts);
+      error(
+        `Flow module "${flowName}" must export a default FlowDefinition (use defineFlow())`,
+        opts,
+      );
       process.exitCode = 1;
       return;
     }
@@ -73,6 +75,18 @@ const flowRunCommand = defineCommand({
         cwd: (args.cwd as string) ?? process.cwd(),
         input: initialInput,
         runsDir: args.runsDir as string | undefined,
+        acpExecutor: async (agentName, prompt) => {
+          const { AmAcpClient } = await import("../protocols/acp/client");
+          const client = new AmAcpClient();
+          try {
+            await client.connectByName(agentName);
+            const sessionId = await client.newSession({ cwd: process.cwd() });
+            const result = await client.prompt(sessionId, [{ text: prompt }]);
+            return result.text;
+          } finally {
+            await client.disconnect().catch(() => {});
+          }
+        },
       });
 
       if (args.json) {
@@ -170,7 +184,8 @@ const flowStatusCommand = defineCommand({
     for (const nodeId of Object.keys(state.nodes)) {
       const node = state.nodes[nodeId];
       const ran = state.executionOrder.includes(nodeId);
-      const icon = node.status === "completed" ? "+" : node.status === "failed" ? "x" : ran ? "~" : " ";
+      const icon =
+        node.status === "completed" ? "+" : node.status === "failed" ? "x" : ran ? "~" : " ";
       info(`  [${icon}] ${nodeId}: ${node.status}`, opts);
       if (node.error) {
         info(`      Error: ${node.error}`, opts);

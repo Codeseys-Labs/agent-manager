@@ -6,8 +6,8 @@
  */
 
 import type { ImportedServer } from "../adapters/types";
-import type { Server } from "./schema";
 import { extractServerIdentity } from "../commands/import";
+import type { Server } from "./schema";
 
 // ── Types ────────────────────────────────────────────────────────────
 
@@ -159,10 +159,7 @@ function arraysEqual(a?: unknown[], b?: unknown[]): boolean {
   return aa.every((v, i) => v === bb[i]);
 }
 
-function recordsEqual(
-  a?: Record<string, string>,
-  b?: Record<string, string>,
-): boolean {
+function recordsEqual(a?: Record<string, string>, b?: Record<string, string>): boolean {
   const aa = a ?? {};
   const bb = b ?? {};
   const keysA = Object.keys(aa).sort();
@@ -203,12 +200,12 @@ function computeFieldDiffs(existing: Server, incoming: ImportedServer): FieldDif
     const iVal = incomingEnv[key];
     if (eVal !== iVal) {
       // Preserve encrypted refs
-      const isEncrypted = eVal && eVal.startsWith("${") && eVal.endsWith("}");
+      const isEncrypted = eVal?.startsWith("${") && eVal.endsWith("}");
       diffs.push({
         field: `env.${key}`,
         existing: eVal,
         incoming: iVal,
-        recommendation: isEncrypted ? "keep-existing" : (iVal ? "keep-incoming" : "keep-existing"),
+        recommendation: isEncrypted ? "keep-existing" : iVal ? "keep-incoming" : "keep-existing",
       });
     }
   }
@@ -267,9 +264,7 @@ export function classifyConflicts(matches: IdentityMatch[]): ServerConflict[] {
       classification = "identical";
     } else {
       // Exact match with diffs — check if all diffs are auto-mergeable
-      const hasHardConflict = diffs.some(
-        (d) => d.field === "command" || d.field === "enabled",
-      );
+      const hasHardConflict = diffs.some((d) => d.field === "command" || d.field === "enabled");
       classification = hasHardConflict ? "conflicting" : "compatible";
     }
 
@@ -306,7 +301,7 @@ function mergeEnv(
   for (const [key, val] of Object.entries(i)) {
     const existingVal = result[key];
     // Preserve encrypted refs — never overwrite ${VAR} with a raw value
-    if (existingVal && existingVal.startsWith("${") && existingVal.endsWith("}")) {
+    if (existingVal?.startsWith("${") && existingVal.endsWith("}")) {
       continue;
     }
     // Incoming wins on conflict, or adds new keys

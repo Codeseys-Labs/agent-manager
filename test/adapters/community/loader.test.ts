@@ -1,7 +1,6 @@
-import { createHash } from "node:crypto";
 import { afterEach, beforeEach, describe, expect, it, spyOn } from "bun:test";
+import { createHash } from "node:crypto";
 import { join } from "node:path";
-import { createTestDir, type TestDir } from "../../helpers/tmp.ts";
 import {
   getCommunityAdapterConfig,
   killAllProxies,
@@ -13,7 +12,11 @@ import {
   verifyChecksum,
   writeAdaptersToml,
 } from "../../../src/adapters/community/loader.ts";
-import type { AdaptersToml, CommunityAdapterConfig } from "../../../src/adapters/community/types.ts";
+import type {
+  AdaptersToml,
+  CommunityAdapterConfig,
+} from "../../../src/adapters/community/types.ts";
+import { type TestDir, createTestDir } from "../../helpers/tmp.ts";
 
 describe("readAdaptersToml()", () => {
   let dir: TestDir;
@@ -283,7 +286,11 @@ describe("verifyChecksum()", () => {
   it("throws on checksum mismatch", async () => {
     const binaryPath = await dir.write("fake-adapter", "#!/bin/sh\necho hello\n");
     await expect(
-      verifyChecksum("bad", binaryPath, "sha256:0000000000000000000000000000000000000000000000000000000000000000"),
+      verifyChecksum(
+        "bad",
+        binaryPath,
+        "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+      ),
     ).rejects.toThrow("Adapter binary checksum mismatch for bad");
   });
 
@@ -327,9 +334,9 @@ describe("verifyChecksum()", () => {
 
   it("throws on invalid checksum format (no colon)", async () => {
     const binaryPath = await dir.write("adapter", "content");
-    await expect(
-      verifyChecksum("bad-format", binaryPath, "nocolonseparator"),
-    ).rejects.toThrow("checksum format invalid");
+    await expect(verifyChecksum("bad-format", binaryPath, "nocolonseparator")).rejects.toThrow(
+      "checksum format invalid",
+    );
   });
 });
 

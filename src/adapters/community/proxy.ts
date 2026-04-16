@@ -91,8 +91,8 @@ export class CommunityAdapterProxy implements Adapter {
 
   private processBuffer(): void {
     // JSON-RPC messages are newline-delimited
-    let newlineIdx: number;
-    while ((newlineIdx = this.buffer.indexOf("\n")) !== -1) {
+    let newlineIdx: number = this.buffer.indexOf("\n");
+    while (newlineIdx !== -1) {
       const line = this.buffer.slice(0, newlineIdx).trim();
       this.buffer = this.buffer.slice(newlineIdx + 1);
       if (!line) continue;
@@ -113,6 +113,7 @@ export class CommunityAdapterProxy implements Adapter {
       } catch {
         // Ignore malformed lines (could be stderr leaking or adapter debug output)
       }
+      newlineIdx = this.buffer.indexOf("\n");
     }
   }
 

@@ -138,8 +138,14 @@ describe("windsurf importConfig()", () => {
   test("imports skill directories from .windsurf/skills/", async () => {
     dir = await createTestDir("am-ws-import-");
     const projectDir = `${dir.path}/project`;
-    await dir.write("project/.windsurf/skills/research/SKILL.md", "# Research Skill\n\nDoes research.");
-    await dir.write("project/.windsurf/skills/deploy/SKILL.md", "# Deploy Skill\n\nDeploys things.");
+    await dir.write(
+      "project/.windsurf/skills/research/SKILL.md",
+      "# Research Skill\n\nDoes research.",
+    );
+    await dir.write(
+      "project/.windsurf/skills/deploy/SKILL.md",
+      "# Deploy Skill\n\nDeploys things.",
+    );
 
     const result = importConfig({ projectPath: projectDir, entities: ["skills"] }, dir.path);
     expect(result.skills).toHaveLength(2);

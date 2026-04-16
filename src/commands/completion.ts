@@ -44,14 +44,26 @@ export const TOP_LEVEL_COMMANDS = [
   "flow",
   "marketplace",
   "completion",
+  "init-project",
 ] as const;
 
 /** Commands that have subcommands, with their subcommand lists. */
 export const SUBCOMMANDS: Record<string, readonly string[]> = {
   agent: ["list", "add", "remove", "ping", "delegate", "cancel"],
   wiki: [
-    "init", "search", "add", "show", "delete", "harvest", "ingest",
-    "lint", "graph", "synthesize", "briefing", "export", "import",
+    "init",
+    "search",
+    "add",
+    "show",
+    "delete",
+    "harvest",
+    "ingest",
+    "lint",
+    "graph",
+    "synthesize",
+    "briefing",
+    "export",
+    "import",
   ],
   config: ["validate", "show"],
   profile: ["list", "show", "create", "delete"],
@@ -120,7 +132,9 @@ complete -F _am_completions am
 
 export function generateZshCompletion(): string {
   const subcommandCases = Object.entries(SUBCOMMANDS)
-    .map(([cmd, subs]) => `        ${cmd})\n            compadd -- ${subs.join(" ")}\n            ;;`)
+    .map(
+      ([cmd, subs]) => `        ${cmd})\n            compadd -- ${subs.join(" ")}\n            ;;`,
+    )
     .join("\n");
 
   return `#compdef am
@@ -159,21 +173,17 @@ _am "\$@"
 
 export function generateFishCompletion(): string {
   const topLevelCompletions = TOP_LEVEL_COMMANDS.map(
-    (cmd) =>
-      `complete -c am -f -n '__am_needs_command' -a '${cmd}'`,
+    (cmd) => `complete -c am -f -n '__am_needs_command' -a '${cmd}'`,
   ).join("\n");
 
   const subcommandCompletions = Object.entries(SUBCOMMANDS)
     .flatMap(([cmd, subs]) =>
-      subs.map(
-        (sub) =>
-          `complete -c am -f -n "__am_using_command ${cmd}" -a '${sub}'`,
-      ),
+      subs.map((sub) => `complete -c am -f -n "__am_using_command ${cmd}" -a '${sub}'`),
     )
     .join("\n");
 
   const flagCompletions = GLOBAL_FLAGS.map(
-    (flag) => `complete -c am -l '${flag.replace(/^--/, '')}'`,
+    (flag) => `complete -c am -l '${flag.replace(/^--/, "")}'`,
   ).join("\n");
 
   return `# fish completion for am (agent-manager)

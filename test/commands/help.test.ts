@@ -1,4 +1,4 @@
-import { describe, it, expect } from "bun:test";
+import { describe, expect, it } from "bun:test";
 import { COMMAND_GROUPS, renderGroupedHelp } from "../../src/help";
 
 describe("grouped help output (ADR-0029)", () => {
@@ -6,14 +6,38 @@ describe("grouped help output (ADR-0029)", () => {
     it("contains all registered subcommands (excluding hidden aliases)", () => {
       // Every command that appears in cli.ts subCommands should be in a group,
       // except hidden aliases like "agents" (alias for "agent").
-      const groupedNames = new Set(
-        COMMAND_GROUPS.flatMap((g) => g.commands.map(([name]) => name)),
-      );
+      const groupedNames = new Set(COMMAND_GROUPS.flatMap((g) => g.commands.map(([name]) => name)));
       const registeredCommands = [
-        "init", "add", "list", "use", "apply", "status", "config", "profile",
-        "doctor", "import", "push", "pull", "undo", "log", "secret", "version",
-        "adapter", "mcp-serve", "serve", "tui", "session", "search", "install",
-        "uninstall", "update", "wiki", "agent", "run", "completion", "marketplace",
+        "init",
+        "add",
+        "list",
+        "use",
+        "apply",
+        "status",
+        "config",
+        "profile",
+        "doctor",
+        "import",
+        "push",
+        "pull",
+        "undo",
+        "log",
+        "secret",
+        "version",
+        "adapter",
+        "mcp-serve",
+        "serve",
+        "tui",
+        "session",
+        "search",
+        "install",
+        "uninstall",
+        "update",
+        "wiki",
+        "agent",
+        "run",
+        "completion",
+        "marketplace",
       ];
       for (const cmd of registeredCommands) {
         expect(groupedNames.has(cmd)).toBe(true);

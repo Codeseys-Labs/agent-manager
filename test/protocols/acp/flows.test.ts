@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
-import { mkdtemp, readdir, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -13,8 +13,8 @@ import {
   action,
   checkpoint,
   compute,
-  detectCycles,
   defineFlow,
+  detectCycles,
   interpolateTemplate,
   listRuns,
   loadRunState,
@@ -245,7 +245,7 @@ describe("runFlow with action nodes", () => {
     const flow = defineFlow({
       name: "failing-action",
       nodes: {
-        fail: action({ command: "exit 1" }),
+        fail: action({ command: "false" }),
       },
       edges: [],
     });

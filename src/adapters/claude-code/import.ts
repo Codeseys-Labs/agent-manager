@@ -68,10 +68,7 @@ export function importConfig(options: ImportOptions = {}, homeDir?: string): Imp
 
     // Project skills from <project>/.claude/skills/
     if (options.projectPath) {
-      const projectSkills = readSkillsDir(
-        join(options.projectPath, ".claude", "skills"),
-        warnings,
-      );
+      const projectSkills = readSkillsDir(join(options.projectPath, ".claude", "skills"), warnings);
       skills.push(...projectSkills);
     }
   }

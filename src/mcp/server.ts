@@ -1401,7 +1401,12 @@ function defineTools(): ToolEntry[] {
           },
         };
         await addEntry(entry);
-        return { action: "add", id: entry.id, entity_type: entry.entity_type, title: entry.content.split("\n")[0].slice(0, 120) };
+        return {
+          action: "add",
+          id: entry.id,
+          entity_type: entry.entity_type,
+          title: entry.content.split("\n")[0].slice(0, 120),
+        };
       },
     },
     {

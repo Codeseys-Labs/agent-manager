@@ -233,7 +233,9 @@ describe("windsurf exportConfig()", () => {
     });
 
     const result = exportConfig(cfg, { projectPath: projectDir, dryRun: true }, dir.path);
-    const skillFile = result.files.find((f) => f.path.includes(".windsurf/skills/research/SKILL.md"));
+    const skillFile = result.files.find((f) =>
+      f.path.includes(".windsurf/skills/research/SKILL.md"),
+    );
     expect(skillFile).toBeDefined();
     expect(skillFile?.content).toContain("# research");
     expect(skillFile?.content).toContain("Multi-agent research skill");

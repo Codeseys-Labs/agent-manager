@@ -4,11 +4,7 @@ import { getAdapter, getDetectedAdapters, listAdapters } from "../adapters/regis
 import type { Adapter, ImportedServer, MarketplaceItem } from "../adapters/types";
 import { resolveConfigDir, tryReadConfig, writeConfig } from "../core/config";
 import { commitAll } from "../core/git";
-import {
-  type MergeStrategy,
-  type ServerConflict,
-  runMergePipeline,
-} from "../core/merge";
+import { type MergeStrategy, type ServerConflict, runMergePipeline } from "../core/merge";
 import type { MarketplaceProvenance } from "../core/schema";
 import {
   type SecretScanResult,
@@ -204,9 +200,7 @@ export const importCommand = defineCommand({
 
           // Track unresolved conflicts (fuzzy matches in auto mode)
           for (const c of mergeResult.conflicts) {
-            const reason = c.match.fuzzyReason
-              ? ` (fuzzy: ${c.match.fuzzyReason})`
-              : "";
+            const reason = c.match.fuzzyReason ? ` (fuzzy: ${c.match.fuzzyReason})` : "";
             allWarnings.push(
               `${adapter.meta.name}: conflict skipped — "${c.match.incomingServer.name}" vs "${c.match.existingName}"${reason}`,
             );
@@ -362,7 +356,11 @@ export const importCommand = defineCommand({
             matchType: c.match.type,
             fuzzyReason: c.match.fuzzyReason,
             classification: c.classification,
-            diffs: c.diffs.map((d) => ({ field: d.field, existing: d.existing, incoming: d.incoming })),
+            diffs: c.diffs.map((d) => ({
+              field: d.field,
+              existing: d.existing,
+              incoming: d.incoming,
+            })),
           })),
         };
 
@@ -379,9 +377,15 @@ export const importCommand = defineCommand({
           if (reportData.conflicts.length > 0) {
             info("", opts);
             for (const c of reportData.conflicts) {
-              info(`  ${c.existing} vs ${c.incoming} [${c.matchType}${c.fuzzyReason ? `: ${c.fuzzyReason}` : ""}]`, opts);
+              info(
+                `  ${c.existing} vs ${c.incoming} [${c.matchType}${c.fuzzyReason ? `: ${c.fuzzyReason}` : ""}]`,
+                opts,
+              );
               for (const d of c.diffs) {
-                info(`    ${d.field}: ${JSON.stringify(d.existing)} → ${JSON.stringify(d.incoming)}`, opts);
+                info(
+                  `    ${d.field}: ${JSON.stringify(d.existing)} → ${JSON.stringify(d.incoming)}`,
+                  opts,
+                );
               }
             }
           }

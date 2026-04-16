@@ -19,10 +19,7 @@ describe("scanClaudePlugins()", () => {
 
   test("returns empty when enabledPlugins is empty", async () => {
     dir = await createTestDir("am-marketplace-");
-    await dir.write(
-      ".claude/settings.json",
-      JSON.stringify({ enabledPlugins: [] }),
-    );
+    await dir.write(".claude/settings.json", JSON.stringify({ enabledPlugins: [] }));
     const result = scanClaudePlugins(dir.path);
     expect(result.items).toHaveLength(0);
     expect(result.warnings).toHaveLength(0);
@@ -94,10 +91,7 @@ describe("scanClaudePlugins()", () => {
         ],
       }),
     );
-    await dir.write(
-      ".claude/plugins/@company/plugin-bar/skills/bar/SKILL.md",
-      "# Bar Skill",
-    );
+    await dir.write(".claude/plugins/@company/plugin-bar/skills/bar/SKILL.md", "# Bar Skill");
 
     const result = scanClaudePlugins(dir.path);
     expect(result.items).toHaveLength(1);
@@ -160,10 +154,7 @@ describe("scanClaudePlugins()", () => {
 
   test("uses plugin ID as name when manifest has no name field", async () => {
     dir = await createTestDir("am-marketplace-");
-    await dir.write(
-      ".claude/settings.json",
-      JSON.stringify({ enabledPlugins: ["bare-plugin"] }),
-    );
+    await dir.write(".claude/settings.json", JSON.stringify({ enabledPlugins: ["bare-plugin"] }));
     await dir.write(
       ".claude/plugins/bare-plugin/plugin.json",
       JSON.stringify({ version: "0.1.0" }),
@@ -205,10 +196,7 @@ describe("scanClaudePlugins()", () => {
 
   test("defaults version to unknown when not in manifest", async () => {
     dir = await createTestDir("am-marketplace-");
-    await dir.write(
-      ".claude/settings.json",
-      JSON.stringify({ enabledPlugins: ["no-version"] }),
-    );
+    await dir.write(".claude/settings.json", JSON.stringify({ enabledPlugins: ["no-version"] }));
     await dir.write(
       ".claude/plugins/no-version/plugin.json",
       JSON.stringify({ name: "no-version" }),
@@ -221,10 +209,7 @@ describe("scanClaudePlugins()", () => {
 
   test("plugin with both servers and skills", async () => {
     dir = await createTestDir("am-marketplace-");
-    await dir.write(
-      ".claude/settings.json",
-      JSON.stringify({ enabledPlugins: ["@full/plugin"] }),
-    );
+    await dir.write(".claude/settings.json", JSON.stringify({ enabledPlugins: ["@full/plugin"] }));
     await dir.write(
       ".claude/plugins/@full/plugin/plugin.json",
       JSON.stringify({
@@ -233,9 +218,7 @@ describe("scanClaudePlugins()", () => {
         mcpServers: {
           "full-server": { command: "node", args: ["server.js"] },
         },
-        skills: [
-          { name: "full-skill", description: "A skill", path: "skills/full/SKILL.md" },
-        ],
+        skills: [{ name: "full-skill", description: "A skill", path: "skills/full/SKILL.md" }],
       }),
     );
 

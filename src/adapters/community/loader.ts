@@ -23,9 +23,15 @@ const proxyCache = new Map<string, CommunityAdapterProxy>();
  * Verify the SHA256 checksum of an adapter binary against the stored checksum.
  * Throws if the checksum doesn't match. Warns (returns) if no checksum is stored.
  */
-export async function verifyChecksum(name: string, command: string, storedChecksum: string | undefined): Promise<void> {
+export async function verifyChecksum(
+  name: string,
+  command: string,
+  storedChecksum: string | undefined,
+): Promise<void> {
   if (!storedChecksum) {
-    console.error(`warning: community adapter "${name}" has no checksum in adapters.toml — skipping integrity check`);
+    console.error(
+      `warning: community adapter "${name}" has no checksum in adapters.toml — skipping integrity check`,
+    );
     return;
   }
 
