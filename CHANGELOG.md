@@ -4,6 +4,44 @@ All notable changes to agent-manager are documented in this file.
 
 ## [Unreleased]
 
+### 5-Agent Review + Implementation Session (2026-04-15)
+
+#### New Features
+- **MCP tools:** `am_server_update` (enable/disable, merge env, replace args/tags), `am_undo` (revert last config change), `am_doctor` (8 health checks). Tool count: 26 → 29.
+- **Entity-aware CLI:** `am list` accepts entity type (servers, instructions, skills, agents, profiles). `am add` accepts entity type (server, instruction, skill, agent). Backwards compatible.
+- **A2A async tasks:** `tasks/send` returns immediately with `state: "working"`. Clients poll with `tasks/get`. Per-instance task store (no more global singleton).
+- **A2A client polling:** `pollTask()` and `sendAndPoll()` convenience methods on A2AClient.
+
+#### Bug Fixes
+- Fix MCP error messages: all errors now include recovery hints (e.g., "Use am_list_servers to see available servers")
+- Fix `am_agent_discover` non-standard error pattern (was returning `{error}` in success response)
+- Fix `am list <invalid>` silently defaulting to servers (now throws with valid types list)
+- Fix `am_agent_delegate` description not mentioning async polling model
+- Fix cancel-then-complete race condition in A2A async handler
+- Fix `am_server_update` missing recovery hint on "not found" error
+- Add `hint` field to JSON error responses for programmatic recovery guidance
+
+#### Design Documents
+- **ADR-0026:** ACP runtime integration via ACPX — 4-phase plan for headless agent orchestration
+- **ADR-0027:** Community adapter loading — JSON-RPC subprocess, npm/git install, adapters.toml
+- **ADR-0028:** Brownfield import merge — two-tier identity matching, interactive conflict resolution
+- Marketplace import design: scan installed Claude Code plugins + VS Code extensions
+- Community adapters design: am-adapter-* npm convention, CommunityAdapterProxy
+
+#### Reviews
+- MCP tools review: 17 findings (3 critical/high)
+- A2A protocol review: 32 findings (7 high)
+- CLI UX review: 22 findings (3 critical)
+- Phase 4 cross-review: 4 medium issues found and fixed
+
+#### Tests
+- 1385 tests across 132 files, 4090 assertions (up from 1335/132/3901)
+
+#### Distribution
+- Release workflow: CHANGELOG-based release notes (replaces --generate-notes)
+- Release workflow: Homebrew formula auto-updated with real SHA256s
+- Release workflow: CHANGELOG stamped with version + fresh [Unreleased] section
+
 ### Multi-Agent Review + Implementation Session (2026-04-10)
 
 #### Bug Fixes (11 bugs from multi-agent review)
