@@ -16,6 +16,7 @@ import type {
   TaskCancelParams,
   TaskQueryParams,
   TaskSendParams,
+  TaskState,
 } from "./types";
 
 // ── Error types ─────────────────────────────────────────────────
@@ -210,9 +211,95 @@ export class A2AClient {
     );
     return resp.result as Task;
   }
+
+  /**
+   * Poll a task until it reaches a terminal state (completed, failed, canceled).
+   * @param baseUrl The agent's base URL.
+   * @param taskId The task ID to poll.
+   * @param opts Polling options (interval, max attempts, abort signal).
+   * @returns The final Task once it reaches a terminal state.
+   */
+  async pollTask(baseUrl: string, taskId: string, opts?: PollTaskOptions): Promise<Task> {
+    return pollTaskImpl(this, baseUrl, taskId, opts);
+  }
+}
+
+// ── Poll options ───────────────────────────────────────────────
+
+export interface PollTaskOptions {
+  /** Polling interval in milliseconds. Default: 1000 */
+  intervalMs?: number;
+  /** Maximum number of poll attempts. Default: 60 */
+  maxAttempts?: number;
+  /** Abort signal to cancel polling. */
+  signal?: AbortSignal;
+}
+
+/** Terminal task states — polling stops when the task reaches one of these. */
+const TERMINAL_STATES = new Set(["completed", "failed", "canceled"]);
+
+/**
+ * Poll a task until it reaches a terminal state (completed, failed, canceled).
+ * @param baseUrl The agent's base URL.
+ * @param taskId The task ID to poll.
+ * @param opts Polling options (interval, max attempts, abort signal).
+ * @returns The final Task once it reaches a terminal state.
+ * @throws A2AClientError if max attempts exceeded or polling is aborted.
+ */
+async function pollTaskImpl(
+  client: A2AClient,
+  baseUrl: string,
+  taskId: string,
+  opts?: PollTaskOptions,
+): Promise<Task> {
+  const intervalMs = opts?.intervalMs ?? 1000;
+  const maxAttempts = opts?.maxAttempts ?? 60;
+
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    if (opts?.signal?.aborted) {
+      throw new A2AClientError("Polling aborted");
+    }
+
+    const task = await client.getTask(baseUrl, { id: taskId });
+
+    if (TERMINAL_STATES.has(task.status.state)) {
+      return task;
+    }
+
+    // Wait before next poll
+    await new Promise<void>((resolve, reject) => {
+      const timer = setTimeout(resolve, intervalMs);
+      if (opts?.signal) {
+        const onAbort = () => {
+          clearTimeout(timer);
+          reject(new A2AClientError("Polling aborted"));
+        };
+        opts.signal.addEventListener("abort", onAbort, { once: true });
+      }
+    });
+  }
+
+  throw new A2AClientError(`Polling timed out after ${maxAttempts} attempts for task ${taskId}`);
 }
 
 /** Convenience: create a client with default options. */
 export function createA2AClient(opts?: A2AClientOptions): A2AClient {
   return new A2AClient(opts);
+}
+
+/**
+ * Send a task and poll until it completes. Convenience wrapper that combines
+ * sendTask + pollTask into a single call.
+ */
+export async function sendAndPoll(
+  client: A2AClient,
+  baseUrl: string,
+  params: TaskSendParams,
+  pollOpts?: PollTaskOptions,
+): Promise<Task> {
+  const task = await client.sendTask(baseUrl, params);
+  if (TERMINAL_STATES.has(task.status.state)) {
+    return task;
+  }
+  return pollTaskImpl(client, baseUrl, task.id, pollOpts);
 }

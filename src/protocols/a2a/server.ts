@@ -6,8 +6,8 @@
  *   POST /a2a                     — JSON-RPC 2.0 endpoint
  *
  * Supported methods:
- *   tasks/send   — create/update a task (maps to am operations)
- *   tasks/get    — query task status
+ *   tasks/send   — create/update a task (returns immediately, runs handler async)
+ *   tasks/get    — query task status (used for polling)
  *   tasks/cancel — cancel a running task
  */
 
@@ -27,38 +27,51 @@ import type {
   TextPart,
 } from "./types";
 
-// ── In-memory task store ────────────────────────────────────────
+// ── Task store ─────────────────────────────────────────────────
 
-const taskStore = new Map<string, Task>();
 const MAX_TASKS = 1000;
 
-function evictStaleTasks(): void {
-  if (taskStore.size <= MAX_TASKS) return;
+export interface TaskStore {
+  get(id: string): Task | undefined;
+  set(id: string, task: Task): void;
+  delete(id: string): boolean;
+  keys(): IterableIterator<string>;
+  readonly size: number;
+  clear(): void;
+  entries(): IterableIterator<[string, Task]>;
+}
+
+export function createTaskStore(): TaskStore {
+  return new Map<string, Task>();
+}
+
+function evictStaleTasks(store: TaskStore): void {
+  if (store.size <= MAX_TASKS) return;
   // Remove completed/failed/canceled tasks first (oldest first via Map insertion order)
-  for (const [id, task] of taskStore) {
-    if (taskStore.size <= MAX_TASKS * 0.8) break;
+  for (const [id, task] of store.entries()) {
+    if (store.size <= MAX_TASKS * 0.8) break;
     if (
       task.status.state === "completed" ||
       task.status.state === "failed" ||
       task.status.state === "canceled"
     ) {
-      taskStore.delete(id);
+      store.delete(id);
     }
   }
   // If still over limit, remove oldest regardless of state
-  if (taskStore.size > MAX_TASKS) {
-    const toRemove = taskStore.size - MAX_TASKS;
+  if (store.size > MAX_TASKS) {
+    const toRemove = store.size - MAX_TASKS;
     let removed = 0;
-    for (const id of taskStore.keys()) {
+    for (const id of store.keys()) {
       if (removed >= toRemove) break;
-      taskStore.delete(id);
+      store.delete(id);
       removed++;
     }
   }
 }
 
-function getOrCreateTask(id: string): Task {
-  let task = taskStore.get(id);
+function getOrCreateTask(store: TaskStore, id: string): Task {
+  let task = store.get(id);
   if (!task) {
     task = {
       id,
@@ -69,7 +82,7 @@ function getOrCreateTask(id: string): Task {
       history: [],
       artifacts: [],
     };
-    taskStore.set(id, task);
+    store.set(id, task);
   }
   return task;
 }
@@ -248,11 +261,12 @@ function jsonRpcSuccess(id: string | number | null, result: unknown): A2AJsonRpc
   };
 }
 
-async function handleJsonRpc(
+function handleJsonRpc(
   req: A2AJsonRpcRequest,
   config: ResolvedConfig,
   handler: TaskHandler,
-): Promise<A2AJsonRpcResponse> {
+  store: TaskStore,
+): A2AJsonRpcResponse {
   const { id, method, params } = req;
 
   switch (method) {
@@ -262,25 +276,30 @@ async function handleJsonRpc(
         return jsonRpcError(id, -32602, "Invalid params: id and message required");
       }
 
-      const task = getOrCreateTask(p.id);
+      const task = getOrCreateTask(store, p.id);
       // Record the user message
       task.history = task.history ?? [];
       task.history.push(p.message);
       updateTaskState(task, "working");
 
-      try {
-        const result = await handler(p.message, config);
-        task.artifacts = result.artifacts ?? task.artifacts;
-        updateTaskState(task, "completed", result.message);
-      } catch (err: unknown) {
-        const message = err instanceof Error ? err.message : String(err);
-        updateTaskState(task, "failed", {
-          role: "agent",
-          parts: [{ type: "text", text: `Task failed: ${message}` }],
+      // Run handler asynchronously — don't block the response
+      handler(p.message, config)
+        .then((result) => {
+          task.artifacts = result.artifacts ?? task.artifacts;
+          updateTaskState(task, "completed", result.message);
+        })
+        .catch((err: unknown) => {
+          const message = err instanceof Error ? err.message : String(err);
+          updateTaskState(task, "failed", {
+            role: "agent",
+            parts: [{ type: "text", text: `Task failed: ${message}` }],
+          });
+        })
+        .finally(() => {
+          evictStaleTasks(store);
         });
-      }
 
-      evictStaleTasks();
+      // Return immediately with state: "working"
       return jsonRpcSuccess(id, task);
     }
 
@@ -290,7 +309,7 @@ async function handleJsonRpc(
         return jsonRpcError(id, -32602, "Invalid params: id required");
       }
 
-      const task = taskStore.get(p.id);
+      const task = store.get(p.id);
       if (!task) {
         return jsonRpcError(id, -32001, `Task not found: ${p.id}`);
       }
@@ -310,7 +329,7 @@ async function handleJsonRpc(
         return jsonRpcError(id, -32602, "Invalid params: id required");
       }
 
-      const task = taskStore.get(p.id);
+      const task = store.get(p.id);
       if (!task) {
         return jsonRpcError(id, -32001, `Task not found: ${p.id}`);
       }
@@ -341,18 +360,28 @@ export interface A2AServerOptions {
   cardOptions: GenerateCardOptions;
   /** Optional custom task handler. Defaults to defaultTaskHandler. */
   taskHandler?: TaskHandler;
+  /** Optional task store. Each call creates its own store if not provided. */
+  taskStore?: TaskStore;
 }
 
 /**
  * Create Hono routes for A2A protocol endpoints.
  * Mount the returned Hono app on your main server.
  *
+ * Each call gets its own task store (no global singleton).
+ *
  * Routes:
  *   GET  /.well-known/agent.json  — A2A Agent Card
  *   POST /a2a                     — A2A JSON-RPC 2.0 endpoint
  */
 export function createA2ARoutes(options: A2AServerOptions): Hono {
-  const { config, cardOptions, taskHandler = defaultTaskHandler } = options;
+  const {
+    config,
+    cardOptions,
+    taskHandler = defaultTaskHandler,
+    taskStore: externalStore,
+  } = options;
+  const store = externalStore ?? createTaskStore();
   const a2aApp = new Hono();
 
   // Agent Card endpoint
@@ -375,19 +404,17 @@ export function createA2ARoutes(options: A2AServerOptions): Hono {
       return c.json(jsonRpcError(req?.id ?? null, -32600, "Invalid JSON-RPC request"), 400);
     }
 
-    const response = await handleJsonRpc(req, config, taskHandler);
+    const response = handleJsonRpc(req, config, taskHandler, store);
     return c.json(response);
   });
+
+  // Expose store for testing
+  (a2aApp as Hono & { _taskStore: TaskStore })._taskStore = store;
 
   return a2aApp;
 }
 
-/** Clear the in-memory task store. Useful for testing. */
-export function clearTaskStore(): void {
-  taskStore.clear();
-}
-
-/** Get all tasks. Useful for debugging/testing. */
-export function getAllTasks(): Map<string, Task> {
-  return new Map(taskStore);
+/** Get the task store from a Hono app created by createA2ARoutes. */
+export function getAppTaskStore(app: Hono): TaskStore {
+  return (app as Hono & { _taskStore: TaskStore })._taskStore;
 }

@@ -88,7 +88,7 @@ src/                                 # 161 TypeScript files
     gitlab.ts                        # GitLab platform adapter
     bare.ts                          # Bare git fallback
   mcp/                               # MCP server mode
-    server.ts                        # JSON-RPC 2.0 over stdio, 14 tools, 3 permission tiers (ADR-0009)
+    server.ts                        # JSON-RPC 2.0 over stdio, 17 tools, 3 permission tiers (ADR-0009)
   tui/                               # Terminal UI (Silvery + React)
     index.tsx                        # TUI launcher
     App.tsx                          # Root component with tab navigation

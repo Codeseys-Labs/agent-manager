@@ -6,9 +6,10 @@ import * as TOML from "@iarna/toml";
 import type { ResolvedConfig } from "../../../src/adapters/types";
 import {
   type A2AServerOptions,
-  clearTaskStore,
+  type TaskStore,
   createA2ARoutes,
-  getAllTasks,
+  createTaskStore,
+  getAppTaskStore,
 } from "../../../src/protocols/a2a/server";
 
 // ── Helpers ─────────────────────────────────────────────────────
@@ -25,11 +26,15 @@ function makeResolvedConfig(overrides: Partial<ResolvedConfig> = {}): ResolvedCo
   };
 }
 
-function makeApp(configOverrides: Partial<ResolvedConfig> = {}) {
+function makeApp(
+  configOverrides: Partial<ResolvedConfig> = {},
+  extraOpts: Partial<A2AServerOptions> = {},
+) {
   const config = makeResolvedConfig(configOverrides);
   const options: A2AServerOptions = {
     config,
     cardOptions: { baseUrl: "http://localhost:9090" },
+    ...extraOpts,
   };
   return createA2ARoutes(options);
 }
@@ -40,6 +45,18 @@ function jsonRpcRequest(app: ReturnType<typeof createA2ARoutes>, body: unknown) 
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
   });
+}
+
+/** Wait for a task in the store to reach a terminal state. */
+async function waitForTask(store: TaskStore, taskId: string, timeoutMs = 2000): Promise<void> {
+  const terminal = new Set(["completed", "failed", "canceled"]);
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    const task = store.get(taskId);
+    if (task && terminal.has(task.status.state)) return;
+    await new Promise((r) => setTimeout(r, 10));
+  }
+  throw new Error(`Task ${taskId} did not reach terminal state within ${timeoutMs}ms`);
 }
 
 // ── Setup / Teardown ────────────────────────────────────────────
@@ -57,10 +74,6 @@ beforeAll(async () => {
   };
   await writeFile(join(tmpDir, "config.toml"), TOML.stringify(config as TOML.JsonMap));
   process.env.AM_CONFIG_DIR = tmpDir;
-});
-
-afterEach(() => {
-  clearTaskStore();
 });
 
 afterAll(async () => {
@@ -94,7 +107,7 @@ describe("A2A Server", () => {
   // ── tasks/send ─────────────────────────────────────────────
 
   describe("POST /a2a — tasks/send", () => {
-    test("creates a task and returns task ID", async () => {
+    test("returns immediately with state working", async () => {
       const app = makeApp();
       const res = await jsonRpcRequest(app, {
         jsonrpc: "2.0",
@@ -122,7 +135,33 @@ describe("A2A Server", () => {
       expect(data.error).toBeUndefined();
       expect(data.result).toBeDefined();
       expect(data.result.id).toBe("task-001");
-      expect(data.result.status.state).toBe("completed");
+      // Immediate response is "working" — handler runs async
+      expect(data.result.status.state).toBe("working");
+    });
+
+    test("task completes asynchronously after send returns", async () => {
+      const app = makeApp();
+      const store = getAppTaskStore(app);
+
+      await jsonRpcRequest(app, {
+        jsonrpc: "2.0",
+        id: 1,
+        method: "tasks/send",
+        params: {
+          id: "task-async-001",
+          message: {
+            role: "user",
+            parts: [{ type: "text", text: "status" }],
+          },
+        },
+      });
+
+      // Wait for async handler to complete
+      await waitForTask(store, "task-async-001");
+
+      const task = store.get("task-async-001");
+      expect(task).toBeDefined();
+      expect(task!.status.state).toBe("completed");
     });
 
     test("returns error for missing params", async () => {
@@ -143,6 +182,8 @@ describe("A2A Server", () => {
 
     test("records user message in task history", async () => {
       const app = makeApp();
+      const store = getAppTaskStore(app);
+
       await jsonRpcRequest(app, {
         jsonrpc: "2.0",
         id: 1,
@@ -156,28 +197,91 @@ describe("A2A Server", () => {
         },
       });
 
-      const tasks = getAllTasks();
-      const task = tasks.get("task-history-test");
+      await waitForTask(store, "task-history-test");
+
+      const task = store.get("task-history-test");
       expect(task).toBeDefined();
       expect(task!.history).toBeDefined();
       expect(task!.history!.length).toBeGreaterThanOrEqual(2); // user + agent
       expect(task!.history![0].role).toBe("user");
     });
+
+    test("task state transitions to failed on handler error", async () => {
+      const store = createTaskStore();
+      const app = makeApp(
+        {},
+        {
+          taskStore: store,
+          taskHandler: async () => {
+            throw new Error("handler boom");
+          },
+        },
+      );
+
+      const res = await jsonRpcRequest(app, {
+        jsonrpc: "2.0",
+        id: 1,
+        method: "tasks/send",
+        params: {
+          id: "task-fail-001",
+          message: {
+            role: "user",
+            parts: [{ type: "text", text: "crash" }],
+          },
+        },
+      });
+
+      const data = (await res.json()) as {
+        result: { id: string; status: { state: string } };
+      };
+      // Immediate response is "working"
+      expect(data.result.status.state).toBe("working");
+
+      // Wait for async handler to fail
+      await waitForTask(store, "task-fail-001");
+
+      const task = store.get("task-fail-001");
+      expect(task).toBeDefined();
+      expect(task!.status.state).toBe("failed");
+      expect(task!.status.message!.parts[0]).toEqual(
+        expect.objectContaining({ type: "text", text: expect.stringContaining("handler boom") }),
+      );
+    });
   });
 
-  // ── tasks/get ──────────────────────────────────────────────
+  // ── tasks/get (polling) ────────────────────────────────────
 
   describe("POST /a2a — tasks/get", () => {
-    test("retrieves a previously created task", async () => {
-      const app = makeApp();
+    test("returns working state before handler completes", async () => {
+      let resolveHandler!: () => void;
+      const handlerPromise = new Promise<void>((r) => {
+        resolveHandler = r;
+      });
 
-      // First create a task
+      const store = createTaskStore();
+      const app = makeApp(
+        {},
+        {
+          taskStore: store,
+          taskHandler: async () => {
+            await handlerPromise;
+            return {
+              message: {
+                role: "agent" as const,
+                parts: [{ type: "text" as const, text: "done" }],
+              },
+            };
+          },
+        },
+      );
+
+      // Send task — handler blocks on our promise
       await jsonRpcRequest(app, {
         jsonrpc: "2.0",
         id: 1,
         method: "tasks/send",
         params: {
-          id: "task-get-001",
+          id: "task-poll-001",
           message: {
             role: "user",
             parts: [{ type: "text", text: "status" }],
@@ -185,24 +289,35 @@ describe("A2A Server", () => {
         },
       });
 
-      // Then retrieve it
-      const res = await jsonRpcRequest(app, {
+      // Poll while handler is still running
+      const pollRes = await jsonRpcRequest(app, {
         jsonrpc: "2.0",
         id: 2,
         method: "tasks/get",
-        params: { id: "task-get-001" },
+        params: { id: "task-poll-001" },
       });
 
-      expect(res.status).toBe(200);
-      const data = (await res.json()) as {
+      const pollData = (await pollRes.json()) as {
         result: { id: string; status: { state: string } };
-        error?: unknown;
       };
+      expect(pollData.result.status.state).toBe("working");
 
-      expect(data.error).toBeUndefined();
-      expect(data.result).toBeDefined();
-      expect(data.result.id).toBe("task-get-001");
-      expect(data.result.status.state).toBe("completed");
+      // Unblock handler and wait for completion
+      resolveHandler();
+      await waitForTask(store, "task-poll-001");
+
+      // Poll again — should be completed
+      const doneRes = await jsonRpcRequest(app, {
+        jsonrpc: "2.0",
+        id: 3,
+        method: "tasks/get",
+        params: { id: "task-poll-001" },
+      });
+
+      const doneData = (await doneRes.json()) as {
+        result: { id: string; status: { state: string } };
+      };
+      expect(doneData.result.status.state).toBe("completed");
     });
 
     test("returns error for non-existent task", async () => {
@@ -240,49 +355,36 @@ describe("A2A Server", () => {
   // ── tasks/cancel ───────────────────────────────────────────
 
   describe("POST /a2a — tasks/cancel", () => {
-    test("cancels a task", async () => {
-      const app = makeApp({
-        servers: {
-          test: {
-            name: "test",
-            command: "echo",
-            args: [],
-            env: {},
-            transport: "stdio",
-            description: "",
-            tags: [],
-            enabled: true,
-            adapters: {},
-          },
-        },
+    test("cancels a working task", async () => {
+      let resolveHandler!: () => void;
+      const handlerPromise = new Promise<void>((r) => {
+        resolveHandler = r;
       });
 
-      // Create a task with a custom handler that leaves it in "working" state
-      const options: A2AServerOptions = {
-        config: makeResolvedConfig(),
-        cardOptions: { baseUrl: "http://localhost:9090" },
-        taskHandler: async () => {
-          // Simulate a quick task that completes
-          return {
-            message: {
-              role: "agent" as const,
-              parts: [{ type: "text" as const, text: "done" }],
-            },
-          };
+      const store = createTaskStore();
+      const app = makeApp(
+        {},
+        {
+          taskStore: store,
+          taskHandler: async () => {
+            await handlerPromise;
+            return {
+              message: {
+                role: "agent" as const,
+                parts: [{ type: "text" as const, text: "done" }],
+              },
+            };
+          },
         },
-      };
-      const customApp = createA2ARoutes(options);
+      );
 
-      // Send a task to create it (it completes immediately with our handler)
-      // For cancel test, we need a task in a cancelable state
-      // Let's create and then try to cancel — the default handler completes immediately,
-      // so completed tasks cannot be canceled
-      await jsonRpcRequest(customApp, {
+      // Send a task — handler will block
+      await jsonRpcRequest(app, {
         jsonrpc: "2.0",
         id: 1,
         method: "tasks/send",
         params: {
-          id: "task-cancel-001",
+          id: "task-cancel-working",
           message: {
             role: "user",
             parts: [{ type: "text", text: "status" }],
@@ -290,12 +392,51 @@ describe("A2A Server", () => {
         },
       });
 
-      // Completed tasks cannot be canceled
-      const cancelRes = await jsonRpcRequest(customApp, {
+      // Cancel while still working
+      const cancelRes = await jsonRpcRequest(app, {
         jsonrpc: "2.0",
         id: 2,
         method: "tasks/cancel",
-        params: { id: "task-cancel-001" },
+        params: { id: "task-cancel-working" },
+      });
+
+      expect(cancelRes.status).toBe(200);
+      const data = (await cancelRes.json()) as {
+        result: { id: string; status: { state: string } };
+        error?: unknown;
+      };
+      expect(data.error).toBeUndefined();
+      expect(data.result.status.state).toBe("canceled");
+
+      // Unblock handler so it doesn't leak
+      resolveHandler();
+    });
+
+    test("cannot cancel a completed task", async () => {
+      const store = createTaskStore();
+      const app = makeApp({}, { taskStore: store });
+
+      await jsonRpcRequest(app, {
+        jsonrpc: "2.0",
+        id: 1,
+        method: "tasks/send",
+        params: {
+          id: "task-cancel-completed",
+          message: {
+            role: "user",
+            parts: [{ type: "text", text: "status" }],
+          },
+        },
+      });
+
+      // Wait for default handler to complete
+      await waitForTask(store, "task-cancel-completed");
+
+      const cancelRes = await jsonRpcRequest(app, {
+        jsonrpc: "2.0",
+        id: 2,
+        method: "tasks/cancel",
+        params: { id: "task-cancel-completed" },
       });
 
       expect(cancelRes.status).toBe(200);
@@ -356,15 +497,54 @@ describe("A2A Server", () => {
     });
   });
 
+  // ── Task store isolation ──────────────────────────────────
+
+  describe("task store isolation", () => {
+    test("separate createA2ARoutes calls have independent stores", async () => {
+      const app1 = makeApp();
+      const app2 = makeApp();
+      const store1 = getAppTaskStore(app1);
+      const store2 = getAppTaskStore(app2);
+
+      await jsonRpcRequest(app1, {
+        jsonrpc: "2.0",
+        id: 1,
+        method: "tasks/send",
+        params: {
+          id: "isolated-task",
+          message: {
+            role: "user",
+            parts: [{ type: "text", text: "status" }],
+          },
+        },
+      });
+
+      await waitForTask(store1, "isolated-task");
+
+      // app1 has the task, app2 does not
+      expect(store1.get("isolated-task")).toBeDefined();
+      expect(store2.get("isolated-task")).toBeUndefined();
+
+      // Querying from app2 returns not found
+      const res = await jsonRpcRequest(app2, {
+        jsonrpc: "2.0",
+        id: 2,
+        method: "tasks/get",
+        params: { id: "isolated-task" },
+      });
+      const data = (await res.json()) as { error: { code: number } };
+      expect(data.error.code).toBe(-32001);
+    });
+  });
+
   // ── Task store eviction ────────────────────────────────────
 
   describe("task store eviction", () => {
     test("completed tasks are cleaned up when store exceeds limit", async () => {
-      const app = makeApp();
+      const store = createTaskStore();
+      const app = makeApp({}, { taskStore: store });
 
       // Create > 1000 completed tasks to trigger eviction
-      // We'll create 1005 tasks — after eviction the store should
-      // shrink to <= 1000 (with completed ones removed first)
       for (let i = 0; i < 1005; i++) {
         await jsonRpcRequest(app, {
           jsonrpc: "2.0",
@@ -380,9 +560,11 @@ describe("A2A Server", () => {
         });
       }
 
-      const tasks = getAllTasks();
+      // Wait for all tasks to complete (the last one triggers eviction)
+      await waitForTask(store, "evict-task-1004", 10000);
+
       // After eviction, store should be at or below MAX_TASKS (1000)
-      expect(tasks.size).toBeLessThanOrEqual(1000);
+      expect(store.size).toBeLessThanOrEqual(1000);
     });
   });
 

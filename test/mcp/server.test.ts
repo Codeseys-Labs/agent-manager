@@ -65,8 +65,11 @@ describe("MCP server", () => {
     expect(names).toContain("am_list_profiles");
     expect(names).toContain("am_status");
     expect(names).toContain("am_config_show");
+    expect(names).toContain("am_doctor");
     expect(names).toContain("am_add_server");
     expect(names).toContain("am_remove_server");
+    expect(names).toContain("am_server_update");
+    expect(names).toContain("am_undo");
     expect(names).toContain("am_use_profile");
     expect(names).toContain("am_import");
     expect(names).toContain("am_apply");
@@ -75,7 +78,7 @@ describe("MCP server", () => {
     expect(names).toContain("am_session_list");
     expect(names).toContain("am_session_export");
     expect(names).toContain("am_session_search");
-    expect(names.length).toBe(14);
+    expect(names.length).toBe(17);
     // Non-core tools should NOT be present by default
     expect(names).not.toContain("am_registry_search");
     expect(names).not.toContain("am_wiki_search");
@@ -112,7 +115,7 @@ describe("MCP server", () => {
     expect(names).toContain("am_agent_list");
     expect(names).toContain("am_agent_delegate");
     expect(names).toContain("am_agent_task_status");
-    expect(names.length).toBe(26);
+    expect(names.length).toBe(29);
   });
 
   test("tools/list respects selective group configuration (ADR-0021)", async () => {
@@ -130,8 +133,8 @@ describe("MCP server", () => {
     expect(resp).not.toBeNull();
     const tools = (resp?.result as JsonRpcResult).tools;
     const names = tools.map((t: { name: string }) => t.name);
-    // Core + wiki = 14 + 5 = 19
-    expect(names.length).toBe(19);
+    // Core + wiki = 17 + 5 = 22
+    expect(names.length).toBe(22);
     expect(names).toContain("am_list_servers");
     expect(names).toContain("am_wiki_search");
     expect(names).not.toContain("am_registry_search");
@@ -297,6 +300,285 @@ describe("MCP server", () => {
     const content = JSON.parse((resp?.result as JsonRpcResult).content[0].text);
     expect(content.action).toBe("remove");
     expect(content.server).toBe("tavily");
+  });
+
+  test("am_server_update updates server properties", async () => {
+    await setupConfig({
+      servers: {
+        fetch: {
+          command: "uvx",
+          args: ["mcp-server-fetch"],
+          tags: ["utility"],
+          transport: "stdio",
+          enabled: true,
+          description: "old description",
+        },
+      },
+    });
+
+    const server = new McpServer();
+    const resp = await server.handleRequest({
+      jsonrpc: "2.0",
+      id: 40,
+      method: "tools/call",
+      params: {
+        name: "am_server_update",
+        arguments: {
+          name: "fetch",
+          enabled: false,
+          tags: ["utility", "web"],
+          description: "new description",
+        },
+      },
+    });
+
+    const content = JSON.parse((resp?.result as JsonRpcResult).content[0].text);
+    expect(content.action).toBe("update");
+    expect(content.server).toBe("fetch");
+
+    // Verify the updates persisted
+    const listResp = await server.handleRequest({
+      jsonrpc: "2.0",
+      id: 41,
+      method: "tools/call",
+      params: { name: "am_list_servers", arguments: {} },
+    });
+    const listContent = JSON.parse((listResp?.result as JsonRpcResult).content[0].text);
+    const updated = listContent.servers.find((s: { name: string }) => s.name === "fetch");
+    expect(updated.enabled).toBe(false);
+    expect(updated.tags).toEqual(["utility", "web"]);
+    expect(updated.description).toBe("new description");
+  });
+
+  test("am_server_update merges env vars", async () => {
+    await setupConfig({
+      servers: {
+        fetch: {
+          command: "uvx",
+          args: ["mcp-server-fetch"],
+          env: { API_KEY: "existing" },
+          transport: "stdio",
+          enabled: true,
+        },
+      },
+    });
+
+    const server = new McpServer();
+    const resp = await server.handleRequest({
+      jsonrpc: "2.0",
+      id: 42,
+      method: "tools/call",
+      params: {
+        name: "am_server_update",
+        arguments: {
+          name: "fetch",
+          env: { NEW_VAR: "new-value" },
+        },
+      },
+    });
+
+    const content = JSON.parse((resp?.result as JsonRpcResult).content[0].text);
+    expect(content.action).toBe("update");
+
+    // Verify env was merged (not replaced)
+    const showResp = await server.handleRequest({
+      jsonrpc: "2.0",
+      id: 43,
+      method: "tools/call",
+      params: { name: "am_config_show", arguments: {} },
+    });
+    const showContent = JSON.parse((showResp?.result as JsonRpcResult).content[0].text);
+    const serverEnv = showContent.config.servers.fetch.env;
+    expect(serverEnv.API_KEY).toBe("existing");
+    expect(serverEnv.NEW_VAR).toBe("new-value");
+  });
+
+  test("am_server_update errors on nonexistent server", async () => {
+    await setupConfig({ servers: {} });
+
+    const server = new McpServer();
+    const resp = await server.handleRequest({
+      jsonrpc: "2.0",
+      id: 44,
+      method: "tools/call",
+      params: {
+        name: "am_server_update",
+        arguments: { name: "nonexistent", enabled: false },
+      },
+    });
+
+    const result = resp?.result as JsonRpcResult;
+    expect(result.isError).toBe(true);
+    const content = JSON.parse(result.content[0].text);
+    expect(content.error).toContain("not found");
+  });
+
+  test("am_server_update replaces args", async () => {
+    await setupConfig({
+      servers: {
+        fetch: {
+          command: "uvx",
+          args: ["old-arg"],
+          transport: "stdio",
+          enabled: true,
+        },
+      },
+    });
+
+    const server = new McpServer();
+    await server.handleRequest({
+      jsonrpc: "2.0",
+      id: 45,
+      method: "tools/call",
+      params: {
+        name: "am_server_update",
+        arguments: {
+          name: "fetch",
+          args: ["new-arg-1", "new-arg-2"],
+        },
+      },
+    });
+
+    const showResp = await server.handleRequest({
+      jsonrpc: "2.0",
+      id: 46,
+      method: "tools/call",
+      params: { name: "am_config_show", arguments: {} },
+    });
+    const showContent = JSON.parse((showResp?.result as JsonRpcResult).content[0].text);
+    expect(showContent.config.servers.fetch.args).toEqual(["new-arg-1", "new-arg-2"]);
+  });
+
+  test("am_doctor returns health check results", async () => {
+    await setupConfig({
+      servers: {
+        fetch: { command: "uvx", args: ["mcp-server-fetch"], transport: "stdio", enabled: true },
+      },
+    });
+
+    const server = new McpServer();
+    const resp = await server.handleRequest({
+      jsonrpc: "2.0",
+      id: 50,
+      method: "tools/call",
+      params: { name: "am_doctor", arguments: {} },
+    });
+
+    expect(resp).not.toBeNull();
+    const result = resp?.result as JsonRpcResult;
+    expect(result.isError).toBeUndefined();
+    const content = JSON.parse(result.content[0].text);
+    expect(typeof content.healthy).toBe("boolean");
+    expect(Array.isArray(content.checks)).toBe(true);
+    expect(content.checks.length).toBeGreaterThan(0);
+
+    // Every check has the expected shape
+    for (const check of content.checks) {
+      expect(typeof check.name).toBe("string");
+      expect(["ok", "warn", "fail"]).toContain(check.status);
+      expect(typeof check.message).toBe("string");
+    }
+
+    // Config dir and git should be ok since setupConfig inits a repo
+    const configDirCheck = content.checks.find(
+      (c: { name: string }) => c.name === "Config directory",
+    );
+    expect(configDirCheck?.status).toBe("ok");
+
+    const gitCheck = content.checks.find((c: { name: string }) => c.name === "Git repository");
+    expect(gitCheck?.status).toBe("ok");
+
+    const configCheck = content.checks.find((c: { name: string }) => c.name === "config.toml");
+    expect(configCheck?.status).toBe("ok");
+  });
+
+  test("am_doctor is read-only (no opt-in needed)", async () => {
+    await setupConfig({});
+    const server = new McpServer();
+    server.setSettings({});
+
+    const resp = await server.handleRequest({
+      jsonrpc: "2.0",
+      id: 51,
+      method: "tools/call",
+      params: { name: "am_doctor", arguments: {} },
+    });
+
+    expect(resp).not.toBeNull();
+    const result = resp?.result as JsonRpcResult;
+    // Should never be a permission error
+    if (result.isError) {
+      const content = JSON.parse(result.content[0].text);
+      expect(content.error).not.toContain("opt-in");
+    }
+  });
+
+  test("am_undo reverts the last config change", async () => {
+    await setupConfig({ servers: {} });
+
+    const server = new McpServer();
+
+    // Add a server to create a commit we can undo
+    await server.handleRequest({
+      jsonrpc: "2.0",
+      id: 52,
+      method: "tools/call",
+      params: {
+        name: "am_add_server",
+        arguments: { name: "temp-server", command: "echo" },
+      },
+    });
+
+    // Verify it exists
+    let listResp = await server.handleRequest({
+      jsonrpc: "2.0",
+      id: 53,
+      method: "tools/call",
+      params: { name: "am_list_servers", arguments: {} },
+    });
+    let listContent = JSON.parse((listResp?.result as JsonRpcResult).content[0].text);
+    expect(listContent.servers.some((s: { name: string }) => s.name === "temp-server")).toBe(true);
+
+    // Undo
+    const undoResp = await server.handleRequest({
+      jsonrpc: "2.0",
+      id: 54,
+      method: "tools/call",
+      params: { name: "am_undo", arguments: {} },
+    });
+
+    const undoContent = JSON.parse((undoResp?.result as JsonRpcResult).content[0].text);
+    expect(undoContent.action).toBe("undo");
+    expect(undoContent.reverted).toContain("add server: temp-server");
+    expect(typeof undoContent.oid).toBe("string");
+
+    // Verify the server is gone after undo
+    listResp = await server.handleRequest({
+      jsonrpc: "2.0",
+      id: 55,
+      method: "tools/call",
+      params: { name: "am_list_servers", arguments: {} },
+    });
+    listContent = JSON.parse((listResp?.result as JsonRpcResult).content[0].text);
+    expect(listContent.servers.some((s: { name: string }) => s.name === "temp-server")).toBe(false);
+  });
+
+  test("am_undo errors when nothing to undo", async () => {
+    // setupConfig creates a repo with only the initial commit
+    await setupConfig({});
+
+    const server = new McpServer();
+    const resp = await server.handleRequest({
+      jsonrpc: "2.0",
+      id: 56,
+      method: "tools/call",
+      params: { name: "am_undo", arguments: {} },
+    });
+
+    const result = resp?.result as JsonRpcResult;
+    expect(result.isError).toBe(true);
+    const content = JSON.parse(result.content[0].text);
+    expect(content.error).toContain("Nothing to undo");
   });
 
   test("write-remote tools rejected without opt-in", async () => {

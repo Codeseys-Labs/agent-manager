@@ -7,6 +7,7 @@
  *   write-remote — requires opt-in via settings.mcp_serve
  */
 
+import { accessSync } from "node:fs";
 import { join } from "node:path";
 import { getAdapter, getDetectedAdapters, listAdapters } from "../adapters/registry";
 import { readActiveProfile, writeActiveProfile } from "../commands/use";
@@ -16,9 +17,10 @@ import {
   readConfig,
   resolveConfigDir,
   resolveProjectConfig,
+  tryReadConfig,
   writeConfig,
 } from "../core/config";
-import { commitAll, getStatus, pull, push } from "../core/git";
+import { commitAll, getStatus, log as gitLog, pull, push, revertHead } from "../core/git";
 import type { Config, McpToolGroup, Settings } from "../core/schema";
 import { interpolateEnvAsync, loadKey } from "../core/secrets";
 import { filterMessages, formatJson, formatMarkdown } from "../core/session";
@@ -261,6 +263,159 @@ function defineTools(): ToolEntry[] {
         return { profile: profileName, config: redactSecrets(config) };
       },
     },
+    {
+      def: {
+        name: "am_doctor",
+        description:
+          "Run a health check on the agent-manager configuration. Returns checks for config validity, git status, detected tools, encryption key, secret audit, and more.",
+        inputSchema: { type: "object", properties: {} },
+      },
+      tier: "read-only",
+      handler: async () => {
+        const configDir = resolveConfigDir();
+        const checks: Array<{ name: string; status: "ok" | "warn" | "fail"; message: string }> = [];
+
+        // 1. Config directory exists
+        try {
+          accessSync(configDir);
+          checks.push({ name: "Config directory", status: "ok", message: configDir });
+        } catch {
+          checks.push({
+            name: "Config directory",
+            status: "fail",
+            message: `Not found: ${configDir}`,
+          });
+        }
+
+        // 2. Git repository
+        try {
+          accessSync(join(configDir, ".git"));
+          checks.push({ name: "Git repository", status: "ok", message: "Initialized" });
+        } catch {
+          checks.push({
+            name: "Git repository",
+            status: "fail",
+            message: "Not a git repo. Run `am init`.",
+          });
+        }
+
+        // 3. config.toml valid
+        const configPath = join(configDir, "config.toml");
+        try {
+          const config = await tryReadConfig(configPath);
+          if (config === null) {
+            checks.push({ name: "config.toml", status: "fail", message: "Not found" });
+          } else {
+            checks.push({ name: "config.toml", status: "ok", message: "Valid" });
+          }
+        } catch (err: unknown) {
+          checks.push({
+            name: "config.toml",
+            status: "fail",
+            message: `Parse/validation error: ${errorMessage(err)}`,
+          });
+        }
+
+        // 4. Detected AI tools
+        const adapterNames = listAdapters();
+        for (const name of adapterNames) {
+          const adapter = await getAdapter(name);
+          if (!adapter) continue;
+          const detection = adapter.detect();
+          if (detection.installed) {
+            checks.push({
+              name: `Adapter: ${adapter.meta.displayName}`,
+              status: "ok",
+              message: detection.version ? `v${detection.version}` : "Detected",
+            });
+          } else {
+            checks.push({
+              name: `Adapter: ${adapter.meta.displayName}`,
+              status: "warn",
+              message: "Not detected",
+            });
+          }
+        }
+
+        // 5. Git remote + working tree
+        try {
+          const gitStatus = await getStatus(configDir);
+          if (gitStatus.remotes.length > 0) {
+            checks.push({ name: "Git remote", status: "ok", message: gitStatus.remotes[0].url });
+          } else {
+            checks.push({ name: "Git remote", status: "warn", message: "No remote configured" });
+          }
+          if (!gitStatus.clean) {
+            checks.push({
+              name: "Working tree",
+              status: "warn",
+              message: `${gitStatus.dirty.length} uncommitted change(s)`,
+            });
+          } else {
+            checks.push({ name: "Working tree", status: "ok", message: "Clean" });
+          }
+        } catch {
+          checks.push({
+            name: "Git status",
+            status: "warn",
+            message: "Could not read git status",
+          });
+        }
+
+        // 6. Encryption key
+        const keyPath = join(configDir, ".agent-manager", "key.txt");
+        try {
+          accessSync(keyPath);
+          checks.push({ name: "Encryption key", status: "ok", message: "Present" });
+        } catch {
+          checks.push({
+            name: "Encryption key",
+            status: "warn",
+            message: "Not found (secrets will not be encrypted)",
+          });
+        }
+
+        // 7. Project config in cwd
+        const projectFile = resolveProjectConfig(process.cwd());
+        if (projectFile) {
+          checks.push({ name: "Project config", status: "ok", message: projectFile });
+        } else {
+          checks.push({
+            name: "Project config",
+            status: "warn",
+            message: "No .agent-manager.toml in current directory tree",
+          });
+        }
+
+        // 8. Secret audit
+        try {
+          const configForScan = await tryReadConfig(configPath);
+          if (configForScan?.servers) {
+            const { scanConfigForSecrets } = await import("../core/secret-detection");
+            const scanResults = await scanConfigForSecrets(configForScan.servers);
+            const totalSecrets = scanResults.reduce((sum, r) => sum + r.secrets.length, 0);
+            if (totalSecrets > 0) {
+              checks.push({
+                name: "Secret audit",
+                status: "warn",
+                message: `${totalSecrets} potential unencrypted secret(s) found`,
+              });
+            } else {
+              checks.push({
+                name: "Secret audit",
+                status: "ok",
+                message: "No unencrypted secrets detected",
+              });
+            }
+          }
+        } catch {
+          // Config already checked above
+        }
+
+        const hasFailures = checks.some((c) => c.status === "fail");
+        return { healthy: !hasFailures, checks };
+      },
+    },
 
     // ── Session tools (read-only) ──────────────────────────────
     {
@@ -353,12 +508,16 @@ function defineTools(): ToolEntry[] {
 
         const adapter = await getAdapter(adapterName);
         if (!adapter?.sessionReader) {
-          throw new Error(`Adapter "${adapterName}" does not support session reading`);
+          throw new Error(
+            `Adapter "${adapterName}" does not support session reading. Use am_session_list to find adapters with session data.`,
+          );
         }
 
         const session = await adapter.sessionReader.loadSession(id);
         if (!session) {
-          throw new Error(`Session "${id}" not found in ${adapterName}`);
+          throw new Error(
+            `Session "${id}" not found in ${adapterName}. Use am_session_list with adapter="${adapterName}" to see valid session IDs.`,
+          );
         }
 
         const filter = {
@@ -495,7 +654,9 @@ function defineTools(): ToolEntry[] {
         const name = args.name as string;
 
         if (config.servers?.[name]) {
-          throw new Error(`Server "${name}" already exists`);
+          throw new Error(
+            `Server "${name}" already exists. Use am_remove_server to remove it first, or update it directly in config.toml.`,
+          );
         }
 
         if (!config.servers) config.servers = {};
@@ -538,7 +699,9 @@ function defineTools(): ToolEntry[] {
         const name = args.name as string;
 
         if (!config.servers?.[name]) {
-          throw new Error(`Server "${name}" not found`);
+          throw new Error(
+            `Server "${name}" not found. Use am_list_servers to see available server names.`,
+          );
         }
 
         delete config.servers[name];
@@ -549,6 +712,91 @@ function defineTools(): ToolEntry[] {
           // Nothing to commit
         }
         return { action: "remove", server: name };
+      },
+    },
+    {
+      def: {
+        name: "am_server_update",
+        description:
+          "Update properties of an existing MCP server (enable/disable, change env vars, args, tags, or description).",
+        inputSchema: {
+          type: "object",
+          properties: {
+            name: { type: "string", description: "Server name to update" },
+            enabled: { type: "boolean", description: "Enable or disable the server" },
+            env: {
+              type: "object",
+              additionalProperties: { type: "string" },
+              description: "Environment variables to merge into existing env",
+            },
+            args: {
+              type: "array",
+              items: { type: "string" },
+              description: "New command arguments (replaces existing)",
+            },
+            tags: {
+              type: "array",
+              items: { type: "string" },
+              description: "Tags to set (replaces existing)",
+            },
+            description: { type: "string", description: "New description" },
+          },
+          required: ["name"],
+        },
+      },
+      tier: "write-local",
+      handler: async (args) => {
+        const configDir = resolveConfigDir();
+        const configPath = join(configDir, "config.toml");
+        const config = await readConfig(configPath);
+        const name = args.name as string;
+
+        if (!config.servers?.[name]) {
+          throw new Error(`Server "${name}" not found`);
+        }
+
+        const existing = config.servers[name];
+        if (args.enabled !== undefined) existing.enabled = args.enabled as boolean;
+        if (args.env !== undefined)
+          existing.env = { ...existing.env, ...(args.env as Record<string, string>) };
+        if (args.args !== undefined) existing.args = args.args as string[];
+        if (args.tags !== undefined) existing.tags = args.tags as string[];
+        if (args.description !== undefined) existing.description = args.description as string;
+
+        await writeConfig(configPath, config);
+        try {
+          await commitAll(configDir, `update server: ${name}`);
+        } catch {
+          // Nothing to commit
+        }
+        return { action: "update", server: name };
+      },
+    },
+    {
+      def: {
+        name: "am_undo",
+        description:
+          "Revert the last config change by reverting the most recent git commit in the agent-manager config repo.",
+        inputSchema: { type: "object", properties: {} },
+      },
+      tier: "write-local",
+      handler: async () => {
+        const configDir = resolveConfigDir();
+
+        let entries;
+        try {
+          entries = await gitLog(configDir, 2);
+        } catch {
+          throw new Error("Cannot read git log. Run `am init` first.");
+        }
+
+        if (entries.length < 2) {
+          throw new Error("Nothing to undo — only the initial commit exists");
+        }
+
+        const headMsg = entries[0].message;
+        const oid = await revertHead(configDir);
+        return { action: "undo", reverted: headMsg, oid };
       },
     },
     {
@@ -719,7 +967,9 @@ function defineTools(): ToolEntry[] {
         const pkgName = args.name as string;
         const pkg = await getPkg(pkgName);
         if (!pkg) {
-          throw new Error(`Package "${pkgName}" not found in the registry`);
+          throw new Error(
+            `Package "${pkgName}" not found in the registry. Use am_registry_search to find available packages.`,
+          );
         }
 
         const configDir = resolveConfigDir();
@@ -941,7 +1191,9 @@ function defineTools(): ToolEntry[] {
         const url = args.url as string;
         const card = await discoverFromUrl(url);
         if (!card) {
-          return { error: `No A2A Agent Card found at ${url}` };
+          throw new Error(
+            `No A2A Agent Card found at ${url}. Verify the URL serves a /.well-known/agent.json endpoint.`,
+          );
         }
         return { card };
       },
@@ -1037,7 +1289,9 @@ function defineTools(): ToolEntry[] {
 
         const entry = roster.find((r) => r.name === name);
         if (!entry) {
-          throw new Error(`Agent "${name}" not found in roster.`);
+          throw new Error(
+            `Agent "${name}" not found in roster. Use am_agent_list to see registered agents.`,
+          );
         }
 
         const client = new A2AClient({ timeout: 30_000 });
@@ -1213,12 +1467,16 @@ function defineTools(): ToolEntry[] {
 
         const adapter = await getAdapter(adapterName);
         if (!adapter?.sessionReader) {
-          throw new Error(`Adapter "${adapterName}" does not support session reading`);
+          throw new Error(
+            `Adapter "${adapterName}" does not support session reading. Use am_session_list to find adapters with session data.`,
+          );
         }
 
         const session = await adapter.sessionReader.loadSession(sessionId);
         if (!session) {
-          throw new Error(`Session "${sessionId}" not found in ${adapterName}`);
+          throw new Error(
+            `Session "${sessionId}" not found in ${adapterName}. Use am_session_list with adapter="${adapterName}" to see valid session IDs.`,
+          );
         }
 
         const { harvestSession } = await import("../wiki/harvester");
@@ -1324,7 +1582,7 @@ export class McpServer {
             id,
             error: {
               code: -32601,
-              message: `Unknown tool: ${toolName}`,
+              message: `Unknown tool: ${toolName}. Use tools/list to see available tools.`,
             },
           };
         }
@@ -1352,11 +1610,21 @@ export class McpServer {
             },
           };
         } catch (err: unknown) {
+          const msg = errorMessage(err);
+          // Split "What failed. Recovery hint." into error + hint
+          const dotIdx = msg.indexOf(". ");
+          const error = dotIdx > 0 ? msg.slice(0, dotIdx + 1) : msg;
+          const hint = dotIdx > 0 ? msg.slice(dotIdx + 2) : undefined;
           return {
             jsonrpc: "2.0",
             id,
             result: {
-              content: [{ type: "text", text: JSON.stringify({ error: errorMessage(err) }) }],
+              content: [
+                {
+                  type: "text",
+                  text: JSON.stringify({ error, ...(hint ? { hint } : {}) }),
+                },
+              ],
               isError: true,
             },
           };
