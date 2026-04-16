@@ -12,6 +12,22 @@ export const RegistryProvenanceSchema = z.object({
 });
 export type RegistryProvenance = z.infer<typeof RegistryProvenanceSchema>;
 
+// --- Marketplace Provenance (tracks servers imported from IDE plugins/extensions) ---
+export const MarketplaceProvenanceSchema = z.object({
+  source: z.enum([
+    "claude-plugin",
+    "vscode-extension",
+    "cursor-extension",
+    "kiro-extension",
+    "windsurf-extension",
+  ]),
+  package: z.string(),
+  version: z.string(),
+  imported_at: z.string(),
+  install_path: z.string().optional(),
+});
+export type MarketplaceProvenance = z.infer<typeof MarketplaceProvenanceSchema>;
+
 // --- Server Schema (MCP) ---
 export const ServerSchema = z.object({
   command: z.string(),
@@ -23,6 +39,7 @@ export const ServerSchema = z.object({
   tags: z.array(z.string()).optional(),
   enabled: z.boolean().default(true),
   _registry: RegistryProvenanceSchema.optional(),
+  _marketplace: MarketplaceProvenanceSchema.optional(),
   adapters: adaptersPassthrough,
 });
 export type Server = z.infer<typeof ServerSchema>;

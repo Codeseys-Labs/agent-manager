@@ -1,0 +1,104 @@
+import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { join } from "node:path";
+import { CommunityAdapterProxy } from "../../../src/adapters/community/proxy.ts";
+
+const MOCK_ADAPTER = join(import.meta.dir, "mock-adapter.ts");
+
+describe("CommunityAdapterProxy", () => {
+  let proxy: CommunityAdapterProxy;
+
+  beforeEach(async () => {
+    proxy = await CommunityAdapterProxy.create("bun", [MOCK_ADAPTER]);
+  });
+
+  afterEach(() => {
+    proxy.kill();
+  });
+
+  it("initializes and fetches meta", () => {
+    expect(proxy.meta.name).toBe("mock-tool");
+    expect(proxy.meta.displayName).toBe("Mock Tool");
+    expect(proxy.meta.version).toBe("0.1.0");
+    expect(proxy.meta.capabilities).toContain("mcp");
+    expect(proxy.meta.capabilities).toContain("instructions");
+  });
+
+  it("fetches schema", () => {
+    expect(proxy.schema).toBeDefined();
+  });
+
+  it("calls detectAsync()", async () => {
+    const result = await proxy.detectAsync();
+    expect(result.installed).toBe(true);
+    expect(result.version).toBe("1.0.0");
+    expect(result.paths.configDir).toBe("/tmp/mock");
+  });
+
+  it("calls importAsync()", async () => {
+    const result = await proxy.importAsync({});
+    expect(result.servers).toEqual([]);
+    expect(result.instructions).toEqual([]);
+    expect(result.skills).toEqual([]);
+    expect(result.warnings).toEqual([]);
+  });
+
+  it("calls export()", async () => {
+    const config = {
+      servers: {},
+      instructions: {},
+      skills: {},
+      agents: {},
+      profile: "default",
+      adapters: {},
+    };
+    const result = await proxy.export(config, {});
+    expect(result.files).toEqual([]);
+    expect(result.warnings).toEqual([]);
+  });
+
+  it("calls diffAsync()", async () => {
+    const config = {
+      servers: {},
+      instructions: {},
+      skills: {},
+      agents: {},
+      profile: "default",
+      adapters: {},
+    };
+    const result = await proxy.diffAsync(config);
+    expect(result.status).toBe("in-sync");
+    expect(result.changes).toEqual([]);
+  });
+
+  it("synchronous detect() returns undetected fallback", () => {
+    const result = proxy.detect();
+    expect(result.installed).toBe(false);
+    expect(result.paths).toEqual({});
+  });
+
+  it("synchronous import() returns empty fallback", () => {
+    const result = proxy.import({});
+    expect(result.servers).toEqual([]);
+  });
+
+  it("synchronous diff() returns unmanaged fallback", () => {
+    const config = {
+      servers: {},
+      instructions: {},
+      skills: {},
+      agents: {},
+      profile: "default",
+      adapters: {},
+    };
+    const result = proxy.diff(config);
+    expect(result.status).toBe("unmanaged");
+  });
+});
+
+describe("CommunityAdapterProxy error handling", () => {
+  it("fails to create with invalid command", async () => {
+    await expect(
+      CommunityAdapterProxy.create("/nonexistent/binary"),
+    ).rejects.toThrow();
+  });
+});

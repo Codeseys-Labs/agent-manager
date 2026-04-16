@@ -56,8 +56,8 @@ in TOML, decrypted at apply time.
 
 ```
 src/
-  cli.ts                    # Entry point -- 28 subcommands via citty
-  commands/                 # One file per CLI command (includes session.ts, wiki.ts, agents.ts, run.ts)
+  cli.ts                    # Entry point -- 30 subcommands via citty
+  commands/                 # One file per CLI command (includes session.ts, wiki.ts, agents.ts, run.ts, flow.ts, completion.ts)
   core/
     schema.ts               # Zod schemas (Server, Instruction, Skill, AgentProfile, Profile, Config)
     config.ts               # TOML read/write, 4-layer hierarchical merge, buildResolvedConfig
@@ -66,8 +66,9 @@ src/
     secrets.ts              # AES-256-GCM encryption + ${VAR} interpolation
     secret-detection.ts     # Tiered secret detection: key-name patterns + BetterLeaks
     betterleaks.ts          # BetterLeaks binary shell-out for Tier 2 scanning
-    instructions.ts         # Shared instruction generation for all formats
+    instructions.ts         # Shared instruction generation for all formats + wiki context injection
     session.ts              # Cross-tool session harvest: types, reader interface, filter/format
+    agent-registry.ts       # Unified agent registry: config + ACP built-in (16) + A2A roster (ADR-0030)
   adapters/
     types.ts                # Adapter interface + all type definitions
     registry.ts             # Lazy factory adapter registry (13 adapters)
@@ -88,16 +89,18 @@ src/
     types.ts                # MCP registry package types (RegistryPackage, provenance, filters)
     client.ts               # HTTP client with LRU cache, retry, exponential backoff
   protocols/
+    bridge.ts               # A2A-ACP bridge: routes A2A tasks to local ACP agents (ADR-0026 Phase 4)
     a2a/                    # Agent-to-Agent protocol (ADR-0017)
       types.ts              # Agent Card, Task, Message types
-      client.ts             # A2A HTTP client for task delegation
-      server.ts             # A2A server endpoint handling
-      discovery.ts          # Agent roster management, URL-based discovery
+      client.ts             # A2A HTTP client for task delegation + SSE streaming
+      server.ts             # A2A server endpoint handling + async tasks
+      discovery.ts          # Agent roster management, URL-based + auto-discovery
       generate-card.ts      # Generate Agent Card from am config
     acp/                    # Agent Communication Protocol (ADR-0026)
       types.ts              # ACP type definitions (agent, session, update events)
       client.ts             # ACP client: spawn, stream, cancel agents headlessly
       registry.ts           # Agent resolution from config + auto-detection
+      flows.ts              # Flows engine: multi-step workflow orchestration (ADR-0026 Phase 3)
   wiki/                     # LLM Wiki / Knowledge Synthesis (ADR-0020)
     types.ts                # Wiki entry, page, index types
     storage.ts              # TOML-backed wiki storage with symlinks
@@ -110,16 +113,17 @@ src/
     registry.ts             # Platform detection (GitHub > GitLab > bare)
     github.ts, gitlab.ts, bare.ts
   mcp/
-    server.ts               # MCP server: JSON-RPC 2.0, 33 tools, 6 groups, 3 permission tiers
+    server.ts               # MCP server: JSON-RPC 2.0, 33 tools, 6 groups, 3 permission tiers (ADR-0009, ADR-0021)
   tui/
     index.tsx, App.tsx      # Silvery/React terminal UI with dashboard, server management (D/E/I/P keys)
   web/
-    server.ts               # Local Hono server (REST API + SSE, server CRUD, wiki endpoints)
-    worker.ts               # Cloudflare Workers (stateless, multi-backend git auth — ADR-0025)
+    server.ts               # Local Hono server (REST API + SSE, server CRUD, wiki browser endpoints)
+    worker.ts               # Cloudflare Workers (stateless, multi-backend git auth, wiki browsing — ADR-0025)
+    git-providers.ts        # Git provider abstraction: GitHub, GitLab, Codeberg/Gitea (ADR-0025)
     public/                 # Static HTML
   lib/                      # Shared utilities (errors.ts, output.ts)
-test/                       # 134 files, 1470 tests, 4312 assertions
-ADRs/                       # 28 architectural decision records
+test/                       # 146 files, 1772 tests, 5336 assertions
+ADRs/                       # 30 architectural decision records
 scripts/
   build.ts                  # Cross-platform build (5 targets)
   install.sh                # curl-based installer
@@ -160,6 +164,8 @@ scripts/
 | `am agents <subcommand>` | A2A agent management: list, add, remove, ping, delegate |
 | `am run <agent> "<prompt>"` | ACP agent orchestration: drive coding agents headlessly |
 | `am run session list\|cancel` | Manage active ACP sessions |
+| `am flow run\|list\|status` | Multi-step workflow orchestration (flows engine) |
+| `am completion bash\|zsh\|fish` | Generate shell completion scripts |
 
 Global flags: `--profile <name>`, `--json`, `--verbose`, `--quiet`
 
@@ -225,7 +231,12 @@ flows and API access. Provider detection is automatic from the configured remote
 **ACP runtime integration (ADR-0026):** Headless agent orchestration via `am run`.
 Spawn, stream output, and cancel ACP-compatible coding agents (Claude Code, Codex CLI).
 4-phase design: Phase 1 (done) covers one-shot execution, session management, and
-MCP tool exposure.
+MCP tool exposure. Phase 4 (done) adds A2A-ACP bridge for remote-to-local routing.
+
+**Unified Agent Registry (ADR-0030):** Three-source agent resolution with priority:
+config agents > ACP built-in (16 known agents) > A2A roster. Same-name agents across
+sources are merged (both acp + a2a protocols). The bridge uses this registry to route
+incoming A2A tasks to local ACP agents.
 
 ## MCP Registry Integration
 
@@ -264,7 +275,7 @@ Workflow: `am wiki ingest --session <id>` → `am wiki search <query>` → `am w
 
 ```bash
 bun install              # Install dependencies
-bun test                 # Run all 1470 tests
+bun test                 # Run all 1772 tests
 bun test --watch         # Watch mode
 bun run dev              # Run CLI in dev mode
 bun run build            # Single binary (macOS arm64)

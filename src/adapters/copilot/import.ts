@@ -9,6 +9,7 @@
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { extractPackageId } from "../claude-code/identity.ts";
+import { fileExistsSync } from "../shared/utils.ts";
 import type { ImportOptions, ImportResult, ImportedInstruction, ImportedServer } from "../types.ts";
 
 interface CopilotServer {
@@ -223,12 +224,3 @@ function readScopedInstructions(projectPath: string, warnings: string[]): Import
   return instructions;
 }
 
-function fileExistsSync(path: string): boolean {
-  try {
-    const fs = require("node:fs");
-    fs.accessSync(path);
-    return true;
-  } catch {
-    return false;
-  }
-}

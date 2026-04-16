@@ -46,6 +46,7 @@ export const COMMAND_GROUPS: ReadonlyArray<{
     commands: [
       ["agent", "Manage A2A agent roster"],
       ["run", "Run ACP agent with a prompt"],
+      ["flow", "Run multi-step ACP workflows"],
     ],
   },
   {
@@ -71,6 +72,7 @@ export const COMMAND_GROUPS: ReadonlyArray<{
       ["mcp-serve", "Start MCP server"],
       ["tui", "Terminal dashboard"],
       ["serve", "Start web server"],
+      ["completion", "Generate shell completions"],
     ],
   },
 ];

@@ -12,7 +12,8 @@ export type Capability =
   | "plugins"
   | "agents"
   | "hooks"
-  | "modes";
+  | "modes"
+  | "marketplace";
 
 // ── Adapter Metadata ─────────────────────────────────────────────
 
@@ -172,6 +173,39 @@ export interface AdapterSchema {
 
 // ── Adapter Interface ────────────────────────────────────────────
 
+// ── Marketplace ─────────────────────────────────────────────────
+
+export type MarketplaceSource =
+  | "claude-plugin"
+  | "vscode-extension"
+  | "cursor-extension"
+  | "kiro-extension"
+  | "windsurf-extension";
+
+export interface MarketplaceMetadata {
+  publisher?: string;
+  repository?: string;
+  installPath: string;
+  manifestPath: string;
+}
+
+export interface MarketplaceItem {
+  id: string;
+  name: string;
+  version: string;
+  source: MarketplaceSource;
+  servers: ImportedServer[];
+  skills: ImportedSkill[];
+  metadata: MarketplaceMetadata;
+}
+
+export interface MarketplaceResult {
+  items: MarketplaceItem[];
+  warnings: string[];
+}
+
+// ── Adapter Interface ────────────────────────────────────────────
+
 export interface Adapter {
   meta: AdapterMeta;
   detect(): DetectResult;
@@ -180,4 +214,5 @@ export interface Adapter {
   diff(config: ResolvedConfig): DiffResult;
   schema: AdapterSchema;
   sessionReader?: SessionReader;
+  scanMarketplace?(): MarketplaceResult;
 }

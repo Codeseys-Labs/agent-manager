@@ -17,7 +17,7 @@ every AI coding tool.
 | TUI | Silvery + React (terminal dashboard) |
 | Encryption | Web Crypto API (AES-256-GCM) |
 | Output | @clack/prompts (interactive) |
-| Testing | bun:test (1470 tests across 134 files) |
+| Testing | bun:test (1772 tests across 146 files) |
 | Search | MiniSearch (BM25 for wiki full-text search) |
 | Secret detection | Tiered: key-name patterns (built-in) + BetterLeaks (optional) |
 | Linting | Biome |
@@ -25,15 +25,16 @@ every AI coding tool.
 ## Directory Layout
 
 ```
-src/                                 # 165 TypeScript files
-  cli.ts                             # Entry point -- citty command routing with 28 lazy subcommands
+src/                                 # 177 TypeScript files
+  cli.ts                             # Entry point -- citty command routing with 30 lazy subcommands
   help.ts                            # Grouped help output for root command (ADR-0029)
   commands/                          # CLI command handlers (one file per command)
     init.ts, add.ts, list.ts, use.ts, apply.ts, status.ts,
     config.ts, profile.ts, doctor.ts, import.ts, push.ts, pull.ts,
     undo.ts, log.ts, secret.ts, version.ts, adapter.ts,
     mcp-serve.ts, serve.ts, tui.ts, session.ts, init-project.ts,
-    search.ts, install.ts, uninstall.ts, update.ts, wiki.ts, agents.ts, run.ts
+    search.ts, install.ts, uninstall.ts, update.ts, wiki.ts, agents.ts, run.ts,
+    flow.ts, completion.ts
   core/                              # Core engine -- config, resolution, git, validation, encryption
     schema.ts                        # Zod schemas: Server, Instruction, Skill, AgentProfile, Profile, Config, ProjectConfig
     config.ts                        # TOML read/write, hierarchical merge (4 layers), project config, buildResolvedConfig
@@ -42,8 +43,9 @@ src/                                 # 165 TypeScript files
     secrets.ts                       # AES-256-GCM encryption + ${VAR} interpolation + async decrypt walk
     secret-detection.ts              # Tiered secret detection: key-name patterns + BetterLeaks shell-out
     betterleaks.ts                   # BetterLeaks binary management: detect, install, scan
-    instructions.ts                  # Shared instruction generation: CLAUDE.md, AGENTS.md, .mdc, steering, .windsurf rules, copilot
+    instructions.ts                  # Shared instruction generation: CLAUDE.md, AGENTS.md, .mdc, steering, .windsurf rules, copilot + wiki context injection
     session.ts                       # Cross-tool session harvest: types, SessionReader interface, filter/format/estimation
+    agent-registry.ts                # Unified agent registry: config + ACP built-in (16) + A2A roster, merged resolution (ADR-0030)
   adapters/                          # 13 built-in IDE adapters
     types.ts                         # Adapter interface: detect/import/export/diff + SessionReader + all type definitions
     registry.ts                      # Lazy factory registry (ADAPTER_FACTORIES map + cache)
@@ -67,6 +69,7 @@ src/                                 # 165 TypeScript files
     types.ts                         # RegistryPackage, provenance, filter types
     client.ts                        # HTTP client with LRU cache, retry, exponential backoff
   protocols/                         # Agent communication protocols
+    bridge.ts                        # A2A-ACP bridge: routes A2A tasks to local ACP agents (ADR-0026 Phase 4)
     a2a/                             # Agent-to-Agent protocol (ADR-0017)
       types.ts                       # Agent Card, Task, Message types
       client.ts                      # A2A HTTP client for task delegation
@@ -77,6 +80,7 @@ src/                                 # 165 TypeScript files
       types.ts                       # ACP type definitions (agent, session, update events)
       client.ts                      # ACP client: spawn, stream, cancel agents headlessly
       registry.ts                    # Agent resolution from config + auto-detection
+      flows.ts                       # Flows engine: multi-step workflow orchestration (ADR-0026 Phase 3)
   wiki/                              # LLM Wiki / Knowledge Synthesis (ADR-0020)
     types.ts                         # Wiki entry, page, index types
     storage.ts                       # TOML-backed wiki storage with symlinks
@@ -91,7 +95,7 @@ src/                                 # 165 TypeScript files
     gitlab.ts                        # GitLab platform adapter
     bare.ts                          # Bare git fallback
   mcp/                               # MCP server mode
-    server.ts                        # JSON-RPC 2.0 over stdio, 33 tools, 6 groups, 3 permission tiers (ADR-0009)
+    server.ts                        # JSON-RPC 2.0 over stdio, 33 tools, 6 groups, 3 permission tiers (ADR-0009, ADR-0021)
   tui/                               # Terminal UI (Silvery + React)
     index.tsx                        # TUI launcher
     App.tsx                          # Root component with tab navigation
@@ -101,15 +105,16 @@ src/                                 # 165 TypeScript files
     HelpView.tsx                     # Help/keybindings view
     data.ts                          # Data loading for TUI
   web/                               # Web UI
-    server.ts                        # Local Hono server: REST API + SSE events + static dashboard
-    worker.ts                        # Cloudflare Workers: stateless, GitHub OAuth, encrypted cookies, GitHub API
+    server.ts                        # Local Hono server: REST API + SSE events + static dashboard + wiki browser
+    worker.ts                        # Cloudflare Workers: stateless, multi-backend git auth, wiki browsing (ADR-0025)
+    git-providers.ts                 # Git provider abstraction: GitHub, GitLab, Codeberg/Gitea (ADR-0025)
     public/                          # Static HTML (index.html, login.html)
   lib/                               # Shared utilities
     errors.ts                        # Shared error types (AmError) and formatting
     output.ts                        # JSON/text output helpers (--json, --quiet, --verbose)
     toml.ts                          # TOML parsing/serialization helpers
 
-test/                                # 134 test files, 1470 tests, 4312 assertions
+test/                                # 146 test files, 1772 tests, 5336 assertions
   core/                              # Unit tests for core modules
   adapters/                          # Adapter-specific tests (per-adapter directories)
   commands/                          # CLI command integration tests
@@ -117,7 +122,7 @@ test/                                # 134 test files, 1470 tests, 4312 assertio
   helpers/                           # Test utilities (tmp dirs, config builders)
   integration/                       # End-to-end tests
 
-ADRs/                                # 29 architectural decision records
+ADRs/                                # 30 architectural decision records
 docs/                                # Design specs and guides
 scripts/
   build.ts                           # Cross-platform build (5 targets via Bun.spawn)
@@ -281,7 +286,7 @@ All git operations use **isomorphic-git** (pure JS). No dependency on system `gi
 ## Testing
 
 ```bash
-bun test                          # Run all 1470 tests
+bun test                          # Run all 1772 tests
 bun test:unit                     # Core + adapter unit tests only
 bun test:integration              # Integration tests only
 bun test --watch                  # Watch mode
@@ -345,6 +350,7 @@ bun run deploy:web                # Deploy to Cloudflare Workers
 | [0027](ADRs/0027-community-adapter-loading.md) | Community Adapter Loading -- JSON-RPC subprocess, npm/git install, adapters.toml |
 | [0028](ADRs/0028-brownfield-import-merge.md) | Brownfield Import Merge -- two-tier identity matching, interactive conflict resolution |
 | [0029](ADRs/0029-command-grouping.md) | Command Grouping -- grouped help output for root command, gh CLI pattern |
+| [0030](ADRs/0030-unified-agent-registry.md) | Unified Agent Registry -- config + ACP + A2A merged resolution, protocol routing |
 
 ## Git Commit Style
 

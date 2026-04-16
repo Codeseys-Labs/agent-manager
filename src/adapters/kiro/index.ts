@@ -6,15 +6,17 @@ import type {
   ExportResult,
   ImportOptions,
   ImportResult,
+  MarketplaceResult,
   ResolvedConfig,
 } from "../types.ts";
+import { scanVSCodeExtensions } from "../shared/marketplace-vscode.ts";
 import { detect } from "./detect.ts";
 import { diffConfig } from "./diff.ts";
 import { exportConfig } from "./export.ts";
 import { importConfig } from "./import.ts";
 import { kiroSchema } from "./schema.ts";
 
-const CAPABILITIES: Capability[] = ["mcp", "instructions", "skills", "agents"];
+const CAPABILITIES: Capability[] = ["mcp", "instructions", "skills", "agents", "marketplace"];
 
 export const kiroAdapter: Adapter = {
   meta: {
@@ -41,4 +43,8 @@ export const kiroAdapter: Adapter = {
   },
 
   schema: kiroSchema,
+
+  scanMarketplace(): MarketplaceResult {
+    return scanVSCodeExtensions("kiro");
+  },
 };

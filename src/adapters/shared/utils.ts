@@ -35,17 +35,46 @@ interface NativeServerLike {
   command?: string;
   args?: string[];
   env?: Record<string, string>;
+  url?: string;
+  type?: string;
   [key: string]: unknown;
 }
 
-/** Compare a resolved server against a native server object, returning field-level diffs. */
+/**
+ * Compare a resolved server against a native server object, returning field-level diffs.
+ *
+ * Handles both stdio servers (command/args/env) and HTTP URL-based servers.
+ * For HTTP servers, detected via `native.url`, `native.type === "http"`,
+ * or `expected.transport` being "streamable-http" or "sse", the URL is compared
+ * against `expected.command` (or an adapter-specific URL override).
+ */
 export function compareServerFields(
   expected: ResolvedServer,
   native: NativeServerLike,
+  options?: { urlOverride?: string },
 ): { field: string; expected: unknown; actual: unknown }[] {
   const diffs: { field: string; expected: unknown; actual: unknown }[] = [];
 
-  // Compare command
+  const isHttp =
+    native.type === "http" ||
+    !!native.url ||
+    expected.transport === "streamable-http" ||
+    expected.transport === "sse";
+
+  if (isHttp) {
+    // HTTP servers: compare URL only
+    const expectedUrl = options?.urlOverride ?? expected.command;
+    if (expectedUrl !== native.url) {
+      diffs.push({
+        field: "url",
+        expected: expectedUrl,
+        actual: native.url,
+      });
+    }
+    return diffs;
+  }
+
+  // stdio servers: compare command, args, env
   if (expected.command !== (native.command ?? "")) {
     diffs.push({
       field: "command",

@@ -6,15 +6,17 @@ import type {
   ExportResult,
   ImportOptions,
   ImportResult,
+  MarketplaceResult,
   ResolvedConfig,
 } from "../types.ts";
+import { scanVSCodeExtensions } from "../shared/marketplace-vscode.ts";
 import { detect } from "./detect.ts";
 import { diffConfig } from "./diff.ts";
 import { exportConfig } from "./export.ts";
 import { importConfig } from "./import.ts";
 import { windsurfSchema } from "./schema.ts";
 
-const CAPABILITIES: Capability[] = ["mcp", "instructions", "skills"];
+const CAPABILITIES: Capability[] = ["mcp", "instructions", "skills", "marketplace"];
 
 export const windsurfAdapter: Adapter = {
   meta: {
@@ -41,4 +43,8 @@ export const windsurfAdapter: Adapter = {
   },
 
   schema: windsurfSchema,
+
+  scanMarketplace(): MarketplaceResult {
+    return scanVSCodeExtensions("windsurf");
+  },
 };

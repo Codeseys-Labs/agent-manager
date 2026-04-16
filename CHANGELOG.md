@@ -2,74 +2,106 @@
 
 All notable changes to agent-manager are documented in this file.
 
-## [Unreleased]
+## [Unreleased] — 0.4.0
 
-### Iteration 3: ACP + A2A Hardening + MCP Expansion (2026-04-15)
+### New Features
 
-#### New Features
-- **ACP Agent Orchestration (ADR-0026):** `am run <agent> "<prompt>"` drives ACP-compatible coding agents headlessly. Session management via `am run session list|cancel`. New module: `src/protocols/acp/` (client.ts, registry.ts, types.ts).
-- **MCP tools:** 7 new tools — `am_server_update` (enable/disable, merge env, replace args/tags), `am_undo` (revert last config change), `am_doctor` (8 health checks), `am_run_agent` (ACP agent orchestration), `am_acp_list_agents`, `am_acp_session_list`, `am_acp_session_cancel`. Tool count: 26 → 33 across 6 groups.
-- **MCP tool groups:** 4 → 6 — added `session` (extracted from core: am_session_list/export/search) and `acp` (am_run_agent, am_acp_list_agents, am_acp_session_list, am_acp_session_cancel).
-- **A2A auth middleware:** Bearer token authentication for A2A server endpoints via `auth_token` option.
-- **A2A TTL eviction:** Terminal tasks auto-expire after 1 hour (TASK_TTL_MS). Two-phase eviction: TTL cleanup then capacity-based LRU.
-- **A2A auto-discovery:** `settings.a2a.discovery_sources[]` config for URL-based agent discovery. `discoverFromConfig()` scans configured sources.
-- **Entity-aware CLI:** `am list` accepts entity type (servers, instructions, skills, agents, profiles). `am add` accepts entity type (server, instruction, skill, agent). Backwards compatible.
-- **A2A async tasks:** `tasks/send` returns immediately with `state: "working"`. Clients poll with `tasks/get`. Per-instance task store (no more global singleton).
-- **A2A client polling:** `pollTask()` and `sendAndPoll()` convenience methods on A2AClient.
+**A2A-ACP Bridge (ADR-0026 Phase 4)**
+- `src/protocols/bridge.ts` — routes incoming A2A tasks to local ACP agents
+- Message parsing: text pattern ("run claude: fix tests") or structured data parts
+- Composite handler: bridge-first with fallthrough to default A2A handler
 
-#### Bug Fixes
-- Fix MCP error messages: all errors now include recovery hints (e.g., "Use am_list_servers to see available servers")
-- Fix `am_agent_discover` non-standard error pattern (was returning `{error}` in success response)
-- Fix `am list <invalid>` silently defaulting to servers (now throws with valid types list)
-- Fix `am_agent_delegate` description not mentioning async polling model
+**Unified Agent Registry (ADR-0030)**
+- `src/core/agent-registry.ts` — merges config, ACP built-in (16 agents), and A2A roster
+- Resolution priority: config agents > ACP built-in > A2A roster
+- Same-name agents across sources are merged (both acp + a2a protocols)
+- `listAllAgents()` and `resolveAgent()` with sync and async variants
+
+**SSE Streaming**
+- Real-time event streaming for A2A task progress and ACP agent updates
+- SSE endpoints on local web server for live status
+
+**Wiki Context Injection**
+- Wiki knowledge auto-injected into generated CLAUDE.md / AGENTS.md at apply time
+- `generateWikiContext()` synthesizes top-5 entries via BM25
+- Splice markers (`am:wiki:begin`/`am:wiki:end`) preserve manual content
+- Enabled via `settings.wiki.inject_on_apply`
+
+**Wiki Browser UI**
+- Local web server: wiki page listing, search, graph visualization endpoints
+- Cloudflare Worker: wiki browsing via git provider API
+
+**Shell Completions**
+- `am completion bash|zsh|fish` — generate shell completion scripts
+- Covers all top-level commands and subcommands
+
+**ACP Agent Orchestration (ADR-0026)**
+- `am run <agent> "<prompt>"` drives ACP-compatible coding agents headlessly
+- Session management via `am run session list|cancel`
+- New module: `src/protocols/acp/` (client.ts, registry.ts, types.ts)
+
+**Grouped CLI Help (ADR-0029)**
+- `src/help.ts` — commands organized by category following gh CLI pattern
+- Categories: Config, Git sync, Registry, Wiki, Agent-to-Agent, ACP, Tools, Interfaces
+
+**MCP Tools Expansion**
+- 7 new tools: `am_server_update`, `am_undo`, `am_doctor`, `am_run_agent`, `am_acp_list_agents`, `am_acp_session_list`, `am_acp_session_cancel`
+- Tool count: 26 → 33 across 6 groups (added `session` and `acp` groups)
+
+**A2A Protocol Hardening**
+- Bearer token auth for A2A server endpoints via `auth_token` option
+- TTL eviction: terminal tasks auto-expire after 1 hour, two-phase eviction (TTL then LRU)
+- Auto-discovery: `settings.a2a.discovery_sources[]` for URL-based agent roster population
+- Async tasks: `tasks/send` returns immediately; `pollTask()` and `sendAndPoll()` on client
+
+**Entity-Aware CLI**
+- `am list` accepts entity type (servers, instructions, skills, agents, profiles)
+- `am add` accepts entity type (server, instruction, skill, agent)
+- Backwards compatible — defaults to servers
+
+**Adapter Updates**
+- Claude Code: skills export, AGENTS.md generation with wiki context
+- Windsurf: skills and AGENTS.md support
+- Gemini CLI: migrated to 6-file adapter pattern
+- ForgeCode: migrated to 6-file adapter pattern with model support
+
+### Bug Fixes
+- Fix MCP error messages: all errors now include recovery hints
+- Fix `am_agent_discover` non-standard error pattern
+- Fix `am list <invalid>` silently defaulting to servers
 - Fix cancel-then-complete race condition in A2A async handler
 - Fix `am_server_update` missing recovery hint on "not found" error
 - Add `hint` field to JSON error responses for programmatic recovery guidance
+- **P0**: `am apply` now filters entities by active profile
+- **HIGH**: `writeConfig` preserves `agents` section through write cycles
+- **HIGH**: `loadTuiData()` uses `buildResolvedConfig()` instead of hand-rolled config
+- **HIGH**: Local web server requires Bearer token auth on all API endpoints
+- Eliminate all `as any` casts from src/ (20 → 0)
+- Replace all `catch (err: any)` with `catch (err: unknown)` (25 → 0)
 
-#### Design Documents
-- **ADR-0026:** ACP runtime integration via ACPX — 4-phase plan for headless agent orchestration
-- **ADR-0027:** Community adapter loading — JSON-RPC subprocess, npm/git install, adapters.toml
-- **ADR-0028:** Brownfield import merge — two-tier identity matching, interactive conflict resolution
-- Marketplace import design: scan installed Claude Code plugins + VS Code extensions
-- Community adapters design: am-adapter-* npm convention, CommunityAdapterProxy
+### Design Documents
+- **ADR-0026:** ACP runtime integration via ACPX — 4-phase headless agent orchestration
+- **ADR-0027:** Community adapter loading — JSON-RPC subprocess, npm/git install
+- **ADR-0028:** Brownfield import merge — two-tier identity matching, conflict resolution
+- **ADR-0029:** Command grouping — grouped help output, gh CLI pattern
+- **ADR-0030:** Unified agent registry — config + ACP + A2A merged resolution
 
-#### Reviews
+### Reviews
 - MCP tools review: 17 findings (3 critical/high)
 - A2A protocol review: 32 findings (7 high)
 - CLI UX review: 22 findings (3 critical)
 - Phase 4 cross-review: 4 medium issues found and fixed
+- Security hardening review of bridge + ACP + streaming
 
-#### Tests
-- 1470 tests across 134 files, 4312 assertions (up from 1335/132/3901)
+### Tests
+- 1,772 tests across 146 files, 5,336 assertions (up from 1,335/132/3,901)
 
-#### Distribution
-- Release workflow: CHANGELOG-based release notes (replaces --generate-notes)
-- Release workflow: Homebrew formula auto-updated with real SHA256s
-- Release workflow: CHANGELOG stamped with version + fresh [Unreleased] section
+### Distribution
+- Release workflow: CHANGELOG-based release notes, Homebrew formula auto-update, version stamping
 
-### Multi-Agent Review + Implementation Session (2026-04-10)
+## [0.3.0] — 2026-04-13
 
-#### Bug Fixes (11 bugs from multi-agent review)
-- **HIGH**: `writeConfig` now preserves `agents` section through write cycles
-- **HIGH**: `loadTuiData()` uses `buildResolvedConfig()` instead of hand-rolled config
-- **HIGH**: Local web server requires Bearer token authentication on all API endpoints
-- **MEDIUM**: Add `subagent_type` to `AgentProfileSchema` (removes phantom field reference)
-- **MEDIUM**: Apply `redactSecrets()` to `/api/config` web response
-- **MEDIUM**: MCP server refreshes settings per request (no stale permission cache)
-- **MEDIUM**: Narrow Worker OAuth scope from `repo` to `contents:read contents:write`
-- **MEDIUM**: Kilo-code export maps `env` to `env` (not `headers`) for remote servers
-- **MEDIUM**: `doctor.ts` uses `tryReadConfig()` via core config layer
-- **LOW**: Remove dead `checkPushPermission()` function
-- **LOW**: Add instruction drift detection to adapter diff system
-
-#### Type Safety
-- Eliminate all `as any` casts from src/ (20 → 0)
-- Replace all `catch (err: any)` with `catch (err: unknown)` (25 → 0)
-- Add `src/lib/toml.ts` typed wrapper for TOML stringify
-- Add `src/lib/errors.ts` with `errorMessage()`, `isNotFound()`, `errorCode()` helpers
-- Remove dead `chalk` dependency
-
-#### New Features
+### New Features
 
 **MCP Registry Integration (ADR-0024)**
 - `am search <query>` — search MCP registry with filtering
@@ -101,78 +133,36 @@ All notable changes to agent-manager are documented in this file.
 - Tier 1 (built-in): key-name pattern matching for env vars (40+ provider patterns)
 - Tier 2 (BetterLeaks): value-based + inline detection via shell-out when installed
 - Auto-encrypt on import/add: secrets detected → substituted with `${VAR}` → encrypted
-- Auto-generate encryption key if none exists
 - `am secret scan` — audit with `--fix` to auto-substitute
-- `am secret install-scanner` — download BetterLeaks binary from GitHub releases
-- `am doctor` reports BetterLeaks availability
 
 **MCP Tool Grouping (ADR-0021)**
 - Profiles control which MCP tool groups are exposed via `settings.mcp_serve.tools`
 - Default: `["core"]` (14 tools). Optional: `registry`, `a2a`, `wiki`
 - Total: 26 MCP tools across 4 groups
 
-**Distribution Infrastructure**
-- CI workflow: test, typecheck, lint, coverage, multi-OS build verify
-- Release workflow: 5-platform binaries, SHA-256 checksums, GitHub Release, npm publish
-- `install.sh`: POSIX-compliant with checksum verification, --dry-run, --version
-- `Formula/am.rb`: Homebrew formula with per-platform binary support
-- `bin/am.js`: npm wrapper resolving platform binary or bun fallback
-- `scripts/bump-version.sh`: version bump → git tag → trigger release
-
-#### Improvements
-- Extract shared adapter utilities to `src/adapters/shared/utils.ts`
-- Add `profile delete` confirmation prompt
-- Fix `process.exitCode = 1` in 6 command error paths
-- Fix `am version` for `--json`/`--quiet` flags
-- Fix `projectToConfig` dropping `proj.env`
-- Cap A2A server task store at 1000 with LRU eviction
-- Add `agent` variant to `DiffChange.entity`
-- Windows junction point fallback for wiki symlinks
-- Extract MiniSearch options constant (deduplicate 3×)
-- Update ADR-0013 with Codeberg, Gitea, Forgejo future adapters
-
-#### Documentation
-- Comprehensive README rewrite with 13-adapter support matrix
-- Full CLI reference for all 27 commands
-- AGENTS.md updated: 24 ADRs, 1134 tests, new modules documented
-- 6 new/updated ADRs: 0021 (tool grouping), 0022 (wiki location), 0023 (secret detection), 0024 (MCP registry), 0017 (accepted), 0020 (accepted)
-
-#### Test Coverage
-- 1134 tests across 118 files (up from 1031/110)
-- New test files for: wiki storage, NER, graph, harvester, registry client, A2A discovery, secret detection, BetterLeaks
-- All tests use real filesystem I/O with temp directory isolation
-
-#### Dependencies
-- Added: `minisearch` (7kB, BM25 search for wiki)
-- Removed: `chalk` (dead dependency, zero imports)
-
-### Session 2 (2026-04-13)
-
-#### Critical Fix
-- **P0**: `am apply` now filters entities by active profile — `buildResolvedConfig()` calls `resolveProfile()` to subset servers/instructions/skills/agents
-
-#### Web UI Enhancements
+**Web UI Enhancements**
 - Local web server: POST/PUT/DELETE /api/servers for full CRUD + POST /api/import/:adapter
 - Local web server: 5 wiki endpoints (list, search, graph, projects, read page)
-- Cloudflare Worker: 3 wiki endpoints via GitHub API (list, projects, read page)
 - Cloudflare Worker: multi-backend git auth — GitHub, GitLab, Codeberg, self-hosted Gitea (ADR-0025)
-- Worker provider abstraction: `GitProvider` interface normalizes OAuth + API across backends
 
-#### TUI Enhancements
-- D key: remove selected server with y/n confirmation
-- E key: view server details (command, args, tags, transport)
-- I key: auto-import from all detected adapters with secret encryption
-- P key: push config to remote
+**TUI Enhancements**
+- D/E/I/P keys: remove server, view details, auto-import, push config
 - Arrow keys: navigate server list
 
-#### Wiki Pipeline
-- Verified end-to-end: session harvest → NER → wiki pages → BM25 index → knowledge graph → symlink → agent access
-- 20 integration tests covering full pipeline
-- Wiki browsable from web UI (local + worker)
+**Distribution Infrastructure**
+- CI workflow: test, typecheck, lint, coverage, multi-OS build verify (Blacksmith runners)
+- Release workflow: 5-platform binaries, SHA-256 checksums, GitHub Release, npm publish
+- `install.sh`: POSIX-compliant with checksum verification
+- Homebrew formula + npm wrapper
 
-#### Tests
-- 1335 tests across 132 files, 3901 assertions (up from 1134/118/2967)
+### Bug Fixes
+- **P0**: `am apply` now filters entities by active profile
+- 11 bugs from multi-agent review (3 HIGH, 5 MEDIUM, 2 LOW)
+- Eliminate all `as any` and `err: any` from src/
 
-#### Documentation
-- ADR-0025: Worker Multi-Backend Git Authentication
-- All docs updated: AGENTS.md, ROADMAP.md, CHANGELOG.md
+### Tests
+- 1,335 tests across 132 files, 3,901 assertions
+
+### Dependencies
+- Added: `minisearch` (7kB, BM25 search for wiki)
+- Removed: `chalk` (dead dependency)

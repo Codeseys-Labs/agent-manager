@@ -8,6 +8,7 @@
 
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { AM_BEGIN, AM_END, spliceMarkerBlock } from "../shared/utils.ts";
 import type {
   ExportOptions,
   ExportResult,
@@ -15,9 +16,6 @@ import type {
   ResolvedServer,
   WrittenFile,
 } from "../types.ts";
-
-const AM_BEGIN = "<!-- am:begin -->";
-const AM_END = "<!-- am:end -->";
 
 /**
  * Export resolved config to Kiro native files.
@@ -164,20 +162,18 @@ function generateSteeringFiles(
     const managedBlock = `${AM_BEGIN}\n${instr.content}\n${AM_END}`;
 
     let content: string;
-    // Try to read existing file and replace managed section
+    // Try to read existing file and splice managed section
+    let existingContent: string | undefined;
     try {
       const fs = require("node:fs");
-      const existingContent = fs.readFileSync(filePath, "utf-8");
-      const beginIdx = existingContent.indexOf(AM_BEGIN);
-      const endIdx = existingContent.indexOf(AM_END);
-      if (beginIdx !== -1 && endIdx !== -1) {
-        const before = existingContent.slice(0, beginIdx);
-        const after = existingContent.slice(endIdx + AM_END.length);
-        content = before + managedBlock + after;
-      } else {
-        content = `${existingContent.trimEnd()}\n\n${managedBlock}\n`;
-      }
+      existingContent = fs.readFileSync(filePath, "utf-8");
     } catch {
+      // No existing file
+    }
+
+    if (existingContent) {
+      content = spliceMarkerBlock(managedBlock, existingContent);
+    } else {
       // No existing file — generate with frontmatter
       content = `---\ninclusion: ${inclusion}\ndescription: "${instr.description}"\n---\n\n${managedBlock}\n`;
     }

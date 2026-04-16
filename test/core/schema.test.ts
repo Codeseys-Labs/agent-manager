@@ -6,6 +6,7 @@ import {
   ConfigSchema,
   type Instruction,
   InstructionSchema,
+  MarketplaceProvenanceSchema,
   type Profile,
   ProfileSchema,
   type ProjectConfig,
@@ -52,6 +53,97 @@ describe("ServerSchema", () => {
 
   test("rejects invalid transport", () => {
     expect(() => ServerSchema.parse({ command: "my-mcp", transport: "grpc" })).toThrow();
+  });
+
+  test("parses server with _marketplace provenance", () => {
+    const result = ServerSchema.parse({
+      command: "node",
+      args: ["dist/server.js"],
+      _marketplace: {
+        source: "claude-plugin",
+        package: "@anthropic/plugin-foo",
+        version: "1.2.0",
+        imported_at: "2026-04-15T10:30:00Z",
+        install_path: "~/.claude/plugins/@anthropic/plugin-foo",
+      },
+    });
+    expect(result._marketplace).toBeDefined();
+    expect(result._marketplace!.source).toBe("claude-plugin");
+    expect(result._marketplace!.package).toBe("@anthropic/plugin-foo");
+    expect(result._marketplace!.version).toBe("1.2.0");
+  });
+
+  test("accepts server with both _registry and _marketplace", () => {
+    const result = ServerSchema.parse({
+      command: "node",
+      _registry: {
+        source: "mcp-registry",
+        package: "my-server",
+        version: "1.0.0",
+        installed_at: "2026-04-01",
+      },
+      _marketplace: {
+        source: "vscode-extension",
+        package: "pub.my-ext",
+        version: "2.0.0",
+        imported_at: "2026-04-15",
+      },
+    });
+    expect(result._registry).toBeDefined();
+    expect(result._marketplace).toBeDefined();
+  });
+});
+
+describe("MarketplaceProvenanceSchema", () => {
+  test("parses valid marketplace provenance", () => {
+    const result = MarketplaceProvenanceSchema.parse({
+      source: "claude-plugin",
+      package: "@anthropic/plugin-foo",
+      version: "1.0.0",
+      imported_at: "2026-04-15T10:30:00Z",
+      install_path: "~/.claude/plugins/@anthropic/plugin-foo",
+    });
+    expect(result.source).toBe("claude-plugin");
+    expect(result.install_path).toBe("~/.claude/plugins/@anthropic/plugin-foo");
+  });
+
+  test("accepts all valid source types", () => {
+    for (const source of [
+      "claude-plugin",
+      "vscode-extension",
+      "cursor-extension",
+      "kiro-extension",
+      "windsurf-extension",
+    ]) {
+      const result = MarketplaceProvenanceSchema.parse({
+        source,
+        package: "test",
+        version: "1.0.0",
+        imported_at: "2026-04-15",
+      });
+      expect(result.source).toBe(source);
+    }
+  });
+
+  test("rejects invalid source type", () => {
+    expect(() =>
+      MarketplaceProvenanceSchema.parse({
+        source: "invalid",
+        package: "test",
+        version: "1.0.0",
+        imported_at: "2026-04-15",
+      }),
+    ).toThrow();
+  });
+
+  test("install_path is optional", () => {
+    const result = MarketplaceProvenanceSchema.parse({
+      source: "vscode-extension",
+      package: "pub.ext",
+      version: "1.0.0",
+      imported_at: "2026-04-15",
+    });
+    expect(result.install_path).toBeUndefined();
   });
 });
 

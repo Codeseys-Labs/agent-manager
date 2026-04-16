@@ -6,15 +6,17 @@ import type {
   ExportResult,
   ImportOptions,
   ImportResult,
+  MarketplaceResult,
   ResolvedConfig,
 } from "../types.ts";
+import { scanVSCodeExtensions } from "../shared/marketplace-vscode.ts";
 import { detect } from "./detect.ts";
 import { diffConfig } from "./diff.ts";
 import { exportConfig } from "./export.ts";
 import { importConfig } from "./import.ts";
 import { cursorSchema } from "./schema.ts";
 
-const CAPABILITIES: Capability[] = ["mcp", "instructions", "agents"];
+const CAPABILITIES: Capability[] = ["mcp", "instructions", "agents", "marketplace"];
 
 export const cursorAdapter: Adapter = {
   meta: {
@@ -41,4 +43,8 @@ export const cursorAdapter: Adapter = {
   },
 
   schema: cursorSchema,
+
+  scanMarketplace(): MarketplaceResult {
+    return scanVSCodeExtensions("cursor");
+  },
 };

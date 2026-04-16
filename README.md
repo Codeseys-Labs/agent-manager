@@ -6,10 +6,10 @@ every AI coding tool. Single source of truth with MCP registry integration,
 knowledge synthesis, and agent-to-agent protocol support.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Tests: 1470 pass](https://img.shields.io/badge/tests-1470%20pass-green.svg)](#testing)
+[![Tests: 1772 pass](https://img.shields.io/badge/tests-1772%20pass-green.svg)](#testing)
 [![Adapters: 13](https://img.shields.io/badge/adapters-13-purple.svg)](#adapter-support-matrix)
 [![MCP Tools: 33](https://img.shields.io/badge/MCP%20tools-33-orange.svg)](#mcp-server-mode)
-[![Commands: 28](https://img.shields.io/badge/commands-28-blue.svg)](#cli-reference)
+[![Commands: 30](https://img.shields.io/badge/commands-30-blue.svg)](#cli-reference)
 [![Bun](https://img.shields.io/badge/runtime-Bun-f9f1e1.svg)](https://bun.sh)
 
 ```bash
@@ -271,6 +271,19 @@ am wiki import <file>           # import entries from JSON or markdown
 
 ---
 
+## A2A-ACP Bridge
+
+The bridge connects remote A2A delegation to local ACP agent execution (ADR-0026 Phase 4, ADR-0030). When an external agent sends an A2A task, agent-manager resolves the target locally, spawns it via ACP, and returns the result as an A2A response.
+
+```bash
+# Remote agent sends: "run claude: fix the failing tests"
+# Bridge resolves "claude" → ACP spawn → executes → returns A2A response
+```
+
+The **Unified Agent Registry** (`src/core/agent-registry.ts`) merges three sources with priority: config agents > ACP built-in (16 agents) > A2A roster. Same agent name available both locally and remotely gets both protocols.
+
+---
+
 ## Agent-to-Agent Protocol (A2A)
 
 Support for Google's Agent-to-Agent protocol (ADR-0017). Enables agent discovery and task delegation between agent-manager instances and other A2A-compatible agents.
@@ -288,6 +301,7 @@ Agent Cards are served at `/.well-known/agent.json` on the local web server. The
 **Security & reliability features:**
 - **Bearer token auth:** Optional `auth_token` protects A2A server endpoints
 - **TTL eviction:** Terminal tasks auto-expire after 1 hour, two-phase eviction (TTL then capacity-based LRU)
+- **SSE streaming:** Real-time event streaming for task progress and agent updates
 - **Auto-discovery:** Configure `settings.a2a.discovery_sources` URLs for automatic agent roster population
 - **Async polling:** `sendAndPoll()` convenience method for fire-and-wait task delegation
 
@@ -306,7 +320,7 @@ am run session list                            # list active ACP sessions
 am run session cancel <sessionId>              # cancel active session
 ```
 
-Agents are registered in config.toml under `[settings.acp.agents]` or discovered automatically from installed tools.
+Agents are resolved via the **Unified Agent Registry** (ADR-0030): config overrides > 16 built-in ACP agents > A2A roster entries. Register custom agents in config.toml under `[agents.<name>]` with `acp` and/or `a2a` subtables.
 
 ---
 
@@ -509,6 +523,14 @@ agents = ["researcher"]
 | `am run session list` | List active ACP sessions |
 | `am run session cancel <id>` | Cancel an active session |
 
+### Flows
+
+| Command | Description |
+|---------|-------------|
+| `am flow run <file>` | Execute a multi-step workflow from a TOML definition |
+| `am flow list` | List recent flow runs |
+| `am flow status <id>` | Show status of a flow run |
+
 ### Tools and Diagnostics
 
 | Command | Description |
@@ -529,6 +551,7 @@ agents = ["researcher"]
 | `am mcp-serve` | Run as MCP server (JSON-RPC over stdio) |
 | `am tui` | Interactive terminal dashboard (Silvery/React) |
 | `am serve` | Local web UI server with Bearer token auth |
+| `am completion bash\|zsh\|fish` | Generate shell completion scripts |
 
 ### Global Flags
 
@@ -551,13 +574,13 @@ am serve
 # Token stored at ~/.config/agent-manager/web-token.txt
 ```
 
-REST API + SSE for real-time updates.
+REST API + SSE for real-time updates. Includes wiki browser UI for browsing knowledge base pages, search, and graph visualization.
 
 ### Stateless Web UI (Cloudflare Workers)
 
 A browser-based management dashboard that accesses your git-backed AM repo via the GitHub/GitLab API. Fully stateless -- config and wiki data live in your git backend, sessions use AES-GCM encrypted cookies. No KV, D1, or R2.
 
-Users can browse their config, wiki, and make changes through the web UI rather than the CLI -- both access the same git-backed source of truth.
+Users can browse their config, wiki, and make changes through the web UI rather than the CLI -- both access the same git-backed source of truth. Wiki pages are browsable from both local and worker web UIs.
 
 ```bash
 wrangler secret put GITHUB_CLIENT_ID
@@ -572,7 +595,7 @@ bun run deploy:web
 
 ```mermaid
 graph LR
-    CLI["CLI (28 commands)"] --> Core["Core Engine<br/>(TOML + Zod + Git)"]
+    CLI["CLI (30 commands)"] --> Core["Core Engine<br/>(TOML + Zod + Git)"]
     MCP["MCP Server<br/>(33 tools, 6 groups)"] --> Core
     TUI["TUI (Silvery)"] --> Core
     Web["Web UI"] --> Hono["Hono (local) /<br/>CF Workers"]
@@ -580,16 +603,20 @@ graph LR
     Core --> Adapters["IDE Adapters (13)<br/>detect / import /<br/>export / diff"]
     Core --> Platform["Platform Adapters<br/>(GitHub, GitLab, bare)"]
     Core --> Secrets["Secret Detection<br/>(gitleaks patterns)"]
+    Core --> AgentReg["Unified Agent Registry<br/>(config + ACP + A2A)"]
 
     Adapters --> Native["Native Config Files"]
     Platform --> Remote["Git Remotes"]
 
     Core --> Wiki["LLM Wiki<br/>(BM25 + NER + Graph)"]
     Core --> Registry["MCP Registry<br/>(search / install)"]
-    Core --> A2A["A2A Protocol<br/>(discovery / delegation)"]
+
+    AgentReg --> A2A["A2A Protocol<br/>(discovery / delegation)"]
+    AgentReg --> ACP["ACP Orchestration<br/>(spawn / stream)"]
+    A2A <--> Bridge["A2A-ACP Bridge"] <--> ACP
 ```
 
-Design decisions documented in [28 ADRs](ADRs/README.md).
+Design decisions documented in [30 ADRs](ADRs/README.md).
 
 ---
 
@@ -597,7 +624,7 @@ Design decisions documented in [28 ADRs](ADRs/README.md).
 
 ```bash
 bun install                       # install dependencies
-bun test                          # run all 1470 tests
+bun test                          # run all 1772 tests
 bun test --watch                  # watch mode
 bun run dev -- <command> [args]   # run CLI from source
 bun run lint                      # Biome check
@@ -644,15 +671,15 @@ cache for faster downloads.
 
 | Metric | Count |
 |--------|-------|
-| Source files | 165 |
-| Test files | 134 |
-| Tests | 1,470 |
-| Assertions | 4,312 |
+| Source files | 177 |
+| Test files | 146 |
+| Tests | 1,772 |
+| Assertions | 5,336 |
 | IDE adapters | 13 |
 | Platform adapters | 3 |
-| CLI commands | 28 |
+| CLI commands | 30 |
 | MCP tools | 33 |
-| ADRs | 28 |
+| ADRs | 30 |
 
 ### Tech Stack
 

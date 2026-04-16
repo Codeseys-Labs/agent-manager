@@ -7,6 +7,7 @@
 
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { fileExistsSync } from "../shared/utils.ts";
 import type { ImportOptions, ImportResult, ImportedInstruction, ImportedServer } from "../types.ts";
 import { extractPackageId } from "./identity.ts";
 
@@ -156,14 +157,4 @@ function readRulesDir(projectPath: string, warnings: string[]): ImportedInstruct
   }
 
   return instructions;
-}
-
-function fileExistsSync(path: string): boolean {
-  try {
-    const fs = require("node:fs");
-    fs.accessSync(path);
-    return true;
-  } catch {
-    return false;
-  }
 }

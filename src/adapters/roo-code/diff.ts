@@ -7,6 +7,7 @@
 
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { compareServerFields } from "../shared/utils.ts";
 import type { DiffChange, DiffResult, ResolvedConfig, ResolvedServer } from "../types.ts";
 import { getGlobalStoragePath } from "./detect.ts";
 
@@ -63,7 +64,7 @@ export function diffConfig(
   for (const [name, expectedServer] of Object.entries(expected)) {
     if (!(name in allNative)) continue;
     const native = allNative[name];
-    const fieldChanges = compareServer(expectedServer, native);
+    const fieldChanges = compareServerFields(expectedServer, native);
     if (fieldChanges.length > 0) {
       changes.push({
         entity: "server",
@@ -131,48 +132,4 @@ function readNativeServersFromFile(filePath: string): Record<string, NativeServe
   }
 
   return result;
-}
-
-/** Compare a resolved server against native, returning field-level diffs. */
-function compareServer(
-  expected: ResolvedServer,
-  native: NativeServer,
-): { field: string; expected: unknown; actual: unknown }[] {
-  const diffs: { field: string; expected: unknown; actual: unknown }[] = [];
-
-  if (expected.command !== native.command) {
-    diffs.push({
-      field: "command",
-      expected: expected.command,
-      actual: native.command,
-    });
-  }
-
-  const expectedArgs = expected.args ?? [];
-  const nativeArgs = native.args ?? [];
-  if (JSON.stringify(normalize(expectedArgs)) !== JSON.stringify(normalize(nativeArgs))) {
-    diffs.push({ field: "args", expected: expectedArgs, actual: nativeArgs });
-  }
-
-  const expectedEnv = expected.env ?? {};
-  const nativeEnv = native.env ?? {};
-  if (JSON.stringify(sortKeys(expectedEnv)) !== JSON.stringify(sortKeys(nativeEnv))) {
-    diffs.push({ field: "env", expected: expectedEnv, actual: nativeEnv });
-  }
-
-  return diffs;
-}
-
-function sortKeys<T extends Record<string, unknown>>(obj: T): T {
-  const sorted: Record<string, unknown> = {};
-  for (const key of Object.keys(obj).sort()) {
-    sorted[key] = obj[key];
-  }
-  return sorted as T;
-}
-
-function normalize(value: unknown): unknown {
-  if (Array.isArray(value)) return value.map(normalize);
-  if (value && typeof value === "object") return sortKeys(value as Record<string, unknown>);
-  return value;
 }

@@ -24,14 +24,14 @@ bun install
 bun test
 ```
 
-If all 1470 tests pass, you're ready.
+If all 1772 tests pass, you're ready.
 
 ## Project Structure
 
 ```
 agent-manager/
   src/
-    cli.ts                  # Entry point (citty, 28 subcommands)
+    cli.ts                  # Entry point (citty, 30 subcommands)
     commands/               # CLI command handlers (29 files)
     core/                   # Config engine (TOML, resolver, git, schema, secrets, instructions, session)
       schema.ts             # Zod schemas (Server, Instruction, Skill, AgentProfile, Profile, Config)
@@ -41,8 +41,9 @@ agent-manager/
       secrets.ts            # AES-256-GCM encryption + ${VAR} interpolation
       secret-detection.ts   # Tiered secret detection: key-name patterns + BetterLeaks
       betterleaks.ts        # BetterLeaks binary management: detect, install, scan
-      instructions.ts       # Shared instruction generation for all output formats
+      instructions.ts       # Shared instruction generation for all output formats + wiki context injection
       session.ts            # Cross-tool session harvest: types, reader interface, filter/format
+      agent-registry.ts     # Unified agent registry: config + ACP built-in + A2A roster (ADR-0030)
     adapters/               # 13 built-in IDE adapters
       types.ts              # Adapter interface + SessionReader -- start here for adapter work
       registry.ts           # Lazy factory registry for all adapters
@@ -65,11 +66,12 @@ agent-manager/
       github.ts, gitlab.ts, bare.ts
     registry/               # MCP package registry client (HTTP, LRU cache, retry)
     protocols/              # Agent communication protocols
+      bridge.ts             # A2A-ACP bridge: routes A2A tasks to local ACP agents
       a2a/                  # Agent-to-Agent protocol (ADR-0017)
       acp/                  # Agent Communication Protocol (ADR-0026) — client, registry, types
     wiki/                   # LLM Wiki / Knowledge Synthesis (ADR-0020)
     mcp/                    # MCP server mode (JSON-RPC over stdio)
-      server.ts             # 33 tools across 6 groups, 3 permission tiers
+      server.ts             # 33 tools across 6 groups, 3 permission tiers (ADR-0009, ADR-0021)
     tui/                    # Terminal UI (Silvery + React)
     web/                    # Web UI (Hono local + Cloudflare Workers)
     lib/                    # Shared utilities (errors.ts, output.ts)
@@ -80,7 +82,7 @@ agent-manager/
     fixtures/               # Sample config files for testing
     helpers/                # Test utilities (temp dirs, mock configs)
     integration/            # End-to-end tests
-  ADRs/                     # 24 architectural decision records
+  ADRs/                     # 30 architectural decision records
   docs/                     # Design specs and guides
   scripts/
     build.ts                # Cross-platform build script (5 targets)
@@ -122,7 +124,7 @@ Keep changes focused. One feature or fix per PR.
 ### 5. Validate
 
 ```bash
-bun test            # All 1470 tests pass
+bun test            # All 1772 tests pass
 bun run lint        # Biome linting + formatting
 bun run typecheck   # TypeScript type checking
 ```
@@ -237,7 +239,7 @@ To add an adapter-specific field, update only that adapter's `schema.ts`.
 
 ## Architecture Decisions
 
-Design decisions are recorded in [28 ADRs](ADRs/README.md). Before proposing a change
+Design decisions are recorded in [30 ADRs](ADRs/README.md). Before proposing a change
 that conflicts with an existing ADR, read it first. To propose a new direction, create
 a new ADR using `ADRs/template.md`.
 

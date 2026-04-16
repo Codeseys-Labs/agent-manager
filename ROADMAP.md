@@ -72,7 +72,7 @@ All adapters: detect, import, export, drift detection. 6-file pattern.
 
 Future candidates: Gitea, Codeberg, Forgejo, BitBucket (ADR-0013 updated).
 
-### CLI (28 commands) — Complete
+### CLI (30 commands) — Complete
 
 Config: init, add, list, use, apply, status, config, profile
 Git: push, pull, undo, log
@@ -80,8 +80,9 @@ Registry: search, install, uninstall, update
 Wiki: wiki (13 subcommands)
 A2A: agents (5 subcommands)
 ACP: run (agent orchestration + session subcommands)
+Flows: flow (pipeline orchestration subcommands)
 Tools: import, adapter, doctor, secret (6 subcommands), session, version
-Interfaces: mcp-serve, tui, serve
+Interfaces: mcp-serve, tui, serve, completion (bash/zsh/fish)
 
 ### MCP Server (33 tools, 6 groups) — Complete
 
@@ -169,31 +170,40 @@ Search, install, uninstall, update with provenance tracking. ADR-0024.
 
 ## Planned — Next Sessions
 
+### A2A-ACP Bridge — Complete
+
+| Component | Status | Notes |
+|-----------|--------|-------|
+| Bridge message parsing | Done | Text + structured data formats |
+| Bridge task handler | Done | A2A → ACP routing with fallthrough |
+| Unified Agent Registry (ADR-0030) | Done | config > ACP built-in (16) > A2A roster |
+| Wiki context injection | Done | Auto-inject at apply time via synthesizer |
+
 ### Phase 2: Knowledge Synthesis
 
 - [ ] LLM-powered extraction (replace regex pattern matching with LLM calls)
 - [ ] Embedding-based semantic search (cosine similarity on wiki entries)
 - [ ] Obsidian-style graph visualization (HTML export from `am wiki graph`)
-- [ ] Context injection into generated AGENTS.md / CLAUDE.md at apply time
+- [x] Context injection into generated AGENTS.md / CLAUDE.md at apply time — done in iteration 6
 - [ ] Cross-project knowledge linking (global wiki as a meta-index)
 
 ### Phase 2: A2A Protocol
 
 - [x] A2A agent authentication (Bearer tokens for roster entries) — done in iteration 3
-- [ ] Streaming task responses (SSE from A2A server)
+- [x] Streaming task responses (SSE from A2A server) — done in iteration 6
 - [ ] Multi-agent orchestration (agent chains / pipelines)
 - [ ] mDNS/DNS-SD local agent discovery
 
 ### Phase 2: Adapters
 
 - [ ] Full skill/agent drift detection across all 13 adapters
-- [ ] Remaining 11 adapters migrated to shared utils (2 done: claude-code, cursor)
+- [ ] Remaining adapters migrated to shared utils
 - [ ] Adapter-specific instruction scope translation tests
 
 ### Infrastructure
 
+- [x] Shell completions (bash/zsh/fish) — done in iteration 9
 - [ ] Test coverage metrics (bun --coverage in CI, badge in README)
-- [ ] Semantic versioning + automated release notes
 - [ ] npm package: split platform binaries into optionalDependencies
 - [ ] Windows CI runner (verify junction point symlinks, path handling)
 
@@ -272,14 +282,14 @@ am-cli as a runtime MCP proxy — accept tool calls, route to configured servers
 
 | Metric | Count |
 |--------|-------|
-| Source files | 165 |
-| Test files | 134 |
-| Tests | 1,470 |
-| Assertions | 4,312 |
+| Source files | 177 |
+| Test files | 146 |
+| Tests | 1,772 |
+| Assertions | 5,336 |
 | IDE adapters | 13 |
 | Platform adapters | 3 |
-| CLI commands | 28 |
+| CLI commands | 30 |
 | MCP tools | 33 |
-| ADRs | 28 |
+| ADRs | 30 |
 | `as any` in src/ | 0 |
 | `err: any` in src/ | 0 |
