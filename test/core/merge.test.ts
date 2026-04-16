@@ -703,8 +703,18 @@ describe("runMergePipeline", () => {
 
     const incoming: ImportedServer[] = [
       // 3 exact matches (same identity)
-      makeImported({ name: "tavily-cursor", command: "bunx", args: ["tavily-mcp@latest"], env: { KEY: "val" } }),
-      makeImported({ name: "fetcher", command: "uvx", args: ["mcp-server-fetch"], description: "Better fetcher desc" }),
+      makeImported({
+        name: "tavily-cursor",
+        command: "bunx",
+        args: ["tavily-mcp@latest"],
+        env: { KEY: "val" },
+      }),
+      makeImported({
+        name: "fetcher",
+        command: "uvx",
+        args: ["mcp-server-fetch"],
+        description: "Better fetcher desc",
+      }),
       makeImported({ name: "outlook-import", command: "aws-outlook-mcp", tags: ["calendar"] }),
       // 2 fuzzy matches (name match)
       makeImported({ name: "sentral", command: "docker", args: ["run", "sentral:latest"] }),

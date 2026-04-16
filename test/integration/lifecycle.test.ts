@@ -292,14 +292,7 @@ describe("lifecycle integration tests", () => {
     }
 
     await runAMWithHome("init");
-    await runAMWithHome(
-      "add",
-      "test-server",
-      "--command",
-      "uvx",
-      "--args",
-      "mcp-server-fetch",
-    );
+    await runAMWithHome("add", "test-server", "--command", "uvx", "--args", "mcp-server-fetch");
 
     // Real apply (no --dry-run)
     const { stdout, code } = await runAMWithHome("apply", "--target", "claude-code");

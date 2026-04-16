@@ -1486,7 +1486,12 @@ describe("A2A Server", () => {
       const app = makeApp(
         {
           servers: {
-            "my-server": { command: "node server.js", args: [], tags: ["test"], enabled: true } as any,
+            "my-server": {
+              command: "node server.js",
+              args: [],
+              tags: ["test"],
+              enabled: true,
+            } as any,
           },
         },
         { taskStore: store },
@@ -1564,7 +1569,9 @@ describe("A2A Server", () => {
 
       await waitForTask(store, "cmd-apply");
       const task = store.get("cmd-apply")!;
-      const textPart = task.status.message!.parts.find((p) => p.type === "text") as { text: string };
+      const textPart = task.status.message!.parts.find((p) => p.type === "text") as {
+        text: string;
+      };
       expect(textPart.text).toContain("write operation");
     });
 
@@ -1584,7 +1591,9 @@ describe("A2A Server", () => {
 
       await waitForTask(store, "cmd-config-write");
       const task = store.get("cmd-config-write")!;
-      const textPart = task.status.message!.parts.find((p) => p.type === "text") as { text: string };
+      const textPart = task.status.message!.parts.find((p) => p.type === "text") as {
+        text: string;
+      };
       expect(textPart.text).toContain("write operation");
     });
 
@@ -1604,7 +1613,9 @@ describe("A2A Server", () => {
 
       await waitForTask(store, "cmd-reg-install");
       const task = store.get("cmd-reg-install")!;
-      const textPart = task.status.message!.parts.find((p) => p.type === "text") as { text: string };
+      const textPart = task.status.message!.parts.find((p) => p.type === "text") as {
+        text: string;
+      };
       expect(textPart.text).toContain("write operation");
     });
 
@@ -1624,7 +1635,9 @@ describe("A2A Server", () => {
 
       await waitForTask(store, "cmd-unknown");
       const task = store.get("cmd-unknown")!;
-      const textPart = task.status.message!.parts.find((p) => p.type === "text") as { text: string };
+      const textPart = task.status.message!.parts.find((p) => p.type === "text") as {
+        text: string;
+      };
       expect(textPart.text).toContain("Unrecognized command");
       expect(textPart.text).toContain("foobar");
       expect(textPart.text).toContain("status");
@@ -1649,7 +1662,9 @@ describe("A2A Server", () => {
       await waitForTask(store, "cmd-case");
       const task = store.get("cmd-case")!;
       expect(task.status.state).toBe("completed");
-      const textPart = task.status.message!.parts.find((p) => p.type === "text") as { text: string };
+      const textPart = task.status.message!.parts.find((p) => p.type === "text") as {
+        text: string;
+      };
       expect(textPart.text).toContain("agent-manager status");
     });
 
@@ -1672,7 +1687,9 @@ describe("A2A Server", () => {
 
       await waitForTask(store, "cmd-no-text");
       const task = store.get("cmd-no-text")!;
-      const textPart = task.status.message!.parts.find((p) => p.type === "text") as { text: string };
+      const textPart = task.status.message!.parts.find((p) => p.type === "text") as {
+        text: string;
+      };
       expect(textPart.text).toContain("Unrecognized command");
     });
   });

@@ -153,7 +153,10 @@ export class AmAcpClient {
           terminal: true,
         },
       }),
-      timeoutPromise<Awaited<ReturnType<ClientSideConnection["initialize"]>>>(initTimeout, "Agent initialization timed out"),
+      timeoutPromise<Awaited<ReturnType<ClientSideConnection["initialize"]>>>(
+        initTimeout,
+        "Agent initialization timed out",
+      ),
     ]);
 
     this.connInfo = {
@@ -355,7 +358,9 @@ function createClientHandler(
     async requestPermission(params: RequestPermissionRequest): Promise<RequestPermissionResponse> {
       if (permissionPolicy === "deny") {
         // HIGH-1 fix: reject all permission requests when --no-auto-approve is set.
-        const denyOption = params.options.find((o) => o.kind === "reject_once" || o.kind === "reject_always");
+        const denyOption = params.options.find(
+          (o) => o.kind === "reject_once" || o.kind === "reject_always",
+        );
         if (denyOption) {
           return { outcome: { outcome: "selected", optionId: denyOption.optionId } };
         }
@@ -365,7 +370,10 @@ function createClientHandler(
       // Auto-approve all permissions in headless mode (default).
       const allowOption = params.options.find((o) => o.kind === "allow_once");
       return {
-        outcome: { outcome: "selected", optionId: allowOption?.optionId ?? params.options[0].optionId },
+        outcome: {
+          outcome: "selected",
+          optionId: allowOption?.optionId ?? params.options[0].optionId,
+        },
       };
     },
 

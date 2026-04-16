@@ -1,5 +1,12 @@
 import { describe, expect, test } from "bun:test";
-import { AmError, errorCode, errorMessage, formatError, isNotFound, requireConfig } from "../../src/lib/errors";
+import {
+  AmError,
+  errorCode,
+  errorMessage,
+  formatError,
+  isNotFound,
+  requireConfig,
+} from "../../src/lib/errors";
 
 describe("AmError", () => {
   test("sets name, message, suggestion, and code", () => {

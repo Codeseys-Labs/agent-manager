@@ -873,13 +873,13 @@ describe("A2AClient", () => {
 
     test("skips malformed JSON in SSE data lines", async () => {
       // Manually construct SSE with one bad event and one good event
-      const sseBody =
-        "event: status\ndata: {not valid json}\n\n" +
-        `event: status\ndata: ${JSON.stringify({
+      const sseBody = `event: status\ndata: {not valid json}\n\nevent: status\ndata: ${JSON.stringify(
+        {
           id: "task-malformed",
           status: { state: "completed", timestamp: "2026-01-01T00:00:00Z" },
           final: true,
-        })}\n\n`;
+        },
+      )}\n\n`;
 
       mockFetch = mock(() =>
         Promise.resolve(

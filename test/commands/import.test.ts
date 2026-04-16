@@ -1,10 +1,10 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { join } from "node:path";
+import { extractServerIdentity } from "../../src/commands/import";
 import { writeConfig } from "../../src/core/config";
 import { initRepo } from "../../src/core/git";
 import type { Config } from "../../src/core/schema";
 import { McpServer } from "../../src/mcp/server";
-import { extractServerIdentity } from "../../src/commands/import";
 import { type TestDir, createTestDir } from "../helpers/tmp";
 
 describe("extractServerIdentity", () => {

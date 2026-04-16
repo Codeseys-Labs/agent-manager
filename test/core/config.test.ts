@@ -340,7 +340,7 @@ describe("loadResolvedConfig — full 4-layer hierarchy", () => {
         profile: "work",
         servers: {
           wiki: { command: "amazon-wiki-mcp" },
-          tavily: { command: "tavily-mcp-v2", enabled: false },  // overrides global tavily
+          tavily: { command: "tavily-mcp-v2", enabled: false }, // overrides global tavily
         },
         instructions: {
           "rule-b": { content: "Project rule B", scope: "always" },
@@ -372,9 +372,9 @@ describe("loadResolvedConfig — full 4-layer hierarchy", () => {
     expect(config.settings?.default_profile).toBe("local-override");
 
     // Servers: union of all 4 layers, higher layers win on same-name
-    expect(config.servers?.fetch).toBeDefined();           // from global
+    expect(config.servers?.fetch).toBeDefined(); // from global
     expect(config.servers?.["local-server"]).toBeDefined(); // from global.local
-    expect(config.servers?.wiki).toBeDefined();             // from project
+    expect(config.servers?.wiki).toBeDefined(); // from project
     expect(config.servers?.["local-project-server"]).toBeDefined(); // from project.local
     // tavily: project overrides global
     expect(config.servers?.tavily.command).toBe("tavily-mcp-v2");
