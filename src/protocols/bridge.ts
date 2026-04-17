@@ -85,8 +85,26 @@ export interface BridgeConfig {
   registryConfig?: UnifiedRegistryConfig;
   /** Pre-loaded A2A roster agents (avoids disk reads). */
   rosterAgents?: Record<string, { url: string; description?: string }>;
-  /** Permission policy for spawned agents. Default: "auto-approve". */
+  /**
+   * Permission policy for spawned agents. Default: `"deny"` when the bridge
+   * is exposed over A2A (remote callers can't be trusted to approve). Set to
+   * `"auto-approve"` only when the bridge is intentionally permissive
+   * (e.g., purely local use with `enableBridge` + a trusted auth_token).
+   *
+   * HIGH-2 fix: previously this field was declared but never passed to the
+   * ACP client, so every bridged call effectively ran as `auto-approve`.
+   */
   permissionPolicy?: PermissionPolicy;
+  /**
+   * Allowed filesystem paths for `readTextFile` / `writeTextFile` calls from
+   * the spawned ACP agent. Empty (or unset) defaults to `[cwd]` to keep file
+   * ops inside the working directory. Pass `["/"]` to preserve the old,
+   * unrestricted behavior.
+   *
+   * HIGH-2 fix: previously unenforced — bridged agents had unrestricted FS
+   * access.
+   */
+  allowedPaths?: string[];
 }
 
 /**
@@ -107,6 +125,13 @@ export function createBridgeTaskHandler(bridgeConfig?: BridgeConfig): TaskHandle
   const timeout = bridgeConfig?.timeout ?? 300_000;
   const registryConfig = bridgeConfig?.registryConfig;
   const rosterAgents = bridgeConfig?.rosterAgents;
+  // HIGH-2 fix: sane defaults when the caller doesn't specify. The bridge is
+  // the A2A-facing edge, so we default to `deny` and restrict FS to cwd.
+  const permissionPolicy: PermissionPolicy = bridgeConfig?.permissionPolicy ?? "deny";
+  const allowedPaths =
+    bridgeConfig?.allowedPaths && bridgeConfig.allowedPaths.length > 0
+      ? bridgeConfig.allowedPaths
+      : [cwd];
 
   return async (userMessage: Message, config: ResolvedConfig) => {
     const request = parseBridgeRequest(userMessage);
@@ -142,6 +167,12 @@ export function createBridgeTaskHandler(bridgeConfig?: BridgeConfig): TaskHandle
 
     // 2. Spawn ACP agent and execute prompt
     const client = new AmAcpClient();
+    // HIGH-2 fix: apply the bridge's permission + filesystem policy BEFORE
+    // connect(). The ACP handler captures these at connect() time via
+    // closure, so setting them after is a no-op and leaves the agent
+    // unrestricted.
+    client.setPermissionPolicy(permissionPolicy);
+    client.setAllowedPaths(allowedPaths);
     try {
       await client.connect(entry.acp.command, { initTimeout: 30_000 });
       const sessionId = await client.newSession({ cwd });

@@ -70,11 +70,20 @@ export class AcpClientError extends Error {
 
 export class AmAcpClient {
   private connection: ClientSideConnection | null = null;
-  private subprocess: { kill(): void } | null = null;
+  private subprocess: {
+    kill(signal?: number | NodeJS.Signals): void;
+    exited?: Promise<number>;
+  } | null = null;
   private connInfo: AcpConnection | null = null;
   private updateHandler: SessionUpdateHandler | null = null;
   private permissionPolicy: PermissionPolicy = "auto-approve";
   private allowedPaths: string[] = [];
+  // HIGH-3 fix: per-instance terminal store so terminals don't leak across
+  // clients (previously this was a module-level Map shared by every instance).
+  private terminalStore = new Map<string, ReturnType<typeof Bun.spawn>>();
+  // HIGH-3 fix: cache drained stdout per terminal since the underlying
+  // ReadableStream can only be consumed once.
+  private terminalOutputCache = new Map<string, string>();
 
   /**
    * Set a handler for session update notifications.
@@ -124,7 +133,7 @@ export class AmAcpClient {
       env: { ...process.env, ...opts?.env },
     });
 
-    this.subprocess = proc;
+    this.subprocess = proc as typeof this.subprocess;
 
     // Build the NDJSON stream from the subprocess stdio
     const stream = ndJsonStream(
@@ -138,35 +147,82 @@ export class AmAcpClient {
     // MEDIUM-3: pass allowed paths for file operation restrictions
     const paths = [...this.allowedPaths, ...(opts?.allowedPaths ?? [])];
     this.connection = new ClientSideConnection(
-      (_agent) => createClientHandler(updateHandler, policy, paths),
+      (_agent) =>
+        createClientHandler(
+          updateHandler,
+          policy,
+          paths,
+          this.terminalStore,
+          this.terminalOutputCache,
+        ),
       stream,
     );
 
-    // Initialize the connection (negotiate capabilities)
-    const initTimeout = opts?.initTimeout ?? 30_000;
-    const initResponse = await Promise.race([
-      this.connection.initialize({
-        protocolVersion: PROTOCOL_VERSION,
-        clientInfo: { name: "agent-manager", version: "0.1.0" },
-        clientCapabilities: {
-          fs: { readTextFile: true, writeTextFile: true },
-          terminal: true,
-        },
-      }),
-      timeoutPromise<Awaited<ReturnType<ClientSideConnection["initialize"]>>>(
-        initTimeout,
-        "Agent initialization timed out",
-      ),
-    ]);
+    // Initialize the connection (negotiate capabilities).
+    // CRITICAL-1 fix: wrap the initialize race in try/catch and forcibly kill
+    // the subprocess if it throws or times out, otherwise orphaned agent
+    // processes accumulate indefinitely.
+    const initTimeout = opts?.initTimeout ?? 10_000;
+    try {
+      const initResponse = await Promise.race([
+        this.connection.initialize({
+          protocolVersion: PROTOCOL_VERSION,
+          clientInfo: { name: "agent-manager", version: "0.1.0" },
+          clientCapabilities: {
+            fs: { readTextFile: true, writeTextFile: true },
+            terminal: true,
+          },
+        }),
+        timeoutPromise<Awaited<ReturnType<ClientSideConnection["initialize"]>>>(
+          initTimeout,
+          "Agent initialization timed out",
+        ),
+      ]);
 
-    this.connInfo = {
-      agentInfo: initResponse.agentInfo,
-      capabilities: initResponse.agentCapabilities,
-      signal: this.connection.signal,
-      closed: this.connection.closed,
-    };
+      this.connInfo = {
+        agentInfo: initResponse.agentInfo,
+        capabilities: initResponse.agentCapabilities,
+        signal: this.connection.signal,
+        closed: this.connection.closed,
+      };
+      return this.connInfo;
+    } catch (err) {
+      await this.killSubprocess();
+      this.connection = null;
+      this.connInfo = null;
+      throw err;
+    }
+  }
 
-    return this.connInfo;
+  /**
+   * Forcibly terminate the subprocess: SIGTERM first, wait up to 2s, then
+   * SIGKILL as fallback. Safe to call when already dead or never spawned.
+   */
+  private async killSubprocess(gracePeriodMs = 2000): Promise<void> {
+    const proc = this.subprocess;
+    if (!proc) return;
+    this.subprocess = null;
+
+    try {
+      proc.kill("SIGTERM");
+    } catch {
+      // already dead or platform quirk — move on to SIGKILL attempt below
+    }
+
+    const exited = proc.exited;
+    if (exited && typeof (exited as Promise<number>).then === "function") {
+      const timer = new Promise<"timeout">((resolve) =>
+        setTimeout(() => resolve("timeout"), gracePeriodMs),
+      );
+      const outcome = await Promise.race([exited.then(() => "exited" as const), timer]);
+      if (outcome === "timeout") {
+        try {
+          proc.kill("SIGKILL");
+        } catch {
+          // ignore
+        }
+      }
+    }
   }
 
   /**
@@ -268,13 +324,22 @@ export class AmAcpClient {
   }
 
   /**
-   * Disconnect from the agent, killing the subprocess.
+   * Disconnect from the agent, killing the subprocess and any terminals it
+   * spawned. Safe to call multiple times.
    */
   async disconnect(): Promise<void> {
-    if (this.subprocess) {
-      this.subprocess.kill();
-      this.subprocess = null;
+    // Reap any terminals spawned by the agent before the main process dies.
+    for (const [id, proc] of this.terminalStore) {
+      try {
+        proc.kill();
+      } catch {
+        // ignore
+      }
+      this.terminalStore.delete(id);
     }
+    this.terminalOutputCache.clear();
+
+    await this.killSubprocess();
     this.connection = null;
     this.connInfo = null;
     this.resetCollected();
@@ -353,6 +418,8 @@ function createClientHandler(
   updateHandler: SessionUpdateHandler | null,
   permissionPolicy: PermissionPolicy = "auto-approve",
   allowedPaths: string[] = [],
+  terminalStore: Map<string, ReturnType<typeof Bun.spawn>> = new Map(),
+  terminalOutputCache: Map<string, string> = new Map(),
 ): Client {
   return {
     async requestPermission(params: RequestPermissionRequest): Promise<RequestPermissionResponse> {
@@ -433,8 +500,14 @@ function createClientHandler(
       if (!proc) {
         return { output: "", exitStatus: { exitCode: -1 }, truncated: false };
       }
-      // Read whatever is available
-      const output = proc.stdout ? await new Response(proc.stdout as ReadableStream).text() : "";
+      // HIGH-3 fix: `new Response(stream).text()` locks the underlying
+      // ReadableStream and can only be consumed once; a second call would
+      // throw. Drain on first read, cache the buffer, return it every time.
+      let output = terminalOutputCache.get(params.terminalId);
+      if (output === undefined) {
+        output = proc.stdout ? await new Response(proc.stdout as ReadableStream).text() : "";
+        terminalOutputCache.set(params.terminalId, output);
+      }
       return { output, truncated: false };
     },
 
@@ -443,6 +516,7 @@ function createClientHandler(
       if (proc) {
         proc.kill();
         terminalStore.delete(params.terminalId);
+        terminalOutputCache.delete(params.terminalId);
       }
       return {};
     },
@@ -467,9 +541,6 @@ function createClientHandler(
     },
   };
 }
-
-// Simple in-memory terminal store for headless operation
-const terminalStore = new Map<string, ReturnType<typeof Bun.spawn>>();
 
 // ── Helpers ────────────────────────────────────────────────────
 

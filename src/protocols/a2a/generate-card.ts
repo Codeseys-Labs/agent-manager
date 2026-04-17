@@ -7,6 +7,7 @@
  */
 
 import type { ResolvedConfig } from "../../adapters/types";
+import { AM_VERSION } from "../../lib/version";
 import type { AgentCapabilities, AgentCard, AgentProvider, AgentSkill } from "./types";
 
 /** Options for generating the Agent Card. */
@@ -142,7 +143,7 @@ export function generateAgentCard(config: ResolvedConfig, options: GenerateCardO
     description:
       options.provider?.description ??
       "Agent configuration manager — define once in TOML, sync via git, generate native configs for every AI coding tool.",
-    version: process.env.BUILD_VERSION ?? "0.1.0",
+    version: AM_VERSION,
     url: options.baseUrl,
     provider,
     capabilities,

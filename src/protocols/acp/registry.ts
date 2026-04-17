@@ -8,29 +8,13 @@
  * See ADR-0026 for rationale.
  */
 
+import { BUILT_IN_ACP_AGENTS } from "../../core/agent-registry";
 import type { AcpSettings, AgentRegistryEntry } from "./types";
 
-// ── Built-in registry ──────────────────────────────────────────
-
-/** Known ACP-compatible agents and their spawn commands. */
-const BUILT_IN_REGISTRY: Record<string, string> = {
-  claude: "npx -y @agentclientprotocol/claude-agent-acp@latest",
-  codex: "npx @zed-industries/codex-acp@latest",
-  gemini: "gemini --acp",
-  cursor: "cursor-agent acp",
-  copilot: "copilot --acp --stdio",
-  kiro: "kiro-cli-chat acp",
-  aider: "aider --acp",
-  "amazon-q": "q chat --acp",
-  amp: "amp --acp",
-  augment: "augment-cli --acp",
-  cline: "cline --acp",
-  "roo-code": "roo --acp",
-  goose: "goose --acp",
-  windsurf: "windsurf-cli --acp",
-  devin: "devin --acp",
-  sourcegraph: "cody --acp",
-};
+// Canonical ACP built-in list lives in src/core/agent-registry.ts per ADR-0030.
+// This file keeps the thin protocol-local lookup/tokenizer API; the dict is
+// imported to avoid drift.
+const BUILT_IN_REGISTRY = BUILT_IN_ACP_AGENTS;
 
 // ── Resolution ─────────────────────────────────────────────────
 
@@ -82,12 +66,85 @@ export function listAgents(acpSettings?: AcpSettings): (AgentRegistryEntry & { n
 
 /**
  * Parse a command string into [executable, ...args].
- * Handles simple space-separated commands. Quoted args are not supported.
+ *
+ * Shell-style tokenizer: splits on whitespace while respecting single and
+ * double quotes. Escape characters (`\`) work inside double quotes and in
+ * unquoted regions; inside single quotes everything is literal.
+ *
+ * Intentionally does NOT expand shell metacharacters (`&&`, `|`, `;`, `$(...)`,
+ * globs, env vars). Those survive as literal tokens so callers passing the
+ * result to `Bun.spawn([...])` won't trigger shell interpretation.
+ *
+ * Throws on empty input or an unterminated quoted string.
  */
 export function parseCommand(command: string): { executable: string; args: string[] } {
-  const parts = command.split(/\s+/).filter(Boolean);
-  if (parts.length === 0) {
+  const tokens: string[] = [];
+  let current = "";
+  let inSingle = false;
+  let inDouble = false;
+  let hasToken = false; // distinguishes "" from "no token yet"
+
+  for (let i = 0; i < command.length; i++) {
+    const ch = command[i];
+
+    if (inSingle) {
+      if (ch === "'") {
+        inSingle = false;
+      } else {
+        current += ch;
+      }
+      continue;
+    }
+
+    if (inDouble) {
+      if (ch === "\\" && i + 1 < command.length) {
+        const next = command[i + 1];
+        // In POSIX double-quotes, backslash only escapes " \ $ ` and newline.
+        // For any other char, the backslash is preserved literally.
+        if (next === '"' || next === "\\" || next === "$" || next === "`" || next === "\n") {
+          current += next;
+          i++;
+        } else {
+          current += ch;
+        }
+      } else if (ch === '"') {
+        inDouble = false;
+      } else {
+        current += ch;
+      }
+      continue;
+    }
+
+    // Unquoted
+    if (ch === "'") {
+      inSingle = true;
+      hasToken = true;
+    } else if (ch === '"') {
+      inDouble = true;
+      hasToken = true;
+    } else if (ch === "\\" && i + 1 < command.length) {
+      current += command[i + 1];
+      hasToken = true;
+      i++;
+    } else if (/\s/.test(ch)) {
+      if (hasToken) {
+        tokens.push(current);
+        current = "";
+        hasToken = false;
+      }
+    } else {
+      current += ch;
+      hasToken = true;
+    }
+  }
+
+  if (inSingle || inDouble) {
+    throw new Error("Unterminated quoted string in agent command");
+  }
+  if (hasToken) tokens.push(current);
+
+  if (tokens.length === 0) {
     throw new Error("Empty agent command");
   }
-  return { executable: parts[0], args: parts.slice(1) };
+  return { executable: tokens[0], args: tokens.slice(1) };
 }

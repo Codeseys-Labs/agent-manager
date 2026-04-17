@@ -15,6 +15,11 @@
 import { timingSafeEqual } from "node:crypto";
 import { Hono } from "hono";
 import type { ResolvedConfig } from "../../adapters/types";
+// MEDIUM-2 fix: static ESM import instead of a synchronous require() in an
+// ESM file. This module <-> bridge form a cycle (bridge imports TaskHandler
+// and TaskEventEmitter from here), but ESM handles cycles fine provided we
+// only touch the imported binding at call time, not during module init.
+import { createBridgedTaskHandler } from "../bridge";
 import { type GenerateCardOptions, generateAgentCard } from "./generate-card";
 import type {
   A2AJsonRpcRequest,
@@ -38,6 +43,12 @@ const MAX_TASKS = 1000;
 export const MAX_HISTORY_PER_TASK = 100;
 /** Idle timeout for SSE streams in milliseconds (MEDIUM-1 hardening). */
 export const SSE_IDLE_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
+/**
+ * Interval for SSE heartbeat comment frames. Prevents intermediary proxies
+ * (nginx, Cloudflare, corporate LBs) from killing long-running task streams
+ * that would otherwise have no traffic between status updates.
+ */
+export const SSE_HEARTBEAT_INTERVAL_MS = 30 * 1000; // 30 seconds
 /** Tasks in terminal state older than this are eligible for TTL eviction. */
 export const TASK_TTL_MS = 3_600_000; // 1 hour
 
@@ -584,10 +595,9 @@ export function createA2ARoutes(options: A2AServerOptions): Hono {
     bridgeConfig,
   } = options;
 
-  // Determine effective task handler: bridge wraps the base handler when enabled
+  // Determine effective task handler: bridge wraps the base handler when enabled.
   let taskHandler = options.taskHandler ?? defaultTaskHandler;
   if (enableBridge) {
-    const { createBridgedTaskHandler } = require("../bridge") as typeof import("../bridge");
     taskHandler = createBridgedTaskHandler(taskHandler, bridgeConfig);
   }
   const store = externalStore ?? createTaskStore();
@@ -644,12 +654,14 @@ export function createA2ARoutes(options: A2AServerOptions): Hono {
       const stream = new ReadableStream({
         start(controller) {
           let idleTimer: ReturnType<typeof setTimeout> | null = null;
+          let heartbeatTimer: ReturnType<typeof setInterval> | null = null;
           let streamClosed = false;
 
           const cleanup = () => {
             if (streamClosed) return;
             streamClosed = true;
             if (idleTimer) clearTimeout(idleTimer);
+            if (heartbeatTimer) clearInterval(heartbeatTimer);
             emitter.off(task.id, listener);
             try {
               controller.close();
@@ -661,7 +673,8 @@ export function createA2ARoutes(options: A2AServerOptions): Hono {
           const resetIdleTimer = () => {
             if (idleTimer) clearTimeout(idleTimer);
             idleTimer = setTimeout(() => {
-              // MEDIUM-1: close stream after idle timeout
+              // MEDIUM-1: close stream after idle timeout (only real traffic
+              // resets this; heartbeats do not — heartbeat IS the keepalive).
               cleanup();
             }, SSE_IDLE_TIMEOUT_MS);
           };
@@ -673,12 +686,37 @@ export function createA2ARoutes(options: A2AServerOptions): Hono {
             resetIdleTimer();
           };
 
-          // Send initial status
+          // HIGH-1 fix: send SSE comment-line heartbeats so proxies don't
+          // kill the connection during long-running tasks. Comment frames
+          // (`:...\n\n`) are ignored by EventSource but keep the TCP
+          // connection alive. They intentionally do NOT call resetIdleTimer
+          // — the server-side idle timeout still fires if no real events
+          // arrive within SSE_IDLE_TIMEOUT_MS.
+          const sendHeartbeat = () => {
+            if (streamClosed) return;
+            try {
+              controller.enqueue(encoder.encode(":heartbeat\n\n"));
+            } catch {
+              // controller may be closing; let cleanup path handle it
+            }
+          };
+
+          // MEDIUM-2 fix: if the task is already terminal when the stream
+          // starts, the initial frame must carry `final: true` so clients
+          // don't wait for a second status event that will never arrive.
+          const initialFinal = isTerminalState(task.status.state);
           send("status", {
             id: task.id,
             status: task.status,
-            final: false,
+            final: initialFinal,
           } satisfies TaskStatusUpdateEvent);
+
+          if (initialFinal) {
+            cleanup();
+            return;
+          }
+
+          heartbeatTimer = setInterval(sendHeartbeat, SSE_HEARTBEAT_INTERVAL_MS);
 
           const listener: TaskEventListener = (evt) => {
             if (streamClosed) return;
