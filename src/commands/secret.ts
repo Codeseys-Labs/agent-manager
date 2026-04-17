@@ -2,8 +2,8 @@ import { mkdir, readFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { defineCommand } from "citty";
 import { atomicWriteFile } from "../core/atomic-write";
-import { resolveConfigDir, tryReadConfig, writeConfig } from "../core/config";
-import { commitAll, isNothingToCommitError } from "../core/git";
+import { resolveConfigDir, tryReadConfig } from "../core/config";
+import { withConfig } from "../core/controller";
 import {
   formatScanReport,
   redactSecret,
@@ -20,8 +20,8 @@ import {
   resolveKeyPath,
   saveKey,
 } from "../core/secrets";
-import { errorMessage, requireConfig } from "../lib/errors";
-import { amError, error, info, output, warn } from "../lib/output";
+import { requireConfig } from "../lib/errors";
+import { amError, error, info, output } from "../lib/output";
 
 export const secretCommand = defineCommand({
   meta: { name: "secret", description: "Manage encrypted secrets" },
@@ -58,7 +58,6 @@ const setCommand = defineCommand({
     const opts = { json: args.json, quiet: args.quiet, verbose: args.verbose };
     try {
       const configDir = resolveConfigDir();
-      const configPath = join(configDir, "config.toml");
 
       const key = await loadKey(configDir);
       if (!key) {
@@ -67,36 +66,36 @@ const setCommand = defineCommand({
         return;
       }
 
-      const config = await tryReadConfig(configPath);
-      requireConfig(config);
-
       const encrypted = await encryptValue(args.value, key);
 
-      if (args.server) {
-        // Set in server env
-        const server = config.servers?.[args.server];
-        if (!server) {
-          error(`Server "${args.server}" not found.`, opts);
-          process.exitCode = 1;
-          return;
-        }
-        if (!server.env) server.env = {};
-        server.env[args.name] = encrypted;
-      } else {
-        // Set in settings.env (top-level env for profiles/global use)
-        if (!config.settings) config.settings = {};
-        config.settings.env = config.settings.env ?? {};
-        config.settings.env[args.name] = encrypted;
-      }
+      type Outcome = { status: "ok" } | { status: "server-not-found" };
+      const outcome = await withConfig<Outcome>(configDir, async (maybeConfig) => {
+        requireConfig(maybeConfig);
+        const config = maybeConfig;
 
-      await writeConfig(configPath, config);
-
-      try {
-        await commitAll(configDir, `secret: set ${args.name}`);
-      } catch (err) {
-        if (!isNothingToCommitError(err)) {
-          warn(`auto-commit failed: ${errorMessage(err) || "unknown git error"}`, opts);
+        if (args.server) {
+          const server = config.servers?.[args.server];
+          if (!server) {
+            return { result: { status: "server-not-found" }, changed: false };
+          }
+          if (!server.env) server.env = {};
+          server.env[args.name] = encrypted;
+        } else {
+          if (!config.settings) config.settings = {};
+          config.settings.env = config.settings.env ?? {};
+          config.settings.env[args.name] = encrypted;
         }
+        return {
+          result: { status: "ok" },
+          commitMessage: `secret: set ${args.name}`,
+          changed: true,
+        };
+      });
+
+      if (outcome.status === "server-not-found") {
+        error(`Server "${args.server}" not found.`, opts);
+        process.exitCode = 1;
+        return;
       }
 
       info(`Secret "${args.name}" set.`, opts);
@@ -343,51 +342,60 @@ const scanCommand = defineCommand({
         return;
       }
 
-      // Fix mode: substitute and encrypt
+      // Fix mode: substitute and encrypt — do key work before taking the lock.
       let key = await loadKey(configDir);
       if (!key) {
-        // Auto-generate key
         const base64Key = await generateKey();
         await saveKey(configDir, base64Key);
         key = await importKey(base64Key);
         info(`Generated encryption key (stored at ${resolveKeyPath()})`, opts);
       }
+      const encryptionKey = key;
 
-      let substituted = 0;
-      const fixedSecrets: Array<{ server: string; key: string; envVar: string }> = [];
-
-      for (const result of scanResults) {
-        const server = config.servers![result.serverName];
-        if (!server) continue;
-
-        for (const secret of result.secrets) {
-          const envVar = secret.suggestedEnvVar;
-          substituteSecret(server, secret, envVar);
-
-          // Store the original value encrypted in settings.env
-          if (!config.settings) config.settings = {};
-          if (!config.settings.env) config.settings.env = {};
-          config.settings.env[envVar] = await encryptValue(secret.value, key);
-
-          fixedSecrets.push({
-            server: result.serverName,
-            key: secret.key ?? `args[${secret.index}]`,
-            envVar,
-          });
-          substituted++;
-        }
+      interface FixResult {
+        substituted: number;
+        fixedSecrets: Array<{ server: string; key: string; envVar: string }>;
       }
 
-      await writeConfig(configPath, config);
+      const fixOutcome = await withConfig<FixResult>(configDir, async (maybeConfig) => {
+        requireConfig(maybeConfig);
+        const config = maybeConfig;
+        let substituted = 0;
+        const fixedSecrets: Array<{ server: string; key: string; envVar: string }> = [];
 
-      try {
-        await commitAll(configDir, `secret: auto-encrypt ${substituted} secret(s)`);
-      } catch (err) {
-        if (!isNothingToCommitError(err)) {
-          warn(`auto-commit failed: ${errorMessage(err) || "unknown git error"}`, opts);
+        // Re-scan inside the lock so we operate on the current state.
+        const freshScan = config.servers ? await scanConfigForSecrets(config.servers) : [];
+
+        for (const result of freshScan) {
+          const server = config.servers![result.serverName];
+          if (!server) continue;
+
+          for (const secret of result.secrets) {
+            const envVar = secret.suggestedEnvVar;
+            substituteSecret(server, secret, envVar);
+
+            if (!config.settings) config.settings = {};
+            if (!config.settings.env) config.settings.env = {};
+            config.settings.env[envVar] = await encryptValue(secret.value, encryptionKey);
+
+            fixedSecrets.push({
+              server: result.serverName,
+              key: secret.key ?? `args[${secret.index}]`,
+              envVar,
+            });
+            substituted++;
+          }
         }
-      }
 
+        return {
+          result: { substituted, fixedSecrets },
+          commitMessage:
+            substituted > 0 ? `secret: auto-encrypt ${substituted} secret(s)` : undefined,
+          changed: substituted > 0,
+        };
+      });
+
+      const { substituted, fixedSecrets } = fixOutcome;
       if (args.json) {
         output({ action: "scan-fix", substituted, fixed: fixedSecrets }, opts);
       } else {

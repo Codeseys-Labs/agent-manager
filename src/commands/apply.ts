@@ -1,16 +1,8 @@
-import { join } from "node:path";
 import { defineCommand } from "citty";
-import { getAdapter, getDetectedAdapters, listAdapters } from "../adapters/registry";
-import {
-  buildResolvedConfig,
-  loadResolvedConfig,
-  resolveConfigDir,
-  resolveProjectConfig,
-} from "../core/config";
-import { interpolateEnvAsync, loadKey } from "../core/secrets";
-import { AmError, errorMessage } from "../lib/errors";
-import { amError, debug, error, info, output, warn } from "../lib/output";
-import { readActiveProfile } from "./use";
+import { resolveConfigDir } from "../core/config";
+import { applyResolved } from "../core/controller";
+import { AmError } from "../lib/errors";
+import { amError, info, output, warn } from "../lib/output";
 
 export const applyCommand = defineCommand({
   meta: { name: "apply", description: "Generate native configs for detected tools" },
@@ -28,12 +20,19 @@ export const applyCommand = defineCommand({
     const opts = { json: args.json, quiet: args.quiet, verbose: args.verbose };
     try {
       const configDir = resolveConfigDir();
-      const projectFile = resolveProjectConfig(process.cwd());
 
-      let config;
+      let applyResult;
       try {
-        config = await loadResolvedConfig({ configDir, projectFile });
-      } catch {
+        applyResult = await applyResolved(configDir, {
+          dryRun: args["dry-run"],
+          target: args.target,
+          profile: args.profile,
+        });
+      } catch (err) {
+        if (err instanceof Error && err.message.includes("not found")) {
+          // Adapter-not-found bubbles up from `applyResolved`.
+          throw new AmError(err.message, err.message, "ADAPTER_NOT_FOUND");
+        }
         throw new AmError(
           "Config not found",
           "Run `am init` to initialize agent-manager",
@@ -41,136 +40,58 @@ export const applyCommand = defineCommand({
         );
       }
 
-      // Determine profile
-      const profileName =
-        args.profile ??
-        (await readActiveProfile(configDir)) ??
-        config.settings?.default_profile ??
-        "default";
-
-      // Decrypt encrypted values before building resolved config
-      const encryptionKey = await loadKey(configDir);
-      const { config: interpolated, warnings: interpWarnings } = await interpolateEnvAsync(config, {
-        encryptionKey: encryptionKey ?? undefined,
-      });
-      for (const w of interpWarnings) {
-        debug(`interpolation: ${w}`, opts);
-      }
-
-      const resolved = buildResolvedConfig(interpolated, profileName, configDir);
-
-      // Find adapters to apply
-      let adapters;
-      if (args.target) {
-        const adapter = await getAdapter(args.target);
-        if (!adapter) {
-          const available = listAdapters();
-          throw new AmError(
-            `Adapter "${args.target}" not found`,
-            `Available adapters: ${available.join(", ")}`,
-            "ADAPTER_NOT_FOUND",
-          );
-        }
-        adapters = [adapter];
-      } else {
-        adapters = await getDetectedAdapters();
-      }
-
-      if (adapters.length === 0) {
+      const total = applyResult.results.length;
+      if (total === 0) {
         info("No tools detected. Nothing to apply.", opts);
         return;
       }
 
-      const results: Array<{
-        adapter: string;
-        files: Array<{ path: string; written: boolean }>;
-        warnings: string[];
-      }> = [];
-      const succeeded: string[] = [];
-      const failed: Array<{ adapter: string; error: string }> = [];
-      const skipped: string[] = [];
-
-      for (const adapter of adapters) {
-        debug(`Applying to ${adapter.meta.displayName}...`, opts);
-
-        if (args.diff) {
-          try {
-            const diffResult = await adapter.diff(resolved);
-            if (diffResult.status === "in-sync") {
-              info(`${adapter.meta.displayName}: in sync`, opts);
-            } else {
-              info(`${adapter.meta.displayName}: ${diffResult.changes.length} change(s)`, opts);
-              for (const change of diffResult.changes) {
-                info(`  ${change.type}: ${change.entity} "${change.name}"`, opts);
-              }
-            }
-          } catch {
-            debug(`${adapter.meta.displayName}: diff not available`, opts);
+      // Per-adapter reporting stays at the surface — controller returns the
+      // structured result, CLI formats it for the terminal.
+      for (const res of applyResult.results) {
+        const written = res.files.filter((f) => f.written).length;
+        if (res.error) {
+          warn(`${res.adapter}: ${res.error}`, opts);
+          continue;
+        }
+        if (!args["dry-run"]) {
+          info(`${res.adapter}: wrote ${written} file(s)`, opts);
+        } else {
+          info(`${res.adapter}: would write ${res.files.length} file(s)`, opts);
+          for (const f of res.files) {
+            info(`  ${f.path}`, opts);
           }
         }
-
-        try {
-          const result = await adapter.export(resolved, {
-            projectPath: projectFile ? join(projectFile, "..") : undefined,
-            dryRun: args["dry-run"],
-          });
-
-          results.push({
-            adapter: adapter.meta.name,
-            files: result.files.map((f) => ({ path: f.path, written: f.written })),
-            warnings: result.warnings,
-          });
-          succeeded.push(adapter.meta.name);
-
-          if (!args["dry-run"]) {
-            info(
-              `${adapter.meta.displayName}: wrote ${result.files.filter((f) => f.written).length} file(s)`,
-              opts,
-            );
-          } else {
-            info(`${adapter.meta.displayName}: would write ${result.files.length} file(s)`, opts);
-            for (const f of result.files) {
-              info(`  ${f.path}`, opts);
-            }
-          }
-
-          for (const w of result.warnings) {
-            warn(`${adapter.meta.displayName}: ${w}`, opts);
-          }
-        } catch (e: unknown) {
-          const msg = errorMessage(e) || "export failed";
-          warn(`${adapter.meta.displayName}: ${msg}`, opts);
-          results.push({ adapter: adapter.meta.name, files: [], warnings: [msg] });
-          failed.push({ adapter: adapter.meta.name, error: msg });
+        for (const w of res.warnings) {
+          warn(`${res.adapter}: ${w}`, opts);
         }
       }
 
-      // Final summary line — always visible (stdout when non-JSON, included
-      // in the JSON envelope under --json).
-      const total = adapters.length;
-      if (failed.length > 0) {
-        const failedNames = failed.map((f) => f.adapter).join(", ");
+      if (applyResult.failed.length > 0) {
+        const failedNames = applyResult.failed.map((f) => f.adapter).join(", ");
         info(
-          `Applied to ${succeeded.length} of ${total} adapters. ${failed.length} failed: [${failedNames}].`,
+          `Applied to ${applyResult.succeeded.length} of ${total} adapters. ${applyResult.failed.length} failed: [${failedNames}].`,
           opts,
         );
-        // Partial failures must surface to scripting callers — set a non-zero
-        // exit code even though individual per-adapter failures were caught.
         process.exitCode = 1;
       } else {
-        info(`Applied to ${succeeded.length} of ${total} adapters.`, opts);
+        info(`Applied to ${applyResult.succeeded.length} of ${total} adapters.`, opts);
       }
 
       if (args.json) {
         output(
           {
             action: "apply",
-            profile: profileName,
+            profile: applyResult.profile,
             dryRun: args["dry-run"],
-            results,
-            succeeded: succeeded.length,
-            failed,
-            skipped,
+            results: applyResult.results.map((r) => ({
+              adapter: r.adapter,
+              files: r.files,
+              warnings: r.warnings,
+            })),
+            succeeded: applyResult.succeeded.length,
+            failed: applyResult.failed,
+            skipped: applyResult.skipped,
           },
           opts,
         );

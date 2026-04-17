@@ -1,8 +1,8 @@
 import { access, readFile, stat } from "node:fs/promises";
 import { isAbsolute, join, resolve as resolvePath } from "node:path";
 import { defineCommand } from "citty";
-import { resolveConfigDir, tryReadConfig, writeConfig } from "../core/config";
-import { commitAll, isNothingToCommitError } from "../core/git";
+import { resolveConfigDir } from "../core/config";
+import { withConfig } from "../core/controller";
 import type { AgentProfile, Instruction, Server, Skill } from "../core/schema";
 import { scanServerForSecrets, substituteSecret } from "../core/secret-detection";
 import {
@@ -13,8 +13,8 @@ import {
   resolveKeyPath,
   saveKey,
 } from "../core/secrets";
-import { errorMessage, requireConfig } from "../lib/errors";
-import { amError, error, info, output, warn } from "../lib/output";
+import { requireConfig } from "../lib/errors";
+import { amError, error, info, output } from "../lib/output";
 
 const ENTITY_TYPES = ["server", "instruction", "skill", "agent"] as const;
 type EntityType = (typeof ENTITY_TYPES)[number];
@@ -128,7 +128,6 @@ async function addServer(
   opts: { json?: boolean; quiet?: boolean; verbose?: boolean },
 ) {
   const configDir = resolveConfigDir();
-  const configPath = join(configDir, "config.toml");
 
   if (!args.command) {
     error("Missing --command. Usage: am add server <name> --command <cmd>", opts);
@@ -136,75 +135,89 @@ async function addServer(
     return;
   }
 
-  const config = await tryReadConfig(configPath);
-  requireConfig(config);
+  type Outcome =
+    | { status: "ok"; server: Server; secretsEncrypted: number; tagStr: string }
+    | { status: "duplicate" }
+    | { status: "missing-config" };
 
-  // Check for duplicate
-  if (config.servers?.[name]) {
+  const outcome = await withConfig<Outcome>(configDir, async (config) => {
+    // requireConfig would throw if the config was empty (no file at all).
+    // Preserve that behavior by bailing out explicitly.
+    if (!config) {
+      return { result: { status: "missing-config" }, changed: false };
+    }
+
+    if (config.servers?.[name]) {
+      return { result: { status: "duplicate" }, changed: false };
+    }
+
+    const server: Server = {
+      command: args.command as string,
+      transport: "stdio",
+      enabled: true,
+    };
+    if (args.args) server.args = (args.args as string).split(",").map((s) => s.trim());
+    if (args.tags) server.tags = (args.tags as string).split(",").map((s) => s.trim());
+    if (args.description) server.description = args.description as string;
+    if (args.env) {
+      server.env = {};
+      for (const pair of (args.env as string).split(",")) {
+        const [k, ...rest] = pair.split("=");
+        if (k && rest.length > 0) server.env[k.trim()] = rest.join("=").trim();
+      }
+    }
+
+    if (!config.servers) config.servers = {};
+    config.servers[name] = server;
+
+    // Scan for secrets and auto-encrypt before writing
+    const scanResult = await scanServerForSecrets(name, server);
+    let secretsEncrypted = 0;
+    const actionableSecrets = scanResult.secrets;
+
+    if (actionableSecrets.length > 0) {
+      let key = await loadKey(configDir);
+      if (!key) {
+        const base64Key = await generateKey();
+        await saveKey(configDir, base64Key);
+        key = await importKey(base64Key);
+        info(`Generated encryption key (stored at ${resolveKeyPath()})`, opts);
+      }
+
+      for (const secret of actionableSecrets) {
+        substituteSecret(server, secret, secret.suggestedEnvVar);
+        if (!config.settings) config.settings = {};
+        if (!config.settings.env) config.settings.env = {};
+        config.settings.env[secret.suggestedEnvVar] = await encryptValue(secret.value, key);
+        secretsEncrypted++;
+      }
+    }
+
+    const tagStr = server.tags?.length ? ` (${server.tags.join(", ")})` : "";
+    return {
+      result: { status: "ok", server, secretsEncrypted, tagStr },
+      commitMessage: `add server: ${name}${tagStr}`,
+      changed: true,
+    };
+  });
+
+  if (outcome.status === "missing-config") {
+    // Re-run requireConfig to surface the canonical "config not found" error.
+    requireConfig(null);
+    return;
+  }
+  if (outcome.status === "duplicate") {
     error(`Server "${name}" already exists. Remove it first or use a different name.`, opts);
     process.exitCode = 1;
     return;
   }
 
-  // Build server entry
-  const server: Server = {
-    command: args.command as string,
-    transport: "stdio",
-    enabled: true,
-  };
-  if (args.args) server.args = (args.args as string).split(",").map((s) => s.trim());
-  if (args.tags) server.tags = (args.tags as string).split(",").map((s) => s.trim());
-  if (args.description) server.description = args.description as string;
-  if (args.env) {
-    server.env = {};
-    for (const pair of (args.env as string).split(",")) {
-      const [k, ...rest] = pair.split("=");
-      if (k && rest.length > 0) server.env[k.trim()] = rest.join("=").trim();
-    }
-  }
-
-  // Add to config
-  if (!config.servers) config.servers = {};
-  config.servers[name] = server;
-
-  // Scan for secrets and auto-encrypt before writing
-  const scanResult = await scanServerForSecrets(name, server);
-  let secretsEncrypted = 0;
-  const actionableSecrets = scanResult.secrets;
-
-  if (actionableSecrets.length > 0) {
-    let key = await loadKey(configDir);
-    if (!key) {
-      const base64Key = await generateKey();
-      await saveKey(configDir, base64Key);
-      key = await importKey(base64Key);
-      info(`Generated encryption key (stored at ${resolveKeyPath()})`, opts);
-    }
-
-    for (const secret of actionableSecrets) {
-      substituteSecret(server, secret, secret.suggestedEnvVar);
-      if (!config.settings) config.settings = {};
-      if (!config.settings.env) config.settings.env = {};
-      config.settings.env[secret.suggestedEnvVar] = await encryptValue(secret.value, key);
-      secretsEncrypted++;
-    }
-  }
-
-  await writeConfig(configPath, config);
-
-  // Auto-commit
-  const tagStr = server.tags?.length ? ` (${server.tags.join(", ")})` : "";
-  try {
-    await commitAll(configDir, `add server: ${name}${tagStr}`);
-  } catch (err) {
-    if (!isNothingToCommitError(err)) {
-      warn(`auto-commit failed: ${errorMessage(err) || "unknown git error"}`, opts);
-    }
-  }
-
   info(`Added server "${name}"`, opts);
-  if (secretsEncrypted > 0 && !args.json) {
-    info(`  Encrypted ${secretsEncrypted} secret(s) — values use \${VAR} references now.`, opts);
+  if (outcome.secretsEncrypted > 0 && !args.json) {
+    info(
+      `  Encrypted ${outcome.secretsEncrypted} secret(s) — values use \${VAR} references now.`,
+      opts,
+    );
   }
 
   if (args.json) {
@@ -213,8 +226,8 @@ async function addServer(
         action: "add",
         entity: "server",
         name,
-        config: server,
-        secretsEncrypted: secretsEncrypted > 0 ? secretsEncrypted : undefined,
+        config: outcome.server,
+        secretsEncrypted: outcome.secretsEncrypted > 0 ? outcome.secretsEncrypted : undefined,
       },
       opts,
     );
@@ -227,7 +240,6 @@ async function addInstruction(
   opts: { json?: boolean; quiet?: boolean; verbose?: boolean },
 ) {
   const configDir = resolveConfigDir();
-  const configPath = join(configDir, "config.toml");
 
   const content = args.content as string | undefined;
   const contentFile = args["content-file"] as string | undefined;
@@ -255,41 +267,53 @@ async function addInstruction(
     return;
   }
 
-  const config = await tryReadConfig(configPath);
-  requireConfig(config);
+  type Outcome =
+    | { status: "ok"; instruction: Instruction }
+    | { status: "duplicate" }
+    | { status: "missing-config" };
 
-  if (config.instructions?.[name]) {
+  const outcome = await withConfig<Outcome>(configDir, async (config) => {
+    if (!config) {
+      return { result: { status: "missing-config" }, changed: false };
+    }
+    if (config.instructions?.[name]) {
+      return { result: { status: "duplicate" }, changed: false };
+    }
+
+    const instruction: Instruction = {
+      scope: scope as Instruction["scope"],
+      ...(content ? { content } : {}),
+      ...(contentFile ? { content_file: contentFile } : {}),
+    };
+    if (args.description) instruction.description = args.description as string;
+    if (args.globs) instruction.globs = (args.globs as string).split(",").map((s) => s.trim());
+    if (args.targets)
+      instruction.targets = (args.targets as string).split(",").map((s) => s.trim());
+
+    if (!config.instructions) config.instructions = {};
+    config.instructions[name] = instruction;
+
+    return {
+      result: { status: "ok", instruction },
+      commitMessage: `add instruction: ${name}`,
+      changed: true,
+    };
+  });
+
+  if (outcome.status === "missing-config") {
+    requireConfig(null);
+    return;
+  }
+  if (outcome.status === "duplicate") {
     error(`Instruction "${name}" already exists. Remove it first or use a different name.`, opts);
     process.exitCode = 1;
     return;
   }
 
-  const instruction: Instruction = {
-    scope: scope as Instruction["scope"],
-    ...(content ? { content } : {}),
-    ...(contentFile ? { content_file: contentFile } : {}),
-  };
-  if (args.description) instruction.description = args.description as string;
-  if (args.globs) instruction.globs = (args.globs as string).split(",").map((s) => s.trim());
-  if (args.targets) instruction.targets = (args.targets as string).split(",").map((s) => s.trim());
-
-  if (!config.instructions) config.instructions = {};
-  config.instructions[name] = instruction;
-
-  await writeConfig(configPath, config);
-
-  try {
-    await commitAll(configDir, `add instruction: ${name}`);
-  } catch (err) {
-    if (!isNothingToCommitError(err)) {
-      warn(`auto-commit failed: ${errorMessage(err) || "unknown git error"}`, opts);
-    }
-  }
-
   info(`Added instruction "${name}" (scope: ${scope})`, opts);
 
   if (args.json) {
-    output({ action: "add", entity: "instruction", name, config: instruction }, opts);
+    output({ action: "add", entity: "instruction", name, config: outcome.instruction }, opts);
   }
 }
 
@@ -367,7 +391,6 @@ async function addSkill(
   opts: { json?: boolean; quiet?: boolean; verbose?: boolean },
 ) {
   const configDir = resolveConfigDir();
-  const configPath = join(configDir, "config.toml");
 
   const pathArg = args.path as string | undefined;
   const sourceArg = args.source as string | undefined;
@@ -423,44 +446,55 @@ async function addSkill(
     return;
   }
 
-  const config = await tryReadConfig(configPath);
-  requireConfig(config);
-
-  if (config.skills?.[name]) {
-    error(`Skill "${name}" already exists. Remove it first or use a different name.`, opts);
-    process.exitCode = 1;
-    return;
-  }
-
   // Derive description: explicit --description > SKILL.md frontmatter/first line > placeholder
   let description = args.description as string | undefined;
   if (!description) description = await readSkillDescription(skillMd);
   if (!description) description = `Skill: ${name}`;
 
-  const skill: Skill = {
-    path: skillPath,
-    description,
-  };
-  if (args.tags) skill.tags = (args.tags as string).split(",").map((s) => s.trim());
+  type Outcome =
+    | { status: "ok"; skill: Skill }
+    | { status: "duplicate" }
+    | { status: "missing-config" };
 
-  if (!config.skills) config.skills = {};
-  config.skills[name] = skill;
-
-  await writeConfig(configPath, config);
-
-  try {
-    await commitAll(configDir, `add skill: ${name}`);
-  } catch (err) {
-    if (!isNothingToCommitError(err)) {
-      warn(`auto-commit failed: ${errorMessage(err) || "unknown git error"}`, opts);
+  const outcome = await withConfig<Outcome>(configDir, async (config) => {
+    if (!config) {
+      return { result: { status: "missing-config" }, changed: false };
     }
+    if (config.skills?.[name]) {
+      return { result: { status: "duplicate" }, changed: false };
+    }
+
+    const skill: Skill = {
+      path: skillPath,
+      description,
+    };
+    if (args.tags) skill.tags = (args.tags as string).split(",").map((s) => s.trim());
+
+    if (!config.skills) config.skills = {};
+    config.skills[name] = skill;
+
+    return {
+      result: { status: "ok", skill },
+      commitMessage: `add skill: ${name}`,
+      changed: true,
+    };
+  });
+
+  if (outcome.status === "missing-config") {
+    requireConfig(null);
+    return;
+  }
+  if (outcome.status === "duplicate") {
+    error(`Skill "${name}" already exists. Remove it first or use a different name.`, opts);
+    process.exitCode = 1;
+    return;
   }
 
   info(`Added skill "${name}"`, opts);
   info(`Skill '${name}' added. Run \`am apply\` to generate native configs.`, opts);
 
   if (args.json) {
-    output({ action: "add", entity: "skill", name, config: skill }, opts);
+    output({ action: "add", entity: "skill", name, config: outcome.skill }, opts);
   }
 }
 
@@ -470,7 +504,6 @@ async function addAgent(
   opts: { json?: boolean; quiet?: boolean; verbose?: boolean },
 ) {
   const configDir = resolveConfigDir();
-  const configPath = join(configDir, "config.toml");
 
   const promptFile = args["prompt-file"] as string | undefined;
   const acpCommand = args.acp as string | undefined;
@@ -498,42 +531,53 @@ async function addAgent(
     }
   }
 
-  const config = await tryReadConfig(configPath);
-  requireConfig(config);
+  type Outcome =
+    | { status: "ok"; agent: AgentProfile }
+    | { status: "duplicate" }
+    | { status: "missing-config" };
 
-  if (config.agents?.[name]) {
+  const outcome = await withConfig<Outcome>(configDir, async (config) => {
+    if (!config) {
+      return { result: { status: "missing-config" }, changed: false };
+    }
+    if (config.agents?.[name]) {
+      return { result: { status: "duplicate" }, changed: false };
+    }
+
+    const agent: AgentProfile = { name };
+    if (description) agent.description = description;
+    if (promptFile) {
+      const resolved = isAbsolute(promptFile) ? promptFile : resolvePath(promptFile);
+      agent.prompt_file = resolved;
+    }
+    if (model) agent.model = model;
+    if (acpCommand) agent.acp = { command: acpCommand };
+    if (a2aUrl) agent.a2a = { url: a2aUrl };
+
+    if (!config.agents) config.agents = {};
+    config.agents[name] = agent;
+
+    return {
+      result: { status: "ok", agent },
+      commitMessage: `add agent: ${name}`,
+      changed: true,
+    };
+  });
+
+  if (outcome.status === "missing-config") {
+    requireConfig(null);
+    return;
+  }
+  if (outcome.status === "duplicate") {
     error(`Agent "${name}" already exists. Remove it first or use a different name.`, opts);
     process.exitCode = 1;
     return;
-  }
-
-  const agent: AgentProfile = { name };
-  if (description) agent.description = description;
-  if (promptFile) {
-    const resolved = isAbsolute(promptFile) ? promptFile : resolvePath(promptFile);
-    agent.prompt_file = resolved;
-  }
-  if (model) agent.model = model;
-  if (acpCommand) agent.acp = { command: acpCommand };
-  if (a2aUrl) agent.a2a = { url: a2aUrl };
-
-  if (!config.agents) config.agents = {};
-  config.agents[name] = agent;
-
-  await writeConfig(configPath, config);
-
-  try {
-    await commitAll(configDir, `add agent: ${name}`);
-  } catch (err) {
-    if (!isNothingToCommitError(err)) {
-      warn(`auto-commit failed: ${errorMessage(err) || "unknown git error"}`, opts);
-    }
   }
 
   info(`Added agent "${name}"`, opts);
   info(`Agent '${name}' added. Run \`am apply\` to generate native configs.`, opts);
 
   if (args.json) {
-    output({ action: "add", entity: "agent", name, config: agent }, opts);
+    output({ action: "add", entity: "agent", name, config: outcome.agent }, opts);
   }
 }

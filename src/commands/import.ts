@@ -1,9 +1,8 @@
-import { join } from "node:path";
 import { defineCommand } from "citty";
 import { getAdapter, getDetectedAdapters, listAdapters } from "../adapters/registry";
 import type { Adapter, ImportedServer, MarketplaceItem } from "../adapters/types";
-import { resolveConfigDir, tryReadConfig, writeConfig } from "../core/config";
-import { commitAll, isNothingToCommitError } from "../core/git";
+import { resolveConfigDir } from "../core/config";
+import { withConfig } from "../core/controller";
 import { type MergeStrategy, type ServerConflict, runMergePipeline } from "../core/merge";
 import type { MarketplaceProvenance } from "../core/schema";
 import {
@@ -71,6 +70,23 @@ export function extractServerIdentity(command: string, args?: string[]): string 
   return command;
 }
 
+interface ImportOutcome {
+  totalImported: number;
+  totalDuplicates: number;
+  totalMerged: number;
+  allWarnings: string[];
+  allConflicts: ServerConflict[];
+  totalEncrypted: number;
+  isBrownfield: boolean;
+  existingServerCount: number;
+  scanResults: SecretScanResult[];
+  totalMarketplaceServers: number;
+  totalMarketplaceSkills: number;
+  allMarketplaceItems: MarketplaceItem[];
+  reportOnly: boolean;
+  unencryptedScanReport?: string;
+}
+
 export const importCommand = defineCommand({
   meta: { name: "import", description: "Import servers from a tool's native config" },
   args: {
@@ -107,13 +123,9 @@ export const importCommand = defineCommand({
     const opts = { json: args.json, quiet: args.quiet, verbose: args.verbose };
     try {
       const configDir = resolveConfigDir();
-      const configPath = join(configDir, "config.toml");
 
-      const config = await tryReadConfig(configPath);
-      requireConfig(config);
-
-      // Determine which adapters to import from
-      let adapters;
+      // Determine which adapters to import from (validation, no config needed).
+      let adapters: Adapter[];
       if (args.source === "auto") {
         adapters = await getDetectedAdapters();
         if (adapters.length === 0) {
@@ -133,176 +145,66 @@ export const importCommand = defineCommand({
         adapters = [adapter];
       }
 
-      let totalImported = 0;
-      let totalDuplicates = 0;
-      let totalMerged = 0;
-      const allWarnings: string[] = [];
-      const allConflicts: ServerConflict[] = [];
+      const outcome = await withConfig<ImportOutcome>(configDir, async (maybeConfig) => {
+        requireConfig(maybeConfig);
+        const config = maybeConfig;
 
-      if (!config.servers) config.servers = {};
-      const isBrownfield = Object.keys(config.servers).length > 0;
-      const mergeStrategy: MergeStrategy = args.auto ? "auto" : "auto";
+        let totalImported = 0;
+        let totalDuplicates = 0;
+        let totalMerged = 0;
+        const allWarnings: string[] = [];
+        const allConflicts: ServerConflict[] = [];
+        let totalEncrypted = 0;
+        let totalMarketplaceServers = 0;
+        let totalMarketplaceSkills = 0;
+        const allMarketplaceItems: MarketplaceItem[] = [];
+        let scanResults: SecretScanResult[] = [];
+        let unencryptedScanReport: string | undefined;
 
-      for (const adapter of adapters) {
-        debug(`Importing from ${adapter.meta.displayName}...`, opts);
+        if (!config.servers) config.servers = {};
+        const isBrownfield = Object.keys(config.servers).length > 0;
+        const existingServerCount = Object.keys(config.servers).length;
+        const mergeStrategy: MergeStrategy = args.auto ? "auto" : "auto";
 
-        let result;
-        try {
-          result = await adapter.import({ projectPath: process.cwd() });
-        } catch (e: unknown) {
-          const msg = errorMessage(e) || "import failed";
-          info(`${adapter.meta.displayName}: ${msg}`, opts);
-          allWarnings.push(`${adapter.meta.name}: ${msg}`);
-          continue;
-        }
+        for (const adapter of adapters) {
+          debug(`Importing from ${adapter.meta.displayName}...`, opts);
 
-        allWarnings.push(...result.warnings.map((w) => `${adapter.meta.name}: ${w}`));
-
-        if (isBrownfield) {
-          // Brownfield: run merge pipeline (ADR-0028)
-          const mergeResult = runMergePipeline(
-            config.servers,
-            result.servers,
-            mergeStrategy,
-            adapter.meta.name,
-          );
-
-          // Report mode — collect but don't apply
-          if (args.report) {
-            allConflicts.push(...mergeResult.conflicts);
-            totalDuplicates += mergeResult.skipped.length;
-            totalImported += mergeResult.added.length;
-            totalMerged += mergeResult.merged.length;
+          let result;
+          try {
+            result = await adapter.import({ projectPath: process.cwd() });
+          } catch (e: unknown) {
+            const msg = errorMessage(e) || "import failed";
+            info(`${adapter.meta.displayName}: ${msg}`, opts);
+            allWarnings.push(`${adapter.meta.name}: ${msg}`);
             continue;
           }
 
-          // Apply merged servers
-          for (const m of mergeResult.merged) {
-            config.servers[m.name] = m.server;
-            totalMerged++;
-          }
+          allWarnings.push(...result.warnings.map((w) => `${adapter.meta.name}: ${w}`));
 
-          // Add new servers
-          for (const srv of mergeResult.added) {
-            config.servers[srv.name] = {
-              command: srv.command,
-              args: srv.args,
-              env: srv.env,
-              transport: srv.transport ?? "stdio",
-              description: srv.description,
-              tags: srv.tags,
-              enabled: srv.enabled ?? true,
-            };
-            totalImported++;
-          }
-
-          // Track skipped (identical)
-          for (const s of mergeResult.skipped) {
-            debug(
-              `Skipping "${s.incomingServer.name}" — identical to "${s.existingName}" (identity: ${s.identity})`,
-              opts,
+          if (isBrownfield) {
+            // Brownfield: run merge pipeline (ADR-0028)
+            const mergeResult = runMergePipeline(
+              config.servers,
+              result.servers,
+              mergeStrategy,
+              adapter.meta.name,
             );
-            totalDuplicates++;
-          }
 
-          // Track unresolved conflicts (fuzzy matches in auto mode)
-          for (const c of mergeResult.conflicts) {
-            const reason = c.match.fuzzyReason ? ` (fuzzy: ${c.match.fuzzyReason})` : "";
-            allWarnings.push(
-              `${adapter.meta.name}: conflict skipped — "${c.match.incomingServer.name}" vs "${c.match.existingName}"${reason}`,
-            );
-            allConflicts.push(c);
-          }
-        } else {
-          // Greenfield: original append behavior (no merge phase)
-          const existingIdentities = new Map<string, string>();
-          for (const [name, srv] of Object.entries(config.servers)) {
-            const identity = extractServerIdentity(srv.command, srv.args);
-            existingIdentities.set(identity, name);
-          }
-
-          for (const srv of result.servers) {
-            const identity = extractServerIdentity(srv.command, srv.args);
-            const existingName = existingIdentities.get(identity);
-
-            if (existingName) {
-              debug(
-                `Skipping "${srv.name}" — duplicate of "${existingName}" (identity: ${identity})`,
-                opts,
-              );
-              totalDuplicates++;
+            if (args.report) {
+              allConflicts.push(...mergeResult.conflicts);
+              totalDuplicates += mergeResult.skipped.length;
+              totalImported += mergeResult.added.length;
+              totalMerged += mergeResult.merged.length;
               continue;
             }
 
-            config.servers[srv.name] = {
-              command: srv.command,
-              args: srv.args,
-              env: srv.env,
-              transport: srv.transport ?? "stdio",
-              description: srv.description,
-              tags: srv.tags,
-              enabled: srv.enabled ?? true,
-            };
-            existingIdentities.set(identity, srv.name);
-            totalImported++;
-          }
-        }
-      }
-
-      // Marketplace scanning (--marketplace flag)
-      let totalMarketplaceServers = 0;
-      let totalMarketplaceSkills = 0;
-      const allMarketplaceItems: MarketplaceItem[] = [];
-      if (args.marketplace) {
-        for (const adapter of adapters) {
-          if (!adapter.scanMarketplace) continue;
-
-          debug(`Scanning marketplace for ${adapter.meta.displayName}...`, opts);
-          let mpResult;
-          try {
-            mpResult = adapter.scanMarketplace();
-          } catch (e: unknown) {
-            const msg = errorMessage(e) || "marketplace scan failed";
-            allWarnings.push(`${adapter.meta.name} marketplace: ${msg}`);
-            continue;
-          }
-
-          allWarnings.push(
-            ...mpResult.warnings.map((w) => `${adapter.meta.name} marketplace: ${w}`),
-          );
-
-          for (const item of mpResult.items) {
-            allMarketplaceItems.push(item);
-
-            // Build identity map of existing servers for dedup
-            const existingIdentities = new Map<string, string>();
-            for (const [name, srv] of Object.entries(config.servers!)) {
-              const identity = extractServerIdentity(srv.command, srv.args);
-              existingIdentities.set(identity, name);
+            for (const m of mergeResult.merged) {
+              config.servers[m.name] = m.server;
+              totalMerged++;
             }
 
-            for (const srv of item.servers) {
-              const identity = extractServerIdentity(srv.command, srv.args);
-              const existingName = existingIdentities.get(identity);
-
-              if (existingName) {
-                debug(
-                  `Skipping marketplace server "${srv.name}" from ${item.id} — duplicate of "${existingName}"`,
-                  opts,
-                );
-                totalDuplicates++;
-                continue;
-              }
-
-              const provenance: MarketplaceProvenance = {
-                source: item.source,
-                package: item.id,
-                version: item.version,
-                imported_at: new Date().toISOString(),
-                install_path: item.metadata.installPath,
-              };
-
-              config.servers![srv.name] = {
+            for (const srv of mergeResult.added) {
+              config.servers[srv.name] = {
                 command: srv.command,
                 args: srv.args,
                 env: srv.env,
@@ -310,53 +212,224 @@ export const importCommand = defineCommand({
                 description: srv.description,
                 tags: srv.tags,
                 enabled: srv.enabled ?? true,
-                _marketplace: provenance,
+              };
+              totalImported++;
+            }
+
+            for (const s of mergeResult.skipped) {
+              debug(
+                `Skipping "${s.incomingServer.name}" — identical to "${s.existingName}" (identity: ${s.identity})`,
+                opts,
+              );
+              totalDuplicates++;
+            }
+
+            for (const c of mergeResult.conflicts) {
+              const reason = c.match.fuzzyReason ? ` (fuzzy: ${c.match.fuzzyReason})` : "";
+              allWarnings.push(
+                `${adapter.meta.name}: conflict skipped — "${c.match.incomingServer.name}" vs "${c.match.existingName}"${reason}`,
+              );
+              allConflicts.push(c);
+            }
+          } else {
+            // Greenfield: original append behavior (no merge phase)
+            const existingIdentities = new Map<string, string>();
+            for (const [name, srv] of Object.entries(config.servers)) {
+              const identity = extractServerIdentity(srv.command, srv.args);
+              existingIdentities.set(identity, name);
+            }
+
+            for (const srv of result.servers) {
+              const identity = extractServerIdentity(srv.command, srv.args);
+              const existingName = existingIdentities.get(identity);
+
+              if (existingName) {
+                debug(
+                  `Skipping "${srv.name}" — duplicate of "${existingName}" (identity: ${identity})`,
+                  opts,
+                );
+                totalDuplicates++;
+                continue;
+              }
+
+              config.servers[srv.name] = {
+                command: srv.command,
+                args: srv.args,
+                env: srv.env,
+                transport: srv.transport ?? "stdio",
+                description: srv.description,
+                tags: srv.tags,
+                enabled: srv.enabled ?? true,
               };
               existingIdentities.set(identity, srv.name);
               totalImported++;
-              totalMarketplaceServers++;
             }
-
-            totalMarketplaceSkills += item.skills.length;
           }
         }
 
-        if (allMarketplaceItems.length > 0 && !args.json) {
-          info("", opts);
+        // Marketplace scanning (--marketplace flag)
+        if (args.marketplace) {
           for (const adapter of adapters) {
-            const items = allMarketplaceItems.filter(
-              (i) =>
-                (i.source === "claude-plugin" && adapter.meta.name === "claude-code") ||
-                i.source === `${adapter.meta.name}-extension` ||
-                (i.source === "vscode-extension" && adapter.meta.name === "copilot"),
-            );
-            if (items.length === 0) continue;
+            if (!adapter.scanMarketplace) continue;
 
-            info(`Marketplace Scan: ${adapter.meta.displayName}`, opts);
-            info("─".repeat(30), opts);
-            for (const item of items) {
-              const serverNames = item.servers.map((s) => s.name).join(", ") || "(none)";
-              const skillNames = item.skills.map((s) => s.name).join(", ") || "(none)";
-              info(`  ${item.id} (v${item.version})`, opts);
-              info(`    Servers: ${serverNames}`, opts);
-              if (item.skills.length > 0) {
-                info(`    Skills: ${skillNames}`, opts);
+            debug(`Scanning marketplace for ${adapter.meta.displayName}...`, opts);
+            let mpResult;
+            try {
+              mpResult = adapter.scanMarketplace();
+            } catch (e: unknown) {
+              const msg = errorMessage(e) || "marketplace scan failed";
+              allWarnings.push(`${adapter.meta.name} marketplace: ${msg}`);
+              continue;
+            }
+
+            allWarnings.push(
+              ...mpResult.warnings.map((w) => `${adapter.meta.name} marketplace: ${w}`),
+            );
+
+            for (const item of mpResult.items) {
+              allMarketplaceItems.push(item);
+
+              const existingIdentities = new Map<string, string>();
+              for (const [name, srv] of Object.entries(config.servers!)) {
+                const identity = extractServerIdentity(srv.command, srv.args);
+                existingIdentities.set(identity, name);
+              }
+
+              for (const srv of item.servers) {
+                const identity = extractServerIdentity(srv.command, srv.args);
+                const existingName = existingIdentities.get(identity);
+
+                if (existingName) {
+                  debug(
+                    `Skipping marketplace server "${srv.name}" from ${item.id} — duplicate of "${existingName}"`,
+                    opts,
+                  );
+                  totalDuplicates++;
+                  continue;
+                }
+
+                const provenance: MarketplaceProvenance = {
+                  source: item.source,
+                  package: item.id,
+                  version: item.version,
+                  imported_at: new Date().toISOString(),
+                  install_path: item.metadata.installPath,
+                };
+
+                config.servers![srv.name] = {
+                  command: srv.command,
+                  args: srv.args,
+                  env: srv.env,
+                  transport: srv.transport ?? "stdio",
+                  description: srv.description,
+                  tags: srv.tags,
+                  enabled: srv.enabled ?? true,
+                  _marketplace: provenance,
+                };
+                existingIdentities.set(identity, srv.name);
+                totalImported++;
+                totalMarketplaceServers++;
+              }
+
+              totalMarketplaceSkills += item.skills.length;
+            }
+          }
+        }
+
+        // Report mode — skip write, print report outside the lock.
+        if (args.report) {
+          return {
+            result: {
+              totalImported,
+              totalDuplicates,
+              totalMerged,
+              allWarnings,
+              allConflicts,
+              totalEncrypted: 0,
+              isBrownfield,
+              existingServerCount,
+              scanResults: [],
+              totalMarketplaceServers,
+              totalMarketplaceSkills,
+              allMarketplaceItems,
+              reportOnly: true,
+            },
+            changed: false,
+          };
+        }
+
+        // Scan imported servers for secrets and auto-encrypt (default behavior)
+        if (config.servers && totalImported > 0) {
+          scanResults = await scanConfigForSecrets(config.servers);
+          const actionableSecrets = scanResults.flatMap((r) => r.secrets);
+
+          if (actionableSecrets.length > 0 && !args["no-encrypt"]) {
+            let key = await loadKey(configDir);
+            if (!key) {
+              debug("No encryption key found — generating one automatically", opts);
+              const base64Key = await generateKey();
+              await saveKey(configDir, base64Key);
+              key = await importKey(base64Key);
+              if (!args.json) {
+                info(`Generated encryption key (stored at ${resolveKeyPath()})`, opts);
               }
             }
-            info("", opts);
+
+            for (const result of scanResults) {
+              const server = config.servers[result.serverName];
+              if (!server) continue;
+              for (const secret of result.secrets) {
+                substituteSecret(server, secret, secret.suggestedEnvVar);
+                if (!config.settings) config.settings = {};
+                if (!config.settings.env) config.settings.env = {};
+                config.settings.env[secret.suggestedEnvVar] = await encryptValue(secret.value, key);
+                totalEncrypted++;
+              }
+            }
+          } else if (actionableSecrets.length > 0 && args["no-encrypt"]) {
+            unencryptedScanReport = formatScanReport(scanResults);
           }
         }
-      }
 
-      // Report mode — show report and exit without writing
-      if (args.report) {
+        const totalChanges = totalImported + totalMerged;
+        const sourceStr =
+          args.source === "auto" ? adapters.map((a) => a.meta.name).join(", ") : args.source;
+        const parts = [`${totalImported} new`];
+        if (totalMerged > 0) parts.push(`${totalMerged} merged`);
+        const commitMessage =
+          totalChanges > 0 ? `import: ${sourceStr} (${parts.join(", ")})` : undefined;
+
+        return {
+          result: {
+            totalImported,
+            totalDuplicates,
+            totalMerged,
+            allWarnings,
+            allConflicts,
+            totalEncrypted,
+            isBrownfield,
+            existingServerCount,
+            scanResults,
+            totalMarketplaceServers,
+            totalMarketplaceSkills,
+            allMarketplaceItems,
+            reportOnly: false,
+            unencryptedScanReport,
+          },
+          commitMessage,
+          changed: true, // We always write when we get past report mode
+        };
+      });
+
+      // ── Report mode output ─────────────────────────────────────
+      if (outcome.reportOnly) {
         const reportData = {
-          brownfield: isBrownfield,
-          existingServers: Object.keys(config.servers).length,
-          newServers: totalImported,
-          identicalSkipped: totalDuplicates,
-          merged: totalMerged,
-          conflicts: allConflicts.map((c) => ({
+          brownfield: outcome.isBrownfield,
+          existingServers: outcome.existingServerCount,
+          newServers: outcome.totalImported,
+          identicalSkipped: outcome.totalDuplicates,
+          merged: outcome.totalMerged,
+          conflicts: outcome.allConflicts.map((c) => ({
             existing: c.match.existingName,
             incoming: c.match.incomingServer.name,
             source: c.match.incomingSource,
@@ -400,88 +473,57 @@ export const importCommand = defineCommand({
         return;
       }
 
-      // Scan imported servers for secrets and auto-encrypt (default behavior)
-      let scanResults: SecretScanResult[] = [];
-      let totalEncrypted = 0;
-      if (config.servers && totalImported > 0) {
-        scanResults = await scanConfigForSecrets(config.servers);
-        const actionableSecrets = scanResults.flatMap((r) => r.secrets);
+      // ── Apply-mode output ──────────────────────────────────────
+      if (!args.json && outcome.totalEncrypted > 0) {
+        info(
+          `Encrypted ${outcome.totalEncrypted} secret(s) — values stored in settings.env, configs use \${VAR} references.`,
+          opts,
+        );
+      }
 
-        if (actionableSecrets.length > 0 && !args["no-encrypt"]) {
-          // Ensure encryption key exists — auto-generate if missing
-          let key = await loadKey(configDir);
-          if (!key) {
-            debug("No encryption key found — generating one automatically", opts);
-            const base64Key = await generateKey();
-            await saveKey(configDir, base64Key);
-            key = await importKey(base64Key);
-            if (!args.json) {
-              info(`Generated encryption key (stored at ${resolveKeyPath()})`, opts);
+      if (!args.json && outcome.unencryptedScanReport) {
+        info("", opts);
+        info("Warning: potential secret(s) left unencrypted (--no-encrypt).", opts);
+        info(outcome.unencryptedScanReport, opts);
+      }
+
+      // Marketplace scan report (console-only; no writes involved).
+      if (args.marketplace && outcome.allMarketplaceItems.length > 0 && !args.json) {
+        info("", opts);
+        for (const adapter of adapters) {
+          const items = outcome.allMarketplaceItems.filter(
+            (i) =>
+              (i.source === "claude-plugin" && adapter.meta.name === "claude-code") ||
+              i.source === `${adapter.meta.name}-extension` ||
+              (i.source === "vscode-extension" && adapter.meta.name === "copilot"),
+          );
+          if (items.length === 0) continue;
+
+          info(`Marketplace Scan: ${adapter.meta.displayName}`, opts);
+          info("─".repeat(30), opts);
+          for (const item of items) {
+            const serverNames = item.servers.map((s) => s.name).join(", ") || "(none)";
+            const skillNames = item.skills.map((s) => s.name).join(", ") || "(none)";
+            info(`  ${item.id} (v${item.version})`, opts);
+            info(`    Servers: ${serverNames}`, opts);
+            if (item.skills.length > 0) {
+              info(`    Skills: ${skillNames}`, opts);
             }
           }
-
-          // Substitute and encrypt each detected secret
-          for (const result of scanResults) {
-            const server = config.servers[result.serverName];
-            if (!server) continue;
-            for (const secret of result.secrets) {
-              // All detected secrets are actionable in the tiered model
-              substituteSecret(server, secret, secret.suggestedEnvVar);
-
-              // Store the original value encrypted in settings.env
-              if (!config.settings) config.settings = {};
-              if (!config.settings.env) config.settings.env = {};
-              config.settings.env[secret.suggestedEnvVar] = await encryptValue(secret.value, key);
-              totalEncrypted++;
-            }
-          }
-
-          if (!args.json && totalEncrypted > 0) {
-            info(
-              `Encrypted ${totalEncrypted} secret(s) — values stored in settings.env, configs use \${VAR} references.`,
-              opts,
-            );
-          }
-        } else if (actionableSecrets.length > 0 && args["no-encrypt"]) {
-          // User explicitly opted out of encryption
-          if (!args.json) {
-            const totalSecrets = actionableSecrets.length;
-            info("", opts);
-            info(
-              `Warning: ${totalSecrets} potential secret(s) left unencrypted (--no-encrypt).`,
-              opts,
-            );
-            info(formatScanReport(scanResults), opts);
-          }
+          info("", opts);
         }
       }
 
-      await writeConfig(configPath, config);
-
-      // Auto-commit
-      const totalChanges = totalImported + totalMerged;
-      if (totalChanges > 0) {
-        const sourceStr =
-          args.source === "auto" ? adapters.map((a) => a.meta.name).join(", ") : args.source;
-        const parts = [`${totalImported} new`];
-        if (totalMerged > 0) parts.push(`${totalMerged} merged`);
-        try {
-          await commitAll(configDir, `import: ${sourceStr} (${parts.join(", ")})`);
-        } catch (err) {
-          if (!isNothingToCommitError(err)) {
-            warn(`auto-commit failed: ${errorMessage(err) || "unknown git error"}`, opts);
-          }
-        }
-      }
-
-      const summaryParts: string[] = [`Imported ${totalImported} server(s)`];
-      if (totalMerged > 0) summaryParts.push(`${totalMerged} merged`);
-      if (totalDuplicates > 0) summaryParts.push(`${totalDuplicates} duplicate(s) skipped`);
-      if (allConflicts.length > 0) summaryParts.push(`${allConflicts.length} conflict(s) skipped`);
+      const summaryParts: string[] = [`Imported ${outcome.totalImported} server(s)`];
+      if (outcome.totalMerged > 0) summaryParts.push(`${outcome.totalMerged} merged`);
+      if (outcome.totalDuplicates > 0)
+        summaryParts.push(`${outcome.totalDuplicates} duplicate(s) skipped`);
+      if (outcome.allConflicts.length > 0)
+        summaryParts.push(`${outcome.allConflicts.length} conflict(s) skipped`);
       info(summaryParts.join(", "), opts);
 
-      if (allWarnings.length > 0) {
-        for (const w of allWarnings) {
+      if (outcome.allWarnings.length > 0) {
+        for (const w of outcome.allWarnings) {
           warn(w, opts);
         }
       }
@@ -491,14 +533,14 @@ export const importCommand = defineCommand({
           {
             action: "import",
             source: args.source,
-            brownfield: isBrownfield,
-            imported: totalImported,
-            merged: totalMerged,
-            duplicates: totalDuplicates,
-            unresolvedConflicts: allConflicts.length,
+            brownfield: outcome.isBrownfield,
+            imported: outcome.totalImported,
+            merged: outcome.totalMerged,
+            duplicates: outcome.totalDuplicates,
+            unresolvedConflicts: outcome.allConflicts.length,
             marketplace: args.marketplace
               ? {
-                  items: allMarketplaceItems.map((i) => ({
+                  items: outcome.allMarketplaceItems.map((i) => ({
                     id: i.id,
                     name: i.name,
                     version: i.version,
@@ -506,12 +548,12 @@ export const importCommand = defineCommand({
                     servers: i.servers.length,
                     skills: i.skills.length,
                   })),
-                  servers: totalMarketplaceServers,
-                  skills: totalMarketplaceSkills,
+                  servers: outcome.totalMarketplaceServers,
+                  skills: outcome.totalMarketplaceSkills,
                 }
               : undefined,
-            warnings: allWarnings,
-            detectedSecrets: scanResults.map((r) => ({
+            warnings: outcome.allWarnings,
+            detectedSecrets: outcome.scanResults.map((r) => ({
               server: r.serverName,
               secrets: r.secrets.map((s) => ({
                 location: s.location,
