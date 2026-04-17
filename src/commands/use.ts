@@ -1,7 +1,8 @@
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import * as TOML from "@iarna/toml";
 import { defineCommand } from "citty";
+import { atomicWriteFile } from "../core/atomic-write";
 import { resolveConfigDir, tryReadConfig } from "../core/config";
 import { AmError, requireConfig } from "../lib/errors";
 import { amError, error, info, output } from "../lib/output";
@@ -38,7 +39,7 @@ export async function writeActiveProfile(configDir: string, profile: string): Pr
 
   state.active_profile = profile;
   const toml = tomlStringify(state as Record<string, unknown>);
-  await writeFile(join(configDir, STATE_FILE), toml, "utf-8");
+  await atomicWriteFile(join(configDir, STATE_FILE), toml);
 }
 
 export const useCommand = defineCommand({

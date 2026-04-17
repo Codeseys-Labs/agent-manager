@@ -8,6 +8,7 @@
 
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { atomicWriteFileSync } from "../../core/atomic-write.ts";
 import { AM_BEGIN, AM_END, spliceMarkerBlock } from "../shared/utils.ts";
 import type {
   ExportOptions,
@@ -68,7 +69,7 @@ export function exportConfig(
         const fs = require("node:fs");
         const dir = file.path.substring(0, file.path.lastIndexOf("/"));
         fs.mkdirSync(dir, { recursive: true });
-        fs.writeFileSync(file.path, file.content, "utf-8");
+        atomicWriteFileSync(file.path, file.content);
         file.written = true;
       } catch (err) {
         warnings.push(

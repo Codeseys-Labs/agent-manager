@@ -6,9 +6,10 @@
  */
 
 import { createHash } from "node:crypto";
-import { readFile, writeFile } from "node:fs/promises";
+import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import * as TOML from "@iarna/toml";
+import { atomicWriteFile } from "../../core/atomic-write.ts";
 import { isNotFound } from "../../lib/errors.ts";
 import { tomlStringify } from "../../lib/toml.ts";
 import type { Adapter } from "../types.ts";
@@ -21,18 +22,36 @@ const proxyCache = new Map<string, CommunityAdapterProxy>();
 
 /**
  * Verify the SHA256 checksum of an adapter binary against the stored checksum.
- * Throws if the checksum doesn't match. Warns (returns) if no checksum is stored.
+ *
+ * Behavior:
+ *   - No checksum + non-local source → THROW. Every community adapter must
+ *     have a checksum pinned at install time (`am adapter install` captures
+ *     it). A missing checksum means either the TOML was hand-edited or the
+ *     adapter was installed by an older am version; either way we refuse to
+ *     spawn arbitrary code. User fix: `am adapter verify <name>`.
+ *   - No checksum + `local:` source → WARN, allow. Local adapters are the
+ *     user's own code under active development; requiring a re-pin on every
+ *     edit would be noise.
+ *   - Mismatched checksum → THROW (tamper detection).
+ *   - Matching checksum → allow.
  */
 export async function verifyChecksum(
   name: string,
   command: string,
   storedChecksum: string | undefined,
+  source?: string,
 ): Promise<void> {
   if (!storedChecksum) {
-    console.error(
-      `warning: community adapter "${name}" has no checksum in adapters.toml — skipping integrity check`,
+    const isLocal = source?.startsWith("local:");
+    if (isLocal) {
+      console.error(
+        `warning: community adapter "${name}" is a local adapter with no checksum — skipping integrity check`,
+      );
+      return;
+    }
+    throw new Error(
+      `Adapter "${name}" has no checksum in adapters.toml. Refusing to spawn untrusted code. Run \`am adapter verify ${name}\` to inspect the adapter, then reinstall with \`am adapter install <source> --force\` to re-pin the checksum.`,
     );
-    return;
   }
 
   // Expected format: "sha256:<hex>"
@@ -79,7 +98,7 @@ export async function readAdaptersToml(configDir: string): Promise<AdaptersToml>
 /** Write adapters.toml to the config directory. */
 export async function writeAdaptersToml(configDir: string, data: AdaptersToml): Promise<void> {
   const path = join(configDir, ADAPTERS_TOML);
-  await writeFile(path, tomlStringify(data as unknown as Record<string, unknown>));
+  await atomicWriteFile(path, tomlStringify(data as unknown as Record<string, unknown>));
 }
 
 /**
@@ -110,7 +129,7 @@ export async function loadCommunityAdapters(
 
     try {
       // Verify binary integrity before spawning
-      await verifyChecksum(name, config.command, config.checksum);
+      await verifyChecksum(name, config.command, config.checksum, config.source);
 
       const proxy = await CommunityAdapterProxy.create(config.command);
       proxyCache.set(name, proxy);

@@ -1,5 +1,7 @@
-import { readFile, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { mkdir, readFile, stat, unlink } from "node:fs/promises";
+import { homedir } from "node:os";
+import { dirname, join } from "node:path";
+import { atomicWriteFile } from "./atomic-write";
 import type { Config } from "./schema";
 
 // --- Encryption constants ---
@@ -7,6 +9,104 @@ const ALGO = "AES-GCM";
 const PREFIX = "enc:v1:";
 const KEY_LENGTH = 256;
 const IV_LENGTH = 12;
+
+// --- Key storage path resolution ---
+
+/**
+ * Return the OS-appropriate data directory path for the AES master key.
+ *
+ * The key lives OUTSIDE the agent-manager config dir (which is a git repo)
+ * so that `commitAll` cannot stage and push it alongside the ciphertext it
+ * protects.
+ *
+ * - macOS:   ~/Library/Application Support/agent-manager/key
+ * - Linux:   $XDG_DATA_HOME/agent-manager/key
+ *            (default ~/.local/share/agent-manager/key)
+ * - Windows: %APPDATA%/agent-manager/key
+ * - Other:   ~/.local/share/agent-manager/key (XDG fallback)
+ *
+ * Respects `AM_KEY_PATH` env var as an absolute override for tests/advanced use.
+ */
+export function resolveKeyPath(): string {
+  // Explicit override (tests, advanced users)
+  if (process.env.AM_KEY_PATH) {
+    return process.env.AM_KEY_PATH;
+  }
+
+  const platform = process.platform;
+  const home = homedir();
+
+  if (platform === "darwin") {
+    return join(home, "Library", "Application Support", "agent-manager", "key");
+  }
+
+  if (platform === "win32") {
+    const appData = process.env.APPDATA ?? join(home, "AppData", "Roaming");
+    return join(appData, "agent-manager", "key");
+  }
+
+  // Linux + other POSIX: XDG_DATA_HOME or ~/.local/share
+  const xdgDataHome = process.env.XDG_DATA_HOME ?? join(home, ".local", "share");
+  return join(xdgDataHome, "agent-manager", "key");
+}
+
+/** Return the legacy (insecure) key path inside the config dir. */
+export function legacyKeyPath(configDir: string): string {
+  return join(configDir, ".agent-manager", "key.txt");
+}
+
+/** Check if a path exists (non-throwing). */
+async function pathExists(p: string): Promise<boolean> {
+  try {
+    await stat(p);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Result of a key-path migration attempt.
+ * - `migrated`: moved legacy → new
+ * - `none`:     no legacy present, no action needed
+ * - `conflict`: both existed, new kept, legacy left in place with warning
+ */
+export type MigrationResult =
+  | { kind: "none" }
+  | { kind: "migrated"; from: string; to: string }
+  | { kind: "conflict"; legacy: string; current: string };
+
+/**
+ * If a legacy key exists in the git-tracked config dir but the new OS-data-dir
+ * key does not, move it. If both exist, keep the new one and flag a conflict
+ * so the caller can warn the user.
+ *
+ * Safe to call every time `loadKey`/`saveKey` runs.
+ */
+export async function migrateLegacyKey(configDir: string): Promise<MigrationResult> {
+  const legacy = legacyKeyPath(configDir);
+  const current = resolveKeyPath();
+
+  const legacyExists = await pathExists(legacy);
+  if (!legacyExists) return { kind: "none" };
+
+  const currentExists = await pathExists(current);
+  if (currentExists) {
+    // Both present — new wins; leave legacy for user to delete, warn via result.
+    return { kind: "conflict", legacy, current };
+  }
+
+  // Move: read legacy, write new with 0600, unlink legacy.
+  const contents = await readFile(legacy, "utf-8");
+  await mkdir(dirname(current), { recursive: true });
+  await atomicWriteFile(current, contents, { mode: 0o600 });
+  try {
+    await unlink(legacy);
+  } catch {
+    // If unlink fails (e.g., permissions), new is in place — still a win.
+  }
+  return { kind: "migrated", from: legacy, to: current };
+}
 
 // --- Encryption functions ---
 
@@ -26,7 +126,18 @@ export async function importKey(base64: string): Promise<CryptoKey> {
   return crypto.subtle.importKey("raw", raw, { name: ALGO }, true, ["encrypt", "decrypt"]);
 }
 
-/** Load the encryption key from AM_ENCRYPTION_KEY env var or .agent-manager/key.txt file. */
+/**
+ * Load the encryption key.
+ *
+ * Priority:
+ *   1. `AM_ENCRYPTION_KEY` env var (takes absolute precedence)
+ *   2. OS data-dir key (`resolveKeyPath()`)
+ *   3. Legacy `configDir/.agent-manager/key.txt` (auto-migrated if found alone)
+ *
+ * Migration: if the legacy path exists and the new path does not, the legacy
+ * key is moved to the new path (mode 0600) and the legacy file is deleted.
+ * One info line is emitted to stderr to notify the user.
+ */
 export async function loadKey(configDir: string): Promise<CryptoKey | null> {
   // Priority: env var > file
   const envKey = process.env.AM_ENCRYPTION_KEY;
@@ -34,8 +145,21 @@ export async function loadKey(configDir: string): Promise<CryptoKey | null> {
     return importKey(envKey.trim());
   }
 
+  // Attempt migration first (no-op if nothing to migrate).
+  const migration = await migrateLegacyKey(configDir);
+  if (migration.kind === "migrated") {
+    // One-line info; avoid stdout so JSON-mode callers aren't polluted.
+    console.error(
+      `info: Migrated master key out of config dir — do not commit ${migration.from} if you still see it.`,
+    );
+  } else if (migration.kind === "conflict") {
+    console.error(
+      `warning: Master key found in BOTH ${migration.current} (active) and legacy ${migration.legacy}. The legacy file is ignored; delete it and ensure it is not committed.`,
+    );
+  }
+
+  const keyPath = resolveKeyPath();
   try {
-    const keyPath = join(configDir, ".agent-manager", "key.txt");
     const contents = await readFile(keyPath, "utf-8");
     return importKey(contents.trim());
   } catch {
@@ -43,10 +167,17 @@ export async function loadKey(configDir: string): Promise<CryptoKey | null> {
   }
 }
 
-/** Write base64 key to .agent-manager/key.txt. */
-export async function saveKey(configDir: string, base64Key: string): Promise<void> {
-  const keyPath = join(configDir, ".agent-manager", "key.txt");
-  await writeFile(keyPath, `${base64Key}\n`, { encoding: "utf-8", mode: 0o600 });
+/**
+ * Write base64 key to the OS-appropriate data-dir path (NOT the git-tracked
+ * config dir). Creates parent directories as needed and enforces mode 0600.
+ *
+ * The `configDir` parameter is retained for API compatibility but is no
+ * longer used to locate the key — `resolveKeyPath()` is the source of truth.
+ */
+export async function saveKey(_configDir: string, base64Key: string): Promise<void> {
+  const keyPath = resolveKeyPath();
+  await mkdir(dirname(keyPath), { recursive: true });
+  await atomicWriteFile(keyPath, `${base64Key}\n`, { mode: 0o600 });
 }
 
 /** AES-256-GCM encrypt a plaintext string. Returns "enc:v1:nonce_b64:ciphertext_b64". */

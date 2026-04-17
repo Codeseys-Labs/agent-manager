@@ -7,6 +7,7 @@
 
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { atomicWriteFileSync } from "../../core/atomic-write.ts";
 import { generateWikiContext, spliceWikiBlock } from "../../core/instructions.ts";
 import type {
   ExportOptions,
@@ -88,7 +89,7 @@ export async function exportConfig(
       try {
         const dir = file.path.substring(0, file.path.lastIndexOf("/"));
         fs.mkdirSync(dir, { recursive: true });
-        fs.writeFileSync(file.path, file.content, "utf-8");
+        atomicWriteFileSync(file.path, file.content);
         file.written = true;
       } catch (err) {
         warnings.push(

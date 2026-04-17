@@ -1,9 +1,10 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { Hono } from "hono";
 import { serveStatic } from "hono/bun";
 import { getAdapter, getDetectedAdapters, listAdapters } from "../adapters/registry";
 import { readActiveProfile, writeActiveProfile } from "../commands/use";
+import { atomicWriteFileSync } from "../core/atomic-write";
 import {
   buildResolvedConfig,
   loadResolvedConfig,
@@ -49,7 +50,7 @@ export function ensureAuthToken(configDir: string): string {
     .join("");
 
   mkdirSync(configDir, { recursive: true });
-  writeFileSync(tokenPath, `${token}\n`, { encoding: "utf-8", mode: 0o600 });
+  atomicWriteFileSync(tokenPath, `${token}\n`, { mode: 0o600 });
   return token;
 }
 

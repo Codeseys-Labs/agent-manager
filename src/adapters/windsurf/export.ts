@@ -7,6 +7,7 @@
 
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
+import { atomicWriteFileSync } from "../../core/atomic-write.ts";
 import { generateAgentsMd } from "../../core/instructions.ts";
 import { filterByTarget } from "../../core/instructions.ts";
 import type {
@@ -72,7 +73,7 @@ export function exportConfig(
       try {
         const dir = dirname(file.path);
         fs.mkdirSync(dir, { recursive: true });
-        fs.writeFileSync(file.path, file.content, "utf-8");
+        atomicWriteFileSync(file.path, file.content);
         file.written = true;
       } catch (err) {
         warnings.push(

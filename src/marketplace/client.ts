@@ -3,17 +3,49 @@
  *
  * Marketplaces are git repos cloned into ~/.config/agent-manager/marketplaces/<name>/.
  * A marketplaces.json index tracks added repos.
+ *
+ * Supply-chain controls (see src/marketplace/security.ts):
+ *  - URL scheme / credential / port validation
+ *  - Clone size + timeout caps
+ *  - SHA pinning in marketplaces.json
+ *  - Trust-on-first-use prompt
  */
 import * as fs from "node:fs";
 import { join } from "node:path";
 import git from "isomorphic-git";
 import http from "isomorphic-git/http/node";
+import { atomicWriteFile } from "../core/atomic-write";
 import { resolveConfigDir } from "../core/config";
+import {
+  DEFAULT_CLONE_TIMEOUT_MS,
+  DEFAULT_MAX_CLONE_BYTES,
+  MarketplaceSecurityError,
+  type MarketplaceSecurityOptions,
+  enforceCloneSize,
+  isLocalPath,
+  promptShaChange,
+  promptTrustOnFirstUse,
+  resolveHeadSha,
+  validateMarketplaceUrl,
+  withCloneTimeout,
+} from "./security";
 import type { MarketplaceEntry, MarketplaceSource, MarketplacesFile } from "./types";
 
 const MARKETPLACES_DIR = "marketplaces";
 const MARKETPLACES_JSON = "marketplaces.json";
 const GIT_AUTHOR = { name: "agent-manager", email: "am@localhost" };
+
+/** Extra options accepted by addMarketplace. */
+export interface AddMarketplaceOptions extends MarketplaceSecurityOptions {
+  /** Skip the TOFU prompt. */
+  yes?: boolean;
+}
+
+/** Extra options accepted by updateMarketplace. */
+export interface UpdateMarketplaceOptions {
+  /** Skip SHA-change confirmation. */
+  yes?: boolean;
+}
 
 /** Resolve the marketplaces root directory. */
 export function resolveMarketplacesDir(): string {
@@ -40,12 +72,12 @@ export async function readMarketplacesFile(): Promise<MarketplacesFile> {
 async function writeMarketplacesFile(data: MarketplacesFile): Promise<void> {
   const filePath = resolveMarketplacesFile();
   await fs.promises.mkdir(join(filePath, ".."), { recursive: true });
-  await fs.promises.writeFile(filePath, `${JSON.stringify(data, null, 2)}\n`);
+  await atomicWriteFile(filePath, `${JSON.stringify(data, null, 2)}\n`);
 }
 
 /** Detect marketplace source from URL. */
 function detectSource(url: string): MarketplaceSource {
-  if (url.startsWith("/") || url.startsWith("./") || url.startsWith("..")) return "local";
+  if (isLocalPath(url) || url.startsWith("file:")) return "local";
   if (url.includes("gitlab")) return "gitlab";
   return "github";
 }
@@ -61,9 +93,20 @@ export function deriveMarketplaceName(url: string): string {
 
 /**
  * Add a marketplace by cloning a git repo.
- * Returns the created entry.
+ *
+ * Flow for remote URLs:
+ *   1. URL validation (scheme, credentials, port).
+ *   2. TOFU prompt (skipped with {yes: true}).
+ *   3. Clone with timeout + size cap.
+ *   4. Resolve HEAD SHA and persist to marketplaces.json.
+ *
+ * Local paths remain symlinked and are not subject to SHA pinning.
  */
-export async function addMarketplace(url: string, name?: string): Promise<MarketplaceEntry> {
+export async function addMarketplace(
+  url: string,
+  name?: string,
+  opts: AddMarketplaceOptions = {},
+): Promise<MarketplaceEntry> {
   const marketplacesDir = resolveMarketplacesDir();
   await fs.promises.mkdir(marketplacesDir, { recursive: true });
 
@@ -78,10 +121,12 @@ export async function addMarketplace(url: string, name?: string): Promise<Market
   }
 
   const cloneDir = join(marketplacesDir, resolvedName);
-  const source = detectSource(url);
+  const localPath = isLocalPath(url);
+  const source: MarketplaceSource = detectSource(url);
 
-  if (source === "local") {
-    // For local paths, create a symlink instead of cloning
+  if (localPath) {
+    // For local filesystem paths (no scheme), create a symlink instead of cloning.
+    // These are not URL-validated (there is no scheme to check) and are not SHA-pinned.
     const resolvedUrl = url.startsWith("/") ? url : join(process.cwd(), url);
     try {
       await fs.promises.access(resolvedUrl);
@@ -89,33 +134,74 @@ export async function addMarketplace(url: string, name?: string): Promise<Market
       throw new MarketplaceError(`Local path "${resolvedUrl}" does not exist.`);
     }
     await fs.promises.symlink(resolvedUrl, cloneDir, "dir");
-  } else {
-    // Clone the git repo
-    try {
-      await git.clone({
+
+    const entry: MarketplaceEntry = {
+      name: resolvedName,
+      url,
+      source,
+      added_at: new Date().toISOString(),
+    };
+    existing.marketplaces.push(entry);
+    await writeMarketplacesFile(existing);
+    return entry;
+  }
+
+  // Remote URL: run full security pipeline.
+  try {
+    validateMarketplaceUrl(url, opts);
+  } catch (err) {
+    if (err instanceof MarketplaceSecurityError) {
+      throw new MarketplaceError(err.message);
+    }
+    throw err;
+  }
+
+  // TOFU prompt BEFORE clone. We cannot show the SHA until after clone,
+  // but the prompt clarifies pinning will happen.
+  const trusted = await promptTrustOnFirstUse(url, null, { yes: opts.yes });
+  if (!trusted) {
+    throw new MarketplaceError(
+      `Marketplace "${url}" was not trusted. Re-run with --yes to auto-accept or confirm interactively.`,
+    );
+  }
+
+  const maxBytes = opts.maxCloneBytes ?? DEFAULT_MAX_CLONE_BYTES;
+  const timeoutMs = opts.cloneTimeoutMs ?? DEFAULT_CLONE_TIMEOUT_MS;
+
+  try {
+    await withCloneTimeout(
+      git.clone({
         fs,
         http,
         dir: cloneDir,
         url,
         singleBranch: true,
         depth: 1,
-      });
-    } catch (err) {
-      // Clean up partial clone on failure
-      try {
-        await fs.promises.rm(cloneDir, { recursive: true, force: true });
-      } catch {
-        // ignore cleanup errors
-      }
-      throw new MarketplaceError(`Failed to clone "${url}": ${(err as Error).message}`);
+      }),
+      timeoutMs,
+    );
+    await enforceCloneSize(cloneDir, maxBytes);
+  } catch (err) {
+    // Clean up partial clone on failure
+    try {
+      await fs.promises.rm(cloneDir, { recursive: true, force: true });
+    } catch {
+      // ignore cleanup errors
     }
+    if (err instanceof MarketplaceSecurityError) {
+      throw new MarketplaceError(err.message);
+    }
+    throw new MarketplaceError(`Failed to clone "${url}": ${(err as Error).message}`);
   }
+
+  const commit = await resolveHeadSha(cloneDir);
 
   const entry: MarketplaceEntry = {
     name: resolvedName,
     url,
     source,
     added_at: new Date().toISOString(),
+    ...(commit ? { commit, pinned: true } : {}),
   };
 
   existing.marketplaces.push(entry);
@@ -127,8 +213,14 @@ export async function addMarketplace(url: string, name?: string): Promise<Market
 /**
  * Update a marketplace repo (git pull).
  * If no name given, updates all marketplaces.
+ *
+ * Pinned marketplaces require {yes: true} or interactive confirmation before
+ * accepting a new SHA; otherwise the update is rejected and the pin remains.
  */
-export async function updateMarketplace(name?: string): Promise<MarketplaceEntry[]> {
+export async function updateMarketplace(
+  name?: string,
+  opts: UpdateMarketplaceOptions = {},
+): Promise<MarketplaceEntry[]> {
   const data = await readMarketplacesFile();
   const targets = name ? data.marketplaces.filter((m) => m.name === name) : data.marketplaces;
 
@@ -148,6 +240,8 @@ export async function updateMarketplace(name?: string): Promise<MarketplaceEntry
     }
 
     const dir = join(marketplacesDir, entry.name);
+    const oldSha = entry.commit ?? (await resolveHeadSha(dir));
+
     try {
       await git.pull({
         fs,
@@ -156,8 +250,6 @@ export async function updateMarketplace(name?: string): Promise<MarketplaceEntry
         ref: "main",
         author: GIT_AUTHOR,
       });
-      entry.updated_at = new Date().toISOString();
-      updated.push(entry);
     } catch (err) {
       // Try default branch fallback
       try {
@@ -168,12 +260,36 @@ export async function updateMarketplace(name?: string): Promise<MarketplaceEntry
           ref: "master",
           author: GIT_AUTHOR,
         });
-        entry.updated_at = new Date().toISOString();
-        updated.push(entry);
       } catch {
         throw new MarketplaceError(`Failed to update "${entry.name}": ${(err as Error).message}`);
       }
     }
+
+    const newSha = await resolveHeadSha(dir);
+    if (entry.pinned && oldSha && newSha && oldSha !== newSha) {
+      const accepted = await promptShaChange(entry.name, entry.url, oldSha, newSha, {
+        yes: opts.yes,
+      });
+      if (!accepted) {
+        // Reset the working tree back to the pinned SHA and refuse the update.
+        try {
+          await git.checkout({ fs, dir, ref: oldSha, force: true });
+        } catch {
+          // ignore — worst case, the user has to reset manually
+        }
+        throw new MarketplaceError(
+          `Refusing to accept new SHA for "${entry.name}" (pinned=${oldSha.slice(0, 12)}, ` +
+            `remote=${newSha.slice(0, 12)}). Pass --yes to confirm or run \`am marketplace remove\` first.`,
+        );
+      }
+      entry.commit = newSha;
+    } else if (newSha) {
+      // Record SHA on first successful update even if previously unpinned.
+      entry.commit = newSha;
+      if (entry.pinned === undefined) entry.pinned = true;
+    }
+    entry.updated_at = new Date().toISOString();
+    updated.push(entry);
   }
 
   await writeMarketplacesFile(data);
@@ -215,6 +331,36 @@ export async function removeMarketplace(name: string): Promise<void> {
 export async function listMarketplaces(): Promise<MarketplaceEntry[]> {
   const data = await readMarketplacesFile();
   return data.marketplaces;
+}
+
+/**
+ * Look up a marketplace entry by name. Returns null if not registered.
+ */
+export async function findMarketplaceEntry(name: string): Promise<MarketplaceEntry | null> {
+  const data = await readMarketplacesFile();
+  return data.marketplaces.find((m) => m.name === name) ?? null;
+}
+
+/**
+ * Verify a marketplace's working-tree HEAD matches its pinned commit.
+ * No-op for local and unpinned entries. Throws on mismatch.
+ */
+export async function verifyMarketplacePin(entry: MarketplaceEntry): Promise<void> {
+  if (entry.source === "local") return;
+  if (!entry.pinned || !entry.commit) return;
+
+  const dir = join(resolveMarketplacesDir(), entry.name);
+  const currentSha = await resolveHeadSha(dir);
+  if (!currentSha) {
+    throw new MarketplaceError(
+      `Marketplace "${entry.name}" is pinned to ${entry.commit.slice(0, 12)} but its working tree has no resolvable HEAD. Re-add the marketplace.`,
+    );
+  }
+  if (currentSha !== entry.commit) {
+    throw new MarketplaceError(
+      `Marketplace "${entry.name}" HEAD (${currentSha.slice(0, 12)}) does not match pinned SHA (${entry.commit.slice(0, 12)}). Run \`am marketplace update ${entry.name}\` to review and accept the change.`,
+    );
+  }
 }
 
 // ── Error class ─────────────────────────────────────────────────

@@ -1,5 +1,5 @@
 import { readFileSync } from "node:fs";
-import { readFile, writeFile } from "node:fs/promises";
+import { readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join, parse as parsePath } from "node:path";
 import * as TOML from "@iarna/toml";
@@ -12,6 +12,7 @@ import type {
 } from "../adapters/types";
 import { isNotFound } from "../lib/errors";
 import { tomlStringify } from "../lib/toml";
+import { atomicWriteFile } from "./atomic-write";
 import { resolveProfile } from "./resolver";
 import { type Config, ConfigSchema, type ProjectConfig, ProjectConfigSchema } from "./schema";
 
@@ -90,7 +91,7 @@ export async function writeConfig(path: string, config: Config): Promise<void> {
   if (config.adapters) ordered.adapters = config.adapters;
 
   const toml = tomlStringify(ordered);
-  await writeFile(path, toml, "utf-8");
+  await atomicWriteFile(path, toml);
 }
 
 /**
@@ -110,7 +111,7 @@ export async function writeProjectConfig(path: string, config: ProjectConfig): P
   if (config.adapters) ordered.adapters = config.adapters;
 
   const toml = tomlStringify(ordered);
-  await writeFile(path, toml, "utf-8");
+  await atomicWriteFile(path, toml);
 }
 
 /**

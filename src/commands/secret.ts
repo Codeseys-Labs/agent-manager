@@ -1,6 +1,7 @@
-import { copyFile, mkdir } from "node:fs/promises";
-import { join } from "node:path";
+import { mkdir, readFile } from "node:fs/promises";
+import { dirname, join } from "node:path";
 import { defineCommand } from "citty";
+import { atomicWriteFile } from "../core/atomic-write";
 import { resolveConfigDir, tryReadConfig, writeConfig } from "../core/config";
 import { commitAll } from "../core/git";
 import {
@@ -16,6 +17,7 @@ import {
   importKey,
   isEncrypted,
   loadKey,
+  resolveKeyPath,
   saveKey,
 } from "../core/secrets";
 import { requireConfig } from "../lib/errors";
@@ -346,7 +348,7 @@ const scanCommand = defineCommand({
         const base64Key = await generateKey();
         await saveKey(configDir, base64Key);
         key = await importKey(base64Key);
-        info("Generated encryption key (stored in .agent-manager/key.txt)", opts);
+        info(`Generated encryption key (stored at ${resolveKeyPath()})`, opts);
       }
 
       let substituted = 0;
@@ -412,16 +414,15 @@ const generateKeyCommand = defineCommand({
     const opts = { json: args.json, quiet: args.quiet, verbose: args.verbose };
     const configDir = resolveConfigDir();
 
-    await mkdir(join(configDir, ".agent-manager"), { recursive: true });
-
     const base64 = await generateKey();
     await saveKey(configDir, base64);
 
-    info("Encryption key generated and saved.", opts);
+    const keyPath = resolveKeyPath();
+    info(`Encryption key generated and saved to ${keyPath}`, opts);
     info(`Save this key in your password manager: ${base64}`, opts);
 
     if (args.json) {
-      output({ action: "generate-key", key: base64 }, opts);
+      output({ action: "generate-key", key: base64, path: keyPath }, opts);
     }
   },
 });
@@ -437,11 +438,12 @@ const importKeyCommand = defineCommand({
   async run({ args }) {
     const opts = { json: args.json, quiet: args.quiet, verbose: args.verbose };
     const configDir = resolveConfigDir();
-    const destDir = join(configDir, ".agent-manager");
-    const destPath = join(destDir, "key.txt");
+    const destPath = resolveKeyPath();
 
-    await mkdir(destDir, { recursive: true });
-    await copyFile(args.path, destPath);
+    await mkdir(dirname(destPath), { recursive: true });
+    // Read source, write with mode 0o600 to match saveKey semantics.
+    const contents = await readFile(args.path, "utf-8");
+    await atomicWriteFile(destPath, contents, { mode: 0o600 });
 
     // Validate the key
     try {
@@ -453,9 +455,9 @@ const importKeyCommand = defineCommand({
       return;
     }
 
-    info("Encryption key imported.", opts);
+    info(`Encryption key imported to ${destPath}`, opts);
     if (args.json) {
-      output({ action: "import-key", source: args.path }, opts);
+      output({ action: "import-key", source: args.path, path: destPath }, opts);
     }
   },
 });
