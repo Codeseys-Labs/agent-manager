@@ -369,11 +369,13 @@ describe("MCP zod validation", () => {
     expect(isInvalidArgsError(resp)).toBe(true);
   });
 
-  test("all 33 tools have a registered schema (coverage guard)", async () => {
+  test("all 38 tools have a registered schema (coverage guard)", async () => {
     await setupConfig({});
     const server = makeServer();
     const tools = server.getTools();
-    expect(tools.length).toBe(33);
+    // Wave D: 33 original + 5 unified (am_agent_invoke / session_list /
+    // session_cancel / status / detect). Legacy aliases kept for back-compat.
+    expect(tools.length).toBe(38);
     // Every tool should reject a known-bad shape (an array) with Invalid arguments.
     // Tools with empty schemas (properties: {}) will pass any object, so we only
     // assert that the dispatcher *invokes* validation — which we verify by running
