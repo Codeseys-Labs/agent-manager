@@ -1,11 +1,12 @@
 #!/usr/bin/env bun
 import { defineCommand, runMain } from "citty";
 import { showGroupedUsage } from "./help";
+import { AM_VERSION } from "./lib/version";
 
 const main = defineCommand({
   meta: {
     name: "am",
-    version: process.env.BUILD_VERSION ?? "0.1.0",
+    version: AM_VERSION,
     description:
       "chezmoi for AI agent configs — define once in TOML, sync via git, generate native configs for every tool",
   },

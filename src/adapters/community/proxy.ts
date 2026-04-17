@@ -149,7 +149,8 @@ export class CommunityAdapterProxy implements Adapter {
   }
 
   private async initialize(): Promise<void> {
-    const amVersion = process.env.BUILD_VERSION ?? "0.1.0";
+    const { AM_VERSION } = await import("../../lib/version");
+    const amVersion = AM_VERSION;
 
     const initResult = (await this.call("adapter/initialize", {
       protocolVersion: PROTOCOL_VERSION,

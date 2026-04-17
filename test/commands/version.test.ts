@@ -25,6 +25,8 @@ describe("am version", () => {
     await versionCommand.run?.({ args: { json: false, quiet: false } } as any);
 
     const output = logSpy.mock.calls[0][0] as string;
-    expect(output).toContain("0.1.0");
+    // Default dev fallback is "0.0.0-dev"; CI builds pass BUILD_VERSION
+    // from package.json. Either way the string must be SemVer-shaped.
+    expect(output).toMatch(/^\d+\.\d+\.\d+(-\w+)?$/);
   });
 });

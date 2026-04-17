@@ -1,5 +1,6 @@
 import { defineCommand } from "citty";
 import { info, output } from "../lib/output";
+import { AM_VERSION } from "../lib/version";
 
 export const versionCommand = defineCommand({
   meta: { name: "version", description: "Print version" },
@@ -8,7 +9,7 @@ export const versionCommand = defineCommand({
     quiet: { type: "boolean", alias: "q", default: false },
   },
   run({ args }) {
-    const version = process.env.BUILD_VERSION ?? "0.1.0";
+    const version = AM_VERSION;
     const opts = { json: args.json, quiet: args.quiet };
     if (args.json) {
       output({ version }, opts);

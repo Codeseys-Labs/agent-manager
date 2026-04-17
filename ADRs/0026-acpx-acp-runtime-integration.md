@@ -1,6 +1,6 @@
 ---
-status: proposed
-date: 2026-04-15
+status: accepted
+date: 2026-04-16
 ---
 
 # ADR-0026: ACP Runtime Integration via ACPX -- am as Agent Orchestrator

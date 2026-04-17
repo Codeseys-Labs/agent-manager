@@ -1,6 +1,6 @@
 ---
-status: proposed
-date: 2026-04-14
+status: accepted
+date: 2026-04-16
 ---
 
 # ADR-0027: Community Adapter Loading via Subprocess IPC

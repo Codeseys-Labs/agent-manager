@@ -1,6 +1,6 @@
 ---
-status: proposed
-date: 2026-04-14
+status: accepted
+date: 2026-04-16
 ---
 
 # ADR-0028: Brownfield Import Merge

@@ -86,6 +86,20 @@ jobs:
       - name: Build binary
         run: VERSION=ci-test bun run build -- --target bun-linux-x64
 
+      - name: "Binary: version matches package.json"
+        run: |
+          # Build with BUILD_VERSION pinned to package.json version, then
+          # assert the compiled binary reports it back. Catches drift
+          # between package.json, build scripts, and fallback constants.
+          PKG_VERSION=$(node -e 'console.log(require("./package.json").version)')
+          BUILD_VERSION="$PKG_VERSION" bun run build -- --target bun-linux-x64
+          REPORTED=$(./dist/am-linux-x64 --version 2>&1 | head -1)
+          if ! echo "$REPORTED" | grep -q "$PKG_VERSION"; then
+            echo "::error::Binary version '$REPORTED' does not match package.json '$PKG_VERSION'"
+            exit 1
+          fi
+          echo "Version gate: PASS ($PKG_VERSION)"
+
       - name: Seed IDE configs
         run: |
           TEST_HOME=$(mktemp -d)
