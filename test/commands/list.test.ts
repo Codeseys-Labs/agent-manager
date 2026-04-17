@@ -58,6 +58,15 @@ describe("am list servers", () => {
     expect(names).toContain("outlook");
   });
 
+  test("top-level description points at `am agent list` for the unified view", async () => {
+    // ADR-0031 M2: `am list agents` returns the config slice only.
+    // The canonical full-roster view lives at `am agent list`. The help
+    // text must disambiguate so users never get surprised.
+    const mod = await import("../../src/commands/list");
+    const desc = mod.listCommand.meta?.description ?? "";
+    expect(desc).toContain("am agent list");
+  });
+
   test("returns empty when no servers configured", async () => {
     dir = await createTestDir("am-list-");
     const configDir = dir.path;

@@ -7,11 +7,17 @@
  *   am run --session backend claude "continue"     — named session (resume previous work)
  *   am run --cwd /path/to/project claude "refactor" — override working directory
  *
- * Subcommands (for session management):
+ * Subcommands (for live ACP session management):
  *   am run session list                            — list active ACP sessions
  *   am run session cancel <sessionId>              — cancel active session
  *
- * See ADR-0026 Phase 2.
+ * Note: `am run agents` is DEPRECATED — use `am agent list` (ADR-0031 M2).
+ * Note: `am run session` manages LIVE ACP sessions (via JSON-RPC to the agent
+ *       subprocess). For cross-tool transcript browsing (read-only disk harvest
+ *       of Claude Code, Codex, etc.), use `am session` instead. Different
+ *       concepts, intentionally kept separate.
+ *
+ * See ADR-0026 Phase 2, ADR-0031 Pillar 3.
  */
 
 import { join } from "node:path";
@@ -23,7 +29,7 @@ import {
 } from "../core/agent-registry";
 import { resolveConfigDir } from "../core/config";
 import { tryReadConfig } from "../core/config";
-import { debug, error, info, output, parsePositiveInt } from "../lib/output";
+import { debug, error, info, output, parsePositiveInt, warn } from "../lib/output";
 import { AcpClientError, AmAcpClient, createAcpClient } from "../protocols/acp/client";
 import type { SessionUpdate } from "../protocols/acp/types";
 
@@ -96,7 +102,7 @@ async function runAgent(args: RunAgentArgs): Promise<void> {
   const entry = await resolveAgentAsync(agentName, registryConfig, configDir);
   if (!entry || !entry.acp) {
     error(
-      `Unknown agent "${agentName}" or no ACP (local) endpoint. Run \`am run agents\` to list available agents.`,
+      `Unknown agent "${agentName}" or no ACP (local) endpoint. Run \`am agent list\` to list available agents.`,
       opts,
     );
     process.exitCode = 1;
@@ -206,10 +212,19 @@ async function runAgent(args: RunAgentArgs): Promise<void> {
   }
 }
 
-// ── Subcommand: am run agents ──────────────────────────────────
+// ── Subcommand: am run agents (DEPRECATED alias) ───────────────
+//
+// Deprecation (ADR-0031 M2): this subcommand duplicated `am agent list`.
+// The canonical surface is `am agent list` under the `agent` group
+// (ADR-0029). This alias forwards to the same unified registry listing
+// and prints a deprecation notice on stderr. Scheduled for removal at
+// agent-manager 0.6.0 (two minor versions after introduction).
 
 const agentsSubcommand = defineCommand({
-  meta: { name: "agents", description: "List available ACP agents" },
+  meta: {
+    name: "agents",
+    description: "DEPRECATED: use `am agent list` instead (same output, canonical surface)",
+  },
   args: {
     json: { type: "boolean", description: "JSON output", default: false },
     quiet: { type: "boolean", alias: "q", default: false },
@@ -217,11 +232,12 @@ const agentsSubcommand = defineCommand({
   },
   async run({ args }) {
     const opts = { json: args.json, quiet: args.quiet, verbose: args.verbose };
+    warn("`am run agents` is deprecated — use `am agent list` (same output).", opts);
     const { registryConfig, configDir } = await loadRegistryContext();
     const agents = await listAllAgentsAsync(registryConfig, configDir);
 
     if (args.json) {
-      output({ agents }, opts);
+      output({ agents, deprecated: "Use `am agent list` instead." }, opts);
       return;
     }
 
@@ -337,7 +353,10 @@ const sessionCancelSubcommand = defineCommand({
 });
 
 const sessionSubcommand = defineCommand({
-  meta: { name: "session", description: "Manage ACP agent sessions" },
+  meta: {
+    name: "session",
+    description: "Manage LIVE ACP agent sessions (for transcript browsing, see `am session`)",
+  },
   subCommands: {
     list: () => Promise.resolve(sessionListSubcommand),
     cancel: () => Promise.resolve(sessionCancelSubcommand),
@@ -396,10 +415,14 @@ export const runCommand = defineCommand({
     // If we reach here, it's the main `am run <agent> <prompt>` form
     const promptText = args.prompt as string | undefined;
     if (!promptText) {
-      error('Usage: am run <agent> "<prompt>" or am run agents|session', {
-        json: args.json,
-        quiet: args.quiet,
-      });
+      error(
+        'Usage: am run <agent> "<prompt>" or am run session (for live ACP sessions). ' +
+          "For agent discovery use `am agent list`.",
+        {
+          json: args.json,
+          quiet: args.quiet,
+        },
+      );
       process.exitCode = 1;
       return;
     }

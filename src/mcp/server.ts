@@ -765,7 +765,7 @@ function defineTools(): ToolEntry[] {
       def: {
         name: "am_session_list",
         description:
-          "List AI coding sessions across all tools (or a specific adapter). Returns session summaries with message counts, timestamps, and token estimates.",
+          "List AI coding session TRANSCRIPTS (read-only, cross-tool disk harvest from Claude Code, Codex, etc.). Returns session summaries with message counts, timestamps, and token estimates. For LIVE ACP sessions, use `am_acp_session_list` instead.",
         inputSchema: {
           type: "object",
           properties: {
@@ -1547,7 +1547,8 @@ function defineTools(): ToolEntry[] {
     {
       def: {
         name: "am_agent_list",
-        description: "List all registered A2A agents from the local agent roster.",
+        description:
+          "List registered A2A agents from the local roster only. For the unified agent view (config + ACP built-ins + A2A roster), use `am_acp_list_agents` (which despite its name returns all three sources — ADR-0031 M2: naming to be consolidated in a future ADR).",
         inputSchema: { type: "object", properties: {} },
       },
       tier: "read-only",
@@ -1955,7 +1956,8 @@ function defineTools(): ToolEntry[] {
     {
       def: {
         name: "am_acp_session_list",
-        description: "List active ACP sessions from the session directory.",
+        description:
+          "List active LIVE ACP sessions from the session directory (agent subprocesses currently running or persisted). For read-only cross-tool transcript browsing, use `am_session_list` instead.",
         inputSchema: { type: "object", properties: {} },
       },
       tier: "read-only" as ToolTier,

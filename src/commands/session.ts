@@ -271,7 +271,11 @@ const searchSubcommand = defineCommand({
 // ── Main Command ─────────────────────────────────────────────────
 
 export const sessionCommand = defineCommand({
-  meta: { name: "session", description: "Browse and export tool sessions" },
+  meta: {
+    name: "session",
+    description:
+      "Browse and export tool session transcripts (read-only, cross-tool). For live ACP sessions, use `am run session`.",
+  },
   subCommands: {
     list: () => Promise.resolve(listSubcommand),
     export: () => Promise.resolve(exportSubcommand),

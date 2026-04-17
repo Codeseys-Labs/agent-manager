@@ -158,7 +158,7 @@ export function createBridgeTaskHandler(bridgeConfig?: BridgeConfig): TaskHandle
           parts: [
             {
               type: "text" as const,
-              text: `Bridge: agent "${request.agent}" is not available locally. Use "am run agents" to see available ACP agents.`,
+              text: `Bridge: agent "${request.agent}" is not available locally. Use "am agent list" to see available ACP agents.`,
             },
           ],
         },

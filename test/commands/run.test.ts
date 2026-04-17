@@ -168,4 +168,78 @@ describe("am run session: subcommand structure", () => {
     expect(resolved.subCommands.list).toBeDefined();
     expect(resolved.subCommands.cancel).toBeDefined();
   });
+
+  test("session subcommand description clarifies LIVE vs transcript", async () => {
+    const mod = await import("../../src/commands/run");
+    const sessionSub = mod.runCommand.subCommands!.session;
+    const resolved = await (sessionSub as () => Promise<any>)();
+    const desc = resolved.meta?.description ?? "";
+    // Avoid silent drift if someone reverts the help text.
+    expect(desc.toLowerCase()).toContain("live");
+    expect(desc).toContain("am session");
+  });
+});
+
+// ── Deprecation: `am run agents` forwards to canonical `am agent list` ─
+//
+// ADR-0031 M2: `am run agents` is deprecated. It must still run (forwards
+// to the same unified-registry listing) and must emit a deprecation
+// notice on stderr, but the canonical surface is `am agent list`.
+
+describe("am run agents (DEPRECATED)", () => {
+  test("subcommand is still registered on `am run`", async () => {
+    const mod = await import("../../src/commands/run");
+    const agentsSub = mod.runCommand.subCommands!.agents;
+    expect(agentsSub).toBeDefined();
+    const resolved = await (agentsSub as () => Promise<any>)();
+    expect(resolved.meta?.name).toBe("agents");
+  });
+
+  test("meta description marks it DEPRECATED and points to canonical", async () => {
+    const mod = await import("../../src/commands/run");
+    const agentsSub = mod.runCommand.subCommands!.agents;
+    const resolved = await (agentsSub as () => Promise<any>)();
+    const desc = resolved.meta?.description ?? "";
+    expect(desc).toContain("DEPRECATED");
+    expect(desc).toContain("am agent list");
+  });
+
+  test("emits deprecation warning on stderr and returns the same data shape as `am agent list`", async () => {
+    // Capture stderr from warn() and stdout from output() in JSON mode.
+    const errLines: string[] = [];
+    const outLines: string[] = [];
+    const origErr = console.error;
+    const origLog = console.log;
+    console.error = (...args: unknown[]) => {
+      errLines.push(args.map(String).join(" "));
+    };
+    console.log = (...args: unknown[]) => {
+      outLines.push(args.map(String).join(" "));
+    };
+
+    try {
+      const mod = await import("../../src/commands/run");
+      const agentsSub = mod.runCommand.subCommands!.agents;
+      const resolved = await (agentsSub as () => Promise<any>)();
+      // Drive the JSON path so we can parse the output envelope deterministically.
+      await resolved.run({ args: { json: true, quiet: false, verbose: false } });
+    } finally {
+      console.error = origErr;
+      console.log = origLog;
+    }
+
+    // Deprecation notice went to stderr (warn() always writes stderr).
+    const joinedErr = errLines.join("\n");
+    expect(joinedErr.toLowerCase()).toContain("deprecated");
+    expect(joinedErr).toContain("am agent list");
+
+    // Output envelope on stdout has the same `agents` key that `am agent list` produces,
+    // plus a deprecation pointer to keep machine callers informed.
+    expect(outLines.length).toBeGreaterThan(0);
+    const parsed = JSON.parse(outLines.join("\n"));
+    expect(parsed.agents).toBeDefined();
+    expect(Array.isArray(parsed.agents)).toBe(true);
+    expect(typeof parsed.deprecated).toBe("string");
+    expect(parsed.deprecated).toContain("am agent list");
+  });
 });

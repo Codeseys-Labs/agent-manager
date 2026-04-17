@@ -34,7 +34,8 @@ function parseEntityType(raw: string | undefined): EntityType {
 export const listCommand = defineCommand({
   meta: {
     name: "list",
-    description: "List entities in the config (servers, instructions, skills, agents, profiles)",
+    description:
+      "List entities in the config (servers, instructions, skills, agents, profiles). For the unified agent roster (config + ACP built-ins + A2A roster), use `am agent list`.",
   },
   args: {
     entity: {
@@ -200,7 +201,10 @@ function listAgents(config: Config, opts: { json?: boolean; quiet?: boolean; ver
   }
 
   if (entries.length === 0) {
-    info("No agents configured.", opts);
+    info(
+      "No agents in config. Run `am agent list` to see ACP built-ins + A2A roster agents.",
+      opts,
+    );
     return;
   }
 

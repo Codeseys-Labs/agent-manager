@@ -253,6 +253,14 @@ describe("am session", () => {
       expect(sessionCommand.subCommands?.search).toBeDefined();
     });
 
+    test("description disambiguates transcript harvest from live ACP sessions (ADR-0031 M2)", async () => {
+      const { sessionCommand } = await import("../../src/commands/session");
+      const desc = sessionCommand.meta?.description ?? "";
+      // Transcript-centric phrasing + pointer to the live ACP surface.
+      expect(desc.toLowerCase()).toContain("transcript");
+      expect(desc).toContain("am run session");
+    });
+
     test("session command is registered in CLI", async () => {
       // Verify cli.ts has the session command import
       const cliContent = await Bun.file(
