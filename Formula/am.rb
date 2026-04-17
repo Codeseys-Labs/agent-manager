@@ -1,28 +1,28 @@
 class Am < Formula
   desc "chezmoi for AI agent configs — define once in TOML, sync via git, generate native configs for every tool"
   homepage "https://github.com/Codeseys-Labs/agent-manager"
-  version "0.4.0"
+  version "0.5.0-rc1"
   license "MIT"
 
   on_macos do
     on_arm do
       url "https://github.com/Codeseys-Labs/agent-manager/releases/download/v#{version}/am-darwin-arm64"
-      sha256 "e78cb081f0a7f2e721c215d8e0421fa5e0e165ff9385942b8ee42110942d308f"
+      sha256 "0a8d9d27c34e3b0ea1ed2984ed6ec67bbf5fc1c92a683ef3fb7eeba3803a4e37"
     end
     on_intel do
       url "https://github.com/Codeseys-Labs/agent-manager/releases/download/v#{version}/am-darwin-x64"
-      sha256 "c9c71dbcdff5e6af7e21a290cff94b79923022f549c856dd37aa8ccf4fef543e"
+      sha256 "18109c90e2a6bf2ea21c70d2663ad41d8e296c1650cc0d19b7ee2877e3a0904a"
     end
   end
 
   on_linux do
     on_arm do
       url "https://github.com/Codeseys-Labs/agent-manager/releases/download/v#{version}/am-linux-arm64"
-      sha256 "e2df9320cd1bdb9c99b1dc778c5e428e2f1ef9687d9b78b9d4fd73c20aa8b1a4"
+      sha256 "981f47338372f868fbe73e5eb7edc96ef51a26c3d69f54b220180ffb187bd2e7"
     end
     on_intel do
       url "https://github.com/Codeseys-Labs/agent-manager/releases/download/v#{version}/am-linux-x64"
-      sha256 "159373e0024102e5a7dd34cbae6a195ec768acc9419a7a0b0e0291978c07374e"
+      sha256 "dc0f2ff525f82551a9eb68cd85e81b03ab71a88c94afb87cbcf3dee7a6177b0b"
     end
   end
 
