@@ -88,13 +88,15 @@ jobs:
 
       - name: "Binary: version matches package.json"
         run: |
-          # Build with BUILD_VERSION pinned to package.json version, then
-          # assert the compiled binary reports it back. Catches drift
-          # between package.json, build scripts, and fallback constants.
+          # Build with VERSION pinned to package.json, then assert the
+          # compiled binary reports it back. Catches drift between
+          # package.json, build scripts, and fallback constants.
+          # NOTE: scripts/build.ts reads VERSION, not BUILD_VERSION.
           PKG_VERSION=$(node -e 'console.log(require("./package.json").version)')
-          BUILD_VERSION="$PKG_VERSION" bun run build -- --target bun-linux-x64
-          REPORTED=$(./dist/am-linux-x64 --version 2>&1 | head -1)
-          if ! echo "$REPORTED" | grep -q "$PKG_VERSION"; then
+          VERSION="$PKG_VERSION" bun run build -- --target bun-linux-x64
+          # Strip the citty "[log] " prefix and any quoting before grep.
+          REPORTED=$(./dist/am-linux-x64 --version 2>&1 | head -1 | sed 's/\[log\] *//' | tr -d '"')
+          if ! echo "$REPORTED" | grep -qF "$PKG_VERSION"; then
             echo "::error::Binary version '$REPORTED' does not match package.json '$PKG_VERSION'"
             exit 1
           fi
