@@ -1,8 +1,9 @@
-import { join } from "node:path";
+import { access, readFile, stat } from "node:fs/promises";
+import { isAbsolute, join, resolve as resolvePath } from "node:path";
 import { defineCommand } from "citty";
 import { resolveConfigDir, tryReadConfig, writeConfig } from "../core/config";
 import { commitAll, isNothingToCommitError } from "../core/git";
-import type { Instruction, Server } from "../core/schema";
+import type { AgentProfile, Instruction, Server, Skill } from "../core/schema";
 import { scanServerForSecrets, substituteSecret } from "../core/secret-detection";
 import {
   encryptValue,
@@ -60,6 +61,26 @@ export const addCommand = defineCommand({
     },
     globs: { type: "string", description: "Comma-separated globs (instructions with scope=glob)" },
     targets: { type: "string", description: "Comma-separated target adapters (instructions)" },
+    // Skill flags
+    path: { type: "string", description: "Path to skill directory containing SKILL.md (skills)" },
+    source: {
+      type: "string",
+      description: "Skill source: git+<url>, local:<path>, or marketplace-ref (skills)",
+    },
+    // Agent flags
+    "prompt-file": {
+      type: "string",
+      description: "Path to system prompt markdown (agents)",
+    },
+    model: { type: "string", description: "Model identifier (agents)" },
+    acp: {
+      type: "string",
+      description: "ACP local runtime command (agents — sets adapters.acp passthrough)",
+    },
+    a2a: {
+      type: "string",
+      description: "A2A remote agent URL (agents — sets adapters.a2a passthrough)",
+    },
     project: {
       type: "boolean",
       description: "Add to project config instead of global",
@@ -90,9 +111,9 @@ export const addCommand = defineCommand({
         case "instruction":
           return await addInstruction(name, args, opts);
         case "skill":
-          return addStub("skill", name, opts);
+          return await addSkill(name, args, opts);
         case "agent":
-          return addStub("agent", name, opts);
+          return await addAgent(name, args, opts);
       }
     } catch (err) {
       amError(err, opts);
@@ -272,13 +293,247 @@ async function addInstruction(
   }
 }
 
-function addStub(
-  entity: string,
+/**
+ * Resolve a skill --source reference to a local path.
+ *
+ * Supported forms:
+ *   - `local:<path>` — absolute or relative filesystem path
+ *   - `git+<url>`    — not yet supported; returns an error string (stubbed)
+ *   - `<anything>`   — treated as a marketplace ref; not supported yet
+ *
+ * For local refs we return the resolved absolute path. For anything else we
+ * return an object with the kind so the caller can render a clear error.
+ * The "pull it in" semantics are intentionally narrow — M3 ships local path
+ * handling; git/marketplace fetching happens in later iterations.
+ */
+function parseSkillSource(
+  source: string,
+): { kind: "local"; path: string } | { kind: "unsupported"; reason: string } {
+  if (source.startsWith("local:")) {
+    const raw = source.slice("local:".length);
+    return { kind: "local", path: isAbsolute(raw) ? raw : resolvePath(raw) };
+  }
+  if (source.startsWith("git+")) {
+    return {
+      kind: "unsupported",
+      reason: "git+ sources are not yet supported. Clone the skill locally and use --path.",
+    };
+  }
+  return {
+    kind: "unsupported",
+    reason: `Unsupported source "${source}". Use local:<path> or --path <path>.`,
+  };
+}
+
+async function fileExists(path: string): Promise<boolean> {
+  try {
+    await access(path);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Extract a description from a SKILL.md file — YAML frontmatter `description:`
+ * takes priority, then falls back to the first non-empty line (stripping a
+ * leading `# `). Returns undefined if the file can't be read or is empty.
+ */
+async function readSkillDescription(skillMdPath: string): Promise<string | undefined> {
+  try {
+    const content = await readFile(skillMdPath, "utf-8");
+    // Check for YAML frontmatter
+    const fm = content.match(/^---\n([\s\S]*?)\n---/);
+    if (fm) {
+      const descLine = fm[1].split("\n").find((l) => /^description\s*:/i.test(l));
+      if (descLine) {
+        const val = descLine.split(":").slice(1).join(":").trim();
+        // Strip surrounding quotes
+        const cleaned = val.replace(/^["']|["']$/g, "").trim();
+        if (cleaned) return cleaned;
+      }
+    }
+    const firstLine = content.split("\n").find((l) => l.trim().length > 0);
+    if (firstLine) return firstLine.replace(/^#\s+/, "").trim();
+  } catch {
+    // fall through
+  }
+  return undefined;
+}
+
+async function addSkill(
   name: string,
+  args: Record<string, unknown>,
   opts: { json?: boolean; quiet?: boolean; verbose?: boolean },
 ) {
-  info(`Adding ${entity}s is coming soon. Use config.toml to add "${name}" manually.`, opts);
-  if (opts.json) {
-    output({ action: "add", entity, name, status: "not_implemented" }, opts);
+  const configDir = resolveConfigDir();
+  const configPath = join(configDir, "config.toml");
+
+  const pathArg = args.path as string | undefined;
+  const sourceArg = args.source as string | undefined;
+
+  if (!pathArg && !sourceArg) {
+    error(
+      "Missing --path or --source. Usage: am add skill <name> --path <dir> (or --source local:<path>)",
+      opts,
+    );
+    process.exitCode = 1;
+    return;
+  }
+
+  if (pathArg && sourceArg) {
+    error("Provide --path or --source, not both.", opts);
+    process.exitCode = 1;
+    return;
+  }
+
+  // Resolve the skill path
+  let skillPath: string;
+  if (pathArg) {
+    skillPath = isAbsolute(pathArg) ? pathArg : resolvePath(pathArg);
+  } else {
+    const parsed = parseSkillSource(sourceArg as string);
+    if (parsed.kind !== "local") {
+      error(parsed.reason, opts);
+      process.exitCode = 1;
+      return;
+    }
+    skillPath = parsed.path;
+  }
+
+  // Validate the path: must be a directory containing SKILL.md (Anthropic convention)
+  let isDir = false;
+  try {
+    const st = await stat(skillPath);
+    isDir = st.isDirectory();
+  } catch {
+    error(`Skill path does not exist: ${skillPath}`, opts);
+    process.exitCode = 1;
+    return;
+  }
+  if (!isDir) {
+    error(`Skill path must be a directory: ${skillPath}`, opts);
+    process.exitCode = 1;
+    return;
+  }
+  const skillMd = join(skillPath, "SKILL.md");
+  if (!(await fileExists(skillMd))) {
+    error(`No SKILL.md found in ${skillPath} (Anthropic skills convention).`, opts);
+    process.exitCode = 1;
+    return;
+  }
+
+  const config = await tryReadConfig(configPath);
+  requireConfig(config);
+
+  if (config.skills?.[name]) {
+    error(`Skill "${name}" already exists. Remove it first or use a different name.`, opts);
+    process.exitCode = 1;
+    return;
+  }
+
+  // Derive description: explicit --description > SKILL.md frontmatter/first line > placeholder
+  let description = args.description as string | undefined;
+  if (!description) description = await readSkillDescription(skillMd);
+  if (!description) description = `Skill: ${name}`;
+
+  const skill: Skill = {
+    path: skillPath,
+    description,
+  };
+  if (args.tags) skill.tags = (args.tags as string).split(",").map((s) => s.trim());
+
+  if (!config.skills) config.skills = {};
+  config.skills[name] = skill;
+
+  await writeConfig(configPath, config);
+
+  try {
+    await commitAll(configDir, `add skill: ${name}`);
+  } catch (err) {
+    if (!isNothingToCommitError(err)) {
+      warn(`auto-commit failed: ${errorMessage(err) || "unknown git error"}`, opts);
+    }
+  }
+
+  info(`Added skill "${name}"`, opts);
+  info(`Skill '${name}' added. Run \`am apply\` to generate native configs.`, opts);
+
+  if (args.json) {
+    output({ action: "add", entity: "skill", name, config: skill }, opts);
+  }
+}
+
+async function addAgent(
+  name: string,
+  args: Record<string, unknown>,
+  opts: { json?: boolean; quiet?: boolean; verbose?: boolean },
+) {
+  const configDir = resolveConfigDir();
+  const configPath = join(configDir, "config.toml");
+
+  const promptFile = args["prompt-file"] as string | undefined;
+  const acpCommand = args.acp as string | undefined;
+  const a2aUrl = args.a2a as string | undefined;
+  const description = args.description as string | undefined;
+  const model = args.model as string | undefined;
+
+  // Agent must have at least one of: prompt-file, acp, a2a
+  if (!promptFile && !acpCommand && !a2aUrl) {
+    error(
+      "Missing --prompt-file, --acp, or --a2a. Provide at least one so the agent has something to run.",
+      opts,
+    );
+    process.exitCode = 1;
+    return;
+  }
+
+  // Validate prompt-file exists if supplied
+  if (promptFile) {
+    const resolved = isAbsolute(promptFile) ? promptFile : resolvePath(promptFile);
+    if (!(await fileExists(resolved))) {
+      error(`Prompt file does not exist: ${resolved}`, opts);
+      process.exitCode = 1;
+      return;
+    }
+  }
+
+  const config = await tryReadConfig(configPath);
+  requireConfig(config);
+
+  if (config.agents?.[name]) {
+    error(`Agent "${name}" already exists. Remove it first or use a different name.`, opts);
+    process.exitCode = 1;
+    return;
+  }
+
+  const agent: AgentProfile = { name };
+  if (description) agent.description = description;
+  if (promptFile) {
+    const resolved = isAbsolute(promptFile) ? promptFile : resolvePath(promptFile);
+    agent.prompt_file = resolved;
+  }
+  if (model) agent.model = model;
+  if (acpCommand) agent.acp = { command: acpCommand };
+  if (a2aUrl) agent.a2a = { url: a2aUrl };
+
+  if (!config.agents) config.agents = {};
+  config.agents[name] = agent;
+
+  await writeConfig(configPath, config);
+
+  try {
+    await commitAll(configDir, `add agent: ${name}`);
+  } catch (err) {
+    if (!isNothingToCommitError(err)) {
+      warn(`auto-commit failed: ${errorMessage(err) || "unknown git error"}`, opts);
+    }
+  }
+
+  info(`Added agent "${name}"`, opts);
+  info(`Agent '${name}' added. Run \`am apply\` to generate native configs.`, opts);
+
+  if (args.json) {
+    output({ action: "add", entity: "agent", name, config: agent }, opts);
   }
 }
