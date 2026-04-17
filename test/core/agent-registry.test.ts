@@ -381,7 +381,7 @@ describe("async variants with disk roster", () => {
       }),
     );
 
-    const agents = await listAllAgentsAsync(undefined, tmp.path);
+    const agents = await listAllAgentsAsync(undefined, tmp.path, { detect: false });
 
     const diskAgent = agents.find((a) => a.name === "disk-agent");
     expect(diskAgent).toBeDefined();
@@ -399,8 +399,57 @@ describe("async variants with disk roster", () => {
   });
 
   test("listAllAgentsAsync works without roster file", async () => {
-    const agents = await listAllAgentsAsync(undefined, tmp.path);
+    const agents = await listAllAgentsAsync(undefined, tmp.path, { detect: false });
     const builtInCount = Object.keys(BUILT_IN_ACP_AGENTS).length;
     expect(agents).toHaveLength(builtInCount);
+  });
+
+  test("listAllAgentsAsync with detect:true populates installed flag", async () => {
+    // Force every PATH check to miss so the result is deterministic regardless
+    // of the host machine's installed agents.
+    const { __setWhichFn, resetAgentDetectionCache } = await import(
+      "../../src/core/agent-detection"
+    );
+    resetAgentDetectionCache();
+    __setWhichFn(() => null);
+    try {
+      const agents = await listAllAgentsAsync(undefined, tmp.path, { detect: true });
+      // Every built-in ACP agent should have `installed` set (true or false,
+      // but not undefined).
+      for (const agent of agents) {
+        if (agent.source === "acp-builtin") {
+          expect(typeof agent.installed).toBe("boolean");
+        }
+      }
+    } finally {
+      __setWhichFn(null);
+      resetAgentDetectionCache();
+    }
+  });
+
+  test("listAllAgentsAsync assumes config agents are installed", async () => {
+    const { __setWhichFn, resetAgentDetectionCache } = await import(
+      "../../src/core/agent-detection"
+    );
+    resetAgentDetectionCache();
+    __setWhichFn(() => null);
+    try {
+      const config: UnifiedRegistryConfig = {
+        agents: {
+          "my-custom": {
+            description: "Hand-wired",
+            acp: { command: "/opt/my-custom --acp" },
+          },
+        },
+      };
+      const agents = await listAllAgentsAsync(config, tmp.path, { detect: true });
+      const custom = agents.find((a) => a.name === "my-custom");
+      expect(custom).toBeDefined();
+      expect(custom!.source).toBe("config");
+      expect(custom!.installed).toBe(true);
+    } finally {
+      __setWhichFn(null);
+      resetAgentDetectionCache();
+    }
   });
 });

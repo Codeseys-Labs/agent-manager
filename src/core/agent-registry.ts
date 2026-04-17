@@ -22,6 +22,10 @@ export interface UnifiedAgent {
   source: "config" | "acp-builtin" | "a2a-roster";
   acp?: { command: string };
   a2a?: { url: string };
+  /** True if the agent's runtime is actually available locally (PATH or paired adapter). */
+  installed?: boolean;
+  /** Tool version if cheaply derivable. */
+  version?: string;
 }
 
 /** Shape of [agents.<name>] in config TOML for the unified registry. */
@@ -233,12 +237,55 @@ export function listAllAgents(
 }
 
 /**
- * Async variant of listAllAgents that reads the A2A roster from disk.
+ * Options controlling `listAllAgentsAsync` behaviour.
+ */
+export interface ListAllAgentsAsyncOptions {
+  /**
+   * When true, populate `installed` / `version` on each returned agent by
+   * running the cheap agent-detection pipeline. Config-source agents are
+   * assumed installed (the user declared them). Default: true.
+   * Disable via `detect: false` on hot paths that must avoid even cheap I/O.
+   */
+  detect?: boolean;
+}
+
+/**
+ * Async variant of listAllAgents that reads the A2A roster from disk and —
+ * unless explicitly disabled — fills in `installed` / `version` on each
+ * agent using `detectAllAgents()`.
  */
 export async function listAllAgentsAsync(
   config?: UnifiedRegistryConfig,
   configDir?: string,
+  options?: ListAllAgentsAsyncOptions,
 ): Promise<UnifiedAgent[]> {
   const rosterAgents = configDir ? await readRoster(configDir) : undefined;
-  return listAllAgents(config, rosterAgents);
+  const agents = listAllAgents(config, rosterAgents);
+
+  const detect = options?.detect !== false;
+  if (!detect) return agents;
+
+  // Populate installed/version fields. Lazy import to avoid a cycle between
+  // core/agent-registry and core/agent-detection (the latter imports
+  // BUILT_IN_ACP_AGENTS from here).
+  const { detectAllAgents } = await import("./agent-detection");
+  const detections = await detectAllAgents();
+
+  return agents.map((agent) => {
+    // Config-source agents: user-declared commands/URLs — assume installed.
+    if (agent.source === "config") {
+      return { ...agent, installed: true };
+    }
+    const detection = detections[agent.name];
+    if (!detection) {
+      // A2A-only roster entries or unknown agents — leave `installed`
+      // unset, the caller can treat as "unknown" or probe via HTTP ping.
+      return agent;
+    }
+    return {
+      ...agent,
+      installed: detection.installed,
+      ...(detection.version ? { version: detection.version } : {}),
+    };
+  });
 }
