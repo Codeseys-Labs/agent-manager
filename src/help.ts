@@ -54,8 +54,14 @@ export const COMMAND_GROUPS: ReadonlyArray<{
     ],
   },
   {
-    heading: "Knowledge commands",
-    commands: [["wiki", "Knowledge base management"]],
+    heading: "Wiki commands",
+    commands: [
+      ["wiki list", "List recent wiki entries"],
+      ["wiki show", "Display a wiki entry by slug"],
+      ["wiki search", "Full-text search across wiki entries"],
+      ["wiki sync", "Push/pull the global wiki via git"],
+      ["wiki path", "Print the local wiki directory path"],
+    ],
   },
   {
     heading: "Tool commands",
@@ -82,7 +88,7 @@ export const COMMAND_GROUPS: ReadonlyArray<{
 /** Render grouped help text for the root command. */
 export function renderGroupedHelp(version: string): string {
   const lines: string[] = [];
-  lines.push(`agent-manager (am) — chezmoi for AI agent configs  v${version}`);
+  lines.push(`agent-manager (am) — the control plane for AI agents  v${version}`);
   lines.push("");
 
   for (const group of COMMAND_GROUPS) {

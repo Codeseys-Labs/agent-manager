@@ -40,7 +40,11 @@ describe("grouped help output (ADR-0029)", () => {
         "marketplace",
       ];
       for (const cmd of registeredCommands) {
-        expect(groupedNames.has(cmd)).toBe(true);
+        // Accept either an exact match or a subcommand prefix match
+        // (e.g. "wiki" is satisfied by "wiki list", "wiki show", etc.).
+        const present =
+          groupedNames.has(cmd) || [...groupedNames].some((name) => name.startsWith(`${cmd} `));
+        expect(present).toBe(true);
       }
     });
 
@@ -67,7 +71,8 @@ describe("grouped help output (ADR-0029)", () => {
     });
 
     it("includes the tagline", () => {
-      expect(output).toContain("chezmoi for AI agent configs");
+      // Post-ADR-0031: tagline shifted to "control plane for AI agents".
+      expect(output).toContain("control plane for AI agents");
     });
 
     it("renders all group headings", () => {
@@ -97,7 +102,7 @@ describe("grouped help output (ADR-0029)", () => {
       expect(output).toContain("am <command> --help");
     });
 
-    it("groups are ordered: Config, Git, Registry, Marketplace, Agent, Knowledge, Tool, Interface", () => {
+    it("groups are ordered: Config, Git, Registry, Marketplace, Agent, Wiki, Tool, Interface", () => {
       const headings = COMMAND_GROUPS.map((g) => g.heading);
       expect(headings).toEqual([
         "Config commands",
@@ -105,7 +110,7 @@ describe("grouped help output (ADR-0029)", () => {
         "Registry commands",
         "Marketplace commands",
         "Agent commands",
-        "Knowledge commands",
+        "Wiki commands",
         "Tool commands",
         "Interface commands",
       ]);

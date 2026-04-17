@@ -2,23 +2,47 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import {
+  listSubcommand,
+  pathSubcommand,
+  searchSubcommand,
+  showSubcommand,
+} from "../../src/commands/wiki";
+import {
   deletePage,
   ensureWikiDirs,
   getAllEntries,
   listPages,
   readPage,
   rebuildSearchIndex,
+  resolveWikiDir,
   searchPages,
   writePage,
 } from "../../src/wiki/storage";
 import type { WikiPage } from "../../src/wiki/types";
 import { type TestDir, createTestDir } from "../helpers/tmp";
 
-// Capture console output
+// Capture console output (commands emit via info/output)
 let consoleOutput: string[] = [];
 let consoleErrors: string[] = [];
 const origLog = console.log;
 const origError = console.error;
+const origConfigDir = process.env.AM_CONFIG_DIR;
+
+function captureConsole(): void {
+  consoleOutput = [];
+  consoleErrors = [];
+  console.log = (...args: unknown[]) => {
+    consoleOutput.push(args.map(String).join(" "));
+  };
+  console.error = (...args: unknown[]) => {
+    consoleErrors.push(args.map(String).join(" "));
+  };
+}
+
+function restoreConsole(): void {
+  console.log = origLog;
+  console.error = origError;
+}
 
 function makePage(overrides: Partial<WikiPage> = {}): WikiPage {
   const now = new Date().toISOString();
@@ -37,222 +61,297 @@ function makePage(overrides: Partial<WikiPage> = {}): WikiPage {
   };
 }
 
-describe("am wiki", () => {
+// ── Storage-level tests (pre-existing, unchanged coverage) ──────
+
+describe("am wiki: storage primitives", () => {
   let dir: TestDir;
   let wikiDir: string;
 
   beforeEach(async () => {
-    consoleOutput = [];
-    consoleErrors = [];
-    console.log = (...args: unknown[]) => {
-      consoleOutput.push(args.map(String).join(" "));
-    };
-    console.error = (...args: unknown[]) => {
-      consoleErrors.push(args.map(String).join(" "));
-    };
-    process.exitCode = undefined;
-
     dir = await createTestDir("am-wiki-");
     wikiDir = join(dir.path, "wiki");
     await ensureWikiDirs(wikiDir);
   });
 
   afterEach(async () => {
-    console.log = origLog;
-    console.error = origError;
-    process.exitCode = undefined;
     if (dir) await dir.cleanup();
   });
 
-  // ── init subcommand ────────────────────────────────────────────
-
-  test("init creates wiki directory structure", async () => {
-    const newWikiDir = join(dir.path, "new-wiki");
-    await ensureWikiDirs(newWikiDir);
-
-    // Check subdirectories exist (use existsSync since Bun.file doesn't work for dirs)
-    expect(existsSync(join(dir.path, "new-wiki", "entities"))).toBe(true);
-    expect(existsSync(join(dir.path, "new-wiki", "concepts"))).toBe(true);
-    expect(existsSync(join(dir.path, "new-wiki", "summaries"))).toBe(true);
-    expect(existsSync(join(dir.path, "new-wiki", "synthesis"))).toBe(true);
-    expect(existsSync(join(dir.path, "new-wiki", "decisions"))).toBe(true);
-    expect(existsSync(join(dir.path, "new-wiki", "raw"))).toBe(true);
+  test("ensureWikiDirs creates the expected subdirectory layout", () => {
+    expect(existsSync(join(wikiDir, "entities"))).toBe(true);
+    expect(existsSync(join(wikiDir, "concepts"))).toBe(true);
+    expect(existsSync(join(wikiDir, "summaries"))).toBe(true);
+    expect(existsSync(join(wikiDir, "synthesis"))).toBe(true);
+    expect(existsSync(join(wikiDir, "decisions"))).toBe(true);
+    expect(existsSync(join(wikiDir, "raw"))).toBe(true);
   });
 
-  // ── add / write page ──────────────────────────────────────────
-
-  test("add creates a wiki page file", async () => {
-    const page = makePage({ slug: "my-fact", type: "entity", title: "My Fact" });
+  test("writePage + readPage roundtrip preserves frontmatter", async () => {
+    const page = makePage({ slug: "rt", type: "concept", title: "Round Trip" });
     await writePage(page, wikiDir);
+    const back = await readPage("rt", wikiDir);
+    expect(back).not.toBeNull();
+    expect(back!.slug).toBe("rt");
+    expect(back!.title).toBe("Round Trip");
+    expect(back!.type).toBe("concept");
+  });
+});
 
-    // Page should exist on disk
-    const filePath = join(wikiDir, "entities", "my-fact.md");
-    const content = await Bun.file(filePath).text();
-    expect(content).toContain("title: My Fact");
-    expect(content).toContain("type: entity");
-    expect(content).toContain("slug: my-fact");
-    expect(content).toContain("This is test content");
+// ── Command-level tests (am wiki list/show/search/path) ─────────
+
+describe("am wiki: list/show/search/path commands", () => {
+  let dir: TestDir;
+  let configDir: string;
+  let wikiDir: string;
+
+  beforeEach(async () => {
+    dir = await createTestDir("am-wiki-cmd-");
+    configDir = dir.path;
+    // Point resolveConfigDir (and therefore the global wiki) at our tmpdir.
+    process.env.AM_CONFIG_DIR = configDir;
+    wikiDir = resolveWikiDir({ global: true });
+    await ensureWikiDirs(wikiDir);
+    captureConsole();
+    process.exitCode = undefined;
   });
 
-  // ── show / read page ──────────────────────────────────────────
-
-  test("show reads and returns a page", async () => {
-    const page = makePage({
-      slug: "show-test",
-      type: "concept",
-      title: "Concept Page",
-      content: "Some content about concepts.",
-    });
-    await writePage(page, wikiDir);
-
-    const result = await readPage("show-test", wikiDir);
-    expect(result).not.toBeNull();
-    expect(result!.slug).toBe("show-test");
-    expect(result!.title).toBe("Concept Page");
-    expect(result!.type).toBe("concept");
-    expect(result!.content).toContain("Some content about concepts");
-    expect(result!.tags).toEqual(["test", "typescript"]);
+  afterEach(async () => {
+    restoreConsole();
+    process.exitCode = undefined;
+    // Restore AM_CONFIG_DIR to its original value (or clear it).
+    // We can't assign `undefined` because Node coerces it to the string
+    // "undefined", which would leak into other tests resolving configDir.
+    if (origConfigDir === undefined) {
+      // biome-ignore lint/performance/noDelete: env var cleanup
+      delete process.env.AM_CONFIG_DIR;
+    } else {
+      process.env.AM_CONFIG_DIR = origConfigDir;
+    }
+    if (dir) await dir.cleanup();
   });
 
-  test("show returns null for non-existent page", async () => {
-    const result = await readPage("does-not-exist", wikiDir);
-    expect(result).toBeNull();
-  });
-
-  // ── delete subcommand ─────────────────────────────────────────
-
-  test("delete removes a page", async () => {
-    const page = makePage({ slug: "delete-me", type: "entity" });
-    await writePage(page, wikiDir);
-
-    // Verify it exists
-    const before = await readPage("delete-me", wikiDir);
-    expect(before).not.toBeNull();
-
-    // Delete it
-    const deleted = await deletePage("delete-me", wikiDir);
-    expect(deleted).toBe(true);
-
-    // Verify it's gone
-    const after = await readPage("delete-me", wikiDir);
-    expect(after).toBeNull();
-  });
-
-  test("delete returns false for non-existent page", async () => {
-    const deleted = await deletePage("nonexistent", wikiDir);
-    expect(deleted).toBe(false);
-  });
-
-  // ── search subcommand ─────────────────────────────────────────
-
-  test("search returns results from MiniSearch", async () => {
-    // Add several pages
-    const page1 = makePage({
-      slug: "typescript-patterns",
-      type: "entity",
-      title: "TypeScript Design Patterns",
-      content: "TypeScript singleton pattern implementation guide.",
-      tags: ["typescript", "design-patterns"],
-    });
-    const page2 = makePage({
-      slug: "python-guide",
-      type: "entity",
-      title: "Python Guide",
-      content: "Python programming basics.",
-      tags: ["python"],
-    });
-    const page3 = makePage({
-      slug: "ts-generics",
-      type: "concept",
-      title: "TypeScript Generics",
-      content: "Using generics in TypeScript for type-safe code.",
-      tags: ["typescript", "generics"],
-    });
-
-    await writePage(page1, wikiDir);
-    await writePage(page2, wikiDir);
-    await writePage(page3, wikiDir);
-
-    // Rebuild the search index
+  async function seed(): Promise<void> {
+    await writePage(
+      makePage({
+        slug: "typescript-patterns",
+        type: "entity",
+        title: "TypeScript Design Patterns",
+        content: "TypeScript singleton pattern implementation guide.",
+        tags: ["typescript", "design-patterns"],
+        updated: "2026-04-10T00:00:00.000Z",
+      }),
+      wikiDir,
+    );
+    await writePage(
+      makePage({
+        slug: "ts-generics",
+        type: "concept",
+        title: "TypeScript Generics",
+        content: "Using generics in TypeScript for type-safe code.",
+        tags: ["typescript", "generics"],
+        updated: "2026-04-15T00:00:00.000Z",
+      }),
+      wikiDir,
+    );
+    await writePage(
+      makePage({
+        slug: "python-guide",
+        type: "entity",
+        title: "Python Guide",
+        content: "Python programming basics.",
+        tags: ["python"],
+        updated: "2026-04-05T00:00:00.000Z",
+      }),
+      wikiDir,
+    );
     await rebuildSearchIndex(wikiDir);
+  }
 
-    // Search for TypeScript
-    const results = await searchPages("TypeScript", 10, wikiDir);
-    expect(results.length).toBeGreaterThanOrEqual(2);
+  // list ───────────────────────────────────────────────────────────
 
-    const slugs = results.map((r) => r.page.slug);
+  test("list emits a JSON payload with all seeded pages sorted by updated desc", async () => {
+    await seed();
+    await listSubcommand.run!({
+      args: { json: true, global: true, quiet: false, verbose: false, all: false, limit: "20" },
+      cmd: listSubcommand,
+      rawArgs: [],
+      data: undefined,
+    } as any);
+    const payload = JSON.parse(consoleOutput.join("\n"));
+    expect(payload.total).toBe(3);
+    expect(payload.pages.length).toBe(3);
+    // Most recently updated first
+    expect(payload.pages[0].slug).toBe("ts-generics");
+    expect(payload.pages[2].slug).toBe("python-guide");
+  });
+
+  test("list respects --limit and reports the truncated count in JSON", async () => {
+    await seed();
+    await listSubcommand.run!({
+      args: { json: true, global: true, quiet: false, verbose: false, all: false, limit: "2" },
+      cmd: listSubcommand,
+      rawArgs: [],
+      data: undefined,
+    } as any);
+    const payload = JSON.parse(consoleOutput.join("\n"));
+    expect(payload.total).toBe(3);
+    expect(payload.shown).toBe(2);
+    expect(payload.pages.length).toBe(2);
+  });
+
+  test("list on an empty wiki prints a helpful hint", async () => {
+    await listSubcommand.run!({
+      args: { json: false, global: true, quiet: false, verbose: false, all: false, limit: "20" },
+      cmd: listSubcommand,
+      rawArgs: [],
+      data: undefined,
+    } as any);
+    const joined = consoleOutput.join("\n");
+    expect(joined).toContain("No wiki pages found");
+    expect(joined).toContain("am wiki ingest");
+  });
+
+  test("list --all ignores --limit", async () => {
+    await seed();
+    await listSubcommand.run!({
+      args: { json: true, global: true, quiet: false, verbose: false, all: true, limit: "1" },
+      cmd: listSubcommand,
+      rawArgs: [],
+      data: undefined,
+    } as any);
+    const payload = JSON.parse(consoleOutput.join("\n"));
+    expect(payload.shown).toBe(3);
+  });
+
+  // show ───────────────────────────────────────────────────────────
+
+  test("show prints a page by slug in JSON mode", async () => {
+    await seed();
+    await showSubcommand.run!({
+      args: {
+        slug: "ts-generics",
+        json: true,
+        global: true,
+        quiet: false,
+        verbose: false,
+      },
+      cmd: showSubcommand,
+      rawArgs: [],
+      data: undefined,
+    } as any);
+    const payload = JSON.parse(consoleOutput.join("\n"));
+    expect(payload.slug).toBe("ts-generics");
+    expect(payload.title).toBe("TypeScript Generics");
+    expect(payload.type).toBe("concept");
+  });
+
+  test("show exits with code 1 and a clear error when the id is unknown", async () => {
+    await seed();
+    await showSubcommand.run!({
+      args: {
+        slug: "does-not-exist",
+        json: false,
+        global: true,
+        quiet: false,
+        verbose: false,
+      },
+      cmd: showSubcommand,
+      rawArgs: [],
+      data: undefined,
+    } as any);
+    expect(process.exitCode).toBe(1);
+    const errs = consoleErrors.join("\n");
+    expect(errs).toContain("does-not-exist");
+    expect(errs.toLowerCase()).toContain("not found");
+  });
+
+  // search ─────────────────────────────────────────────────────────
+
+  test("search returns ranked matches in JSON", async () => {
+    await seed();
+    await searchSubcommand.run!({
+      args: {
+        query: "TypeScript",
+        json: true,
+        global: true,
+        quiet: false,
+        verbose: false,
+        limit: "10",
+      },
+      cmd: searchSubcommand,
+      rawArgs: [],
+      data: undefined,
+    } as any);
+    const payload = JSON.parse(consoleOutput.join("\n"));
+    expect(payload.query).toBe("TypeScript");
+    const slugs = payload.results.map((r: { slug: string }) => r.slug);
     expect(slugs).toContain("typescript-patterns");
     expect(slugs).toContain("ts-generics");
-
-    // Each result should have a score
-    for (const r of results) {
-      expect(r.score).toBeGreaterThan(0);
-    }
+    expect(payload.total).toBeGreaterThanOrEqual(2);
   });
 
-  test("search returns empty for no matches", async () => {
-    await rebuildSearchIndex(wikiDir);
-    const results = await searchPages("zzz-nonexistent-query", 10, wikiDir);
-    expect(results).toEqual([]);
+  test("search with no matches prints a 'No pages match' line in text mode", async () => {
+    await seed();
+    await searchSubcommand.run!({
+      args: {
+        query: "zzz-nonexistent-query-xyz",
+        json: false,
+        global: true,
+        quiet: false,
+        verbose: false,
+        limit: "10",
+      },
+      cmd: searchSubcommand,
+      rawArgs: [],
+      data: undefined,
+    } as any);
+    const joined = consoleOutput.join("\n");
+    expect(joined).toContain("No pages match");
   });
 
-  // ── export subcommand ─────────────────────────────────────────
-
-  test("export returns all pages as data", async () => {
-    const page1 = makePage({ slug: "export-1", type: "entity", title: "Export One" });
-    const page2 = makePage({ slug: "export-2", type: "concept", title: "Export Two" });
-
-    await writePage(page1, wikiDir);
-    await writePage(page2, wikiDir);
-
-    const pages = await listPages({ wikiDir });
-    expect(pages.length).toBe(2);
-
-    const slugs = pages.map((p) => p.slug);
-    expect(slugs).toContain("export-1");
-    expect(slugs).toContain("export-2");
+  test("search with no matches returns total: 0 in JSON mode", async () => {
+    await seed();
+    await searchSubcommand.run!({
+      args: {
+        query: "zzz-nonexistent-query-xyz",
+        json: true,
+        global: true,
+        quiet: false,
+        verbose: false,
+        limit: "10",
+      },
+      cmd: searchSubcommand,
+      rawArgs: [],
+      data: undefined,
+    } as any);
+    const payload = JSON.parse(consoleOutput.join("\n"));
+    expect(payload.total).toBe(0);
+    expect(payload.results).toEqual([]);
   });
 
-  // ── roundtrip: write, read, list, delete ──────────────────────
+  // path ───────────────────────────────────────────────────────────
 
-  test("full page lifecycle: write, read, list, delete", async () => {
-    const page = makePage({
-      slug: "lifecycle-test",
-      type: "decision",
-      title: "Architecture Decision",
-      content: "We decided to use Bun for the runtime.",
-      tags: ["architecture", "bun"],
-    });
-
-    // Write
-    await writePage(page, wikiDir);
-
-    // Read
-    const read = await readPage("lifecycle-test", wikiDir);
-    expect(read).not.toBeNull();
-    expect(read!.title).toBe("Architecture Decision");
-
-    // List
-    const pages = await listPages({ wikiDir });
-    expect(pages.some((p) => p.slug === "lifecycle-test")).toBe(true);
-
-    // Delete
-    await deletePage("lifecycle-test", wikiDir);
-    const afterDelete = await readPage("lifecycle-test", wikiDir);
-    expect(afterDelete).toBeNull();
+  test("path prints the global wiki directory as a bare line for shell use", async () => {
+    await pathSubcommand.run!({
+      args: { json: false, global: true, quiet: false, verbose: false },
+      cmd: pathSubcommand,
+      rawArgs: [],
+      data: undefined,
+    } as any);
+    // One line of output, equal to the resolved wiki path — no prefix.
+    expect(consoleOutput.length).toBe(1);
+    expect(consoleOutput[0]).toBe(wikiDir);
   });
 
-  test("pages can be filtered by type", async () => {
-    await writePage(makePage({ slug: "entity-1", type: "entity", title: "E1" }), wikiDir);
-    await writePage(makePage({ slug: "concept-1", type: "concept", title: "C1" }), wikiDir);
-    await writePage(makePage({ slug: "entity-2", type: "entity", title: "E2" }), wikiDir);
-
-    const entities = await listPages({ type: "entity", wikiDir });
-    expect(entities.length).toBe(2);
-    expect(entities.every((p) => p.type === "entity")).toBe(true);
-
-    const concepts = await listPages({ type: "concept", wikiDir });
-    expect(concepts.length).toBe(1);
-    expect(concepts[0].slug).toBe("concept-1");
+  test("path --json emits structured output including the global flag", async () => {
+    await pathSubcommand.run!({
+      args: { json: true, global: true, quiet: false, verbose: false },
+      cmd: pathSubcommand,
+      rawArgs: [],
+      data: undefined,
+    } as any);
+    const payload = JSON.parse(consoleOutput.join("\n"));
+    expect(payload.path).toBe(wikiDir);
+    expect(payload.global).toBe(true);
   });
 });

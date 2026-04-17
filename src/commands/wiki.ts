@@ -1,10 +1,15 @@
 /**
- * CLI commands for the LLM Wiki / Knowledge Synthesis system (ADR-0020).
+ * CLI commands for the LLM Wiki / Knowledge Synthesis system (ADR-0020, ADR-0031 pillar 5).
  *
- * Subcommands:
- *   am wiki search <query>           — BM25 search via MiniSearch
- *   am wiki add                      — add a wiki page (manual entry)
+ * Primary navigation subcommands (promoted under ADR-0031):
+ *   am wiki list                     — list recent wiki entries
  *   am wiki show <slug>              — display a wiki page by slug
+ *   am wiki search <query>           — BM25 search via MiniSearch
+ *   am wiki sync                     — push/pull the wiki via git
+ *   am wiki path                     — print the local wiki directory path
+ *
+ * Authoring / maintenance:
+ *   am wiki add                      — add a wiki page (manual entry)
  *   am wiki delete <slug>            — remove a page with confirmation
  *   am wiki ingest [--session <id>]  — create wiki pages from sessions
  *   am wiki synthesize <query>       — generate context block
@@ -20,8 +25,9 @@ import { dirname, join } from "node:path";
 import { defineCommand } from "citty";
 import { getAdapter, listAdapters } from "../adapters/registry";
 import { resolveProjectConfig } from "../core/config";
+import { getStatus, pull as gitPull, push as gitPush } from "../core/git";
 import { errorCode, errorMessage } from "../lib/errors";
-import { error, info, output, parsePositiveInt } from "../lib/output";
+import { error, info, output, parsePositiveInt, warn } from "../lib/output";
 import { exportGraphForViz, findOrphans, loadGraph } from "../wiki/graph";
 import { harvestSession, harvestSessionAsPages } from "../wiki/harvester";
 import {
@@ -55,7 +61,7 @@ import type {
 
 // ── Subcommands ─────────────────────────────────────────────────
 
-const searchSubcommand = defineCommand({
+export const searchSubcommand = defineCommand({
   meta: { name: "search", description: "Search the wiki (BM25 via MiniSearch)" },
   args: {
     query: { type: "positional", description: "Search query", required: true },
@@ -196,7 +202,7 @@ const addSubcommand = defineCommand({
   },
 });
 
-const showSubcommand = defineCommand({
+export const showSubcommand = defineCommand({
   meta: { name: "show", description: "Display a wiki page by slug" },
   args: {
     slug: { type: "positional", description: "Page slug", required: true },
@@ -896,6 +902,208 @@ const graphSubcommand = defineCommand({
   },
 });
 
+// ── list / sync / path (ADR-0031 pillar-5 promotion) ────────────
+
+export const listSubcommand = defineCommand({
+  meta: { name: "list", description: "List wiki entries (most recent first)" },
+  args: {
+    json: { type: "boolean", description: "JSON output", default: false },
+    quiet: { type: "boolean", alias: "q", default: false },
+    verbose: { type: "boolean", alias: "v", default: false },
+    global: { type: "boolean", description: "Use global wiki", default: false },
+    all: {
+      type: "boolean",
+      description: "List every page (default: 20 most recent)",
+      default: false,
+    },
+    limit: {
+      type: "string",
+      description: "Max results (default 20, ignored with --all)",
+      default: "20",
+    },
+    type: {
+      type: "string",
+      description: "Filter by page type (entity|concept|summary|synthesis|decision)",
+    },
+    tag: { type: "string", description: "Filter by tag" },
+  },
+  async run({ args }) {
+    const opts = { json: args.json, quiet: args.quiet, verbose: args.verbose };
+    const wikiDir = args.global ? resolveWikiDir({ global: true }) : undefined;
+
+    const filter: Parameters<typeof listPages>[0] = { wikiDir };
+    if (args.type) {
+      filter.type = args.type as (typeof filter)["type"];
+    }
+    if (args.tag) filter.tag = args.tag as string;
+
+    const all = await listPages(filter);
+
+    // Sort by updated desc (most recent first)
+    all.sort((a, b) => (a.updated < b.updated ? 1 : a.updated > b.updated ? -1 : 0));
+
+    const limit = args.all ? all.length : parsePositiveInt(args.limit, "limit", 20);
+    const pages = all.slice(0, limit);
+
+    if (args.json) {
+      output(
+        {
+          total: all.length,
+          shown: pages.length,
+          pages: pages.map((p) => ({
+            slug: p.slug,
+            title: p.title,
+            type: p.type,
+            tags: p.tags,
+            updated: p.updated,
+          })),
+        },
+        opts,
+      );
+      return;
+    }
+
+    if (pages.length === 0) {
+      info("No wiki pages found. Try `am wiki ingest` or `am wiki add`.", opts);
+      return;
+    }
+
+    info(`${"Slug".padEnd(40)} ${"Type".padEnd(10)} ${"Updated".padEnd(10)} ${"Title"}`, opts);
+    info(`${"─".repeat(40)} ${"─".repeat(10)} ${"─".repeat(10)} ${"─".repeat(40)}`, opts);
+    for (const page of pages) {
+      info(
+        `${page.slug.padEnd(40)} ${page.type.padEnd(10)} ${page.updated.slice(0, 10).padEnd(10)} ${page.title.slice(0, 50)}`,
+        opts,
+      );
+    }
+    if (all.length > pages.length) {
+      info(`\nShowing ${pages.length} of ${all.length}. Use --all to show every page.`, opts);
+    } else {
+      info(`\n${pages.length} page(s).`, opts);
+    }
+  },
+});
+
+export const pathSubcommand = defineCommand({
+  meta: { name: "path", description: "Print the local wiki directory path" },
+  args: {
+    json: { type: "boolean", description: "JSON output", default: false },
+    quiet: { type: "boolean", alias: "q", default: false },
+    verbose: { type: "boolean", alias: "v", default: false },
+    global: { type: "boolean", description: "Print the global wiki path", default: false },
+  },
+  async run({ args }) {
+    const opts = { json: args.json, quiet: args.quiet, verbose: args.verbose };
+    const wikiDir = resolveWikiDir({ global: args.global });
+    if (args.json) {
+      output({ path: wikiDir, global: args.global }, opts);
+    } else {
+      // Print the raw path to stdout (no prefix), so shells can:
+      //   cd "$(am wiki path)"
+      //   $EDITOR "$(am wiki path)"
+      console.log(wikiDir);
+    }
+  },
+});
+
+// TODO(ADR-0031/M4 follow-up): wiki sync is currently a thin wrapper around
+// isomorphic-git push/pull on the global wiki root. Project wiki sync is out
+// of scope for M4 because the central store is symlinked per ADR-0022 and the
+// authoritative repo lives in the config dir. A richer sync (commit unstaged
+// wiki edits, conflict resolution, per-project remotes) is left for M5.
+export const syncSubcommand = defineCommand({
+  meta: { name: "sync", description: "Push/pull the global wiki via git" },
+  args: {
+    json: { type: "boolean", description: "JSON output", default: false },
+    quiet: { type: "boolean", alias: "q", default: false },
+    verbose: { type: "boolean", alias: "v", default: false },
+    direction: {
+      type: "string",
+      description: "push | pull | both",
+      default: "both",
+    },
+    remote: { type: "string", description: "Git remote name", default: "origin" },
+    branch: { type: "string", description: "Git branch name (default: current)" },
+  },
+  async run({ args }) {
+    const opts = { json: args.json, quiet: args.quiet, verbose: args.verbose };
+    const wikiDir = resolveWikiDir({ global: true });
+    const direction = (args.direction as string).toLowerCase();
+
+    if (!["push", "pull", "both"].includes(direction)) {
+      error(`Invalid --direction "${direction}". Expected: push | pull | both.`, opts);
+      process.exitCode = 1;
+      return;
+    }
+
+    let status;
+    try {
+      status = await getStatus(wikiDir);
+    } catch {
+      error(
+        `Wiki directory is not a git repo: ${wikiDir}. Initialize it with \`git init\` and add a remote before syncing.`,
+        opts,
+      );
+      process.exitCode = 1;
+      return;
+    }
+
+    if (status.remotes.length === 0) {
+      error(
+        `No git remote configured in ${wikiDir}. Add one with \`git -C ${wikiDir} remote add origin <url>\`.`,
+        opts,
+      );
+      process.exitCode = 1;
+      return;
+    }
+
+    if (!status.clean && (direction === "pull" || direction === "both")) {
+      warn(
+        `Wiki working tree has ${status.dirty.length} uncommitted change(s); pulling anyway (isomorphic-git will refuse on conflict).`,
+        opts,
+      );
+    }
+
+    const remote = args.remote as string;
+    const branch = args.branch as string | undefined;
+    const actions: Array<{ action: "pull" | "push"; ok: boolean; error?: string }> = [];
+
+    if (direction === "pull" || direction === "both") {
+      try {
+        await gitPull(wikiDir, remote, branch);
+        actions.push({ action: "pull", ok: true });
+        info(`Pulled wiki from ${remote}`, opts);
+      } catch (err: unknown) {
+        const msg = errorMessage(err) ?? "pull failed";
+        actions.push({ action: "pull", ok: false, error: msg });
+        error(`Pull failed: ${msg}`, opts);
+        process.exitCode = 1;
+        if (direction === "pull") {
+          if (args.json) output({ action: "sync", wikiDir, remote, results: actions }, opts);
+          return;
+        }
+      }
+    }
+
+    if (direction === "push" || direction === "both") {
+      try {
+        await gitPush(wikiDir, remote, branch);
+        actions.push({ action: "push", ok: true });
+        info(`Pushed wiki to ${remote}`, opts);
+      } catch (err: unknown) {
+        const msg = errorMessage(err) ?? "push failed";
+        actions.push({ action: "push", ok: false, error: msg });
+        error(`Push failed: ${msg}`, opts);
+        process.exitCode = 1;
+      }
+    }
+
+    if (args.json) {
+      output({ action: "sync", wikiDir, remote, branch: status.branch, results: actions }, opts);
+    }
+  },
+});
+
 // ── Init Subcommand (ADR-0022) ──────────────────────────────────
 
 const initSubcommand = defineCommand({
@@ -964,10 +1172,15 @@ const initSubcommand = defineCommand({
 export const wikiCommand = defineCommand({
   meta: { name: "wiki", description: "LLM Wiki — knowledge synthesis from agent sessions" },
   subCommands: {
-    init: () => Promise.resolve(initSubcommand),
-    search: () => Promise.resolve(searchSubcommand),
-    add: () => Promise.resolve(addSubcommand),
+    // Primary navigation (ADR-0031 pillar 5)
+    list: () => Promise.resolve(listSubcommand),
     show: () => Promise.resolve(showSubcommand),
+    search: () => Promise.resolve(searchSubcommand),
+    sync: () => Promise.resolve(syncSubcommand),
+    path: () => Promise.resolve(pathSubcommand),
+    // Authoring / maintenance
+    init: () => Promise.resolve(initSubcommand),
+    add: () => Promise.resolve(addSubcommand),
     delete: () => Promise.resolve(deleteSubcommand),
     ingest: () => Promise.resolve(ingestSubcommand),
     harvest: () => Promise.resolve(harvestSubcommand),
