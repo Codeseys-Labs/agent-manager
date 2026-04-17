@@ -1,8 +1,25 @@
 # agent-manager (`am`)
 
-chezmoi for AI agent configs -- define your MCP servers, skills, instructions,
-and agent profiles once in TOML, sync via git, and generate native configs for
-every AI coding tool.
+**The control plane for AI agents.** Define your catalog once in TOML (MCP servers,
+skills, instructions, agents, profiles), sync via git, generate native configs for
+every AI coding tool, route any agent through a unified MCP gateway, delegate via
+ACP (local) or A2A (remote), subscribe to marketplaces, remember sessions in an
+LLM-wiki, edit from terminal, local web, or cloud.
+
+## Core tenets (ADR-0031)
+
+Every feature decision must answer: **which of the six pillars does this serve?**
+
+1. **Catalog + git sync** (TOML, user's git choice, brownfield import, drift detection)
+2. **MCP gateway** (`am mcp-serve` as the stable endpoint any agent plumbs into)
+3. **Protocol router** (ACP local, A2A remote, bridge, unified `am_agent_*` tools)
+4. **Marketplace** (git-backed catalogs, supply-chain hardened: SHA pinning, TOFU, `--ignore-scripts`)
+5. **LLM-wiki** (Karpathy design, session context for agents using am, git-backed)
+6. **Three UIs over one core** (TUI, local web, Cloudflare web)
+
+Features orthogonal to all six are flagged for reconsideration. Non-goals are
+enumerated in [ADR-0031](ADRs/0031-product-scope-and-pillars.md).
+
 
 ## Tech Stack
 

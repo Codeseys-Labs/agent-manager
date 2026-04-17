@@ -1,10 +1,33 @@
 # AGENTS.md -- agent-manager
 
-agent-manager (`am`) is chezmoi for AI agent configs. Define your MCP servers, skills,
-instructions, and agent profiles once in TOML, sync the config via git, and generate
-native config files for every AI coding tool. Single source of truth, bidirectional
-sync, profile-based subsets, drift detection, MCP registry integration, and cross-session
-knowledge synthesis.
+agent-manager (`am`) is **the control plane for AI agents**. Define your catalog
+once in TOML (MCP servers, skills, instructions, agents, profiles), sync via git,
+and generate native config files for every AI coding tool. Route any agent through
+a unified MCP gateway. Delegate locally via ACP or remotely via A2A. Subscribe to
+marketplaces. Remember sessions in an LLM-wiki. Edit from terminal, local web, or
+cloud.
+
+## Core tenets (per [ADR-0031](ADRs/0031-product-scope-and-pillars.md))
+
+Every feature decision and audit must answer: **which of the six pillars does
+this serve?** Features orthogonal to all six are flagged for reconsideration.
+
+1. **Catalog + git sync** — define once, sync via user's choice of git backend.
+2. **MCP gateway** — `am mcp-serve` as the stable endpoint any agent plumbs into.
+3. **Protocol router** — ACP for local agents, A2A for remote, bridge between.
+4. **Marketplace** — subscribe to git-backed catalogs of MCPs/skills/plugins/agents.
+5. **LLM-wiki** — Karpathy-style session context, globally git-backed, locally mirrored.
+6. **Three UIs over one core** — TUI, local web, Cloudflare web.
+
+Underemphasized features that are still load-bearing for pillar 1:
+**drift detection** (100% adapter coverage), **brownfield import** (intelligent
+merge across tools), **session harvest** (cross-tool read-side pipeline feeding
+pillar 5), **MCP Package Registry** (install/search/update/uninstall with
+supply-chain controls).
+
+Explicit non-goals: am is NOT a workflow orchestrator (flows serve pillar 3
+composition only), NOT a hosted inference product, NOT a replacement for native
+IDE UX, NOT a general-purpose dotfile manager.
 
 ## Architecture
 
