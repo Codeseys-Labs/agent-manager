@@ -31,10 +31,38 @@ export function redactConfigSecrets(obj: unknown): unknown {
  * These are intentionally greedy on the value side — we prefer false positives
  * (over-redaction) to false negatives (leaked secrets). Ordering matters:
  * more specific patterns first so they win before the generic fallbacks.
+ *
+ * Wave B (2026-04-16) additions:
+ *   - SSH/PEM private keys (OpenSSH, RSA, EC, DSA, ENCRYPTED) — multiline
+ *   - JWT tokens (eyJ.eyJ.sig)
+ *   - xoxp/xoxa/xoxr Slack tokens that include dots and underscores
+ *
+ * Deliberately NOT added:
+ *   - Generic high-entropy base64 (>= 40 chars of `[A-Za-z0-9+/=]`). The
+ *     hit rate is too low vs. false positives: UUIDs-in-base64, opaque
+ *     request IDs, container image digests, CSP nonces, workload identity
+ *     tokens (non-secret), and many public certs all match. Over-redaction
+ *     would strip useful diagnostic context from error envelopes and make
+ *     user-reported bugs harder to reproduce. The targeted patterns above
+ *     catch the credential families we actually care about.
  */
 const SECRET_PATTERNS: Array<{ re: RegExp; replace: string }> = [
   // Encrypted sentinel from src/core/secrets.ts (enc:v1:<base64>)
   { re: /enc:v1:[A-Za-z0-9+/=_-]+/g, replace: "[encrypted]" },
+  // SSH/PEM private keys — multiline, non-greedy body. Must precede generic
+  // Bearer/sk- rules so we don't half-redact the body. The `m` flag lets `.`
+  // match newlines under the `s` flag (dotall).
+  {
+    re: /-----BEGIN (?:OPENSSH |RSA |EC |DSA |ENCRYPTED |PGP |)PRIVATE KEY-----[\s\S]*?-----END (?:OPENSSH |RSA |EC |DSA |ENCRYPTED |PGP |)PRIVATE KEY-----/g,
+    replace: "[REDACTED_PRIVATE_KEY]",
+  },
+  // JWT tokens: three dot-separated base64url segments, first starts with
+  // `eyJ` (the `{"` header). Minimum lengths guard against matching e.g.
+  // `eyJ.eyJ.X` random short strings.
+  {
+    re: /\beyJ[A-Za-z0-9_-]{4,}\.[A-Za-z0-9_-]{4,}\.[A-Za-z0-9_-]{4,}\b/g,
+    replace: "[REDACTED_JWT]",
+  },
   // Bearer tokens: "Bearer <token>" or "Authorization: Bearer <token>"
   { re: /\b[Bb]earer\s+[A-Za-z0-9._~+/=-]{8,}/g, replace: "Bearer [REDACTED]" },
   // AWS access key ids (AKIA/ASIA + 16 chars)
@@ -47,8 +75,10 @@ const SECRET_PATTERNS: Array<{ re: RegExp; replace: string }> = [
   { re: /\bsk-[A-Za-z0-9_-]{20,}\b/g, replace: "[REDACTED_API_KEY]" },
   // Google API keys (AIza + 35 chars)
   { re: /\bAIza[A-Za-z0-9_-]{35}\b/g, replace: "[REDACTED_GOOGLE_KEY]" },
-  // Slack tokens (xox[baprs]-...)
-  { re: /\bxox[baprs]-[A-Za-z0-9-]{10,}\b/g, replace: "[REDACTED_SLACK_TOKEN]" },
+  // Slack tokens (xox[baprs]-...) — extended character class to cover the
+  // newer xoxp/xoxa/xoxr token formats that include `.` and `_` in the
+  // trailing segment.
+  { re: /\bxox[baprs]-[A-Za-z0-9._-]{10,}\b/g, replace: "[REDACTED_SLACK_TOKEN]" },
   // key=value / key: value style where key hints at secret and value is long-ish
   // Must NOT consume the key itself (so we can still see which var was leaked).
   {

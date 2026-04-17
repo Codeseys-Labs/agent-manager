@@ -7,6 +7,7 @@
  *   write-remote — requires opt-in via settings.mcp_serve
  */
 
+import { createHash, timingSafeEqual } from "node:crypto";
 import { accessSync } from "node:fs";
 import { isAbsolute, join, resolve as pathResolve } from "node:path";
 import { z } from "zod";
@@ -44,6 +45,28 @@ interface JsonRpcResponse {
   result?: unknown;
   error?: { code: number; message: string; data?: unknown };
 }
+
+// ── MCP protocol version negotiation (Wave C) ───────────────────
+//
+// Spec: https://modelcontextprotocol.io/specification/2025-11-25/basic/lifecycle
+// "If the server supports the requested protocol version, it MUST respond
+// with the same version. Otherwise, the server MUST respond with another
+// protocol version it supports."
+//
+// We track a set of versions we speak. When the client requests one we
+// support, we echo it back. If we can't support any of them, we emit
+// -32602 with the list of versions we do support, per the spec example.
+export const SUPPORTED_MCP_PROTOCOL_VERSIONS = ["2025-11-25", "2024-11-05"] as const;
+export const PREFERRED_MCP_PROTOCOL_VERSION: (typeof SUPPORTED_MCP_PROTOCOL_VERSIONS)[number] =
+  "2024-11-05";
+
+/**
+ * Methods that are allowed before the client has sent `initialize`. Any
+ * other method must return -32002 "Server not initialized" per MCP
+ * lifecycle spec: the initialization phase MUST be the first interaction.
+ * `ping` is explicitly carved out by the spec as safe pre-init.
+ */
+const PRE_INIT_ALLOWED_METHODS = new Set<string>(["initialize", "ping"]);
 
 // ── MCP tool definition ─────────────────────────────────────────
 
@@ -117,15 +140,26 @@ export function loadAuthConfig(env: NodeJS.ProcessEnv = process.env): AuthConfig
 }
 
 /**
- * Constant-time string compare to avoid trivial timing oracles.
+ * Constant-time string compare that also hides the input length.
+ *
+ * Wave B (2026-04-16): the previous implementation short-circuited on
+ * `a.length !== b.length`, leaking the expected token length via timing. An
+ * attacker with stdio access could probe token lengths before beginning a
+ * byte-by-byte attack.
+ *
+ * Fix: hash both inputs to a fixed 32-byte digest (SHA-256) and run
+ * `timingSafeEqual` on the digests. The hash step is constant-time w.r.t.
+ * the secret (SHA-256 state transitions do not branch on input), the
+ * digests are always equal length (32 bytes), and the comparison itself is
+ * timing-safe. Net result: no length, prefix, or byte-level timing channel.
+ *
+ * Exported for the sibling Wave B test that asserts hash is called on both
+ * sides.
  */
-function constantTimeEq(a: string, b: string): boolean {
-  if (a.length !== b.length) return false;
-  let diff = 0;
-  for (let i = 0; i < a.length; i++) {
-    diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
-  }
-  return diff === 0;
+export function constantTimeEq(a: string, b: string): boolean {
+  const ha = createHash("sha256").update(a, "utf8").digest();
+  const hb = createHash("sha256").update(b, "utf8").digest();
+  return timingSafeEqual(ha, hb);
 }
 
 /**
@@ -2010,12 +2044,56 @@ export class McpServer {
   /** Auth config (Wave 2.B): tokens + unsafe-local flag. */
   private auth: AuthConfig;
 
-  constructor(opts?: { auth?: AuthConfig }) {
+  /**
+   * Wave C: per-session initialization state. Per MCP spec the client MUST
+   * send `initialize` before any other request (notifications excluded, and
+   * `ping` is explicitly carved out). We track whether we have seen a
+   * successful `initialize` and gate all other method dispatch on it.
+   *
+   * Defaults to `true` for in-process construction — tests and programmatic
+   * callers that bypass the stdio handshake shouldn't have to simulate
+   * initialize. The stdio `serve()` loop explicitly resets this to `false`
+   * at the start of each session so that the wire-level handshake is
+   * enforced for real clients. See also `skipInitGate` constructor option.
+   */
+  private initialized = true;
+
+  /** Expose initialize state for tests. */
+  isInitialized(): boolean {
+    return this.initialized;
+  }
+
+  /** Reset initialize state — useful for tests that reuse an instance. */
+  resetInitialized(): void {
+    this.initialized = false;
+  }
+
+  // ── WAVE C: AUTH CONFIG ENTRY POINT ────────────────────────────
+  // Wave B (2026-04-16) flipped the default to strict. Any caller that
+  // instantiates `new McpServer()` with no arguments now gets a locked-down
+  // server that refuses every write-tier tool call. Callers that need the
+  // previous permissive behaviour (in-process consumers, tests) MUST pass
+  // `{ auth: { token: undefined, allowUnsafeLocal: true } }` explicitly.
+  //
+  // Rationale: "secure by default" — `am mcp-serve` wires strict mode from
+  // `loadAuthConfig()`, but previously any other instantiation (programmatic
+  // use, test helpers, future integrations) silently bypassed the gate.
+  //
+  // Wave C (2026-04-16) adds protocol conformance gates that live alongside
+  // the auth check: JSON-RPC envelope validation, init-state gating,
+  // protocolVersion negotiation, and batch id deduplication. See
+  // handleRequest and serve below for entry points.
+  constructor(opts?: { auth?: AuthConfig; enforceInitGate?: boolean }) {
     this.tools = defineTools();
-    // Default permissive auth when no opts provided (in-process callers keep
-    // legacy behaviour). The `am mcp-serve` CLI command explicitly passes
-    // `loadAuthConfig()` so stdio clients face the full gate.
-    this.auth = opts?.auth ?? { token: undefined, allowUnsafeLocal: true };
+    // Secure default: no token, no unsafe-local escape hatch. Write-tier tool
+    // calls are refused until the caller wires an AuthConfig explicitly.
+    this.auth = opts?.auth ?? { token: undefined, allowUnsafeLocal: false };
+    // enforceInitGate flips the session state to "not yet initialized" so
+    // pre-handshake requests are rejected. The stdio `serve()` entry point
+    // sets this automatically; in-process callers (tests, programmatic
+    // use) default to already-initialized so they don't need to simulate
+    // the handshake.
+    if (opts?.enforceInitGate) this.initialized = false;
   }
 
   /** Override auth config (useful for tests). */
@@ -2040,9 +2118,118 @@ export class McpServer {
     }
   }
 
+  /**
+   * Wave C: process a JSON-RPC batch, rejecting duplicate IDs.
+   *
+   * Per JSON-RPC 2.0: each request in a batch must have a unique id.
+   * Notifications (no id) are exempt — multiple notifications may share
+   * the absence of an id. We dispatch in parallel; duplicates are
+   * rejected synchronously with -32600 without calling the handler.
+   *
+   * Exported for testability.
+   */
+  async handleBatch(reqs: JsonRpcRequest[]): Promise<(JsonRpcResponse | null)[]> {
+    const seenIds = new Set<string | number>();
+    const tasks: Promise<JsonRpcResponse | null>[] = [];
+    for (const r of reqs) {
+      const hasId = "id" in r && r.id !== null && r.id !== undefined;
+      if (hasId) {
+        const key = r.id as string | number;
+        if (seenIds.has(key)) {
+          tasks.push(
+            Promise.resolve<JsonRpcResponse>({
+              jsonrpc: "2.0",
+              id: key,
+              error: {
+                code: -32600,
+                message: `Invalid Request: duplicate id "${key}" within batch.`,
+              },
+            }),
+          );
+          continue;
+        }
+        seenIds.add(key);
+      }
+      tasks.push(this.handleRequest(r));
+    }
+    return Promise.all(tasks);
+  }
+
   /** Process a single JSON-RPC request and return a response. */
   async handleRequest(req: JsonRpcRequest): Promise<JsonRpcResponse | null> {
     const id = req.id ?? null;
+
+    // ── Wave C: JSON-RPC envelope validation ─────────────────────
+    // Reject non-conformant envelopes BEFORE dispatching. Per
+    // JSON-RPC 2.0 + MCP 2025-11-25: jsonrpc MUST equal "2.0", and
+    // request IDs MUST be a string or number (null is forbidden for
+    // requests; notifications omit id entirely).
+    //
+    // Detection of "is this a notification?" is by the presence of an
+    // `id` field at all. We can't distinguish missing-vs-null without
+    // looking at the raw JSON, so we accept the JS semantics here: if
+    // `id` is undefined (absent from the parsed object), treat it as a
+    // notification; if it's explicitly null, that's a violation.
+    if (req.jsonrpc !== "2.0") {
+      // Can't trust the id either — echo back what the caller sent (or null).
+      return {
+        jsonrpc: "2.0",
+        id,
+        error: {
+          code: -32600,
+          message: `Invalid Request: jsonrpc must equal "2.0" (got ${JSON.stringify(req.jsonrpc)}).`,
+        },
+      };
+    }
+
+    // Methods must be a non-empty string per JSON-RPC.
+    if (typeof req.method !== "string" || req.method.length === 0) {
+      return {
+        jsonrpc: "2.0",
+        id,
+        error: { code: -32600, message: "Invalid Request: method must be a non-empty string." },
+      };
+    }
+
+    // Notifications (no id at all) — we only permit the known notification
+    // method `notifications/initialized`. Everything else is either a
+    // silently-dropped unknown notification or a malformed request.
+    const isNotification = !("id" in req);
+
+    if (!isNotification) {
+      // Request (not a notification): id MUST be string or number, not null.
+      if (req.id === null) {
+        return {
+          jsonrpc: "2.0",
+          id: null,
+          error: { code: -32600, message: "Invalid Request: id MUST NOT be null for requests." },
+        };
+      }
+      if (typeof req.id !== "string" && typeof req.id !== "number") {
+        return {
+          jsonrpc: "2.0",
+          id: null,
+          error: { code: -32600, message: "Invalid Request: id must be a string or number." },
+        };
+      }
+    }
+
+    // ── Wave C: initialize-state gate ────────────────────────────
+    // Spec: "The initialization phase MUST be the first interaction".
+    // Only `initialize`, `ping`, and notifications are allowed before
+    // the client has completed initialization. Notifications don't
+    // return a response, so unknown-method notifications are silently
+    // ignored (per JSON-RPC).
+    if (!this.initialized && !isNotification && !PRE_INIT_ALLOWED_METHODS.has(req.method)) {
+      return {
+        jsonrpc: "2.0",
+        id,
+        error: {
+          code: -32002,
+          message: `Server not initialized. Client must send 'initialize' before '${req.method}'.`,
+        },
+      };
+    }
 
     // Refresh settings before handling tool calls so permission checks are never stale
     if (req.method === "tools/call") {
@@ -2050,12 +2237,46 @@ export class McpServer {
     }
 
     switch (req.method) {
-      case "initialize":
+      case "initialize": {
+        // ── Wave C: protocol version negotiation ────────────────
+        const params = (req.params ?? {}) as Record<string, unknown>;
+        const requested = params.protocolVersion;
+        // A missing protocolVersion from the client is tolerated — we fall
+        // back to our preferred version. Per spec the client is required
+        // to send it, but rejecting missing-version would break older
+        // clients without meaningful benefit. We log it via the response
+        // shape (we return the preferred version and let the client
+        // decide whether to continue).
+        let negotiated: string = PREFERRED_MCP_PROTOCOL_VERSION;
+        if (typeof requested === "string" && requested.length > 0) {
+          const supported = (SUPPORTED_MCP_PROTOCOL_VERSIONS as readonly string[]).includes(
+            requested,
+          );
+          if (supported) {
+            negotiated = requested;
+          } else {
+            // Client asked for a version we don't speak. Per spec example,
+            // return -32602 with a clear message listing what we support.
+            // Don't silently coerce.
+            return {
+              jsonrpc: "2.0",
+              id,
+              error: {
+                code: -32602,
+                message: `Unsupported protocol version: ${requested}. Supported versions: ${SUPPORTED_MCP_PROTOCOL_VERSIONS.join(", ")}.`,
+                data: { supported: [...SUPPORTED_MCP_PROTOCOL_VERSIONS], requested },
+              },
+            };
+          }
+        }
+        // Flip the init flag AFTER we've decided this is a valid initialize.
+        // A failed negotiation (above) does NOT mark the session initialized.
+        this.initialized = true;
         return {
           jsonrpc: "2.0",
           id,
           result: {
-            protocolVersion: "2024-11-05",
+            protocolVersion: negotiated,
             capabilities: { tools: {} },
             serverInfo: {
               name: "agent-manager",
@@ -2063,6 +2284,13 @@ export class McpServer {
             },
           },
         };
+      }
+
+      case "ping":
+        // MCP ping is a no-op that returns an empty result object. It's
+        // explicitly allowed pre-init, so clients can health-check before
+        // the handshake completes.
+        return { jsonrpc: "2.0", id, result: {} };
 
       case "notifications/initialized":
         // Client acknowledgement — no response needed
@@ -2201,6 +2429,11 @@ export class McpServer {
 
   /** Run the server on stdio, reading newline-delimited JSON-RPC from stdin. */
   async serve(): Promise<void> {
+    // Wave C: real sessions enforce the MCP initialize handshake. Flip the
+    // gate to "not yet initialized" so the first non-initialize/non-ping
+    // request is rejected with -32002 per spec.
+    this.initialized = false;
+
     // Load settings once at startup for permission checks
     try {
       const configDir = resolveConfigDir();
@@ -2238,9 +2471,11 @@ export class McpServer {
         }
 
         if (Array.isArray(req)) {
-          const responses = await Promise.all(
-            req.map((r: JsonRpcRequest) => this.handleRequest(r)),
-          );
+          // Wave C: batch ID dedup. Per JSON-RPC 2.0 each request in a
+          // batch must have a unique id. We track ids seen in this batch
+          // and respond to any duplicate with -32600 instead of dispatching.
+          // Notifications (no id) are skipped from the dedup check.
+          const responses = await this.handleBatch(req);
           const filtered = responses.filter(Boolean);
           if (filtered.length > 0) {
             process.stdout.write(`${JSON.stringify(filtered)}\n`);

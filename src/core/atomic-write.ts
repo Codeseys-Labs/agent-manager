@@ -18,8 +18,17 @@
  */
 
 import { randomBytes } from "node:crypto";
-import { closeSync, fsyncSync, openSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
-import { open, rename, unlink, writeFile } from "node:fs/promises";
+import {
+  closeSync,
+  fsyncSync,
+  lstatSync,
+  openSync,
+  realpathSync,
+  renameSync,
+  unlinkSync,
+  writeFileSync,
+} from "node:fs";
+import { lstat, open, realpath, rename, unlink, writeFile } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 
 interface AtomicWriteOptions {
@@ -33,6 +42,57 @@ function tmpPathFor(target: string): string {
   const base = basename(target);
   const suffix = randomBytes(6).toString("hex");
   return join(dir, `.${base}.${suffix}.tmp`);
+}
+
+/**
+ * Resolve the "effective target" for an atomic write.
+ *
+ * Wave B (2026-04-16): previously, `renameSync(tmp, target)` where `target`
+ * was a symlink would *replace the symlink itself* with a regular file,
+ * silently breaking dotfile-repo workflows (e.g. `~/.claude.json` →
+ * `~/dotfiles/claude.json`).
+ *
+ * Fix: `lstat` the target first. If it's a symlink, resolve to the real
+ * path and perform the atomic write against that path — the symlink stays
+ * intact and the real file is updated atomically.
+ *
+ * Returns the path the atomic write should target. Non-existent paths and
+ * regular files fall through unchanged.
+ */
+function resolveEffectiveTargetSync(target: string): string {
+  let st: ReturnType<typeof lstatSync>;
+  try {
+    st = lstatSync(target);
+  } catch {
+    // Target doesn't exist yet — write to it as-is.
+    return target;
+  }
+  if (st.isSymbolicLink()) {
+    try {
+      // realpathSync follows the symlink chain to the canonical path.
+      return realpathSync(target);
+    } catch {
+      // Dangling symlink: leave as-is; rename will replace it. (Rare.)
+      return target;
+    }
+  }
+  return target;
+}
+
+async function resolveEffectiveTarget(target: string): Promise<string> {
+  try {
+    const st = await lstat(target);
+    if (st.isSymbolicLink()) {
+      try {
+        return await realpath(target);
+      } catch {
+        return target;
+      }
+    }
+  } catch {
+    // Target doesn't exist — proceed as-is.
+  }
+  return target;
 }
 
 /**
@@ -56,7 +116,10 @@ export function atomicWriteFileSync(
   data: string | Uint8Array,
   options: AtomicWriteOptions = {},
 ): void {
-  const tmp = tmpPathFor(target);
+  // Resolve symlinks to the real target so we rename into the dotfile repo
+  // (or wherever the symlink points) instead of replacing the symlink.
+  const effectiveTarget = resolveEffectiveTargetSync(target);
+  const tmp = tmpPathFor(effectiveTarget);
   let fd: number | null = null;
 
   try {
@@ -70,7 +133,7 @@ export function atomicWriteFileSync(
     closeSync(fd);
     fd = null;
 
-    renameSync(tmp, target);
+    renameSync(tmp, effectiveTarget);
   } catch (err) {
     if (fd !== null) {
       try {
@@ -97,7 +160,10 @@ export async function atomicWriteFile(
   data: string | Uint8Array,
   options: AtomicWriteOptions = {},
 ): Promise<void> {
-  const tmp = tmpPathFor(target);
+  // See resolveEffectiveTargetSync: preserve symlinks by writing into the
+  // real file's directory.
+  const effectiveTarget = await resolveEffectiveTarget(target);
+  const tmp = tmpPathFor(effectiveTarget);
 
   try {
     await writeFile(tmp, data, options.mode !== undefined ? { mode: options.mode } : undefined);
@@ -109,7 +175,7 @@ export async function atomicWriteFile(
       await handle.close();
     }
 
-    await rename(tmp, target);
+    await rename(tmp, effectiveTarget);
   } catch (err) {
     try {
       await unlink(tmp);
