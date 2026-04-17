@@ -8,7 +8,8 @@
  */
 
 import { accessSync } from "node:fs";
-import { join } from "node:path";
+import { isAbsolute, join, resolve as pathResolve } from "node:path";
+import { z } from "zod";
 import { getAdapter, getDetectedAdapters, listAdapters } from "../adapters/registry";
 import { readActiveProfile, writeActiveProfile } from "../commands/use";
 import {
@@ -22,10 +23,11 @@ import {
 } from "../core/config";
 import { commitAll, getStatus, log as gitLog, pull, push, revertHead } from "../core/git";
 import type { Config, McpToolGroup, Settings } from "../core/schema";
-import { interpolateEnvAsync, loadKey } from "../core/secrets";
+import { interpolateEnvAsync, legacyKeyPath, loadKey, resolveKeyPath } from "../core/secrets";
 import { filterMessages, formatJson, formatMarkdown } from "../core/session";
 import type { SessionSummary } from "../core/session";
 import { errorMessage } from "../lib/errors";
+import { redactConfigSecrets, safeErrorMessage } from "../lib/redact";
 
 // ── JSON-RPC types ──────────────────────────────────────────────
 
@@ -61,6 +63,122 @@ interface ToolEntry {
   def: McpToolDef;
   tier: ToolTier;
   handler: (args: Record<string, unknown>) => Promise<unknown>;
+}
+
+// ── Input validation ────────────────────────────────────────────
+
+/**
+ * Validate raw MCP `arguments` against a zod schema at the top of every tool
+ * handler. Callers get a discriminated result — no exceptions thrown.
+ */
+export function validateInput<T>(
+  schema: z.ZodSchema<T>,
+  args: unknown,
+): { ok: true; data: T } | { ok: false; error: string } {
+  const parsed = schema.safeParse(args);
+  if (parsed.success) return { ok: true, data: parsed.data };
+  const issues = parsed.error.issues
+    .map((i) => `${i.path.join(".") || "(root)"}: ${i.message}`)
+    .join("; ");
+  return { ok: false, error: `Invalid arguments: ${issues}` };
+}
+
+// ── Auth gate (ADR 2026-04-16 Wave 2.B) ────────────────────────
+//
+// Problem: `am mcp-serve` talks JSON-RPC over stdio to an unauthenticated
+// parent process. On `write-local` calls (e.g. am_apply) we decrypt secrets
+// and write them to disk. Any agent plumbed into this server could exfiltrate
+// the whole keychain.
+//
+// Model: if `AM_MCP_TOKEN` is set at server startup, every `write-local` or
+// higher tool MUST include a matching bearer token on the call. The token is
+// read from either:
+//   - params._meta.authorization: "Bearer <token>"  (MCP meta convention)
+//   - params._meta.token: "<token>"                 (simpler alt)
+//   - params.arguments._am_token: "<token>"         (fallback for clients
+//                                                    that can't set _meta)
+//
+// If no token is set AND the server was not started with
+// AM_MCP_ALLOW_UNSAFE_LOCAL=1 (or --allow-unsafe-local), write-tier calls are
+// refused at tools/call and write-tier tools are hidden from tools/list.
+// Read-only tools remain unauthenticated for backward compatibility.
+
+export interface AuthConfig {
+  /** Expected bearer token. If present, write-tier calls must match. */
+  token?: string;
+  /** Allow write-tier without a token. Required when no token is configured. */
+  allowUnsafeLocal: boolean;
+}
+
+export function loadAuthConfig(env: NodeJS.ProcessEnv = process.env): AuthConfig {
+  const token = env.AM_MCP_TOKEN?.trim() || undefined;
+  const allowUnsafeLocal = env.AM_MCP_ALLOW_UNSAFE_LOCAL === "1";
+  return { token, allowUnsafeLocal };
+}
+
+/**
+ * Constant-time string compare to avoid trivial timing oracles.
+ */
+function constantTimeEq(a: string, b: string): boolean {
+  if (a.length !== b.length) return false;
+  let diff = 0;
+  for (let i = 0; i < a.length; i++) {
+    diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  }
+  return diff === 0;
+}
+
+/**
+ * Extract a bearer token from a JSON-RPC request, checking the three
+ * locations a client might put it. Returns `undefined` if none found.
+ */
+function extractBearerToken(req: JsonRpcRequest): string | undefined {
+  const params = (req.params ?? {}) as Record<string, unknown>;
+  const meta = (params._meta as Record<string, unknown> | undefined) ?? undefined;
+  if (meta) {
+    const authHeader = typeof meta.authorization === "string" ? meta.authorization : undefined;
+    if (authHeader) {
+      const m = authHeader.match(/^Bearer\s+(.+)$/i);
+      if (m) return m[1].trim();
+    }
+    if (typeof meta.token === "string") return meta.token.trim();
+  }
+  const args = (params.arguments as Record<string, unknown> | undefined) ?? undefined;
+  if (args && typeof args._am_token === "string") return (args._am_token as string).trim();
+  return undefined;
+}
+
+/**
+ * Decide whether a write-tier tool call may proceed given the server's
+ * auth config and the incoming request.
+ */
+export function checkWriteAuth(
+  tier: ToolTier,
+  auth: AuthConfig,
+  req: JsonRpcRequest,
+): { allowed: true } | { allowed: false; reason: string } {
+  if (tier === "read-only") return { allowed: true };
+  // Write tier from here on (write-local or write-remote).
+  if (auth.token) {
+    const supplied = extractBearerToken(req);
+    if (!supplied) {
+      return {
+        allowed: false,
+        reason:
+          "Authentication required. Write-tier tools require a bearer token. Pass params._meta.authorization = 'Bearer <token>' matching AM_MCP_TOKEN.",
+      };
+    }
+    if (!constantTimeEq(supplied, auth.token)) {
+      return { allowed: false, reason: "Invalid bearer token." };
+    }
+    return { allowed: true };
+  }
+  if (auth.allowUnsafeLocal) return { allowed: true };
+  return {
+    allowed: false,
+    reason:
+      "Write-tier tools are disabled. Set AM_MCP_TOKEN=<token> (recommended) or AM_MCP_ALLOW_UNSAFE_LOCAL=1 when starting `am mcp-serve`.",
+  };
 }
 
 /** Default tool groups exposed when settings.mcp_serve.tools is unset. */
@@ -129,14 +247,55 @@ function checkPermission(
 }
 
 // ── Secret redaction ───────────────────────────────────────────
+// Thin shim kept for call-site stability; logic lives in src/lib/redact.ts.
 
 function redactSecrets(obj: unknown): unknown {
-  if (typeof obj === "string" && obj.startsWith("enc:v1:")) return "[encrypted]";
-  if (Array.isArray(obj)) return obj.map(redactSecrets);
-  if (obj && typeof obj === "object") {
-    return Object.fromEntries(Object.entries(obj).map(([k, v]) => [k, redactSecrets(v)]));
+  return redactConfigSecrets(obj);
+}
+
+// ── Path traversal guard ────────────────────────────────────────
+
+/** Strict identifier for session IDs: alnum, dash, underscore, 1–128 chars. */
+const SESSION_ID_RE = /^[a-zA-Z0-9_-]{1,128}$/;
+
+/**
+ * Validate that a user-supplied session ID is safe to join onto the session
+ * directory. Rejects traversal (`..`), separators, null bytes, and enforces
+ * the strict charset. Then belt+suspenders: resolves the path and verifies
+ * it stays inside the intended directory.
+ *
+ * Throws a plain Error — callers should let it propagate into the standard
+ * error envelope (which is already redacted).
+ */
+export function resolveSessionPathSafely(sessionDir: string, sessionId: string): string {
+  if (typeof sessionId !== "string") {
+    throw new Error("Invalid sessionId: must be a string.");
   }
-  return obj;
+  if (sessionId.length === 0 || sessionId.length > 128) {
+    throw new Error("Invalid sessionId: length must be 1–128 characters.");
+  }
+  if (sessionId.includes("\0")) {
+    throw new Error("Invalid sessionId: null byte rejected.");
+  }
+  if (sessionId.includes("/") || sessionId.includes("\\")) {
+    throw new Error("Invalid sessionId: path separators rejected.");
+  }
+  if (sessionId.includes("..")) {
+    throw new Error("Invalid sessionId: parent traversal rejected.");
+  }
+  if (isAbsolute(sessionId)) {
+    throw new Error("Invalid sessionId: absolute paths rejected.");
+  }
+  if (!SESSION_ID_RE.test(sessionId)) {
+    throw new Error("Invalid sessionId: must match /^[a-zA-Z0-9_-]{1,128}$/ (no dots, no spaces).");
+  }
+  const baseResolved = pathResolve(sessionDir);
+  const candidate = pathResolve(baseResolved, sessionId);
+  const sep = process.platform === "win32" ? "\\" : "/";
+  if (candidate !== baseResolved && !candidate.startsWith(baseResolved + sep)) {
+    throw new Error("Invalid sessionId: resolved path escapes session directory.");
+  }
+  return candidate;
 }
 
 // ── Helpers ─────────────────────────────────────────────────────
@@ -153,6 +312,134 @@ async function loadConfigAndProfile(): Promise<{
     (await readActiveProfile(configDir)) ?? config.settings?.default_profile ?? "default";
   return { config, configDir, profileName };
 }
+
+// ── Tool input schemas (Wave 2.B runtime validation) ────────────
+//
+// Every tool that appears in `defineTools()` MUST have a corresponding
+// zod schema here. The dispatcher runs `validateInput(schema, args)` at the
+// top of every `tools/call` and returns an error envelope if it fails.
+//
+// Schemas are intentionally `.passthrough()` where unknown fields could
+// reasonably appear (e.g. the `_am_token` auth fallback), and `.strict()`
+// where we want to reject unexpected properties outright.
+
+const zStr = z.string();
+const zStrNonEmpty = z.string().min(1);
+const zStrArr = z.array(z.string());
+const zStrMap = z.record(z.string(), z.string());
+const zBool = z.boolean();
+const zNum = z.number();
+
+/** Allow an optional auth passthrough field `_am_token` on every tool. */
+function withAuth<T extends z.ZodRawShape>(shape: T) {
+  return z.object({ ...shape, _am_token: z.string().optional() }).passthrough();
+}
+
+const TOOL_SCHEMAS: Record<string, z.ZodTypeAny> = {
+  // ── core read-only ────────────────────────────────────────
+  am_list_servers: withAuth({ active: zBool.optional() }),
+  am_list_profiles: withAuth({}),
+  am_status: withAuth({}),
+  am_config_show: withAuth({}),
+  am_doctor: withAuth({}),
+
+  // ── session read-only ─────────────────────────────────────
+  am_session_list: withAuth({ adapter: zStr.optional() }),
+  am_session_export: withAuth({
+    id: zStrNonEmpty,
+    adapter: zStrNonEmpty,
+    role: z.enum(["user", "assistant", "system", "tool"]).optional(),
+    noTools: zBool.optional(),
+    noSystem: zBool.optional(),
+    format: z.enum(["md", "json"]).optional(),
+  }),
+  am_session_search: withAuth({
+    query: zStrNonEmpty,
+    adapter: zStr.optional(),
+    role: z.enum(["user", "assistant", "system", "tool"]).optional(),
+  }),
+
+  // ── core write-local ──────────────────────────────────────
+  am_add_server: withAuth({
+    name: zStrNonEmpty,
+    command: zStrNonEmpty,
+    args: zStrArr.optional(),
+    tags: zStrArr.optional(),
+    description: zStr.optional(),
+    env: zStrMap.optional(),
+  }),
+  am_remove_server: withAuth({ name: zStrNonEmpty }),
+  am_server_update: withAuth({
+    name: zStrNonEmpty,
+    enabled: zBool.optional(),
+    env: zStrMap.optional(),
+    args: zStrArr.optional(),
+    tags: zStrArr.optional(),
+    description: zStr.optional(),
+  }),
+  am_undo: withAuth({}),
+  am_use_profile: withAuth({ profile: zStrNonEmpty }),
+  am_import: withAuth({ source: zStrNonEmpty }),
+  am_apply: withAuth({ target: zStr.optional(), dryRun: zBool.optional() }),
+
+  // ── core write-remote ─────────────────────────────────────
+  am_sync_push: withAuth({}),
+  am_sync_pull: withAuth({}),
+
+  // ── registry ──────────────────────────────────────────────
+  am_registry_search: withAuth({
+    query: zStrNonEmpty,
+    tag: zStr.optional(),
+    verified: zBool.optional(),
+    limit: zNum.int().positive().max(1000).optional(),
+  }),
+  am_registry_install: withAuth({ name: zStrNonEmpty, env: zStrMap.optional() }),
+  am_registry_list_installed: withAuth({}),
+
+  // ── a2a ───────────────────────────────────────────────────
+  am_agent_discover: withAuth({ url: zStrNonEmpty.url() }),
+  am_agent_list: withAuth({}),
+  am_agent_delegate: withAuth({ name: zStrNonEmpty, message: zStrNonEmpty }),
+  am_agent_task_status: withAuth({ name: zStrNonEmpty, taskId: zStrNonEmpty }),
+
+  // ── wiki ──────────────────────────────────────────────────
+  am_wiki_search: withAuth({
+    query: zStrNonEmpty,
+    limit: zNum.int().positive().max(1000).optional(),
+  }),
+  am_wiki_add: withAuth({
+    entity_type: z.enum(["fact", "procedure", "preference", "relationship", "capability"]),
+    content: zStrNonEmpty,
+    context: zStr.optional(),
+    tags: zStrArr.optional(),
+    confidence: zNum.min(0).max(1).optional(),
+  }),
+  am_wiki_synthesize: withAuth({
+    query: zStrNonEmpty,
+    agent_id: zStr.optional(),
+    top_k: zNum.int().positive().max(1000).optional(),
+  }),
+  am_wiki_briefing: withAuth({ agent_id: zStrNonEmpty }),
+  am_wiki_harvest: withAuth({ adapter: zStrNonEmpty, session_id: zStrNonEmpty }),
+
+  // ── acp ───────────────────────────────────────────────────
+  am_run_agent: withAuth({
+    agent: zStrNonEmpty,
+    prompt: zStrNonEmpty,
+    session: zStr.optional(),
+    cwd: zStr.optional(),
+  }),
+  am_acp_list_agents: withAuth({}),
+  am_acp_session_list: withAuth({}),
+  // Tight schema on sessionId: regex enforced here, defence-in-depth at handler.
+  am_acp_session_cancel: withAuth({
+    sessionId: z
+      .string()
+      .min(1)
+      .max(128)
+      .regex(SESSION_ID_RE, "sessionId must match /^[a-zA-Z0-9_-]{1,128}$/"),
+  }),
+};
 
 // ── Tool definitions ────────────────────────────────────────────
 
@@ -371,17 +658,30 @@ function defineTools(): ToolEntry[] {
           });
         }
 
-        // 6. Encryption key
-        const keyPath = join(configDir, ".agent-manager", "key.txt");
+        // 6. Encryption key (new location: OS data dir, NOT the git-tracked config dir)
+        const keyPath = resolveKeyPath();
         try {
           accessSync(keyPath);
-          checks.push({ name: "Encryption key", status: "ok", message: "Present" });
+          checks.push({ name: "Encryption key", status: "ok", message: `Present at ${keyPath}` });
         } catch {
           checks.push({
             name: "Encryption key",
             status: "warn",
-            message: "Not found (secrets will not be encrypted)",
+            message: `Not found at ${keyPath} (secrets will not be encrypted)`,
           });
+        }
+
+        // 6b. Legacy key file inside git-tracked config dir
+        const legacyPath = legacyKeyPath(configDir);
+        try {
+          accessSync(legacyPath);
+          checks.push({
+            name: "Legacy key location",
+            status: "warn",
+            message: `Found key at ${legacyPath} — this is INSIDE the git-tracked config dir. Delete it and ensure it has not been pushed to any remote.`,
+          });
+        } catch {
+          // Absent: good.
         }
 
         // 7. Project config in cwd
@@ -1132,10 +1432,11 @@ function defineTools(): ToolEntry[] {
               warnings: result.warnings,
             });
           } catch (e: unknown) {
+            // Redact secrets before surfacing export errors to the MCP client.
             results.push({
               adapter: adapter.meta.name,
               files: 0,
-              warnings: [errorMessage(e) || "export failed"],
+              warnings: [safeErrorMessage(e) || "export failed"],
             });
           }
         }
@@ -1682,7 +1983,11 @@ function defineTools(): ToolEntry[] {
         const { config } = await loadConfigAndProfile();
         const sessionDir =
           config.settings?.acp?.session_dir ?? join(resolveConfigDir(), "sessions");
-        const sessionPath = join(sessionDir, sessionId);
+
+        // Path traversal guard: reject ../, /, \\, null bytes, absolute paths,
+        // and anything outside the strict ID charset. Then belt+suspenders:
+        // resolve and verify the path stays under sessionDir. (Wave 2.B)
+        const sessionPath = resolveSessionPathSafely(sessionDir, sessionId);
 
         try {
           await rm(sessionPath, { recursive: true });
@@ -1702,9 +2007,25 @@ function defineTools(): ToolEntry[] {
 export class McpServer {
   private tools: ToolEntry[];
   private settings?: Settings;
+  /** Auth config (Wave 2.B): tokens + unsafe-local flag. */
+  private auth: AuthConfig;
 
-  constructor() {
+  constructor(opts?: { auth?: AuthConfig }) {
     this.tools = defineTools();
+    // Default permissive auth when no opts provided (in-process callers keep
+    // legacy behaviour). The `am mcp-serve` CLI command explicitly passes
+    // `loadAuthConfig()` so stdio clients face the full gate.
+    this.auth = opts?.auth ?? { token: undefined, allowUnsafeLocal: true };
+  }
+
+  /** Override auth config (useful for tests). */
+  setAuth(auth: AuthConfig): void {
+    this.auth = auth;
+  }
+
+  /** Expose auth config (useful for tests). */
+  getAuth(): AuthConfig {
+    return this.auth;
   }
 
   /** Re-read settings from config for fresh permission checks. */
@@ -1753,7 +2074,13 @@ export class McpServer {
         const enabledGroups = new Set<McpToolGroup>(
           this.settings?.mcp_serve?.tools ?? DEFAULT_TOOL_GROUPS,
         );
-        const visibleTools = this.tools.filter((t) => enabledGroups.has(getToolGroup(t.def.name)));
+        let visibleTools = this.tools.filter((t) => enabledGroups.has(getToolGroup(t.def.name)));
+        // Auth gate (Wave 2.B): if no token is configured AND unsafe-local is
+        // not enabled, hide write-tier tools from discovery. Read-only stays
+        // visible for unauthenticated clients.
+        if (!this.auth.token && !this.auth.allowUnsafeLocal) {
+          visibleTools = visibleTools.filter((t) => t.tier === "read-only");
+        }
         return {
           jsonrpc: "2.0",
           id,
@@ -1780,7 +2107,7 @@ export class McpServer {
           };
         }
 
-        // Permission check
+        // Permission check (ADR-0009 tier: write-remote opt-in)
         const perm = checkPermission(tool.tier, this.settings);
         if (!perm.allowed) {
           return {
@@ -1793,6 +2120,36 @@ export class McpServer {
           };
         }
 
+        // Auth gate (Wave 2.B): write-tier tools require AM_MCP_TOKEN or
+        // AM_MCP_ALLOW_UNSAFE_LOCAL=1. Read-only passes through.
+        const authDecision = checkWriteAuth(tool.tier, this.auth, req);
+        if (!authDecision.allowed) {
+          return {
+            jsonrpc: "2.0",
+            id,
+            result: {
+              content: [{ type: "text", text: JSON.stringify({ error: authDecision.reason }) }],
+              isError: true,
+            },
+          };
+        }
+
+        // Zod runtime validation of arguments (Wave 2.B).
+        const schema = TOOL_SCHEMAS[toolName];
+        if (schema) {
+          const validation = validateInput(schema, toolArgs);
+          if (!validation.ok) {
+            return {
+              jsonrpc: "2.0",
+              id,
+              result: {
+                content: [{ type: "text", text: JSON.stringify({ error: validation.error }) }],
+                isError: true,
+              },
+            };
+          }
+        }
+
         try {
           const result = await tool.handler(toolArgs);
           return {
@@ -1803,7 +2160,8 @@ export class McpServer {
             },
           };
         } catch (err: unknown) {
-          const msg = errorMessage(err);
+          // Redact secrets from error text before it leaves the server.
+          const msg = safeErrorMessage(err);
           // Split "What failed. Recovery hint." into error + hint
           const dotIdx = msg.indexOf(". ");
           const error = dotIdx > 0 ? msg.slice(0, dotIdx + 1) : msg;
