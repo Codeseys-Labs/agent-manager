@@ -1,7 +1,7 @@
 import { join } from "node:path";
 import { defineCommand } from "citty";
 import { resolveConfigDir, tryReadConfig, writeConfig } from "../core/config";
-import { commitAll } from "../core/git";
+import { commitAll, isNothingToCommitError } from "../core/git";
 import type { Instruction, Server } from "../core/schema";
 import { scanServerForSecrets, substituteSecret } from "../core/secret-detection";
 import {
@@ -12,8 +12,8 @@ import {
   resolveKeyPath,
   saveKey,
 } from "../core/secrets";
-import { requireConfig } from "../lib/errors";
-import { amError, error, info, output } from "../lib/output";
+import { errorMessage, requireConfig } from "../lib/errors";
+import { amError, error, info, output, warn } from "../lib/output";
 
 const ENTITY_TYPES = ["server", "instruction", "skill", "agent"] as const;
 type EntityType = (typeof ENTITY_TYPES)[number];
@@ -175,8 +175,10 @@ async function addServer(
   const tagStr = server.tags?.length ? ` (${server.tags.join(", ")})` : "";
   try {
     await commitAll(configDir, `add server: ${name}${tagStr}`);
-  } catch {
-    // Nothing to commit is fine
+  } catch (err) {
+    if (!isNothingToCommitError(err)) {
+      warn(`auto-commit failed: ${errorMessage(err) || "unknown git error"}`, opts);
+    }
   }
 
   info(`Added server "${name}"`, opts);
@@ -257,8 +259,10 @@ async function addInstruction(
 
   try {
     await commitAll(configDir, `add instruction: ${name}`);
-  } catch {
-    // Nothing to commit is fine
+  } catch (err) {
+    if (!isNothingToCommitError(err)) {
+      warn(`auto-commit failed: ${errorMessage(err) || "unknown git error"}`, opts);
+    }
   }
 
   info(`Added instruction "${name}" (scope: ${scope})`, opts);

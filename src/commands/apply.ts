@@ -9,7 +9,7 @@ import {
 } from "../core/config";
 import { interpolateEnvAsync, loadKey } from "../core/secrets";
 import { AmError, errorMessage } from "../lib/errors";
-import { amError, debug, error, info, output } from "../lib/output";
+import { amError, debug, error, info, output, warn } from "../lib/output";
 import { readActiveProfile } from "./use";
 
 export const applyCommand = defineCommand({
@@ -86,6 +86,9 @@ export const applyCommand = defineCommand({
         files: Array<{ path: string; written: boolean }>;
         warnings: string[];
       }> = [];
+      const succeeded: string[] = [];
+      const failed: Array<{ adapter: string; error: string }> = [];
+      const skipped: string[] = [];
 
       for (const adapter of adapters) {
         debug(`Applying to ${adapter.meta.displayName}...`, opts);
@@ -117,6 +120,7 @@ export const applyCommand = defineCommand({
             files: result.files.map((f) => ({ path: f.path, written: f.written })),
             warnings: result.warnings,
           });
+          succeeded.push(adapter.meta.name);
 
           if (!args["dry-run"]) {
             info(
@@ -131,17 +135,45 @@ export const applyCommand = defineCommand({
           }
 
           for (const w of result.warnings) {
-            info(`  warning: ${w}`, opts);
+            warn(`${adapter.meta.displayName}: ${w}`, opts);
           }
         } catch (e: unknown) {
           const msg = errorMessage(e) || "export failed";
-          info(`${adapter.meta.displayName}: ${msg}`, opts);
+          warn(`${adapter.meta.displayName}: ${msg}`, opts);
           results.push({ adapter: adapter.meta.name, files: [], warnings: [msg] });
+          failed.push({ adapter: adapter.meta.name, error: msg });
         }
       }
 
+      // Final summary line — always visible (stdout when non-JSON, included
+      // in the JSON envelope under --json).
+      const total = adapters.length;
+      if (failed.length > 0) {
+        const failedNames = failed.map((f) => f.adapter).join(", ");
+        info(
+          `Applied to ${succeeded.length} of ${total} adapters. ${failed.length} failed: [${failedNames}].`,
+          opts,
+        );
+        // Partial failures must surface to scripting callers — set a non-zero
+        // exit code even though individual per-adapter failures were caught.
+        process.exitCode = 1;
+      } else {
+        info(`Applied to ${succeeded.length} of ${total} adapters.`, opts);
+      }
+
       if (args.json) {
-        output({ action: "apply", profile: profileName, dryRun: args["dry-run"], results }, opts);
+        output(
+          {
+            action: "apply",
+            profile: profileName,
+            dryRun: args["dry-run"],
+            results,
+            succeeded: succeeded.length,
+            failed,
+            skipped,
+          },
+          opts,
+        );
       }
     } catch (err) {
       amError(err, opts);

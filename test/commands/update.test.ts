@@ -253,7 +253,10 @@ describe("am update", () => {
       cmd: updateCommand as any,
     });
 
-    const allOutput = consoleOutput.join("\n");
+    // Per-package check failures are now surfaced via warn() → stderr
+    // (previously info() → stdout). Scan both streams so the assertion is
+    // robust to either routing.
+    const allOutput = [...consoleOutput, ...consoleErrors].join("\n");
     // Should show error for the failed server check and report it
     expect(allOutput).toContain("tavily");
     expect(allOutput).toContain("500");

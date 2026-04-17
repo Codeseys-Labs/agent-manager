@@ -6,7 +6,7 @@ import { listAdapters } from "../adapters/registry";
 import { loadResolvedConfig, resolveConfigDir, resolveProjectConfig } from "../core/config";
 import { ConfigSchema } from "../core/schema";
 import { AmError, errorMessage, isNotFound } from "../lib/errors";
-import { amError, error, info, output } from "../lib/output";
+import { amError, error, info, output, warn } from "../lib/output";
 import { tomlStringify } from "../lib/toml";
 
 export const configCommand = defineCommand({
@@ -108,7 +108,7 @@ export const validateCommand = defineCommand({
     }
 
     for (const w of warnings) {
-      info(`warning: ${w}`, opts);
+      warn(w, opts);
     }
 
     if (!valid) {

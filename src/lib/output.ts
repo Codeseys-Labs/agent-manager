@@ -20,6 +20,27 @@ export function error(message: string, opts: OutputOptions): void {
 }
 
 /**
+ * Emit a warning.
+ *
+ * Warnings are important signals and are intentionally NOT silenced by
+ * `--quiet` — scripting callers need to see them. Always written to stderr
+ * (so they never pollute the stdout JSON payload / pipeline).
+ *
+ * In JSON mode the warning is emitted as a single JSON object on stderr
+ * (`{level: "warn", message}`), which machine callers can merge into their
+ * own warnings list. The per-command final JSON payload on stdout is
+ * unaffected — commands that want to aggregate warnings into the final
+ * envelope should do so explicitly (see collectWarnings()).
+ */
+export function warn(message: string, opts: OutputOptions): void {
+  if (opts.json) {
+    console.error(JSON.stringify({ level: "warn", message }));
+  } else {
+    console.error(`warning: ${message}`);
+  }
+}
+
+/**
  * Print a structured error with optional suggestion, respecting --json.
  */
 export function amError(err: unknown, opts: OutputOptions): void {

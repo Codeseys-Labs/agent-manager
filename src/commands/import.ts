@@ -3,7 +3,7 @@ import { defineCommand } from "citty";
 import { getAdapter, getDetectedAdapters, listAdapters } from "../adapters/registry";
 import type { Adapter, ImportedServer, MarketplaceItem } from "../adapters/types";
 import { resolveConfigDir, tryReadConfig, writeConfig } from "../core/config";
-import { commitAll } from "../core/git";
+import { commitAll, isNothingToCommitError } from "../core/git";
 import { type MergeStrategy, type ServerConflict, runMergePipeline } from "../core/merge";
 import type { MarketplaceProvenance } from "../core/schema";
 import {
@@ -22,7 +22,7 @@ import {
   saveKey,
 } from "../core/secrets";
 import { AmError, errorMessage, requireConfig } from "../lib/errors";
-import { amError, debug, error, info, output } from "../lib/output";
+import { amError, debug, error, info, output, warn } from "../lib/output";
 
 /**
  * Extract a canonical identity from a server command+args for dedup.
@@ -467,8 +467,10 @@ export const importCommand = defineCommand({
         if (totalMerged > 0) parts.push(`${totalMerged} merged`);
         try {
           await commitAll(configDir, `import: ${sourceStr} (${parts.join(", ")})`);
-        } catch {
-          // Nothing new to commit
+        } catch (err) {
+          if (!isNothingToCommitError(err)) {
+            warn(`auto-commit failed: ${errorMessage(err) || "unknown git error"}`, opts);
+          }
         }
       }
 
@@ -480,7 +482,7 @@ export const importCommand = defineCommand({
 
       if (allWarnings.length > 0) {
         for (const w of allWarnings) {
-          info(`  warning: ${w}`, opts);
+          warn(w, opts);
         }
       }
 

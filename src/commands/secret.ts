@@ -3,7 +3,7 @@ import { dirname, join } from "node:path";
 import { defineCommand } from "citty";
 import { atomicWriteFile } from "../core/atomic-write";
 import { resolveConfigDir, tryReadConfig, writeConfig } from "../core/config";
-import { commitAll } from "../core/git";
+import { commitAll, isNothingToCommitError } from "../core/git";
 import {
   formatScanReport,
   redactSecret,
@@ -20,8 +20,8 @@ import {
   resolveKeyPath,
   saveKey,
 } from "../core/secrets";
-import { requireConfig } from "../lib/errors";
-import { amError, error, info, output } from "../lib/output";
+import { errorMessage, requireConfig } from "../lib/errors";
+import { amError, error, info, output, warn } from "../lib/output";
 
 export const secretCommand = defineCommand({
   meta: { name: "secret", description: "Manage encrypted secrets" },
@@ -93,8 +93,10 @@ const setCommand = defineCommand({
 
       try {
         await commitAll(configDir, `secret: set ${args.name}`);
-      } catch {
-        // Nothing to commit
+      } catch (err) {
+        if (!isNothingToCommitError(err)) {
+          warn(`auto-commit failed: ${errorMessage(err) || "unknown git error"}`, opts);
+        }
       }
 
       info(`Secret "${args.name}" set.`, opts);
@@ -380,8 +382,10 @@ const scanCommand = defineCommand({
 
       try {
         await commitAll(configDir, `secret: auto-encrypt ${substituted} secret(s)`);
-      } catch {
-        // Nothing to commit
+      } catch (err) {
+        if (!isNothingToCommitError(err)) {
+          warn(`auto-commit failed: ${errorMessage(err) || "unknown git error"}`, opts);
+        }
       }
 
       if (args.json) {

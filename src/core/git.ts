@@ -30,6 +30,17 @@ export async function initRepo(dir: string): Promise<void> {
   });
 }
 
+/**
+ * Detect the benign "Nothing to commit" error thrown by `commitAll` when the
+ * working tree is clean. Call sites should swallow only this shape and
+ * rethrow / warn on anything else (permission, lock, ENOSPC, corrupt repo).
+ */
+export function isNothingToCommitError(err: unknown): boolean {
+  if (!err || typeof err !== "object") return false;
+  const msg = (err as { message?: unknown }).message;
+  return typeof msg === "string" && msg === "Nothing to commit";
+}
+
 export async function commitAll(dir: string, message: string): Promise<string> {
   const matrix = await git.statusMatrix({ fs, dir });
 

@@ -4,7 +4,7 @@ import { defineCommand } from "citty";
 import { resolveConfigDir, tryReadConfig, writeConfig } from "../core/config";
 import { commitAll } from "../core/git";
 import { requireConfig } from "../lib/errors";
-import { amError, error, info, output } from "../lib/output";
+import { amError, error, info, output, warn } from "../lib/output";
 import { RegistryError, getPackage } from "../registry/client";
 import type { RegistryPackage, RegistryProvenance } from "../registry/types";
 
@@ -93,9 +93,9 @@ export const updateCommand = defineCommand({
         }
       }
 
-      // Report errors
+      // Report per-package errors encountered while checking for updates.
       for (const e of errors) {
-        info(`  ⚠ ${e.name}: ${e.error}`, opts);
+        warn(`${e.name}: ${e.error}`, opts);
       }
 
       if (candidates.length === 0) {
