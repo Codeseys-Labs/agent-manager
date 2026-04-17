@@ -10,15 +10,27 @@ LLM-wiki, edit from terminal, local web, or cloud.
 
 Every feature decision must answer: **which of the six pillars does this serve?**
 
-1. **Catalog + git sync** (TOML, user's git choice, brownfield import, drift detection)
-2. **MCP gateway** (`am mcp-serve` as the stable endpoint any agent plumbs into)
-3. **Protocol router** (ACP local, A2A remote, bridge, unified `am_agent_*` tools)
-4. **Marketplace** (git-backed catalogs, supply-chain hardened: SHA pinning, TOFU, `--ignore-scripts`)
-5. **LLM-wiki** (Karpathy design, session context for agents using am, git-backed)
-6. **Three UIs over one core** (TUI, local web, Cloudflare web)
+1. **Catalog + git sync** — entity types (servers/instructions/skills/agents/
+   profiles), user's git choice, brownfield import (ADR-0028), drift detection
+   (ADR-0006), AES-256-GCM secret hygiene, MCP Package Registry (ADR-0024).
+2. **MCP gateway** — `am mcp-serve`, 33+ tools, concurrency-safe writers
+   (iter4 Wave B), bearer auth (iter2 Wave B), streaming via MCP
+   notifications/progress (iter4 Wave D).
+3. **Protocol router** — ACP local, A2A remote, bridge, unified `am_agent_*`
+   tools, agent auto-detection (iter4 Wave C), flows (ADR-0026) scoped to
+   pillar 3 composition.
+4. **Marketplace** — git-backed catalogs, supply-chain hardened (SHA pinning,
+   TOFU, `--ignore-scripts`). Distinct from Registry per ADR-0032.
+5. **LLM-wiki** (Karpathy) — session harvest (ADR-0016) feeds the wiki;
+   without harvest the wiki is an empty shelf. Global git-backed + per-project
+   mirror. `am wiki` CLI + MCP `am_wiki_*`.
+6. **Three UIs over one core** — TUI, local web, Cloudflare web; route
+   through `core/controller.ts`.
 
 Features orthogonal to all six are flagged for reconsideration. Non-goals are
-enumerated in [ADR-0031](ADRs/0031-product-scope-and-pillars.md).
+enumerated in [ADR-0031](ADRs/0031-product-scope-and-pillars.md). Terminology
+(catalog vs config vs Registry vs Marketplace) is locked in
+[ADR-0032](ADRs/0032-terminology-glossary.md).
 
 
 ## Tech Stack

@@ -29,24 +29,32 @@ One catalog. Thirteen tools. Git-synced across every machine. Agent-aware.
 agent-manager is not "chezmoi for configs" — it outgrew that framing. It is
 a control plane for AI agents, built on six composing pillars:
 
-1. **Catalog + git sync.** Servers, skills, agents, plugins, profiles
-   defined once in TOML. User's choice of git backend. Brownfield import
-   from any supported tool.
+1. **Catalog + git sync.** Entity types (servers, instructions, skills, agents,
+   profiles) defined once in TOML. User's choice of git backend. Load-bearing
+   sub-features worth naming: **brownfield import** (`am import` reads native
+   IDE configs with intelligent merge), **drift detection** (`am status` catches
+   when any of the 13 tools diverged from your catalog), **secret hygiene**
+   (AES-256-GCM at rest + 24-provider detection on import), and the **MCP
+   Package Registry** (`am search/install/update/uninstall` browses the
+   upstream package index).
 2. **MCP gateway.** `am mcp-serve` exposes the catalog as a stable MCP
-   endpoint. Plumb any agent into it once; the catalog becomes the single
-   source of truth.
-3. **Protocol router.** ACP for local subprocess agents (Claude Code,
-   Codex, Gemini, Cursor, Kiro, Copilot…). A2A for remote agents. Bridge
-   routes remote delegations into local ACP execution.
+   endpoint. 33+ tools, concurrency-safe writers, bearer auth, progress
+   notifications for streaming agent invocations.
+3. **Protocol router.** ACP for local subprocess agents (Claude Code, Codex,
+   Gemini, Cursor, Kiro, Copilot…). A2A for remote. Bridge routes remote
+   delegations into local ACP. **Agent auto-detection** now shows which
+   agents are actually installed. Unified `am agent list` + `am_agent_invoke`.
 4. **Marketplace.** Subscribe to git-backed catalogs of MCPs + skills +
    plugins + agents. Supply-chain hardened (commit SHA pinning,
-   trust-on-first-use, path traversal scrub, `--ignore-scripts`).
-5. **LLM-wiki.** Karpathy-style session context capture. Globally
-   git-backed, locally mirrored per project. Agents using am have context
-   of what was done and discussed across sessions. Browse via `am wiki`.
-6. **Three UIs over one core.** TUI (`am tui`), local web (`am web`),
-   Cloudflare web (multi-device, auth-gated). All three talk to the same
-   core; they are skins, not competing products.
+   trust-on-first-use, path traversal scrub, `--ignore-scripts`). Distinct
+   from Registry — see [ADR-0032](ADRs/0032-terminology-glossary.md).
+5. **LLM-wiki.** Karpathy-style session context. **Session harvest**
+   (`am session` + `am wiki ingest`) is the cross-tool read pipeline that
+   feeds the wiki — without it, this pillar is an empty shelf. Globally
+   git-backed; locally mirrored per project. Browse via `am wiki`.
+6. **Three UIs over one core.** TUI (`am tui`), local web (`am serve`),
+   Cloudflare web (multi-device, auth-gated). All three route through
+   `core/controller.ts` — no parallel implementations, no feature drift.
 
 See [ADR-0031](ADRs/0031-product-scope-and-pillars.md) for the formal
 statement of scope and explicit non-goals.

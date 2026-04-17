@@ -46,33 +46,83 @@ yardstick.
 
 **Six pillars (in-scope):**
 
-1. **Catalog + git sync.** Servers, skills, agents, plugins, profiles defined
-   once in TOML. User's choice of git backend (GitHub, GitLab, Bitbucket,
-   self-hosted). Brownfield import from any supported tool.
+Every pillar is the HEADLINE for a set of load-bearing sub-features. iter4 R4
+found the original pillar list too terse — the sub-features are named below so
+audits can verify "is feature X serving which pillar, and at what depth?"
+without re-reading the whole repo.
+
+1. **Catalog + git sync.**
+   - **Entity types:** servers, instructions, skills, agents, profiles — all in
+     one TOML file, authored in one place.
+   - **Git backend:** user's choice (GitHub, GitLab, Bitbucket, self-hosted).
+   - **Brownfield import** (ADR-0028): `am import <tool>` reads native IDE
+     configs with intelligent merge + conflict resolution. The first-contact
+     experience — users don't rewrite from scratch.
+   - **Drift detection** (ADR-0006): `am status` / `am apply --diff` surface
+     divergence between the catalog and what's on disk across all 13 adapters.
+     The reason a direct IDE edit can't silently steal your catalog.
+   - **Brownfield secret hygiene:** AES-256-GCM encryption at rest, 24-provider
+     secret-key detection on import/add, scan-and-encrypt workflows. Foundational
+     across all pillars — secrets are properties of catalog entries, enforced
+     uniformly.
+   - **MCP Package Registry** (ADR-0024): `am search/install/uninstall/update`
+     browses the upstream npm/Smithery/etc. catalog and seeds entries. The
+     "where do I find X" layer. See ADR-0032 for the Registry vs Marketplace
+     distinction.
 
 2. **MCP gateway.** `am mcp-serve` is a stable endpoint any agent can plumb
    into. The catalog becomes the single source of truth; individual IDEs /
    agents consume through am instead of maintaining their own config.
+   - **33+ unified tools** covering catalog read/write, registry, wiki, agents,
+     sessions, doctor, undo.
+   - **Concurrency-safe** (iter4 Wave B): all write-tier tools serialize
+     behind a process-wide config mutex. Read-only tools stay parallel.
+   - **Progress notifications** (iter4 Wave D): streaming responses for
+     long-running agent invocations via MCP `notifications/progress`.
+   - **Write-tier auth** (iter2 Wave B): bearer token gate; read-only stays
+     open; `AM_MCP_ALLOW_UNSAFE_LOCAL` for trusted-local escape hatch.
 
 3. **Protocol router.** ACP for local subprocess agents, A2A for remote
    agents, bridge for routing A2A tasks into local ACP execution. Session
    lifecycle, permission policies, and delegation are protocol-agnostic from
    the user's perspective.
+   - **Unified agent registry** (ADR-0030): one `am agent list` merges config
+     + ACP built-ins + A2A roster; one `am_agent_invoke` routes to either.
+   - **Auto-detection** (iter4 Wave C): 16 built-in ACP agents now PATH-probed
+     + adapter-cross-checked so the registry reports what's actually installed.
+   - **Flows** (ADR-0026): multi-step composition across catalog entries.
+     Scoped to pillar 3 — NOT a general-purpose workflow orchestrator.
+   - **A2A-ACP bridge:** incoming A2A tasks route to local ACP execution so
+     remote agents can delegate into the user's local toolbelt.
 
 4. **Marketplace.** Users subscribe to git-backed catalogs of MCPs + skills
    + plugins + agents. Replicates Claude Code's marketplace model but
-   tool-agnostic. Supply-chain hardened (commit SHA pinning, TOFU, path
-   traversal scrub, `--ignore-scripts`).
+   tool-agnostic.
+   - **Supply-chain hardened** (iter2 Wave 2.C): commit SHA pinning, TOFU
+     prompts, clone-size caps, URL validation, path-traversal scrub on
+     manifest fields, `--ignore-scripts` on npm install for community
+     adapters.
+   - **Multiple sources:** one am, many marketplaces. Each pinned independently.
+   - **Distinct from Registry:** see ADR-0032. Registry = upstream package
+     index. Marketplace = user-chosen curated bundles.
 
-5. **LLM-wiki.** Karpathy-style session context capture. Globally git-backed,
-   locally mirrored per project. Agents using am have context of what was
-   done and discussed across sessions. **This is the least-documented
-   differentiator and deserves first-class README placement.**
+5. **LLM-wiki** (Karpathy design). Session context capture so agents using
+   am have memory of what was done and discussed across sessions.
+   - **Session harvest** (ADR-0016): the **only** cross-tool read-side
+     pipeline — harvests transcripts from claude-code + codex sessions into
+     the wiki. All 13 adapters write; only these two read. Without harvest
+     the wiki is an empty shelf.
+   - **Global + per-project:** `~/.config/agent-manager/wiki/global/` is
+     git-backed; `<project>/.agent-manager/wiki/` is a per-project mirror so
+     the current directory has local context.
+   - **`am wiki` CLI** (iter3 M4): list/show/search/sync/path.
+   - **MCP surface:** `am_wiki_*` tools let agents query + append during
+     their own sessions.
 
-6. **Three editing surfaces over one core.** TUI (terminal power users),
-   local web (rich UI, local trust), Cloudflare web (multi-device,
-   auth-gated). All three are skins over the same core; they are not
-   competing products.
+6. **Three editing surfaces over one core.** TUI (`am tui`), local web
+   (`am serve`), Cloudflare web (multi-device, auth-gated). All three are
+   skins over the same core via `core/controller.ts` (iter4 Wave B) — no
+   parallel implementations.
 
 **Explicit non-goals (out of scope):**
 

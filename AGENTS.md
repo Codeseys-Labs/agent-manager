@@ -12,18 +12,24 @@ cloud.
 Every feature decision and audit must answer: **which of the six pillars does
 this serve?** Features orthogonal to all six are flagged for reconsideration.
 
-1. **Catalog + git sync** — define once, sync via user's choice of git backend.
-2. **MCP gateway** — `am mcp-serve` as the stable endpoint any agent plumbs into.
-3. **Protocol router** — ACP for local agents, A2A for remote, bridge between.
-4. **Marketplace** — subscribe to git-backed catalogs of MCPs/skills/plugins/agents.
-5. **LLM-wiki** — Karpathy-style session context, globally git-backed, locally mirrored.
-6. **Three UIs over one core** — TUI, local web, Cloudflare web.
-
-Underemphasized features that are still load-bearing for pillar 1:
-**drift detection** (100% adapter coverage), **brownfield import** (intelligent
-merge across tools), **session harvest** (cross-tool read-side pipeline feeding
-pillar 5), **MCP Package Registry** (install/search/update/uninstall with
-supply-chain controls).
+1. **Catalog + git sync** — define once, sync via user's choice of git.
+   Includes brownfield import (ADR-0028), drift detection (ADR-0006), secret
+   hygiene (AES-256-GCM + 24-provider detection), MCP Package Registry
+   (ADR-0024).
+2. **MCP gateway** — `am mcp-serve` as the stable endpoint any agent plumbs
+   into. 33+ tools, concurrency-safe writers (iter4 Wave B), bearer auth
+   (iter2 Wave B), streaming via MCP progress notifications (iter4 Wave D).
+3. **Protocol router** — ACP local, A2A remote, A2A-ACP bridge, unified agent
+   registry (ADR-0030), **auto-detection of installed agents** (iter4 Wave C),
+   flows (ADR-0026) scoped to pillar 3 composition.
+4. **Marketplace** — subscribe to git-backed catalogs of MCPs/skills/plugins/
+   agents. Supply-chain hardened: SHA pinning, TOFU, `--ignore-scripts`,
+   path-traversal scrub. Distinct from Registry (see [ADR-0032](ADRs/0032-terminology-glossary.md)).
+5. **LLM-wiki** — Karpathy-style session context. Session harvest (ADR-0016)
+   is the cross-tool read pipeline — without it, pillar 5 is an empty shelf.
+   Global git-backed + per-project local mirror. `am wiki` + MCP `am_wiki_*`.
+6. **Three UIs over one core** — TUI, local web, Cloudflare web. All three
+   route through `core/controller.ts` — no parallel implementations.
 
 Explicit non-goals: am is NOT a workflow orchestrator (flows serve pillar 3
 composition only), NOT a hosted inference product, NOT a replacement for native
