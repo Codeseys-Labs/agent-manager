@@ -7,18 +7,53 @@
 
 // ── Agent Card ──────────────────────────────────────────────────
 
-/** A2A Agent Card — advertises agent capabilities via /.well-known/agent.json */
+/** A2A Agent Card — advertises agent capabilities via /.well-known/agent-card.json */
 export interface AgentCard {
+  /**
+   * A2A protocol version this agent implements (e.g. "0.3.0"). REQUIRED as
+   * of v0.3 AgentCard schema.
+   */
+  protocolVersion?: string;
   name: string;
   description: string;
   version: string;
   url: string;
+  /**
+   * Preferred transport hint for clients. v0.3 defines a transport registry;
+   * we use "http+jsonrpc" to indicate JSON-RPC 2.0 over HTTP(S) POST.
+   */
+  preferredTransport?: string;
   provider?: AgentProvider;
   capabilities: AgentCapabilities;
   skills: AgentSkill[];
+  /** Legacy v0.2 authentication list. Retained for backward compatibility. */
   authentication?: AuthenticationScheme[];
+  /**
+   * v0.3 OpenAPI-style security schemes. A map from scheme name to its
+   * description. Clients use this plus `security` to decide how to auth.
+   */
+  securitySchemes?: Record<string, SecurityScheme>;
+  /** v0.3 `security` requirement list (matches OpenAPI convention). */
+  security?: Array<Record<string, string[]>>;
+  /**
+   * v0.3 flag: when true, the agent exposes an extended card via an
+   * authenticated endpoint with more detail than the public one.
+   */
+  supportsAuthenticatedExtendedCard?: boolean;
   defaultInputModes?: string[];
   defaultOutputModes?: string[];
+}
+
+/** OpenAPI-style security scheme (v0.3). */
+export interface SecurityScheme {
+  type: "http" | "apiKey" | "oauth2" | "openIdConnect";
+  /** For type=http: "bearer", "basic", etc. */
+  scheme?: string;
+  /** For type=apiKey: header/query/cookie name. */
+  name?: string;
+  /** For type=apiKey: where the key is passed. */
+  in?: "header" | "query" | "cookie";
+  description?: string;
 }
 
 export interface AgentProvider {

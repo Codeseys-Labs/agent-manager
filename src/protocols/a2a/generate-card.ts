@@ -8,7 +8,14 @@
 
 import type { ResolvedConfig } from "../../adapters/types";
 import { AM_VERSION } from "../../lib/version";
-import type { AgentCapabilities, AgentCard, AgentProvider, AgentSkill } from "./types";
+import type {
+  AgentCapabilities,
+  AgentCard,
+  AgentProvider,
+  AgentSkill,
+  SecurityScheme,
+} from "./types";
+import { A2A_PREFERRED_TRANSPORT, A2A_PROTOCOL_VERSION } from "./version";
 
 /** Options for generating the Agent Card. */
 export interface GenerateCardOptions {
@@ -138,17 +145,38 @@ export function generateAgentCard(config: ResolvedConfig, options: GenerateCardO
       }
     : undefined;
 
+  // v0.3 OpenAPI-style security schemes. We advertise bearer auth as an
+  // optional scheme — the server only enforces it when auth_token is set
+  // (see createA2ARoutes). Clients that want to talk to us without auth
+  // can use an empty security list per OpenAPI semantics.
+  const securitySchemes: Record<string, SecurityScheme> = {
+    bearer: {
+      type: "http",
+      scheme: "bearer",
+      description: "Bearer token from the agent-manager config directory.",
+    },
+  };
+
   return {
+    protocolVersion: A2A_PROTOCOL_VERSION,
     name: options.provider?.name ?? "agent-manager",
     description:
       options.provider?.description ??
       "Agent configuration manager — define once in TOML, sync via git, generate native configs for every AI coding tool.",
     version: AM_VERSION,
     url: options.baseUrl,
+    preferredTransport: A2A_PREFERRED_TRANSPORT,
     provider,
     capabilities,
     skills: allSkills,
+    // Legacy authentication list — preserved for v0.2 clients until removed.
     authentication: [{ type: "bearer", description: "Bearer token from config directory" }],
+    securitySchemes,
+    // No blanket security requirement: bearer is only required when the
+    // server is started with auth_token. Clients without a token still
+    // get the public Agent Card and any unauthenticated endpoints.
+    security: [],
+    supportsAuthenticatedExtendedCard: false,
     defaultInputModes: ["text", "data"],
     defaultOutputModes: ["text", "data"],
   };

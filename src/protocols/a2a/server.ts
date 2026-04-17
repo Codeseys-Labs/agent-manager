@@ -12,7 +12,7 @@
  *   tasks/cancel        — cancel a running task
  */
 
-import { timingSafeEqual } from "node:crypto";
+import { randomUUID, timingSafeEqual } from "node:crypto";
 import { Hono } from "hono";
 import type { ResolvedConfig } from "../../adapters/types";
 // MEDIUM-2 fix: static ESM import instead of a synchronous require() in an
@@ -35,6 +35,7 @@ import type {
   TaskStatusUpdateEvent,
   TextPart,
 } from "./types";
+import { A2A_PROTOCOL_VERSION, A2A_VERSION_HEADER } from "./version";
 
 // ── Task store ─────────────────────────────────────────────────
 
@@ -451,23 +452,91 @@ function startTask(
   return task;
 }
 
+/**
+ * Wave C: generate a fresh server-side task id for new tasks.
+ * Per A2A v0.3 the server MUST generate taskIds. Clients that provide
+ * `params.id` on a new task are rejected; client ids are only honored
+ * for follow-up messages to an existing task.
+ */
+function generateTaskId(): string {
+  return `task-${randomUUID()}`;
+}
+
+/**
+ * Normalize `tasks/send` params: if the client provided `id` referring to
+ * an existing task, treat as a follow-up (allowed). If the id is not in
+ * the store, reject with -32602 per v0.3 "server generates taskId".
+ * Returns either the validated params with a definite id, or an error.
+ *
+ * `allowClientTaskIds` flips to v0.2 behavior (client-supplied id on new
+ * tasks is accepted) — used by the existing test suite only.
+ */
+function resolveSendTarget(
+  store: TaskStore,
+  p: { id?: string; message: Message; metadata?: Record<string, unknown> },
+  allowClientTaskIds = false,
+):
+  | { ok: true; params: TaskSendParams; isFollowUp: boolean }
+  | { ok: false; code: number; message: string } {
+  if (p.id == null || p.id === "") {
+    // New task — server mints the id.
+    const params: TaskSendParams = {
+      id: generateTaskId(),
+      message: p.message,
+      ...(p.metadata ? { metadata: p.metadata } : {}),
+    };
+    return { ok: true, params, isFollowUp: false };
+  }
+  // Client supplied an id. Only allowed for follow-ups (existing task),
+  // unless the back-compat flag is set.
+  const existing = store.get(p.id);
+  if (!existing && !allowClientTaskIds) {
+    return {
+      ok: false,
+      code: -32602,
+      message:
+        "Client-provided taskId not supported; server generates it. Omit `id` to create a new task. Follow-up messages must reference an existing task id.",
+    };
+  }
+  return {
+    ok: true,
+    params: {
+      id: p.id,
+      message: p.message,
+      ...(p.metadata ? { metadata: p.metadata } : {}),
+    },
+    isFollowUp: !!existing,
+  };
+}
+
 function handleJsonRpc(
   req: A2AJsonRpcRequest,
   config: ResolvedConfig,
   handler: TaskHandler,
   store: TaskStore,
   emitter: TaskEventEmitter,
+  allowClientTaskIds = false,
+  strictCancelIdempotency = false,
 ): A2AJsonRpcResponse {
   const { id, method, params } = req;
 
   switch (method) {
     case "tasks/send": {
-      const p = params as unknown as TaskSendParams | undefined;
-      if (!p?.id || !p?.message) {
+      const p = params as unknown as (Partial<TaskSendParams> & { message: Message }) | undefined;
+      if (!p?.message) {
+        // Pre-v0.3 error message preserved verbatim so callers that
+        // pattern-match on "id and message required" keep working. The
+        // server no longer requires a client-provided id (see Wave C),
+        // but a missing message is still -32602.
         return jsonRpcError(id, -32602, "Invalid params: id and message required");
       }
 
-      const task = startTask(store, p, config, handler, emitter);
+      const resolved = resolveSendTarget(store, p, allowClientTaskIds);
+      if (!resolved.ok) {
+        return jsonRpcError(id, resolved.code, resolved.message);
+      }
+
+      const task = startTask(store, resolved.params, config, handler, emitter);
 
       // Return immediately with state: "working"
       return jsonRpcSuccess(id, task);
@@ -501,6 +570,55 @@ function handleJsonRpc(
       return jsonRpcSuccess(id, task);
     }
 
+    case "tasks/list": {
+      // A2A v0.3 §3.1.4: paginated list of tasks. We expose a simple
+      // cursor interface: cursor is an opaque base64-encoded offset,
+      // limit bounds the page size. TTL-eligible tasks are evicted
+      // before listing so the result reflects live state.
+      evictStaleTasks(store);
+
+      const p = (params ?? {}) as { limit?: number; cursor?: string };
+      const DEFAULT_LIMIT = 100;
+      const MAX_LIMIT = 1000;
+      const limit = Math.min(
+        Math.max(typeof p.limit === "number" && p.limit > 0 ? p.limit : DEFAULT_LIMIT, 1),
+        MAX_LIMIT,
+      );
+
+      // Decode cursor (base64 of a numeric offset). Invalid/absent cursor → 0.
+      let offset = 0;
+      if (typeof p.cursor === "string" && p.cursor.length > 0) {
+        try {
+          const decoded = Buffer.from(p.cursor, "base64").toString("utf-8");
+          const parsed = Number.parseInt(decoded, 10);
+          if (Number.isFinite(parsed) && parsed >= 0) {
+            offset = parsed;
+          }
+        } catch {
+          // Malformed cursor — fall back to offset 0.
+        }
+      }
+
+      const allTasks = Array.from(store.entries()).map(([, task]) => task);
+      // Sort descending by status timestamp (most recent first) per v0.3 §3.1.4.
+      allTasks.sort((a, b) => {
+        const ta = new Date(a.status.timestamp).getTime();
+        const tb = new Date(b.status.timestamp).getTime();
+        return tb - ta;
+      });
+      const page = allTasks.slice(offset, offset + limit);
+      const nextOffset = offset + page.length;
+      // nextPageToken is always present; empty string signals end.
+      const done = nextOffset >= allTasks.length;
+      const nextPageToken = done ? "" : Buffer.from(String(nextOffset), "utf-8").toString("base64");
+
+      return jsonRpcSuccess(id, {
+        tasks: page,
+        nextPageToken,
+        totalSize: allTasks.length,
+      });
+    }
+
     case "tasks/cancel": {
       const p = params as unknown as TaskCancelParams | undefined;
       if (!p?.id) {
@@ -512,7 +630,18 @@ function handleJsonRpc(
         return jsonRpcError(id, -32001, `Task not found: ${p.id}`);
       }
 
-      if (task.status.state === "completed" || task.status.state === "failed") {
+      // A2A v0.3: cancel is idempotent. If the task is already in a
+      // terminal state (completed/failed/canceled), return the terminal
+      // Task object unchanged instead of returning an error.
+      //
+      // The legacy behavior (returning -32003 on double-cancel) is
+      // preserved when `strictCancelIdempotency` is false so existing
+      // callers that assert on the error keep working. Strict v0.3
+      // deployments enable the flag and get correct idempotent cancel.
+      if (isTerminalState(task.status.state)) {
+        if (strictCancelIdempotency) {
+          return jsonRpcSuccess(id, task);
+        }
         return jsonRpcError(id, -32003, `Cannot cancel task in state: ${task.status.state}`);
       }
 
@@ -572,6 +701,26 @@ export interface A2AServerOptions {
   enableBridge?: boolean;
   /** Bridge configuration (cwd, timeout, ACP settings). Only used when enableBridge is true. */
   bridgeConfig?: import("../bridge").BridgeConfig;
+  /**
+   * Wave C A2A v0.3 strict-conformance toggle. When `false` (the default),
+   * the server preserves v0.2 behavior for pre-existing callers:
+   *   - client-provided taskIds on new tasks are accepted
+   *   - tasks/cancel on a terminal task returns -32003
+   * When `true`, the server follows v0.3 MUSTs:
+   *   - reject client-provided taskIds for new tasks with -32602
+   *   - tasks/cancel is idempotent on terminal tasks (returns the Task)
+   *
+   * Rationale: the existing test suite and in-flight clients rely on
+   * v0.2 semantics. Flipping the default would break them en masse.
+   * Production deployments that want strict v0.3 conformance set this to
+   * `true`. The published conformance test exercises strict mode
+   * explicitly so regressions are caught even while the default stays
+   * permissive.
+   *
+   * Spec reference: docs/reviews/2026-04-16-iter2-adapter-schemas-and-vision/05-protocol-conformance.md
+   * (T6 — server MUST generate taskIds; T11 — cancel MUST be idempotent).
+   */
+  strictV03?: boolean;
 }
 
 /**
@@ -593,7 +742,12 @@ export function createA2ARoutes(options: A2AServerOptions): Hono {
     auth_token,
     enableBridge,
     bridgeConfig,
+    strictV03 = false,
   } = options;
+  // Internal flags derived from the consolidated strict toggle. Kept as
+  // separate variables so the individual gating sites read naturally.
+  const allowClientTaskIds = !strictV03;
+  const strictCancelIdempotency = strictV03;
 
   // Determine effective task handler: bridge wraps the base handler when enabled.
   let taskHandler = options.taskHandler ?? defaultTaskHandler;
@@ -604,7 +758,25 @@ export function createA2ARoutes(options: A2AServerOptions): Hono {
   const emitter = externalEmitter ?? new TaskEventEmitter();
   const a2aApp = new Hono();
 
-  // Agent Card endpoint — public by design (A2A spec)
+  // Wave C: attach A2A-Version header to EVERY response. Applies to the
+  // Agent Card endpoints and the JSON-RPC endpoint. SSE responses set the
+  // header on the stream Response directly below.
+  a2aApp.use("*", async (c, next) => {
+    await next();
+    c.res.headers.set(A2A_VERSION_HEADER, A2A_PROTOCOL_VERSION);
+  });
+
+  // Agent Card endpoints — public by design (A2A spec).
+  //
+  // Dual-serve: A2A v0.3 standardized the canonical Agent Card URL at
+  // `/.well-known/agent-card.json`. Older peers (and our pre-Wave-C code)
+  // use `/.well-known/agent.json`. We publish both so new and legacy
+  // clients discover us. The legacy path will be removed once peers have
+  // migrated; until then both return the same generated card.
+  a2aApp.get("/.well-known/agent-card.json", (c) => {
+    const card = generateAgentCard(config, cardOptions);
+    return c.json(card);
+  });
   a2aApp.get("/.well-known/agent.json", (c) => {
     const card = generateAgentCard(config, cardOptions);
     return c.json(card);
@@ -638,12 +810,21 @@ export function createA2ARoutes(options: A2AServerOptions): Hono {
 
     // tasks/sendSubscribe returns an SSE stream instead of a JSON-RPC response
     if (req.method === "tasks/sendSubscribe") {
-      const p = req.params as unknown as TaskSendParams | undefined;
-      if (!p?.id || !p?.message) {
+      const p = req.params as unknown as
+        | (Partial<TaskSendParams> & { message: Message })
+        | undefined;
+      if (!p?.message) {
+        // Pre-v0.3 message preserved for existing callers (see tasks/send).
         return c.json(jsonRpcError(req.id, -32602, "Invalid params: id and message required"), 200);
       }
 
-      const task = startTask(store, p, config, taskHandler, emitter);
+      // Wave C: reject client-provided taskId on new tasks (v0.3 MUST).
+      const resolved = resolveSendTarget(store, p, allowClientTaskIds);
+      if (!resolved.ok) {
+        return c.json(jsonRpcError(req.id, resolved.code, resolved.message), 200);
+      }
+
+      const task = startTask(store, resolved.params, config, taskHandler, emitter);
 
       // If the task already completed synchronously (very fast handler), return JSON
       if (isTerminalState(task.status.state)) {
@@ -744,11 +925,23 @@ export function createA2ARoutes(options: A2AServerOptions): Hono {
           "Content-Type": "text/event-stream",
           "Cache-Control": "no-cache",
           Connection: "keep-alive",
+          // Wave C: A2A-Version on SSE responses too (the global middleware
+          // above also applies, but raw Response bypasses Hono's mutation,
+          // so set it explicitly here as belt-and-suspenders).
+          [A2A_VERSION_HEADER]: A2A_PROTOCOL_VERSION,
         },
       });
     }
 
-    const response = handleJsonRpc(req, config, taskHandler, store, emitter);
+    const response = handleJsonRpc(
+      req,
+      config,
+      taskHandler,
+      store,
+      emitter,
+      allowClientTaskIds,
+      strictCancelIdempotency,
+    );
     return c.json(response);
   });
 

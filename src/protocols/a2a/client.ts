@@ -20,6 +20,7 @@ import type {
   TaskState,
   TaskStatusUpdateEvent,
 } from "./types";
+import { A2A_PROTOCOL_VERSION, A2A_VERSION_HEADER } from "./version";
 
 // ── Error types ─────────────────────────────────────────────────
 
@@ -56,6 +57,10 @@ function nextRpcId(): number {
 function buildAuthHeaders(opts?: A2AClientOptions): Record<string, string> {
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
+    // Wave C: send A2A-Version on every request per v0.3 MUST. Servers
+    // that ignore the header are unaffected; conformant servers use it
+    // to version-gate semantics.
+    [A2A_VERSION_HEADER]: A2A_PROTOCOL_VERSION,
   };
   if (opts?.bearerToken) {
     headers.Authorization = `Bearer ${opts.bearerToken}`;
@@ -80,35 +85,53 @@ export class A2AClient {
   }
 
   /**
-   * Discover an agent by fetching its Agent Card from /.well-known/agent.json.
-   * Returns null if the agent card is not found (404).
+   * Discover an agent by fetching its Agent Card.
+   *
+   * Wave C: most A2A peers in the wild still serve the legacy
+   * `/.well-known/agent.json`. v0.3 standardized the canonical URL at
+   * `/.well-known/agent-card.json` but requires servers to keep the
+   * legacy path for backward compatibility. We probe legacy first (best
+   * compatibility with deployed peers) then fall back to the canonical
+   * path. Returns null when both 404.
    */
   async discoverAgent(baseUrl: string): Promise<AgentCard | null> {
-    const url = `${normalizeUrl(baseUrl)}/.well-known/agent.json`;
+    const base = normalizeUrl(baseUrl);
+    const candidates = [`${base}/.well-known/agent.json`, `${base}/.well-known/agent-card.json`];
     const timeout = this.opts.timeout ?? 30_000;
 
-    let resp: Response;
-    try {
-      resp = await fetch(url, {
-        method: "GET",
-        headers: buildAuthHeaders(this.opts),
-        signal: AbortSignal.timeout(timeout),
-      });
-    } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : String(err);
-      throw new A2AClientError(`Failed to fetch agent card from ${url}: ${message}`);
+    let lastError: A2AClientError | null = null;
+    for (const url of candidates) {
+      let resp: Response;
+      try {
+        resp = await fetch(url, {
+          method: "GET",
+          headers: buildAuthHeaders(this.opts),
+          signal: AbortSignal.timeout(timeout),
+        });
+      } catch (err: unknown) {
+        const message = err instanceof Error ? err.message : String(err);
+        lastError = new A2AClientError(`Failed to fetch agent card from ${url}: ${message}`);
+        continue;
+      }
+
+      if (resp.status === 404) continue;
+      if (!resp.ok) {
+        lastError = new A2AClientError(
+          `Agent card request failed: ${resp.status} ${resp.statusText}`,
+          resp.status,
+        );
+        continue;
+      }
+
+      const card = (await resp.json()) as AgentCard;
+      return card;
     }
 
-    if (resp.status === 404) return null;
-    if (!resp.ok) {
-      throw new A2AClientError(
-        `Agent card request failed: ${resp.status} ${resp.statusText}`,
-        resp.status,
-      );
-    }
-
-    const card = (await resp.json()) as AgentCard;
-    return card;
+    // Both paths 404'd → agent simply not found. Otherwise propagate the
+    // last transport/HTTP error so the caller can distinguish "no agent"
+    // from "network failure".
+    if (lastError) throw lastError;
+    return null;
   }
 
   /**
