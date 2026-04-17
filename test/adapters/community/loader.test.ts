@@ -307,14 +307,26 @@ describe("verifyChecksum()", () => {
     }
   });
 
-  it("warns but allows when no checksum is stored", async () => {
+  it("throws when no checksum is stored (non-local source)", async () => {
+    // A missing checksum for a remote/npm/git adapter is now fatal — we
+    // refuse to spawn untrusted code without a pinned hash.
+    await expect(verifyChecksum("nocheck", "/any/path", undefined)).rejects.toThrow(
+      /no checksum in adapters\.toml/,
+    );
+    await expect(
+      verifyChecksum("nocheck", "/any/path", undefined, "npm:am-adapter-nocheck"),
+    ).rejects.toThrow(/no checksum/);
+  });
+
+  it("warns but allows when no checksum is stored AND source is local:", async () => {
     const stderrSpy = spyOn(console, "error");
-    // Should not throw
-    await verifyChecksum("nocheck", "/any/path", undefined);
+    // Local adapters are the user's own code — churn on every edit would
+    // be noise, so we warn instead of failing.
+    await verifyChecksum("mylocal", "/any/path", undefined, "local:./mylocal");
     expect(stderrSpy).toHaveBeenCalled();
     const msg = stderrSpy.mock.calls[0][0] as string;
-    expect(msg).toContain("no checksum");
-    expect(msg).toContain("nocheck");
+    expect(msg).toContain("local adapter");
+    expect(msg).toContain("mylocal");
     stderrSpy.mockRestore();
   });
 

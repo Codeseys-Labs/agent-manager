@@ -1,4 +1,5 @@
-import { mkdir, rm } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { mkdir, readFile, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { defineCommand } from "citty";
 import {
@@ -159,8 +160,11 @@ const installSubcommand = defineCommand({
           process.exitCode = 1;
           return;
         }
-        // Run npm install in the cloned directory
-        const npmProc = Bun.spawn(["npm", "install", "--production"], {
+        // Run npm install in the cloned directory.
+        // --ignore-scripts: cloned repo is untrusted; its package.json
+        // lifecycle scripts (preinstall/install/postinstall) must not run
+        // on the host before validation + checksum pinning.
+        const npmProc = Bun.spawn(["npm", "install", "--production", "--ignore-scripts"], {
           cwd: adapterDir,
           stdout: "pipe",
           stderr: "pipe",
@@ -186,11 +190,26 @@ const installSubcommand = defineCommand({
       info(`Verified: ${proxy.meta.displayName} v${proxy.meta.version}`, opts);
       proxy.kill();
 
+      // Capture checksum of the adapter entrypoint. This is what the loader
+      // will verify on every subsequent spawn — TOFU-style pinning of the
+      // bits we just validated.
+      //
+      // Exception: `local:` adapters are the user's own code under active
+      // development. Recomputing the checksum on every edit would be noise,
+      // so we record no checksum and the loader skips the check with a warn.
+      let checksum: string | undefined;
+      if (sourceType === "local") {
+        debug("local adapter: skipping checksum pinning (user-owned source)", opts);
+      } else {
+        checksum = await computeChecksum(command);
+      }
+
       // Register in adapters.toml
       const config: CommunityAdapterConfig = {
         source: formatSource(source, sourceType),
         command,
         installed_at: new Date().toISOString(),
+        ...(checksum ? { checksum } : {}),
       };
       await setCommunityAdapterConfig(configDir, name, config);
 
@@ -303,11 +322,14 @@ const updateSubcommand = defineCommand({
           continue;
         }
 
-        // For npm sources, re-run npm install to get latest
+        // For npm sources, re-run npm install to get latest.
+        // --ignore-scripts: community adapter; lifecycle scripts would run
+        // as the user on update without a prompt, giving an attacker a path
+        // to RCE via a compromised package version.
         if (config.source.startsWith("npm:")) {
           const adapterDir = join(configDir, "adapters", name);
           const pkg = config.source.replace("npm:", "");
-          const proc = Bun.spawn(["npm", "install", pkg], {
+          const proc = Bun.spawn(["npm", "install", pkg, "--ignore-scripts"], {
             cwd: adapterDir,
             stdout: "pipe",
             stderr: "pipe",
@@ -325,6 +347,11 @@ const updateSubcommand = defineCommand({
           const proxy = await CommunityAdapterProxy.create(config.command);
           info(`Updated "${name}" — ${proxy.meta.displayName} v${proxy.meta.version}`, opts);
           proxy.kill();
+          // Re-pin the checksum against the freshly installed bits. Without
+          // this, the next load would fail because the hash on disk no
+          // longer matches the stored hash.
+          const newChecksum = await computeChecksum(config.command);
+          await setCommunityAdapterConfig(configDir, name, { ...config, checksum: newChecksum });
           results.push({ name, action: "updated" });
         } catch {
           error(`Adapter "${name}" failed validation after update.`, opts);
@@ -433,7 +460,42 @@ export const adapterCommand = defineCommand({
 
 // ── Helpers ────────────────────────────────────────────────────────
 
-function resolveSource(source: string): {
+/**
+ * Valid adapter name: lowercase alphanumerics, dash, underscore.
+ * Must start with alnum. 1–64 chars. Matches the subset of POSIX-safe
+ * directory names that also work as command prefixes (`am-adapter-<name>`).
+ *
+ * Rejects: path traversal (`..`, `/`), empty strings, uppercase,
+ * whitespace, leading dash/underscore, and anything > 64 chars.
+ */
+const ADAPTER_NAME_RE = /^[a-z0-9][a-z0-9_-]{0,63}$/;
+
+/**
+ * Validate a derived adapter name. Throws on invalid input so the caller
+ * can fail before creating directories, spawning npm, or writing TOML.
+ *
+ * A separate export so tests can exercise it directly and other call sites
+ * (e.g. marketplace installer) can reuse the same rule.
+ */
+export function validateAdapterName(name: string): void {
+  if (!name || typeof name !== "string") {
+    throw new Error("Invalid adapter name: empty or non-string value");
+  }
+  // Reject obvious path-traversal and separator abuse even before the regex,
+  // so the error message is actionable.
+  if (name.includes("..") || name.includes("/") || name.includes("\\")) {
+    throw new Error(
+      `Invalid adapter name "${name}": must not contain "..", "/", or "\\" (would escape adapters directory).`,
+    );
+  }
+  if (!ADAPTER_NAME_RE.test(name)) {
+    throw new Error(
+      `Invalid adapter name "${name}": must match /^[a-z0-9][a-z0-9_-]{0,63}$/ (lowercase letters/digits, dash, underscore; start with alnum; 1–64 chars).`,
+    );
+  }
+}
+
+export function resolveSource(source: string): {
   name: string;
   sourceType: "npm" | "git" | "local";
   installCmd: string[];
@@ -445,8 +507,10 @@ function resolveSource(source: string): {
     const name =
       path
         .split("/")
+        .filter(Boolean) // drop empty segments from trailing or doubled slashes
         .pop()
-        ?.replace(/^am-adapter-/, "") ?? "unknown";
+        ?.replace(/^am-adapter-/, "") ?? "";
+    validateAdapterName(name);
     return { name, sourceType: "local", installCmd: [] };
   }
 
@@ -462,19 +526,28 @@ function resolveSource(source: string): {
     const repoName =
       url
         .split("/")
+        .filter(Boolean)
         .pop()
-        ?.replace(/\.git$/, "") ?? "unknown";
+        ?.replace(/\.git$/, "") ?? "";
     const name = repoName.replace(/^am-adapter-/, "");
+    validateAdapterName(name);
     return { name, sourceType: "git", installCmd: ["git", "clone", url, name] };
   }
 
   // npm package (default)
   const pkgName = source.replace(/@[\d.]+$/, ""); // strip version
-  const name = pkgName.replace(/^am-adapter-/, "");
+  // Strip leading scope (@scope/) for the derived name — npm install
+  // still receives the original `source` spec.
+  const unscoped = pkgName.replace(/^@[^/]+\//, "");
+  const name = unscoped.replace(/^am-adapter-/, "");
+  validateAdapterName(name);
   return {
     name,
     sourceType: "npm",
-    installCmd: ["npm", "install", source, "--production"],
+    // --ignore-scripts: marketplace adapter is untrusted; lifecycle scripts
+    // (preinstall/install/postinstall) can execute arbitrary code before any
+    // checksum or manifest validation runs — classic supply-chain RCE.
+    installCmd: ["npm", "install", source, "--production", "--ignore-scripts"],
   };
 }
 
@@ -482,4 +555,17 @@ function formatSource(source: string, sourceType: "npm" | "git" | "local"): stri
   if (sourceType === "local") return `local:${source.replace(/^local:/, "")}`;
   if (sourceType === "git") return `git+${source.replace(/^git\+/, "")}`;
   return `npm:${source}`;
+}
+
+/**
+ * Compute the sha256 of the adapter entrypoint file and format it as
+ * `sha256:<hex>` for storage in adapters.toml.
+ *
+ * Pins the exact bits that just passed validation. The loader verifies
+ * this on every spawn; any tampering after install causes load failure.
+ */
+async function computeChecksum(commandPath: string): Promise<string> {
+  const data = await readFile(commandPath);
+  const hex = createHash("sha256").update(data).digest("hex");
+  return `sha256:${hex}`;
 }

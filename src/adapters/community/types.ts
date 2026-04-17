@@ -10,7 +10,10 @@ export interface CommunityAdapterConfig {
   source: string; // "npm:am-adapter-zed@0.2.0", "git+https://...", "local:./path"
   command: string; // path to the adapter executable
   installed_at: string; // ISO 8601 timestamp
-  checksum?: string; // "sha256:abc123..."
+  // "sha256:<hex>". REQUIRED for non-local adapters; loader refuses to spawn
+  // without it. Optional only for `source: "local:..."` adapters (user's own
+  // code under active development — checksum churn would be noise).
+  checksum?: string;
   enabled?: boolean; // default true
 }
 
