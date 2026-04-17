@@ -17,6 +17,7 @@ import type {
   ImportedServer,
   ImportedSkill,
 } from "../types.ts";
+import { findKiloExtensionStoragePath } from "./detect.ts";
 import { extractPackageId } from "./identity.ts";
 import { parseJsonc } from "./jsonc.ts";
 
@@ -84,13 +85,35 @@ export function importConfig(options: ImportOptions = {}, homeDir?: string): Imp
     : null;
 
   if (entities.includes("servers")) {
-    // Global servers
+    // CLI surface: global servers
     if (globalConfig) {
       servers.push(...extractServers(globalConfig, "global"));
     }
-    // Project servers
+
+    // CLI surface: project servers
     if (projectConfig) {
       servers.push(...extractServers(projectConfig, "project"));
+    }
+
+    // VS Code extension surface: merge with CLI. Extension wins on name
+    // collisions (its UI is usually the user's most recent edit).
+    const extServers = loadExtensionServers(home, warnings);
+    if (extServers.length > 0) {
+      const cliNames = new Set(servers.map((s) => s.name));
+      const overrides: string[] = [];
+      for (const extServer of extServers) {
+        if (cliNames.has(extServer.name)) overrides.push(extServer.name);
+        // Remove any CLI entry with the same name so the extension wins.
+        for (let i = servers.length - 1; i >= 0; i--) {
+          if (servers[i].name === extServer.name) servers.splice(i, 1);
+        }
+        servers.push(extServer);
+      }
+      if (overrides.length > 0) {
+        warnings.push(
+          `Kilo VS Code extension overrode CLI-defined servers: ${overrides.join(", ")}`,
+        );
+      }
     }
   }
 
@@ -185,6 +208,65 @@ function loadGlobalConfig(home: string, warnings: string[]): KiloConfig | null {
   }
   warnings.push(`No Kilo global config found in ${configDir}`);
   return null;
+}
+
+/**
+ * Load MCP servers from the Kilo VS Code extension's globalStorage.
+ *
+ * File lives at:
+ *   <globalStorage>/settings/mcp_settings.json
+ *
+ * Schema mirrors Cline/Roo (Kilo is a Cline fork): a `mcpServers` object map.
+ */
+function loadExtensionServers(home: string, warnings: string[]): ImportedServer[] {
+  const ext = findKiloExtensionStoragePath(home);
+  if (!ext) return [];
+  const file = join(ext, "settings", "mcp_settings.json");
+  const fs = require("node:fs");
+  try {
+    fs.accessSync(file);
+  } catch {
+    return [];
+  }
+  let text: string;
+  try {
+    text = fs.readFileSync(file, "utf-8");
+  } catch {
+    warnings.push(`Cannot read file: ${file}`);
+    return [];
+  }
+  let parsed: { mcpServers?: Record<string, LegacyMcpEntry> };
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    warnings.push(`Malformed JSON: ${file}`);
+    return [];
+  }
+  const entries = parsed?.mcpServers;
+  if (!entries || typeof entries !== "object") return [];
+
+  const servers: ImportedServer[] = [];
+  for (const [name, entry] of Object.entries(entries)) {
+    if (!entry || typeof entry !== "object" || !entry.command) continue;
+
+    const adapterExtras: Record<string, unknown> = { source: "vscode-extension" };
+    for (const [key, value] of Object.entries(entry)) {
+      if (!LEGACY_CORE_FIELDS.has(key)) adapterExtras[key] = value;
+    }
+    if (entry.alwaysAllow) adapterExtras.alwaysAllow = entry.alwaysAllow;
+
+    servers.push({
+      name,
+      command: entry.command,
+      scope: "global",
+      ...(entry.args && { args: entry.args }),
+      ...(entry.env && { env: entry.env }),
+      enabled: entry.disabled !== true,
+      packageId: extractPackageId(entry.command, entry.args),
+      adapterExtras,
+    });
+  }
+  return servers;
 }
 
 function loadProjectConfig(projectPath: string, warnings: string[]): KiloConfig | null {

@@ -46,6 +46,13 @@ export function importConfig(options: ImportOptions = {}, homeDir?: string): Imp
     servers.push(...mcpServers);
   }
 
+  if (entities.includes("instructions")) {
+    // Global memories/global_rules.md — user-scope instruction, always on.
+    const globalRulesPath = join(home, ".codeium", "windsurf", "memories", "global_rules.md");
+    const globalRules = readGlobalRules(globalRulesPath, warnings);
+    if (globalRules) instructions.push(globalRules);
+  }
+
   if (entities.includes("instructions") && options.projectPath) {
     const projectInstructions = readRulesDir(options.projectPath, warnings);
     instructions.push(...projectInstructions);
@@ -213,6 +220,32 @@ function readRulesDir(projectPath: string, warnings: string[]): ImportedInstruct
   }
 
   return instructions;
+}
+
+/**
+ * Read Windsurf's user-scope `memories/global_rules.md`.
+ *
+ * This file is the Windsurf UI's "global rules" memory store — equivalent to
+ * the `.windsurfrules` legacy file but user-scope instead of project-scope.
+ * We import it as an "always"-scope instruction.
+ */
+function readGlobalRules(filePath: string, warnings: string[]): ImportedInstruction | null {
+  const fs = require("node:fs");
+  if (!fileExistsSync(filePath)) return null;
+  try {
+    const content = fs.readFileSync(filePath, "utf-8");
+    return {
+      name: "windsurf-global-rules",
+      content: content.trim(),
+      scope: "always",
+      description:
+        "Windsurf user-scope global rules (~/.codeium/windsurf/memories/global_rules.md)",
+      sourcePath: filePath,
+    };
+  } catch {
+    warnings.push(`Cannot read global rules: ${filePath}`);
+    return null;
+  }
 }
 
 function readLegacyRules(projectPath: string, warnings: string[]): ImportedInstruction | null {

@@ -26,6 +26,7 @@ export function detect(homeDir?: string, projectPath?: string): DetectResult {
   }
 
   // Global rules: ~/.codeium/windsurf/memories/global_rules.md
+  // Read by `importConfig()` when present.
   const globalRules = join(windsurfDir, "memories", "global_rules.md");
   if (existsSync(globalRules)) {
     paths.globalRules = globalRules;

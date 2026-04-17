@@ -2,59 +2,60 @@ import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import type { DetectResult } from "../types.ts";
+import {
+  findFirstExistingVSCodeExtensionStorage,
+  resolveVSCodeExtensionStorage,
+} from "../vscode/paths.ts";
+
+/**
+ * Cline marketplace extension ID. We try the canonical mixed-case and a
+ * lowercase fallback — VS Code has historically downcased on install, but
+ * modern installs preserve case. On case-sensitive Linux filesystems this
+ * distinction matters.
+ */
+export const CLINE_EXTENSION_IDS = ["saoudrizwan.claude-dev"] as const;
 
 /**
  * Resolve the VS Code globalStorage path for the Cline extension.
  *
- * The extension ID is `saoudrizwan.claude-dev`.
- * Paths vary by OS:
- *   - macOS:  ~/Library/Application Support/Code/User/globalStorage/saoudrizwan.claude-dev
- *   - Linux:  ~/.config/Code/User/globalStorage/saoudrizwan.claude-dev
- *   - Windows: %APPDATA%/Code/User/globalStorage/saoudrizwan.claude-dev
+ * Tries every VS Code variant (stable, Insiders, VSCodium, Cursor, Windsurf).
+ * Returns the first on-disk hit, falling back to the stable-VSCode candidate
+ * so existing code that assumes a path is always returned keeps working.
  */
 export function getGlobalStoragePath(home: string): string {
-  const extensionId = "saoudrizwan.claude-dev";
-  const suffix = join("Code", "User", "globalStorage", extensionId);
-
-  if (process.platform === "darwin") {
-    return join(home, "Library", "Application Support", suffix);
-  }
-  if (process.platform === "win32") {
-    return join(process.env.APPDATA ?? join(home, "AppData", "Roaming"), suffix);
-  }
-  // Linux and other platforms
-  return join(home, ".config", suffix);
+  const hit = findFirstExistingVSCodeExtensionStorage([...CLINE_EXTENSION_IDS], home);
+  if (hit) return hit;
+  // Fall back to the first candidate path (stable VS Code) so callers that
+  // want to construct a path relative to it (e.g. settings/*.json) still get
+  // a well-defined path, even if nothing exists yet.
+  const candidates = resolveVSCodeExtensionStorage([...CLINE_EXTENSION_IDS], home);
+  return candidates[0];
 }
 
 /**
  * Detect whether Cline is installed and discover config paths.
  *
  * Detection strategy:
- *   1. VS Code globalStorage for saoudrizwan.claude-dev extension
- *   2. cline_mcp_settings.json in globalStorage/settings/
+ *   1. VS Code globalStorage for the Cline extension across all variants
+ *   2. cline_mcp_settings.json in that globalStorage/settings/
  *   3. .clinerules (file or directory) at project root
  */
 export function detect(homeDir?: string, projectPath?: string): DetectResult {
   const home = homeDir ?? homedir();
   const paths: Record<string, string> = {};
 
-  // Global: VS Code globalStorage
-  const globalStoragePath = getGlobalStoragePath(home);
-  if (existsSync(globalStoragePath)) {
-    paths.globalStorageDir = globalStoragePath;
-  }
-
-  // MCP settings file
-  const mcpSettingsPath = join(globalStoragePath, "settings", "cline_mcp_settings.json");
-  if (existsSync(mcpSettingsPath)) {
-    paths.mcpSettings = mcpSettingsPath;
+  const extStorage = findFirstExistingVSCodeExtensionStorage([...CLINE_EXTENSION_IDS], home);
+  if (extStorage) {
+    paths.globalStorageDir = extStorage;
+    const mcpSettingsPath = join(extStorage, "settings", "cline_mcp_settings.json");
+    if (existsSync(mcpSettingsPath)) {
+      paths.mcpSettings = mcpSettingsPath;
+    }
   }
 
   const installed = "globalStorageDir" in paths || "mcpSettings" in paths;
 
-  // Project-level paths
   if (projectPath) {
-    // .clinerules directory (newer format, takes priority)
     const rulesDir = join(projectPath, ".clinerules");
     if (existsSync(rulesDir)) {
       const fs = require("node:fs");
@@ -63,7 +64,6 @@ export function detect(homeDir?: string, projectPath?: string): DetectResult {
         if (stat.isDirectory()) {
           paths.rulesDir = rulesDir;
         } else {
-          // Legacy single-file format
           paths.rulesFile = rulesDir;
         }
       } catch {

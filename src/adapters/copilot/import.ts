@@ -11,6 +11,7 @@ import { join } from "node:path";
 import { extractPackageId } from "../claude-code/identity.ts";
 import { fileExistsSync } from "../shared/utils.ts";
 import type { ImportOptions, ImportResult, ImportedInstruction, ImportedServer } from "../types.ts";
+import { resolveVSCodeUserMcpJson } from "../vscode/paths.ts";
 
 interface CopilotServer {
   type?: string;
@@ -35,6 +36,17 @@ export function importConfig(options: ImportOptions = {}, homeDir?: string): Imp
   const warnings: string[] = [];
   const servers: ImportedServer[] = [];
   const instructions: ImportedInstruction[] = [];
+
+  if (entities.includes("servers")) {
+    // User-scope mcp.json across all VS Code variants
+    for (const candidate of resolveVSCodeUserMcpJson(home)) {
+      if (!fileExistsSync(candidate)) continue;
+      const userServers = readServersFromFile(candidate, "global", warnings);
+      servers.push(...userServers);
+      // Prefer the first variant that has the file (first-wins mirrors detect)
+      break;
+    }
+  }
 
   if (entities.includes("servers") && options.projectPath) {
     // Project MCP from .vscode/mcp.json (uses "servers" key)

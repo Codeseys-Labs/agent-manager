@@ -2,28 +2,46 @@ import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import type { DetectResult } from "../types.ts";
+import { findFirstExistingVSCodeExtensionStorage } from "../vscode/paths.ts";
+
+/**
+ * Kilo marketplace extension ID casings (mixed case as registered, plus a
+ * lowercase fallback for case-sensitive filesystems where VS Code may have
+ * downcased on install).
+ */
+export const KILO_EXTENSION_IDS = ["kilocode.Kilo-Code", "kilocode.kilo-code"] as const;
+
+/**
+ * Return the VS Code extension globalStorage path for Kilo, if one exists.
+ *
+ * Checks every VS Code variant (stable, Insiders, VSCodium, Cursor, Windsurf)
+ * and every extension-ID casing. Returns the first hit.
+ */
+export function findKiloExtensionStoragePath(homeDir?: string): string | undefined {
+  const home = homeDir ?? homedir();
+  return findFirstExistingVSCodeExtensionStorage([...KILO_EXTENSION_IDS], home);
+}
 
 /**
  * Detect whether Kilo Code is installed and discover config paths.
  *
- * Detection strategy (ordered by specificity):
- *   1. .kilo/kilo.jsonc in project root (new, highest priority)
- *   2. kilo.jsonc in project root (new)
- *   3. .kilocode/ directory in project root (legacy)
- *   4. ~/.config/kilo/ directory (global config)
- *   5. `kilo` CLI in PATH
+ * Kilo ships as BOTH:
+ *   - A CLI (`@kilocode/cli`) writing to `~/.config/kilo/kilo.jsonc`
+ *   - A VS Code extension (`kilocode.Kilo-Code`) writing MCP settings to
+ *     `<globalStorage>/settings/mcp_settings.json`
+ *
+ * We treat Kilo as installed if either surface is present.
  */
 export function detect(homeDir?: string, projectPath?: string): DetectResult {
   const home = homeDir ?? homedir();
   const paths: Record<string, string> = {};
 
-  // Global config directory: ~/.config/kilo/
+  // ── CLI surface ───────────────────────────────────────────────
   const globalConfigDir = join(home, ".config", "kilo");
   if (existsSync(globalConfigDir)) {
     paths.globalConfigDir = globalConfigDir;
   }
 
-  // Global config files (check multiple names in priority order)
   const globalConfigNames = [
     "kilo.jsonc",
     "kilo.json",
@@ -39,58 +57,45 @@ export function detect(homeDir?: string, projectPath?: string): DetectResult {
     }
   }
 
-  // Global AGENTS.md
   const globalAgentsMd = join(globalConfigDir, "AGENTS.md");
-  if (existsSync(globalAgentsMd)) {
-    paths.globalAgentsMd = globalAgentsMd;
-  }
+  if (existsSync(globalAgentsMd)) paths.globalAgentsMd = globalAgentsMd;
 
-  // Global rules: ~/.kilocode/rules/
   const globalRulesDir = join(home, ".kilocode", "rules");
-  if (existsSync(globalRulesDir)) {
-    paths.globalRulesDir = globalRulesDir;
-  }
+  if (existsSync(globalRulesDir)) paths.globalRulesDir = globalRulesDir;
 
-  // Global skills: ~/.kilocode/skills/
   const globalSkillsDir = join(home, ".kilocode", "skills");
-  if (existsSync(globalSkillsDir)) {
-    paths.globalSkillsDir = globalSkillsDir;
-  }
+  if (existsSync(globalSkillsDir)) paths.globalSkillsDir = globalSkillsDir;
 
-  // Global agent markdown files: ~/.config/kilo/agents/
   const globalAgentsDir = join(globalConfigDir, "agents");
-  if (existsSync(globalAgentsDir)) {
-    paths.globalAgentsDir = globalAgentsDir;
+  if (existsSync(globalAgentsDir)) paths.globalAgentsDir = globalAgentsDir;
+
+  // ── VS Code extension surface ────────────────────────────────
+  const extStorage = findKiloExtensionStoragePath(home);
+  if (extStorage) {
+    paths.extensionStorageDir = extStorage;
+    const extMcp = join(extStorage, "settings", "mcp_settings.json");
+    if (existsSync(extMcp)) paths.extensionMcpSettings = extMcp;
   }
 
-  const installed = "globalConfigDir" in paths || "globalConfig" in paths;
+  const installed =
+    "globalConfigDir" in paths || "globalConfig" in paths || "extensionStorageDir" in paths;
 
-  // Try to get version from CLI
   let version: string | undefined;
-  if (installed) {
-    version = getKiloVersion();
-  }
+  if (installed) version = getKiloVersion();
 
-  // Project-level paths
+  // ── Project-level paths ──────────────────────────────────────
   if (projectPath) {
-    // .kilo/kilo.jsonc takes priority
     const dotKiloConfig = join(projectPath, ".kilo", "kilo.jsonc");
     if (existsSync(dotKiloConfig)) {
       paths.projectConfig = dotKiloConfig;
     } else {
       const rootConfig = join(projectPath, "kilo.jsonc");
-      if (existsSync(rootConfig)) {
-        paths.projectConfig = rootConfig;
-      }
+      if (existsSync(rootConfig)) paths.projectConfig = rootConfig;
     }
 
-    // Legacy .kilocode/ directory
     const kilocodeDir = join(projectPath, ".kilocode");
-    if (existsSync(kilocodeDir)) {
-      paths.kilocodeDir = kilocodeDir;
-    }
+    if (existsSync(kilocodeDir)) paths.kilocodeDir = kilocodeDir;
 
-    // AGENTS.md (and fallbacks)
     for (const name of ["AGENTS.md", "AGENT.md", "CLAUDE.md", "CONTEXT.md"]) {
       const p = join(projectPath, name);
       if (existsSync(p)) {
@@ -99,23 +104,14 @@ export function detect(homeDir?: string, projectPath?: string): DetectResult {
       }
     }
 
-    // Project rules: .kilocode/rules/
     const projectRulesDir = join(projectPath, ".kilocode", "rules");
-    if (existsSync(projectRulesDir)) {
-      paths.projectRulesDir = projectRulesDir;
-    }
+    if (existsSync(projectRulesDir)) paths.projectRulesDir = projectRulesDir;
 
-    // Project skills: .kilocode/skills/
     const projectSkillsDir = join(projectPath, ".kilocode", "skills");
-    if (existsSync(projectSkillsDir)) {
-      paths.projectSkillsDir = projectSkillsDir;
-    }
+    if (existsSync(projectSkillsDir)) paths.projectSkillsDir = projectSkillsDir;
 
-    // Project agent markdown files: .kilo/agents/
     const projectAgentsDir = join(projectPath, ".kilo", "agents");
-    if (existsSync(projectAgentsDir)) {
-      paths.projectAgentsDir = projectAgentsDir;
-    }
+    if (existsSync(projectAgentsDir)) paths.projectAgentsDir = projectAgentsDir;
   }
 
   return { installed, version, paths };

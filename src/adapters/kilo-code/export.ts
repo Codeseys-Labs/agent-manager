@@ -16,6 +16,7 @@ import type {
   ResolvedServer,
   WrittenFile,
 } from "../types.ts";
+import { findKiloExtensionStoragePath } from "./detect.ts";
 import { parseJsonc } from "./jsonc.ts";
 
 const AM_BEGIN = "<!-- am:begin -->";
@@ -47,11 +48,21 @@ export async function exportConfig(
     }
   }
 
-  // 1. Generate global config: ~/.config/kilo/kilo.jsonc
+  // 1. Generate global CLI config: ~/.config/kilo/kilo.jsonc
+  //    We always write this, since the CLI surface is stable across installs.
   const globalConfigDir = join(home, ".config", "kilo");
   const globalPath = join(globalConfigDir, "kilo.jsonc");
   const globalContent = generateKiloConfig(globalServers, globalPath, warnings);
   files.push({ path: globalPath, content: globalContent, written: false });
+
+  // 1a. Also write the VS Code extension's mcp_settings.json if the extension
+  // is installed. This is the surface the extension UI reads.
+  const extStorage = findKiloExtensionStoragePath(home);
+  if (extStorage) {
+    const extPath = join(extStorage, "settings", "mcp_settings.json");
+    const extContent = generateExtensionMcpSettings(globalServers, extPath);
+    files.push({ path: extPath, content: extContent, written: false });
+  }
 
   // 2. Generate project config: kilo.jsonc
   if (options.projectPath && Object.keys(projectServers).length > 0) {
@@ -156,6 +167,48 @@ function generateKiloConfig(
   const final = { ...rest, mcp };
 
   return `${JSON.stringify(final, null, 2)}\n`;
+}
+
+/**
+ * Generate the Kilo VS Code extension's `mcp_settings.json`.
+ *
+ * The schema mirrors Cline's `cline_mcp_settings.json` (Kilo is a Cline fork):
+ * a JSON object with a top-level `mcpServers` map keyed by server name, each
+ * value being `{ command, args?, env?, disabled?, alwaysAllow? }`.
+ *
+ * We preserve any existing top-level fields (e.g. user-specific settings keys)
+ * so callers don't lose custom settings on a round-trip.
+ */
+function generateExtensionMcpSettings(
+  servers: Record<string, ResolvedServer>,
+  existingPath: string,
+): string {
+  let existing: Record<string, unknown> = {};
+  try {
+    const fs = require("node:fs");
+    const text = fs.readFileSync(existingPath, "utf-8");
+    existing = JSON.parse(text) as Record<string, unknown>;
+  } catch {
+    /* no existing file */
+  }
+
+  const mcpServers: Record<string, unknown> = {};
+  for (const [name, server] of Object.entries(servers)) {
+    const entry: Record<string, unknown> = { command: server.command };
+    if (server.args.length > 0) entry.args = server.args;
+    if (Object.keys(server.env).length > 0) entry.env = server.env;
+
+    // Carry over known Cline/Roo extras, excluding our internal routing hints.
+    const kcExtras = server.adapters?.["kilo-code"] ?? {};
+    for (const [key, value] of Object.entries(kcExtras)) {
+      if (key === "scope" || key === "source") continue;
+      entry[key] = value;
+    }
+    mcpServers[name] = entry;
+  }
+
+  const output = { ...existing, mcpServers };
+  return `${JSON.stringify(output, null, 2)}\n`;
 }
 
 /** Concatenate instructions targeted at kilo-code. */
