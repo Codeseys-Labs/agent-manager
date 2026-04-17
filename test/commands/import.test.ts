@@ -93,7 +93,7 @@ describe("import command passes projectPath to adapters", () => {
     await writeConfig(join(configDir, "config.toml"), { servers: {} });
 
     // Invoke via MCP server — the handler should pass projectPath: process.cwd()
-    const server = new McpServer();
+    const server = new McpServer({ auth: { token: undefined, allowUnsafeLocal: true } });
     const resp = await server.handleRequest({
       jsonrpc: "2.0",
       id: 1,
@@ -118,7 +118,7 @@ describe("import command passes projectPath to adapters", () => {
     await initRepo(configDir);
     await writeConfig(join(configDir, "config.toml"), { servers: {} });
 
-    const server = new McpServer();
+    const server = new McpServer({ auth: { token: undefined, allowUnsafeLocal: true } });
     const resp = await server.handleRequest({
       jsonrpc: "2.0",
       id: 2,

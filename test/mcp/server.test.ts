@@ -32,7 +32,7 @@ describe("MCP server", () => {
   }
 
   test("initialize returns server info", async () => {
-    const server = new McpServer();
+    const server = new McpServer({ auth: { token: undefined, allowUnsafeLocal: true } });
     const resp = await server.handleRequest({
       jsonrpc: "2.0",
       id: 1,
@@ -49,7 +49,7 @@ describe("MCP server", () => {
 
   test("tools/list returns only core tools by default (ADR-0021)", async () => {
     await setupConfig({});
-    const server = new McpServer();
+    const server = new McpServer({ auth: { token: undefined, allowUnsafeLocal: true } });
     const resp = await server.handleRequest({
       jsonrpc: "2.0",
       id: 2,
@@ -97,7 +97,7 @@ describe("MCP server", () => {
         mcp_serve: { tools: ["core", "registry", "a2a", "wiki", "session", "acp"] },
       },
     });
-    const server = new McpServer();
+    const server = new McpServer({ auth: { token: undefined, allowUnsafeLocal: true } });
     const resp = await server.handleRequest({
       jsonrpc: "2.0",
       id: 2,
@@ -139,7 +139,7 @@ describe("MCP server", () => {
         mcp_serve: { tools: ["core", "wiki"] },
       },
     });
-    const server = new McpServer();
+    const server = new McpServer({ auth: { token: undefined, allowUnsafeLocal: true } });
     const resp = await server.handleRequest({
       jsonrpc: "2.0",
       id: 2,
@@ -177,7 +177,7 @@ describe("MCP server", () => {
       },
     });
 
-    const server = new McpServer();
+    const server = new McpServer({ auth: { token: undefined, allowUnsafeLocal: true } });
     const resp = await server.handleRequest({
       jsonrpc: "2.0",
       id: 3,
@@ -203,7 +203,7 @@ describe("MCP server", () => {
       },
     });
 
-    const server = new McpServer();
+    const server = new McpServer({ auth: { token: undefined, allowUnsafeLocal: true } });
     const resp = await server.handleRequest({
       jsonrpc: "2.0",
       id: 4,
@@ -223,7 +223,7 @@ describe("MCP server", () => {
       },
     });
 
-    const server = new McpServer();
+    const server = new McpServer({ auth: { token: undefined, allowUnsafeLocal: true } });
     const resp = await server.handleRequest({
       jsonrpc: "2.0",
       id: 5,
@@ -248,7 +248,7 @@ describe("MCP server", () => {
       },
     });
 
-    const server = new McpServer();
+    const server = new McpServer({ auth: { token: undefined, allowUnsafeLocal: true } });
     const resp = await server.handleRequest({
       jsonrpc: "2.0",
       id: 6,
@@ -265,7 +265,7 @@ describe("MCP server", () => {
   test("am_add_server adds a server", async () => {
     await setupConfig({ servers: {} });
 
-    const server = new McpServer();
+    const server = new McpServer({ auth: { token: undefined, allowUnsafeLocal: true } });
     const resp = await server.handleRequest({
       jsonrpc: "2.0",
       id: 7,
@@ -304,7 +304,7 @@ describe("MCP server", () => {
       },
     });
 
-    const server = new McpServer();
+    const server = new McpServer({ auth: { token: undefined, allowUnsafeLocal: true } });
     const resp = await server.handleRequest({
       jsonrpc: "2.0",
       id: 9,
@@ -331,7 +331,7 @@ describe("MCP server", () => {
       },
     });
 
-    const server = new McpServer();
+    const server = new McpServer({ auth: { token: undefined, allowUnsafeLocal: true } });
     const resp = await server.handleRequest({
       jsonrpc: "2.0",
       id: 40,
@@ -378,7 +378,7 @@ describe("MCP server", () => {
       },
     });
 
-    const server = new McpServer();
+    const server = new McpServer({ auth: { token: undefined, allowUnsafeLocal: true } });
     const resp = await server.handleRequest({
       jsonrpc: "2.0",
       id: 42,
@@ -411,7 +411,7 @@ describe("MCP server", () => {
   test("am_server_update errors on nonexistent server", async () => {
     await setupConfig({ servers: {} });
 
-    const server = new McpServer();
+    const server = new McpServer({ auth: { token: undefined, allowUnsafeLocal: true } });
     const resp = await server.handleRequest({
       jsonrpc: "2.0",
       id: 44,
@@ -440,7 +440,7 @@ describe("MCP server", () => {
       },
     });
 
-    const server = new McpServer();
+    const server = new McpServer({ auth: { token: undefined, allowUnsafeLocal: true } });
     await server.handleRequest({
       jsonrpc: "2.0",
       id: 45,
@@ -471,7 +471,7 @@ describe("MCP server", () => {
       },
     });
 
-    const server = new McpServer();
+    const server = new McpServer({ auth: { token: undefined, allowUnsafeLocal: true } });
     const resp = await server.handleRequest({
       jsonrpc: "2.0",
       id: 50,
@@ -509,7 +509,7 @@ describe("MCP server", () => {
 
   test("am_doctor is read-only (no opt-in needed)", async () => {
     await setupConfig({});
-    const server = new McpServer();
+    const server = new McpServer({ auth: { token: undefined, allowUnsafeLocal: true } });
     server.setSettings({});
 
     const resp = await server.handleRequest({
@@ -531,7 +531,7 @@ describe("MCP server", () => {
   test("am_undo reverts the last config change", async () => {
     await setupConfig({ servers: {} });
 
-    const server = new McpServer();
+    const server = new McpServer({ auth: { token: undefined, allowUnsafeLocal: true } });
 
     // Add a server to create a commit we can undo
     await server.handleRequest({
@@ -582,7 +582,7 @@ describe("MCP server", () => {
     // setupConfig creates a repo with only the initial commit
     await setupConfig({});
 
-    const server = new McpServer();
+    const server = new McpServer({ auth: { token: undefined, allowUnsafeLocal: true } });
     const resp = await server.handleRequest({
       jsonrpc: "2.0",
       id: 56,
@@ -602,7 +602,7 @@ describe("MCP server", () => {
       servers: {},
     });
 
-    const server = new McpServer();
+    const server = new McpServer({ auth: { token: undefined, allowUnsafeLocal: true } });
     // Set settings explicitly without mcp_serve permissions
     server.setSettings({});
 
@@ -626,7 +626,7 @@ describe("MCP server", () => {
       servers: {},
     });
 
-    const server = new McpServer();
+    const server = new McpServer({ auth: { token: undefined, allowUnsafeLocal: true } });
     server.setSettings({});
 
     const resp = await server.handleRequest({
@@ -654,7 +654,7 @@ describe("MCP server", () => {
       servers: {},
     });
 
-    const server = new McpServer();
+    const server = new McpServer({ auth: { token: undefined, allowUnsafeLocal: true } });
     server.setSettings({});
 
     const resp = await server.handleRequest({
@@ -672,7 +672,7 @@ describe("MCP server", () => {
   });
 
   test("unknown tool returns error", async () => {
-    const server = new McpServer();
+    const server = new McpServer({ auth: { token: undefined, allowUnsafeLocal: true } });
     const resp = await server.handleRequest({
       jsonrpc: "2.0",
       id: 13,
@@ -687,7 +687,7 @@ describe("MCP server", () => {
   });
 
   test("unknown method returns error", async () => {
-    const server = new McpServer();
+    const server = new McpServer({ auth: { token: undefined, allowUnsafeLocal: true } });
     const resp = await server.handleRequest({
       jsonrpc: "2.0",
       id: 14,
@@ -700,7 +700,7 @@ describe("MCP server", () => {
   });
 
   test("notification (no id) returns null", async () => {
-    const server = new McpServer();
+    const server = new McpServer({ auth: { token: undefined, allowUnsafeLocal: true } });
     const resp = await server.handleRequest({
       jsonrpc: "2.0",
       method: "notifications/initialized",
@@ -713,7 +713,7 @@ describe("MCP server", () => {
   // For session reader tests, use claude-code with specific session IDs.
 
   test("am_session_list with adapter filter returns array", async () => {
-    const server = new McpServer();
+    const server = new McpServer({ auth: { token: undefined, allowUnsafeLocal: true } });
     // gemini-cli has no sessionReader, so this returns empty quickly
     const resp = await server.handleRequest({
       jsonrpc: "2.0",
@@ -732,7 +732,7 @@ describe("MCP server", () => {
   });
 
   test("am_session_list with adapter that has no sessions returns empty", async () => {
-    const server = new McpServer();
+    const server = new McpServer({ auth: { token: undefined, allowUnsafeLocal: true } });
     // windsurf has no sessionReader, returns empty fast
     const resp = await server.handleRequest({
       jsonrpc: "2.0",
@@ -750,7 +750,7 @@ describe("MCP server", () => {
   });
 
   test("am_session_export errors on adapter without session reading", async () => {
-    const server = new McpServer();
+    const server = new McpServer({ auth: { token: undefined, allowUnsafeLocal: true } });
     const resp = await server.handleRequest({
       jsonrpc: "2.0",
       id: 22,
@@ -769,7 +769,7 @@ describe("MCP server", () => {
   });
 
   test("am_session_export errors on missing session", async () => {
-    const server = new McpServer();
+    const server = new McpServer({ auth: { token: undefined, allowUnsafeLocal: true } });
     const resp = await server.handleRequest({
       jsonrpc: "2.0",
       id: 23,
@@ -788,7 +788,7 @@ describe("MCP server", () => {
   });
 
   test("am_session_export errors on nonexistent adapter", async () => {
-    const server = new McpServer();
+    const server = new McpServer({ auth: { token: undefined, allowUnsafeLocal: true } });
     const resp = await server.handleRequest({
       jsonrpc: "2.0",
       id: 24,
@@ -805,7 +805,7 @@ describe("MCP server", () => {
   });
 
   test("am_session_search with adapter filter returns results structure", async () => {
-    const server = new McpServer();
+    const server = new McpServer({ auth: { token: undefined, allowUnsafeLocal: true } });
     // Use gemini-cli — no session reader, returns empty quickly
     const resp = await server.handleRequest({
       jsonrpc: "2.0",
@@ -827,7 +827,7 @@ describe("MCP server", () => {
   });
 
   test("am_session_search with role filter", async () => {
-    const server = new McpServer();
+    const server = new McpServer({ auth: { token: undefined, allowUnsafeLocal: true } });
     const resp = await server.handleRequest({
       jsonrpc: "2.0",
       id: 26,
@@ -844,7 +844,7 @@ describe("MCP server", () => {
   });
 
   test("session tools are read-only tier (no opt-in needed)", async () => {
-    const server = new McpServer();
+    const server = new McpServer({ auth: { token: undefined, allowUnsafeLocal: true } });
     // Explicitly set empty settings (no permissions)
     server.setSettings({});
 
@@ -906,7 +906,7 @@ describe("MCP error response structure", () => {
   test("error responses include hint field for actionable errors", async () => {
     await setupConfig({ servers: {} });
 
-    const server = new McpServer();
+    const server = new McpServer({ auth: { token: undefined, allowUnsafeLocal: true } });
     const resp = await server.handleRequest({
       jsonrpc: "2.0",
       id: 200,
@@ -930,7 +930,7 @@ describe("MCP error response structure", () => {
       },
     });
 
-    const server = new McpServer();
+    const server = new McpServer({ auth: { token: undefined, allowUnsafeLocal: true } });
     const resp = await server.handleRequest({
       jsonrpc: "2.0",
       id: 201,
@@ -956,7 +956,7 @@ describe("MCP error response structure", () => {
       },
     });
 
-    const server = new McpServer();
+    const server = new McpServer({ auth: { token: undefined, allowUnsafeLocal: true } });
     const resp = await server.handleRequest({
       jsonrpc: "2.0",
       id: 202,
@@ -973,7 +973,7 @@ describe("MCP error response structure", () => {
   test("am_import with nonexistent adapter returns error with hint", async () => {
     await setupConfig({ servers: {} });
 
-    const server = new McpServer();
+    const server = new McpServer({ auth: { token: undefined, allowUnsafeLocal: true } });
     const resp = await server.handleRequest({
       jsonrpc: "2.0",
       id: 203,
@@ -1011,7 +1011,7 @@ describe("MCP am_import passes projectPath to adapters", () => {
     await initRepo(configDir);
     await writeConfig(join(configDir, "config.toml"), { servers: {} });
 
-    const server = new McpServer();
+    const server = new McpServer({ auth: { token: undefined, allowUnsafeLocal: true } });
     const resp = await server.handleRequest({
       jsonrpc: "2.0",
       id: 300,
@@ -1036,7 +1036,7 @@ describe("MCP am_import passes projectPath to adapters", () => {
     await initRepo(configDir);
     await writeConfig(join(configDir, "config.toml"), { servers: {} });
 
-    const server = new McpServer();
+    const server = new McpServer({ auth: { token: undefined, allowUnsafeLocal: true } });
     // Use claude-code which is always available
     const resp = await server.handleRequest({
       jsonrpc: "2.0",
@@ -1084,7 +1084,7 @@ describe("MCP am_list_profiles handler", () => {
       },
     });
 
-    const server = new McpServer();
+    const server = new McpServer({ auth: { token: undefined, allowUnsafeLocal: true } });
     const resp = await server.handleRequest({
       jsonrpc: "2.0",
       id: 400,
@@ -1138,7 +1138,7 @@ describe("MCP am_use_profile handler", () => {
       },
     });
 
-    const server = new McpServer();
+    const server = new McpServer({ auth: { token: undefined, allowUnsafeLocal: true } });
     const resp = await server.handleRequest({
       jsonrpc: "2.0",
       id: 500,
@@ -1362,7 +1362,7 @@ describe("MCP ACP tools", () => {
   }
 
   test("ACP tools are registered with correct names", () => {
-    const server = new McpServer();
+    const server = new McpServer({ auth: { token: undefined, allowUnsafeLocal: true } });
     const tools = server.getTools();
     const names = tools.map((t) => t.def.name);
     expect(names).toContain("am_run_agent");
@@ -1372,7 +1372,7 @@ describe("MCP ACP tools", () => {
   });
 
   test("ACP tools belong to the 'acp' group", () => {
-    const server = new McpServer();
+    const server = new McpServer({ auth: { token: undefined, allowUnsafeLocal: true } });
     const tools = server.getTools();
     const acpToolNames = [
       "am_run_agent",
@@ -1392,7 +1392,7 @@ describe("MCP ACP tools", () => {
         mcp_serve: { tools: ["acp"] },
       },
     });
-    const server = new McpServer();
+    const server = new McpServer({ auth: { token: undefined, allowUnsafeLocal: true } });
     const resp = await server.handleRequest({
       jsonrpc: "2.0",
       id: 100,
@@ -1411,35 +1411,35 @@ describe("MCP ACP tools", () => {
   });
 
   test("am_run_agent has correct tier (write-remote)", () => {
-    const server = new McpServer();
+    const server = new McpServer({ auth: { token: undefined, allowUnsafeLocal: true } });
     const tools = server.getTools();
     const runAgent = tools.find((t) => t.def.name === "am_run_agent");
     expect(runAgent?.tier).toBe("write-remote");
   });
 
   test("am_acp_list_agents has correct tier (read-only)", () => {
-    const server = new McpServer();
+    const server = new McpServer({ auth: { token: undefined, allowUnsafeLocal: true } });
     const tools = server.getTools();
     const listAgents = tools.find((t) => t.def.name === "am_acp_list_agents");
     expect(listAgents?.tier).toBe("read-only");
   });
 
   test("am_acp_session_list has correct tier (read-only)", () => {
-    const server = new McpServer();
+    const server = new McpServer({ auth: { token: undefined, allowUnsafeLocal: true } });
     const tools = server.getTools();
     const sessionList = tools.find((t) => t.def.name === "am_acp_session_list");
     expect(sessionList?.tier).toBe("read-only");
   });
 
   test("am_acp_session_cancel has correct tier (write-remote)", () => {
-    const server = new McpServer();
+    const server = new McpServer({ auth: { token: undefined, allowUnsafeLocal: true } });
     const tools = server.getTools();
     const sessionCancel = tools.find((t) => t.def.name === "am_acp_session_cancel");
     expect(sessionCancel?.tier).toBe("write-remote");
   });
 
   test("am_run_agent requires agent and prompt params", () => {
-    const server = new McpServer();
+    const server = new McpServer({ auth: { token: undefined, allowUnsafeLocal: true } });
     const tools = server.getTools();
     const runAgent = tools.find((t) => t.def.name === "am_run_agent");
     expect(runAgent?.def.inputSchema.required).toEqual(["agent", "prompt"]);
@@ -1450,7 +1450,7 @@ describe("MCP ACP tools", () => {
   });
 
   test("am_acp_session_cancel requires sessionId param", () => {
-    const server = new McpServer();
+    const server = new McpServer({ auth: { token: undefined, allowUnsafeLocal: true } });
     const tools = server.getTools();
     const cancel = tools.find((t) => t.def.name === "am_acp_session_cancel");
     expect(cancel?.def.inputSchema.required).toEqual(["sessionId"]);
@@ -1471,7 +1471,7 @@ describe("MCP ACP tools", () => {
       },
     });
 
-    const server = new McpServer();
+    const server = new McpServer({ auth: { token: undefined, allowUnsafeLocal: true } });
     const resp = await server.handleRequest({
       jsonrpc: "2.0",
       id: 101,
@@ -1499,7 +1499,7 @@ describe("MCP ACP tools", () => {
   test("am_acp_session_list returns empty when no session dir", async () => {
     await setupConfig({});
 
-    const server = new McpServer();
+    const server = new McpServer({ auth: { token: undefined, allowUnsafeLocal: true } });
     const resp = await server.handleRequest({
       jsonrpc: "2.0",
       id: 102,
@@ -1522,7 +1522,7 @@ describe("MCP ACP tools", () => {
       },
     });
 
-    const server = new McpServer();
+    const server = new McpServer({ auth: { token: undefined, allowUnsafeLocal: true } });
 
     const resp = await server.handleRequest({
       jsonrpc: "2.0",
@@ -1541,7 +1541,7 @@ describe("MCP ACP tools", () => {
   test("am_run_agent rejected without write-remote opt-in", async () => {
     await setupConfig({});
 
-    const server = new McpServer();
+    const server = new McpServer({ auth: { token: undefined, allowUnsafeLocal: true } });
     server.setSettings({});
 
     const resp = await server.handleRequest({
@@ -1561,7 +1561,7 @@ describe("MCP ACP tools", () => {
   test("am_acp_session_cancel rejected without write-remote opt-in", async () => {
     await setupConfig({});
 
-    const server = new McpServer();
+    const server = new McpServer({ auth: { token: undefined, allowUnsafeLocal: true } });
     server.setSettings({});
 
     const resp = await server.handleRequest({
