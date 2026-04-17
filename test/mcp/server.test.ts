@@ -40,11 +40,17 @@ describe("MCP server", () => {
       params: {},
     });
     expect(resp).not.toBeNull();
+    // iter4 Wave A Bug 3: serverInfo.version used to be hardcoded "0.1.0" and
+    // was asserted as such here — a snapshot of the bug. Now uses AM_VERSION
+    // (defaults to "0.0.0-dev" when BUILD_VERSION env is unset, matches the
+    // compiled-binary version when set by the build pipeline).
     expect(resp?.result).toMatchObject({
       protocolVersion: "2024-11-05",
       capabilities: { tools: {} },
-      serverInfo: { name: "agent-manager", version: "0.1.0" },
+      serverInfo: { name: "agent-manager" },
     });
+    const result = resp?.result as { serverInfo: { version: string } };
+    expect(result.serverInfo.version).toMatch(/^\d+\.\d+\.\d+(-\w+)?$/);
   });
 
   test("tools/list returns only core tools by default (ADR-0021)", async () => {
@@ -130,7 +136,13 @@ describe("MCP server", () => {
     expect(names).toContain("am_acp_list_agents");
     expect(names).toContain("am_acp_session_list");
     expect(names).toContain("am_acp_session_cancel");
-    expect(names.length).toBe(33);
+    // Wave D unified agent tools (5 new; legacy ACP aliases still present)
+    expect(names).toContain("am_agent_invoke");
+    expect(names).toContain("am_agent_session_list");
+    expect(names).toContain("am_agent_session_cancel");
+    expect(names).toContain("am_agent_status");
+    expect(names).toContain("am_agent_detect");
+    expect(names.length).toBe(38);
   });
 
   test("tools/list respects selective group configuration (ADR-0021)", async () => {
@@ -1405,7 +1417,13 @@ describe("MCP ACP tools", () => {
     expect(names).toContain("am_acp_list_agents");
     expect(names).toContain("am_acp_session_list");
     expect(names).toContain("am_acp_session_cancel");
-    expect(names.length).toBe(4);
+    // Wave D unified agent tools also live in the acp group.
+    expect(names).toContain("am_agent_invoke");
+    expect(names).toContain("am_agent_session_list");
+    expect(names).toContain("am_agent_session_cancel");
+    expect(names).toContain("am_agent_status");
+    expect(names).toContain("am_agent_detect");
+    expect(names.length).toBe(9);
     // Core tools should NOT be present
     expect(names).not.toContain("am_list_servers");
   });

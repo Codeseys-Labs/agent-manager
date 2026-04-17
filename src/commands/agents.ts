@@ -13,7 +13,13 @@
 
 import { join } from "node:path";
 import { defineCommand } from "citty";
-import { listAllAgentsAsync } from "../core/agent-registry";
+import {
+  AGENT_BINARIES,
+  type AgentDetection,
+  detectAgentByPath,
+  detectAllAgents,
+} from "../core/agent-detection";
+import { BUILT_IN_ACP_AGENTS, listAllAgentsAsync } from "../core/agent-registry";
 import type { UnifiedRegistryConfig } from "../core/agent-registry";
 import { resolveConfigDir, tryReadConfig } from "../core/config";
 import { error, info, output } from "../lib/output";
@@ -27,6 +33,7 @@ import {
   saveRoster,
 } from "../protocols/a2a/discovery";
 import type { AgentRosterEntry } from "../protocols/a2a/types";
+import { AmAcpClient } from "../protocols/acp/client";
 
 // ── Subcommands ─────────────────────────────────────────────────
 
@@ -60,7 +67,15 @@ const listSubcommand = defineCommand({
     }
 
     if (args.json) {
-      output({ agents, ...(args.discover ? { discovered } : {}) }, opts);
+      // Derive the protocol field explicitly for JSON consumers — the text
+      // table does the same derivation inline (line below), so both formats
+      // now agree. Fixes iter4 smoke Bug 4.
+      const agentsWithProtocol = agents.map((agent) => ({
+        ...agent,
+        protocol: agent.acp && agent.a2a ? "ACP/A2A" : agent.acp ? "ACP" : "A2A",
+        endpoint: agent.acp?.command ?? agent.a2a?.url ?? null,
+      }));
+      output({ agents: agentsWithProtocol, ...(args.discover ? { discovered } : {}) }, opts);
       return;
     }
 
@@ -69,22 +84,33 @@ const listSubcommand = defineCommand({
       return;
     }
 
-    info(`${"Name".padEnd(20)} ${"Protocol".padEnd(12)} ${"Source".padEnd(14)} Endpoint`, opts);
     info(
-      `${"\u2500".repeat(20)} ${"\u2500".repeat(12)} ${"\u2500".repeat(14)} ${"\u2500".repeat(44)}`,
+      `${"Name".padEnd(20)} ${"Protocol".padEnd(10)} ${"Source".padEnd(14)} ${"Installed".padEnd(12)} Endpoint`,
+      opts,
+    );
+    info(
+      `${"\u2500".repeat(20)} ${"\u2500".repeat(10)} ${"\u2500".repeat(14)} ${"\u2500".repeat(12)} ${"\u2500".repeat(40)}`,
       opts,
     );
     for (const agent of agents) {
       const protocol = agent.acp && agent.a2a ? "ACP/A2A" : agent.acp ? "ACP" : "A2A";
       const endpoint = agent.acp?.command ?? agent.a2a?.url ?? "\u2014";
+      let installed: string;
+      if (agent.installed === true) {
+        installed = agent.version ? `yes (v${agent.version})` : "yes";
+      } else if (agent.installed === false) {
+        installed = "no";
+      } else {
+        installed = "\u2014";
+      }
       info(
-        `${agent.name.padEnd(20)} ${protocol.padEnd(12)} ${agent.source.padEnd(14)} ${endpoint}`,
+        `${agent.name.padEnd(20)} ${protocol.padEnd(10)} ${agent.source.padEnd(14)} ${installed.padEnd(12)} ${endpoint}`,
         opts,
       );
     }
     for (const agent of discovered) {
       info(
-        `${agent.name.padEnd(20)} ${"A2A".padEnd(12)} ${"[discovered]".padEnd(14)} ${agent.url}`,
+        `${agent.name.padEnd(20)} ${"A2A".padEnd(10)} ${"[discovered]".padEnd(14)} ${"\u2014".padEnd(12)} ${agent.url}`,
         opts,
       );
     }
@@ -399,6 +425,135 @@ const cancelSubcommand = defineCommand({
   },
 });
 
+// ── detect subcommand ──────────────────────────────────────────
+
+/**
+ * Deep-probe a single ACP agent by spawning its runtime, running the ACP
+ * `initialize` handshake, and reporting the negotiated agentInfo. Returns
+ * structured data usable by both the text and JSON renderers.
+ */
+async function deepProbe(
+  name: string,
+  command: string,
+  timeoutMs: number,
+): Promise<{
+  name: string;
+  probed: true;
+  acpVerified: boolean;
+  agentInfo?: { name?: string; version?: string };
+  error?: string;
+}> {
+  const client = new AmAcpClient();
+  try {
+    const conn = await client.connect(command, { initTimeout: timeoutMs });
+    await client.disconnect();
+    return {
+      name,
+      probed: true,
+      acpVerified: true,
+      agentInfo: conn.agentInfo ?? undefined,
+    };
+  } catch (err: unknown) {
+    // Best-effort cleanup — connect() already kills on failure, but guard here too.
+    try {
+      await client.disconnect();
+    } catch {
+      // ignore
+    }
+    return {
+      name,
+      probed: true,
+      acpVerified: false,
+      error: err instanceof Error ? err.message : String(err),
+    };
+  }
+}
+
+const detectSubcommand = defineCommand({
+  meta: {
+    name: "detect",
+    description: "Detect which ACP agents are installed locally (deep probe when name given)",
+  },
+  args: {
+    name: { type: "positional", description: "Agent name to deep-probe (optional)" },
+    timeout: {
+      type: "string",
+      description: "Deep-probe timeout in ms (default 8000)",
+      default: "8000",
+    },
+    json: { type: "boolean", description: "JSON output", default: false },
+    quiet: { type: "boolean", alias: "q", default: false },
+    verbose: { type: "boolean", alias: "v", default: false },
+  },
+  async run({ args }) {
+    const opts = { json: args.json, quiet: args.quiet, verbose: args.verbose };
+    const name = args.name as string | undefined;
+    const timeoutMs = Math.max(1, Number.parseInt(String(args.timeout), 10) || 8000);
+
+    // Case A: single agent — deep probe.
+    if (name) {
+      const command = BUILT_IN_ACP_AGENTS[name];
+      if (!command) {
+        error(`Unknown built-in ACP agent: ${name}`, opts);
+        process.exitCode = 1;
+        return;
+      }
+      const cheap = detectAgentByPath(name);
+      const probe = await deepProbe(name, command, timeoutMs);
+
+      if (args.json) {
+        output({ name, cheap, deep: probe }, opts);
+        return;
+      }
+
+      info(`Agent: ${name}`, opts);
+      info(`  PATH binary: ${AGENT_BINARIES[name] ?? "(none mapped)"}`, opts);
+      info(`  PATH check: ${cheap.installed ? `found at ${cheap.binary}` : "not found"}`, opts);
+      info(`  ACP command: ${command}`, opts);
+      if (probe.acpVerified) {
+        info("  ACP handshake: verified", opts);
+        if (probe.agentInfo?.name) info(`    agent name: ${probe.agentInfo.name}`, opts);
+        if (probe.agentInfo?.version) info(`    agent version: ${probe.agentInfo.version}`, opts);
+      } else {
+        info(`  ACP handshake: failed (${probe.error ?? "unknown error"})`, opts);
+      }
+      return;
+    }
+
+    // Case B: no name — cheap scan of every built-in.
+    const detections = await detectAllAgents();
+
+    if (args.json) {
+      output({ agents: detections }, opts);
+      return;
+    }
+
+    info(
+      `${"Name".padEnd(20)} ${"Installed".padEnd(12)} ${"Source".padEnd(10)} ${"Binary".padEnd(12)} Path/Notes`,
+      opts,
+    );
+    info(
+      `${"\u2500".repeat(20)} ${"\u2500".repeat(12)} ${"\u2500".repeat(10)} ${"\u2500".repeat(12)} ${"\u2500".repeat(40)}`,
+      opts,
+    );
+
+    const names = Object.keys(BUILT_IN_ACP_AGENTS).sort();
+    let installedCount = 0;
+    for (const agentName of names) {
+      const d: AgentDetection = detections[agentName] ?? { installed: false, source: "none" };
+      if (d.installed) installedCount += 1;
+      const installed = d.installed ? (d.version ? `yes (v${d.version})` : "yes") : "no";
+      const binary = AGENT_BINARIES[agentName] ?? "\u2014";
+      const notes = d.binary ?? (d.adapterDetected ? "(adapter host detected)" : "");
+      info(
+        `${agentName.padEnd(20)} ${installed.padEnd(12)} ${d.source.padEnd(10)} ${binary.padEnd(12)} ${notes}`,
+        opts,
+      );
+    }
+    info(`\n${installedCount} of ${names.length} built-in ACP agents installed.`, opts);
+  },
+});
+
 // ── Main Command ────────────────────────────────────────────────
 
 export const agentsCommand = defineCommand({
@@ -408,6 +563,7 @@ export const agentsCommand = defineCommand({
     add: () => Promise.resolve(addSubcommand),
     remove: () => Promise.resolve(removeSubcommand),
     ping: () => Promise.resolve(pingSubcommand),
+    detect: () => Promise.resolve(detectSubcommand),
     delegate: () => Promise.resolve(delegateSubcommand),
     cancel: () => Promise.resolve(cancelSubcommand),
   },

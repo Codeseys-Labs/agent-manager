@@ -12,6 +12,11 @@ let authToken: string;
 beforeAll(async () => {
   tmpDir = await mkdtemp(join(tmpdir(), "am-web-test-"));
   await mkdir(join(tmpDir, ".agent-manager"), { recursive: true });
+  // iter4 Wave B: mutation endpoints go through withConfig() which calls
+  // commitAll() after a successful write. Initialize a real git repo here
+  // so the commit succeeds in tests — matches the shape of `am init`.
+  const { initRepo } = await import("../../src/core/git");
+  await initRepo(tmpDir);
 
   const config = {
     settings: { default_profile: "default" },
@@ -80,7 +85,8 @@ describe("Web API", () => {
     expect(res.status).toBe(200);
     const data = await res.json();
     expect(data.status).toBe("ok");
-    expect(data.version).toBe("0.1.0");
+    // iter4 Wave A Bug 3: was "0.1.0" snapshot-of-bug, now AM_VERSION.
+    expect(data.version).toMatch(/^\d+\.\d+\.\d+(-\w+)?$/);
   });
 
   it("GET /api/config returns resolved config", async () => {
@@ -172,7 +178,9 @@ describe("Web API", () => {
     expect(data.available).toBeDefined();
   });
 
-  it("GET /api/status returns status object", async () => {
+  // /api/status loops through all detected adapters calling diff() — can
+  // be slow on a populated dev machine. Bump the default 5s timeout.
+  it("GET /api/status returns status object", { timeout: 15000 }, async () => {
     const res = await request(app, "/api/status");
     expect(res.status).toBe(200);
     const data = await res.json();

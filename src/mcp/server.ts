@@ -22,6 +22,7 @@ import {
   tryReadConfig,
   writeConfig,
 } from "../core/config";
+import { applyResolved, withConfig } from "../core/controller";
 import { commitAll, getStatus, log as gitLog, pull, push, revertHead } from "../core/git";
 import type { Config, McpToolGroup, Settings } from "../core/schema";
 import { interpolateEnvAsync, legacyKeyPath, loadKey, resolveKeyPath } from "../core/secrets";
@@ -29,6 +30,7 @@ import { filterMessages, formatJson, formatMarkdown } from "../core/session";
 import type { SessionSummary } from "../core/session";
 import { errorMessage } from "../lib/errors";
 import { redactConfigSecrets, safeErrorMessage } from "../lib/redact";
+import { AM_VERSION } from "../lib/version";
 
 // ── JSON-RPC types ──────────────────────────────────────────────
 
@@ -82,11 +84,53 @@ interface McpToolDef {
 
 type ToolTier = "read-only" | "write-local" | "write-remote";
 
+/**
+ * Wave D: per-call context passed to tool handlers.
+ *
+ * Gives handlers access to:
+ *   - `emitProgress(payload)`: emits `notifications/progress` (MCP spec 2025-06-18 §6.3)
+ *     back to the client if the caller supplied `params._meta.progressToken`.
+ *     If no progressToken was supplied, this is a no-op — handlers can always
+ *     call it without checking, and the callers that don't support progress
+ *     simply see no notifications (graceful fallback to blocking mode).
+ *   - `progressToken`: the raw token (undefined if none); handlers rarely need this.
+ */
+export interface ToolContext {
+  emitProgress: (payload: { progress?: number; total?: number; message?: unknown }) => void;
+  progressToken: string | number | undefined;
+}
+
 interface ToolEntry {
   def: McpToolDef;
   tier: ToolTier;
-  handler: (args: Record<string, unknown>) => Promise<unknown>;
+  /**
+   * Handlers receive args and an optional ToolContext. ctx is always
+   * provided by the dispatcher; handlers that predate Wave D ignore it
+   * by not declaring the second parameter.
+   */
+  handler: (args: Record<string, unknown>, ctx: ToolContext) => Promise<unknown>;
 }
+
+/**
+ * Wave D: set of deprecated-alias tool names we've already warned about in
+ * this process. Prevents log spam: the first call to an alias writes a
+ * one-line deprecation notice to stderr; subsequent calls to the same alias
+ * are silent. Cleared only by restart.
+ */
+const warnedDeprecatedAliases = new Set<string>();
+
+/**
+ * Wave D: per-call emitter for `notifications/progress` — attach this to
+ * ctx.emitProgress for the duration of a `tools/call` that supplied a
+ * progressToken. The dispatcher installs the concrete writer (stdio vs
+ * in-process); tests can replace it via McpServer#setProgressSink.
+ */
+type ProgressNotification = {
+  jsonrpc: "2.0";
+  method: "notifications/progress";
+  params: { progressToken: string | number; progress?: number; total?: number; message?: unknown };
+};
+type ProgressSink = (notif: ProgressNotification) => void;
 
 // ── Input validation ────────────────────────────────────────────
 
@@ -247,6 +291,14 @@ const TOOL_GROUP_MAP: Record<string, McpToolGroup> = {
   am_acp_list_agents: "acp",
   am_acp_session_list: "acp",
   am_acp_session_cancel: "acp",
+  // Wave D unified agent tools. We keep them under "acp" so existing
+  // settings.mcp_serve.tools = ["acp"] deployments get the new tools too;
+  // a future ADR will collapse acp+a2a groups into a single "agents" group.
+  am_agent_invoke: "acp",
+  am_agent_session_list: "acp",
+  am_agent_session_cancel: "acp",
+  am_agent_status: "acp",
+  am_agent_detect: "acp",
   // All other tools (am_list_servers, am_list_profiles, am_status, etc.) default to "core"
 };
 
@@ -330,6 +382,73 @@ export function resolveSessionPathSafely(sessionDir: string, sessionId: string):
     throw new Error("Invalid sessionId: resolved path escapes session directory.");
   }
   return candidate;
+}
+
+// ── Active ACP session registry (Wave D) ────────────────────────
+//
+// `am_agent_session_cancel` needs a handle to an in-flight ACP client in
+// order to call the spec'd `cancel` RPC. Without this registry the cancel
+// tool can only clean up on-disk state, which is the exact bug R6 found in
+// the legacy `am_acp_session_cancel` handler.
+//
+// The registry is a plain Map keyed by sessionId. Entries carry the
+// AmAcpClient instance and the agent name (so callers can scope cancel by
+// agent when multiple agents share a session namespace). Registry is
+// populated by `am_agent_invoke` before calling `client.prompt(...)` and
+// cleared in a `finally` after disconnect.
+//
+// A2A sessions use the same map (value.a2a holds {baseUrl}) so
+// `am_agent_session_cancel` routes correctly.
+
+interface AcpActiveSession {
+  kind: "acp";
+  agent: string;
+  // Loose typing avoids a circular import with protocols/acp/client.ts
+  // at module-init time; the registry is only read by the cancel tool
+  // which already has the concrete type.
+  client: { cancel: (sessionId: string) => Promise<void>; disconnect: () => Promise<void> };
+}
+
+interface A2aActiveSession {
+  kind: "a2a";
+  agent: string;
+  baseUrl: string;
+}
+
+type ActiveSession = AcpActiveSession | A2aActiveSession;
+
+const activeSessions = new Map<string, ActiveSession>();
+
+/** Expose for tests to seed entries without invoking a real agent. */
+export function _registerActiveSession(sessionId: string, entry: ActiveSession): void {
+  activeSessions.set(sessionId, entry);
+}
+export function _unregisterActiveSession(sessionId: string): void {
+  activeSessions.delete(sessionId);
+}
+export function _getActiveSession(sessionId: string): ActiveSession | undefined {
+  return activeSessions.get(sessionId);
+}
+
+// ── Deprecation warning helper (Wave D) ─────────────────────────
+
+/**
+ * Emit a one-line deprecation notice to stderr the first time a given
+ * alias name is used in this process. Subsequent calls to the same alias
+ * are silent. Production stdio clients ignore stderr, so this is safe.
+ */
+function warnDeprecated(oldName: string, newName: string): void {
+  if (warnedDeprecatedAliases.has(oldName)) return;
+  warnedDeprecatedAliases.add(oldName);
+  // eslint-disable-next-line no-console -- intentional stderr notice
+  process.stderr.write(
+    `[am-mcp] DEPRECATED: tool "${oldName}" is an alias. Use "${newName}" instead (removal targeted for v0.4).\n`,
+  );
+}
+
+/** Reset the deprecation set — exposed for tests that run multiple scenarios. */
+export function _resetDeprecationWarnings(): void {
+  warnedDeprecatedAliases.clear();
 }
 
 // ── Helpers ─────────────────────────────────────────────────────
@@ -473,6 +592,42 @@ const TOOL_SCHEMAS: Record<string, z.ZodTypeAny> = {
       .max(128)
       .regex(SESSION_ID_RE, "sessionId must match /^[a-zA-Z0-9_-]{1,128}$/"),
   }),
+
+  // ── agents (unified, Wave D) ───────────────────────────────
+  // Accept either a string `prompt` or a structured `{ messages: [...] }`.
+  // A2A only sees the flattened text today; ACP receives the single combined prompt.
+  am_agent_invoke: withAuth({
+    agent: zStrNonEmpty,
+    prompt: z.union([
+      zStrNonEmpty,
+      z.object({
+        messages: z.array(
+          z.object({
+            role: z.enum(["user", "assistant", "system", "tool"]).optional(),
+            content: zStrNonEmpty,
+          }),
+        ),
+      }),
+    ]),
+    session: zStr.optional(),
+    cwd: zStr.optional(),
+    stream: zBool.optional(),
+    timeout: zNum.int().positive().max(3_600_000).optional(),
+  }),
+  am_agent_session_list: withAuth({ agent: zStr.optional() }),
+  am_agent_session_cancel: withAuth({
+    agent: zStr.optional(),
+    sessionId: z
+      .string()
+      .min(1)
+      .max(128)
+      .regex(SESSION_ID_RE, "sessionId must match /^[a-zA-Z0-9_-]{1,128}$/"),
+  }),
+  am_agent_status: withAuth({
+    sessionId: z.string().min(1).max(128).regex(SESSION_ID_RE),
+    agent: zStr.optional(),
+  }),
+  am_agent_detect: withAuth({}),
 };
 
 // ── Tool definitions ────────────────────────────────────────────
@@ -992,34 +1147,30 @@ function defineTools(): ToolEntry[] {
       tier: "write-local",
       handler: async (args) => {
         const configDir = resolveConfigDir();
-        const configPath = join(configDir, "config.toml");
-        const config = await readConfig(configPath);
         const name = args.name as string;
-
-        if (config.servers?.[name]) {
-          throw new Error(
-            `Server "${name}" already exists. Use am_remove_server to remove it first, or update it directly in config.toml.`,
-          );
-        }
-
-        if (!config.servers) config.servers = {};
-        config.servers[name] = {
-          command: args.command as string,
-          ...(args.args ? { args: args.args as string[] } : {}),
-          ...(args.tags ? { tags: args.tags as string[] } : {}),
-          ...(args.description ? { description: args.description as string } : {}),
-          ...(args.env ? { env: args.env as Record<string, string> } : {}),
-          transport: "stdio",
-          enabled: true,
-        };
-
-        await writeConfig(configPath, config);
-        try {
-          await commitAll(configDir, `add server: ${name}`);
-        } catch {
-          // Nothing to commit
-        }
-        return { action: "add", server: name };
+        return withConfig(configDir, async (config) => {
+          if (!config) throw new Error("Config not found. Run `am init` first.");
+          if (config.servers?.[name]) {
+            throw new Error(
+              `Server "${name}" already exists. Use am_remove_server to remove it first, or update it directly in config.toml.`,
+            );
+          }
+          if (!config.servers) config.servers = {};
+          config.servers[name] = {
+            command: args.command as string,
+            ...(args.args ? { args: args.args as string[] } : {}),
+            ...(args.tags ? { tags: args.tags as string[] } : {}),
+            ...(args.description ? { description: args.description as string } : {}),
+            ...(args.env ? { env: args.env as Record<string, string> } : {}),
+            transport: "stdio",
+            enabled: true,
+          };
+          return {
+            result: { action: "add", server: name },
+            commitMessage: `add server: ${name}`,
+            changed: true,
+          };
+        });
       },
     },
     {
@@ -1037,24 +1188,21 @@ function defineTools(): ToolEntry[] {
       tier: "write-local",
       handler: async (args) => {
         const configDir = resolveConfigDir();
-        const configPath = join(configDir, "config.toml");
-        const config = await readConfig(configPath);
         const name = args.name as string;
-
-        if (!config.servers?.[name]) {
-          throw new Error(
-            `Server "${name}" not found. Use am_list_servers to see available server names.`,
-          );
-        }
-
-        delete config.servers[name];
-        await writeConfig(configPath, config);
-        try {
-          await commitAll(configDir, `remove server: ${name}`);
-        } catch {
-          // Nothing to commit
-        }
-        return { action: "remove", server: name };
+        return withConfig(configDir, async (config) => {
+          if (!config) throw new Error("Config not found. Run `am init` first.");
+          if (!config.servers?.[name]) {
+            throw new Error(
+              `Server "${name}" not found. Use am_list_servers to see available server names.`,
+            );
+          }
+          delete config.servers[name];
+          return {
+            result: { action: "remove", server: name },
+            commitMessage: `remove server: ${name}`,
+            changed: true,
+          };
+        });
       },
     },
     {
@@ -1090,31 +1238,27 @@ function defineTools(): ToolEntry[] {
       tier: "write-local",
       handler: async (args) => {
         const configDir = resolveConfigDir();
-        const configPath = join(configDir, "config.toml");
-        const config = await readConfig(configPath);
         const name = args.name as string;
-
-        if (!config.servers?.[name]) {
-          throw new Error(
-            `Server "${name}" not found. Use am_list_servers to see available server names.`,
-          );
-        }
-
-        const existing = config.servers[name];
-        if (args.enabled !== undefined) existing.enabled = args.enabled as boolean;
-        if (args.env !== undefined)
-          existing.env = { ...existing.env, ...(args.env as Record<string, string>) };
-        if (args.args !== undefined) existing.args = args.args as string[];
-        if (args.tags !== undefined) existing.tags = args.tags as string[];
-        if (args.description !== undefined) existing.description = args.description as string;
-
-        await writeConfig(configPath, config);
-        try {
-          await commitAll(configDir, `update server: ${name}`);
-        } catch {
-          // Nothing to commit
-        }
-        return { action: "update", server: name };
+        return withConfig(configDir, async (config) => {
+          if (!config) throw new Error("Config not found. Run `am init` first.");
+          if (!config.servers?.[name]) {
+            throw new Error(
+              `Server "${name}" not found. Use am_list_servers to see available server names.`,
+            );
+          }
+          const existing = config.servers[name];
+          if (args.enabled !== undefined) existing.enabled = args.enabled as boolean;
+          if (args.env !== undefined)
+            existing.env = { ...existing.env, ...(args.env as Record<string, string>) };
+          if (args.args !== undefined) existing.args = args.args as string[];
+          if (args.tags !== undefined) existing.tags = args.tags as string[];
+          if (args.description !== undefined) existing.description = args.description as string;
+          return {
+            result: { action: "update", server: name },
+            commitMessage: `update server: ${name}`,
+            changed: true,
+          };
+        });
       },
     },
     {
@@ -1193,8 +1337,6 @@ function defineTools(): ToolEntry[] {
       tier: "write-local",
       handler: async (args) => {
         const configDir = resolveConfigDir();
-        const configPath = join(configDir, "config.toml");
-        const config = await readConfig(configPath);
         const source = args.source as string;
 
         let adapters;
@@ -1213,41 +1355,40 @@ function defineTools(): ToolEntry[] {
           adapters = [adapter];
         }
 
-        let totalImported = 0;
-        if (!config.servers) config.servers = {};
+        return withConfig(configDir, async (config) => {
+          if (!config) throw new Error("Config not found. Run `am init` first.");
+          let totalImported = 0;
+          if (!config.servers) config.servers = {};
 
-        for (const adapter of adapters) {
-          try {
-            const result = await adapter.import({ projectPath: process.cwd() });
-            for (const srv of result.servers) {
-              if (!config.servers[srv.name]) {
-                config.servers[srv.name] = {
-                  command: srv.command,
-                  args: srv.args,
-                  env: srv.env,
-                  transport: srv.transport ?? "stdio",
-                  description: srv.description,
-                  tags: srv.tags,
-                  enabled: srv.enabled ?? true,
-                };
-                totalImported++;
+          for (const adapter of adapters) {
+            try {
+              const result = await adapter.import({ projectPath: process.cwd() });
+              for (const srv of result.servers) {
+                if (!config.servers[srv.name]) {
+                  config.servers[srv.name] = {
+                    command: srv.command,
+                    args: srv.args,
+                    env: srv.env,
+                    transport: srv.transport ?? "stdio",
+                    description: srv.description,
+                    tags: srv.tags,
+                    enabled: srv.enabled ?? true,
+                  };
+                  totalImported++;
+                }
               }
+            } catch {
+              // Skip adapters that fail to import
             }
-          } catch {
-            // Skip adapters that fail to import
           }
-        }
 
-        await writeConfig(configPath, config);
-        if (totalImported > 0) {
-          try {
-            await commitAll(configDir, `import: ${source} (${totalImported} servers)`);
-          } catch {
-            // Nothing to commit
-          }
-        }
-
-        return { action: "import", source, imported: totalImported };
+          return {
+            result: { action: "import", source, imported: totalImported },
+            commitMessage:
+              totalImported > 0 ? `import: ${source} (${totalImported} servers)` : undefined,
+            changed: totalImported > 0,
+          };
+        });
       },
     },
 
@@ -1318,56 +1459,53 @@ function defineTools(): ToolEntry[] {
         }
 
         const configDir = resolveConfigDir();
-        const configPath = join(configDir, "config.toml");
-        const config = await readConfig(configPath);
-
-        if (config.servers?.[pkg.name]) {
-          throw new Error(
-            `Server "${pkg.name}" already exists. Remove it first or use am_remove_server.`,
-          );
-        }
-
-        // Build env from provided values + defaults
-        const env: Record<string, string> = {};
-        const providedEnv = (args.env as Record<string, string>) ?? {};
-        for (const envVar of pkg.server.env ?? []) {
-          if (providedEnv[envVar.name]) {
-            env[envVar.name] = providedEnv[envVar.name];
-          } else if (envVar.default) {
-            env[envVar.name] = envVar.default;
-          } else if (envVar.required) {
-            env[envVar.name] = `\${${envVar.name}}`;
+        return withConfig(configDir, async (config) => {
+          if (!config) throw new Error("Config not found. Run `am init` first.");
+          if (config.servers?.[pkg.name]) {
+            throw new Error(
+              `Server "${pkg.name}" already exists. Remove it first or use am_remove_server.`,
+            );
           }
-        }
 
-        if (!config.servers) config.servers = {};
-        config.servers[pkg.name] = {
-          command: pkg.server.command,
-          ...(pkg.server.args ? { args: pkg.server.args } : {}),
-          ...(Object.keys(env).length > 0 ? { env } : {}),
-          transport: pkg.server.transport ?? "stdio",
-          enabled: true,
-          description: pkg.description,
-          tags: pkg.tags,
-          _registry: {
-            source: "mcp-registry" as const,
-            package: pkg.name,
-            version: pkg.version,
-            installed_at: new Date().toISOString(),
-          },
-        };
+          const env: Record<string, string> = {};
+          const providedEnv = (args.env as Record<string, string>) ?? {};
+          for (const envVar of pkg.server.env ?? []) {
+            if (providedEnv[envVar.name]) {
+              env[envVar.name] = providedEnv[envVar.name];
+            } else if (envVar.default) {
+              env[envVar.name] = envVar.default;
+            } else if (envVar.required) {
+              env[envVar.name] = `\${${envVar.name}}`;
+            }
+          }
 
-        await writeConfig(configPath, config);
-        try {
-          await commitAll(configDir, `registry install: ${pkg.name}`);
-        } catch {
-          // Nothing to commit
-        }
-        return {
-          action: "install",
-          package: pkg.name,
-          version: pkg.version,
-        };
+          if (!config.servers) config.servers = {};
+          config.servers[pkg.name] = {
+            command: pkg.server.command,
+            ...(pkg.server.args ? { args: pkg.server.args } : {}),
+            ...(Object.keys(env).length > 0 ? { env } : {}),
+            transport: pkg.server.transport ?? "stdio",
+            enabled: true,
+            description: pkg.description,
+            tags: pkg.tags,
+            _registry: {
+              source: "mcp-registry" as const,
+              package: pkg.name,
+              version: pkg.version,
+              installed_at: new Date().toISOString(),
+            },
+          };
+
+          return {
+            result: {
+              action: "install",
+              package: pkg.name,
+              version: pkg.version,
+            },
+            commitMessage: `registry install: ${pkg.name}`,
+            changed: true,
+          };
+        });
       },
     },
     {
@@ -1430,52 +1568,26 @@ function defineTools(): ToolEntry[] {
       },
       tier: "write-local",
       handler: async (args) => {
-        const { config, configDir, profileName } = await loadConfigAndProfile();
-
-        // Decrypt encrypted values before applying
-        const encryptionKey = await loadKey(configDir);
-        const { config: decrypted } = await interpolateEnvAsync(config, {
-          encryptionKey: encryptionKey ?? undefined,
+        const configDir = resolveConfigDir();
+        const applyResult = await applyResolved(configDir, {
+          dryRun: !!args.dryRun,
+          target: args.target as string | undefined,
         });
-        const resolved = buildResolvedConfig(decrypted, profileName, configDir);
-        const projectFile = resolveProjectConfig(process.cwd());
-
-        let adapters;
-        if (args.target) {
-          const adapter = await getAdapter(args.target as string);
-          if (!adapter) {
-            throw new Error(
-              `Adapter "${args.target}" not found. Available: ${listAdapters().join(", ")}`,
-            );
-          }
-          adapters = [adapter];
-        } else {
-          adapters = await getDetectedAdapters();
-        }
-
-        const results: Array<{ adapter: string; files: number; warnings: string[] }> = [];
-        for (const adapter of adapters) {
-          try {
-            const result = await adapter.export(resolved, {
-              projectPath: projectFile ? join(projectFile, "..") : undefined,
-              dryRun: !!args.dryRun,
-            });
-            results.push({
-              adapter: adapter.meta.name,
-              files: result.files.filter((f) => f.written).length,
-              warnings: result.warnings,
-            });
-          } catch (e: unknown) {
-            // Redact secrets before surfacing export errors to the MCP client.
-            results.push({
-              adapter: adapter.meta.name,
-              files: 0,
-              warnings: [safeErrorMessage(e) || "export failed"],
-            });
-          }
-        }
-
-        return { action: "apply", profile: profileName, dryRun: !!args.dryRun, results };
+        // Shape the response to the existing MCP contract (files count, not
+        // full per-file list) and redact error messages.
+        const results = applyResult.results.map((r) => ({
+          adapter: r.adapter,
+          files: r.files.filter((f) => f.written).length,
+          warnings: r.error
+            ? [safeErrorMessage(new Error(r.error)) || "export failed"]
+            : r.warnings,
+        }));
+        return {
+          action: "apply",
+          profile: applyResult.profile,
+          dryRun: applyResult.dryRun,
+          results,
+        };
       },
     },
     {
@@ -1548,23 +1660,25 @@ function defineTools(): ToolEntry[] {
       def: {
         name: "am_agent_list",
         description:
-          "List registered A2A agents from the local roster only. For the unified agent view (config + ACP built-ins + A2A roster), use `am_acp_list_agents` (which despite its name returns all three sources — ADR-0031 M2: naming to be consolidated in a future ADR).",
+          "List all agents from the unified registry (config overrides, ACP built-in, A2A roster). Each entry shows which protocol(s) are available. Wave D: was A2A-roster-only, now returns the merged view.",
         inputSchema: { type: "object", properties: {} },
       },
       tier: "read-only",
       handler: async () => {
-        const { loadRoster } = await import("../protocols/a2a/discovery");
+        const { listAllAgentsAsync } = await import("../core/agent-registry");
+        const { config } = await loadConfigAndProfile();
         const configDir = resolveConfigDir();
-        const roster = await loadRoster(configDir);
+        const agents = await listAllAgentsAsync(config, configDir);
         return {
-          agents: roster.map((r) => ({
-            name: r.name,
-            url: r.url,
-            description: r.description,
-            addedAt: r.addedAt,
-            lastSeen: r.lastSeen,
+          agents: agents.map((a) => ({
+            name: a.name,
+            description: a.description ?? null,
+            source: a.source,
+            protocol: a.acp && a.a2a ? "both" : a.acp ? "acp" : "a2a",
+            acp: a.acp ?? null,
+            a2a: a.a2a ?? null,
           })),
-          total: roster.length,
+          total: agents.length,
         };
       },
     },
@@ -1572,7 +1686,7 @@ function defineTools(): ToolEntry[] {
       def: {
         name: "am_agent_delegate",
         description:
-          "Send a task to a registered A2A agent. Returns immediately with a task ID while the agent works asynchronously. Use am_agent_task_status to poll for completion. The agent must be in the local roster (use am_agent_list to see available agents).",
+          "[DEPRECATED — use am_agent_invoke] Send a task to a registered A2A agent. Returns immediately with a task ID while the agent works asynchronously. Use am_agent_task_status to poll for completion.",
         inputSchema: {
           type: "object",
           properties: {
@@ -1583,33 +1697,14 @@ function defineTools(): ToolEntry[] {
         },
       },
       tier: "write-remote",
-      handler: async (args) => {
-        const { loadRoster } = await import("../protocols/a2a/discovery");
-        const { A2AClient } = await import("../protocols/a2a/client");
-        const configDir = resolveConfigDir();
-        const roster = await loadRoster(configDir);
-        const name = args.name as string;
-        const message = args.message as string;
-
-        const entry = roster.find((r) => r.name === name);
-        if (!entry) {
-          throw new Error(
-            `Agent "${name}" not found in roster. Available: ${roster.map((r) => r.name).join(", ") || "(none)"}`,
-          );
-        }
-
-        const client = new A2AClient({ timeout: 60_000 });
-        const taskId = `am-mcp-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-
-        const result = await client.sendTask(entry.url, {
-          id: taskId,
-          message: {
-            role: "user",
-            parts: [{ type: "text", text: message }],
-          },
-        });
-
-        return { agent: name, task: result };
+      handler: async (args, ctx) => {
+        warnDeprecated("am_agent_delegate", "am_agent_invoke");
+        // Route through the unified invoke implementation so we get streaming
+        // and registry resolution for free. Map {name,message} → {agent,prompt}.
+        return invokeAgentImpl(
+          { agent: args.name, prompt: args.message, deprecated: "am_agent_delegate" },
+          ctx,
+        );
       },
     },
     {
@@ -1859,7 +1954,7 @@ function defineTools(): ToolEntry[] {
       def: {
         name: "am_run_agent",
         description:
-          "Run a prompt against an ACP-compatible coding agent. Returns immediately with a session ID. Use am_acp_session_list to check progress. Requires the agent to be in the built-in registry or configured in settings.acp.agents.",
+          "[DEPRECATED — use am_agent_invoke] Run a prompt against an ACP-compatible coding agent.",
         inputSchema: {
           type: "object",
           properties: {
@@ -1883,60 +1978,21 @@ function defineTools(): ToolEntry[] {
         },
       },
       tier: "write-remote" as ToolTier,
-      handler: async (args) => {
-        const { createAcpClient } = await import("../protocols/acp/client");
-        const { resolveAgentAsync } = await import("../core/agent-registry");
-        const agentName = args.agent as string;
-        const promptText = args.prompt as string;
-        const sessionName = args.session as string | undefined;
-        const cwd = (args.cwd as string) ?? process.cwd();
-
-        // Load config for unified agent resolution
-        const { config } = await loadConfigAndProfile();
-        const configDir = resolveConfigDir();
-
-        const entry = await resolveAgentAsync(agentName, config, configDir);
-        if (!entry || !entry.acp) {
-          throw new Error(
-            `Unknown agent "${agentName}" or no ACP (local) endpoint. Use am_acp_list_agents to see available agents.`,
-          );
-        }
-
-        const client = createAcpClient();
-        try {
-          await client.connect(entry.acp.command);
-          const sessionId =
-            sessionName ?? `am-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-          await client.newSession({ cwd });
-          const result = await client.prompt(sessionId, [{ type: "text", text: promptText }]);
-          await client.disconnect();
-
-          return {
-            sessionId,
-            agent: agentName,
-            status: "completed",
-            result: {
-              text: result.text,
-              toolCalls: result.toolCalls.map((tc) => ({
-                name: (tc as Record<string, unknown>).name ?? "unknown",
-              })),
-            },
-          };
-        } catch (err) {
-          await client.disconnect().catch(() => {});
-          throw err;
-        }
+      handler: async (args, ctx) => {
+        warnDeprecated("am_run_agent", "am_agent_invoke");
+        return invokeAgentImpl(args, ctx);
       },
     },
     {
       def: {
         name: "am_acp_list_agents",
         description:
-          "List all agents from the unified registry (config overrides, ACP built-in, A2A roster). Shows protocol availability (ACP/A2A/both).",
+          "[DEPRECATED — use am_agent_list] List all agents from the unified registry (config overrides, ACP built-in, A2A roster). Shows protocol availability (ACP/A2A/both).",
         inputSchema: { type: "object", properties: {} },
       },
       tier: "read-only" as ToolTier,
       handler: async () => {
+        warnDeprecated("am_acp_list_agents", "am_agent_list");
         const { listAllAgentsAsync } = await import("../core/agent-registry");
         const { config } = await loadConfigAndProfile();
         const configDir = resolveConfigDir();
@@ -1957,51 +2013,20 @@ function defineTools(): ToolEntry[] {
       def: {
         name: "am_acp_session_list",
         description:
-          "List active LIVE ACP sessions from the session directory (agent subprocesses currently running or persisted). For read-only cross-tool transcript browsing, use `am_session_list` instead.",
+          "[DEPRECATED — use am_agent_session_list] List active LIVE ACP sessions from the session directory (agent subprocesses currently running or persisted).",
         inputSchema: { type: "object", properties: {} },
       },
       tier: "read-only" as ToolTier,
-      handler: async () => {
-        const { readdir, stat } = await import("node:fs/promises");
-        const { join } = await import("node:path");
-        const { config } = await loadConfigAndProfile();
-        const sessionDir =
-          config.settings?.acp?.session_dir ?? join(resolveConfigDir(), "sessions");
-
-        const sessions: Array<{
-          id: string;
-          agent: string;
-          created: string;
-          status: string;
-        }> = [];
-
-        try {
-          const entries = await readdir(sessionDir);
-          for (const entry of entries) {
-            try {
-              const entryPath = join(sessionDir, entry);
-              const info = await stat(entryPath);
-              sessions.push({
-                id: entry,
-                agent: "unknown",
-                created: info.birthtime.toISOString(),
-                status: "persisted",
-              });
-            } catch {
-              // Skip unreadable entries
-            }
-          }
-        } catch {
-          // Session directory doesn't exist yet — return empty
-        }
-
-        return { sessions };
+      handler: async (args) => {
+        warnDeprecated("am_acp_session_list", "am_agent_session_list");
+        return listAgentSessionsImpl(args);
       },
     },
     {
       def: {
         name: "am_acp_session_cancel",
-        description: "Cancel an active ACP session by session ID.",
+        description:
+          "[DEPRECATED — use am_agent_session_cancel] Cancel an active ACP session by session ID. Calls the ACP cancel RPC (if the session is live) and removes persisted state.",
         inputSchema: {
           type: "object",
           properties: {
@@ -2011,31 +2036,432 @@ function defineTools(): ToolEntry[] {
         },
       },
       tier: "write-remote" as ToolTier,
+      handler: async (args, ctx) => {
+        warnDeprecated("am_acp_session_cancel", "am_agent_session_cancel");
+        return cancelSessionImpl(args, ctx);
+      },
+    },
+
+    // ── Wave D unified agent tools ──────────────────────────────
+    {
+      def: {
+        name: "am_agent_invoke",
+        description:
+          "Invoke an agent with a prompt. Routes to ACP (local subprocess) if the agent resolves via built-in/config.acp, or A2A (remote HTTP) via roster/config.a2a. Supports streaming via notifications/progress when params._meta.progressToken is set. Blocking otherwise.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            agent: { type: "string", description: "Agent name from am_agent_list." },
+            prompt: {
+              oneOf: [
+                { type: "string", description: "Prompt text." },
+                {
+                  type: "object",
+                  properties: {
+                    messages: {
+                      type: "array",
+                      items: {
+                        type: "object",
+                        properties: {
+                          role: { type: "string" },
+                          content: { type: "string" },
+                        },
+                        required: ["content"],
+                      },
+                    },
+                  },
+                  required: ["messages"],
+                },
+              ],
+            },
+            session: {
+              type: "string",
+              description: "Named session to create or resume. Omit for anonymous.",
+            },
+            stream: {
+              type: "boolean",
+              description:
+                "Request progress notifications. Only meaningful when params._meta.progressToken is also set.",
+            },
+            cwd: {
+              type: "string",
+              description: "Working directory for ACP agents (ignored for A2A).",
+            },
+            timeout: { type: "number", description: "Overall timeout in ms. Default: 120000." },
+          },
+          required: ["agent", "prompt"],
+        },
+      },
+      tier: "write-remote" as ToolTier,
+      handler: async (args, ctx) => invokeAgentImpl(args, ctx),
+    },
+    {
+      def: {
+        name: "am_agent_session_list",
+        description:
+          "List active sessions across ACP and A2A backends. With no agent filter, returns every tracked session across all agents. With agent=<name>, limits to that agent. Merges the in-memory active registry with on-disk ACP session directory entries.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            agent: {
+              type: "string",
+              description: "Optional: limit to a specific agent name.",
+            },
+          },
+        },
+      },
+      tier: "read-only" as ToolTier,
+      handler: async (args) => listAgentSessionsImpl(args),
+    },
+    {
+      def: {
+        name: "am_agent_session_cancel",
+        description:
+          "Cancel an active agent session. Routes to ACP or A2A based on the active session registry. For ACP this calls the spec'd cancel RPC THEN removes persisted state; for A2A it calls tasks/cancel. If the connection is already gone, silently rms the persisted dir (no error).",
+        inputSchema: {
+          type: "object",
+          properties: {
+            sessionId: { type: "string", description: "Session ID to cancel" },
+            agent: { type: "string", description: "Optional: agent name for disambiguation." },
+          },
+          required: ["sessionId"],
+        },
+      },
+      tier: "write-remote" as ToolTier,
+      handler: async (args, ctx) => cancelSessionImpl(args, ctx),
+    },
+    {
+      def: {
+        name: "am_agent_status",
+        description:
+          "Return the status of an in-flight or recently-terminated agent session. { sessionId } → { state, lastUpdate, agent }.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            sessionId: { type: "string" },
+            agent: { type: "string" },
+          },
+          required: ["sessionId"],
+        },
+      },
+      tier: "read-only" as ToolTier,
       handler: async (args) => {
         const sessionId = args.sessionId as string;
-        // ACP sessions are transient — cancellation removes persisted state if any
-        const { rm } = await import("node:fs/promises");
-        const { join } = await import("node:path");
-        const { config } = await loadConfigAndProfile();
-        const sessionDir =
-          config.settings?.acp?.session_dir ?? join(resolveConfigDir(), "sessions");
-
-        // Path traversal guard: reject ../, /, \\, null bytes, absolute paths,
-        // and anything outside the strict ID charset. Then belt+suspenders:
-        // resolve and verify the path stays under sessionDir. (Wave 2.B)
-        const sessionPath = resolveSessionPathSafely(sessionDir, sessionId);
-
-        try {
-          await rm(sessionPath, { recursive: true });
-          return { action: "cancel", sessionId, status: "cancelled" };
-        } catch {
-          throw new Error(
-            `Session "${sessionId}" not found. Use am_acp_session_list to see active sessions.`,
-          );
+        const entry = activeSessions.get(sessionId);
+        if (entry) {
+          return {
+            sessionId,
+            agent: entry.agent,
+            state: "active",
+            lastUpdate: new Date().toISOString(),
+            backend: entry.kind,
+          };
         }
+        return {
+          sessionId,
+          agent: (args.agent as string) ?? null,
+          state: "unknown",
+          lastUpdate: null,
+          backend: null,
+        };
+      },
+    },
+    {
+      def: {
+        name: "am_agent_detect",
+        description:
+          "Detect which ACP/A2A agents are available on this host. Currently returns the known built-in ACP registry and any A2A roster entries. PATH-based detection will be expanded when Wave C's agent-detection helper lands.",
+        inputSchema: { type: "object", properties: {} },
+      },
+      tier: "read-only" as ToolTier,
+      handler: async () => {
+        // TODO(Wave C agent-auto-detection): replace with the PATH-based helper
+        // once it lands. See docs/reviews/2026-04-17-iter4-system-critique/02-agent-auto-detection.md.
+        const { listAllAgentsAsync } = await import("../core/agent-registry");
+        const { config } = await loadConfigAndProfile();
+        const configDir = resolveConfigDir();
+        const agents = await listAllAgentsAsync(config, configDir);
+        return {
+          detected: agents.map((a) => ({
+            name: a.name,
+            source: a.source,
+            protocol: a.acp && a.a2a ? "both" : a.acp ? "acp" : "a2a",
+            // Without Wave C we can't probe binaries on PATH cheaply; return null.
+            // Consumers treat null as "not verified" not "absent".
+            reachable: null,
+          })),
+          note: "PATH-based liveness probe deferred to Wave C agent-auto-detection helper.",
+        };
       },
     },
   ];
+}
+
+// ── Wave D unified-tool handler implementations ─────────────────
+//
+// Extracted so that deprecated aliases can share the same handler without
+// duplicating the logic. All three take (args, ctx); ctx.emitProgress is
+// a no-op when no progressToken was supplied.
+
+async function invokeAgentImpl(args: Record<string, unknown>, ctx: ToolContext): Promise<unknown> {
+  const { resolveAgentAsync } = await import("../core/agent-registry");
+  const agentName = args.agent as string;
+  const sessionName = args.session as string | undefined;
+  const cwd = (args.cwd as string) ?? process.cwd();
+  const streamRequested = Boolean(args.stream) || ctx.progressToken !== undefined;
+
+  // Flatten prompt into a single text string. Structured prompts get joined
+  // with blank lines so the underlying ACP/A2A transport sees one cohesive
+  // prompt. This is intentionally lossy — more sophisticated multi-message
+  // routing lands in a follow-up once we define a per-transport contract.
+  let promptText: string;
+  const rawPrompt = args.prompt;
+  if (typeof rawPrompt === "string") {
+    promptText = rawPrompt;
+  } else if (
+    rawPrompt &&
+    typeof rawPrompt === "object" &&
+    Array.isArray((rawPrompt as { messages?: unknown }).messages)
+  ) {
+    const messages = (rawPrompt as { messages: Array<{ role?: string; content: string }> })
+      .messages;
+    promptText = messages
+      .map((m) => (m.role ? `[${m.role}] ${m.content}` : m.content))
+      .join("\n\n");
+  } else {
+    throw new Error("prompt must be a string or an object with a messages array.");
+  }
+
+  const { config } = await loadConfigAndProfile();
+  const configDir = resolveConfigDir();
+  const entry = await resolveAgentAsync(agentName, config, configDir);
+  if (!entry) {
+    throw new Error(
+      `Unknown agent "${agentName}". Use am_agent_detect or am_agent_list to see available agents.`,
+    );
+  }
+
+  // ── Route: prefer ACP when both available (local-first per ADR-0031).
+  if (entry.acp) {
+    const { createAcpClient } = await import("../protocols/acp/client");
+    const client = createAcpClient();
+    const sessionId = sessionName ?? `am-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+
+    // Wire progress: ACP emits onSessionUpdate for every chunk/tool call.
+    // We forward those as notifications/progress when streaming is requested.
+    if (streamRequested) {
+      client.onSessionUpdate((update: unknown) => {
+        ctx.emitProgress({
+          message: { kind: "acp.session_update", sessionId, agent: agentName, data: update },
+        });
+      });
+    }
+
+    try {
+      await client.connect(entry.acp.command);
+      activeSessions.set(sessionId, {
+        kind: "acp",
+        agent: agentName,
+        client,
+      });
+      await client.newSession({ cwd });
+      const result = await client.prompt(sessionId, [{ type: "text", text: promptText }]);
+      return {
+        sessionId,
+        agent: agentName,
+        protocol: "acp",
+        result: result.text,
+        stopReason: result.stopReason,
+        toolCalls: result.toolCalls.map((tc) => ({
+          name: (tc as Record<string, unknown>).name ?? "unknown",
+        })),
+        streamed: streamRequested,
+      };
+    } finally {
+      activeSessions.delete(sessionId);
+      await client.disconnect().catch(() => {});
+    }
+  }
+
+  // ── Route: A2A
+  if (entry.a2a) {
+    const { A2AClient } = await import("../protocols/a2a/client");
+    const timeout = (args.timeout as number | undefined) ?? 120_000;
+    const client = new A2AClient({ timeout });
+    const sessionId =
+      sessionName ?? `am-a2a-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    activeSessions.set(sessionId, {
+      kind: "a2a",
+      agent: agentName,
+      baseUrl: entry.a2a.url,
+    });
+
+    try {
+      if (streamRequested) {
+        // sendSubscribe streams SSE events — forward each as a progress notif.
+        await client.sendSubscribe(
+          entry.a2a.url,
+          {
+            id: sessionId,
+            message: { role: "user", parts: [{ type: "text", text: promptText }] },
+          },
+          {
+            onStatus: (ev) =>
+              ctx.emitProgress({ message: { kind: "a2a.status", sessionId, data: ev } }),
+            onArtifact: (ev) =>
+              ctx.emitProgress({ message: { kind: "a2a.artifact", sessionId, data: ev } }),
+          },
+        );
+        // sendSubscribe resolves on stream close; fetch final task state for result body.
+        const finalTask = await client.getTask(entry.a2a.url, { id: sessionId });
+        return {
+          sessionId,
+          agent: agentName,
+          protocol: "a2a",
+          result: JSON.stringify(finalTask),
+          streamed: true,
+        };
+      }
+      const task = await client.sendTask(entry.a2a.url, {
+        id: sessionId,
+        message: { role: "user", parts: [{ type: "text", text: promptText }] },
+      });
+      return {
+        sessionId,
+        agent: agentName,
+        protocol: "a2a",
+        result: JSON.stringify(task),
+        streamed: false,
+      };
+    } finally {
+      activeSessions.delete(sessionId);
+    }
+  }
+
+  throw new Error(
+    `Agent "${agentName}" has neither an ACP nor A2A endpoint. Use am_agent_detect to verify registry state.`,
+  );
+}
+
+async function listAgentSessionsImpl(args: Record<string, unknown>): Promise<unknown> {
+  const agentFilter = args.agent as string | undefined;
+  const { readdir, stat } = await import("node:fs/promises");
+  const { join } = await import("node:path");
+  const { config } = await loadConfigAndProfile();
+  const sessionDir = config.settings?.acp?.session_dir ?? join(resolveConfigDir(), "sessions");
+
+  const sessions: Array<{
+    id: string;
+    agent: string;
+    backend: "acp" | "a2a" | "disk";
+    state: string;
+    created?: string;
+  }> = [];
+
+  // 1. In-memory active sessions (authoritative).
+  for (const [id, entry] of activeSessions.entries()) {
+    if (agentFilter && entry.agent !== agentFilter) continue;
+    sessions.push({
+      id,
+      agent: entry.agent,
+      backend: entry.kind,
+      state: "active",
+    });
+  }
+
+  // 2. Persisted on-disk ACP sessions (fallback if not live).
+  try {
+    const entries = await readdir(sessionDir);
+    const seen = new Set(sessions.map((s) => s.id));
+    for (const entry of entries) {
+      if (seen.has(entry)) continue;
+      try {
+        const info = await stat(join(sessionDir, entry));
+        sessions.push({
+          id: entry,
+          agent: "unknown",
+          backend: "disk",
+          state: "persisted",
+          created: info.birthtime.toISOString(),
+        });
+      } catch {
+        // skip
+      }
+    }
+  } catch {
+    // session dir missing — that's fine
+  }
+
+  return { sessions, total: sessions.length };
+}
+
+async function cancelSessionImpl(
+  args: Record<string, unknown>,
+  _ctx: ToolContext,
+): Promise<unknown> {
+  const sessionId = args.sessionId as string;
+  const { rm } = await import("node:fs/promises");
+  const { join } = await import("node:path");
+  const { config } = await loadConfigAndProfile();
+  const sessionDir = config.settings?.acp?.session_dir ?? join(resolveConfigDir(), "sessions");
+
+  // Path traversal guard first — defence in depth.
+  const sessionPath = resolveSessionPathSafely(sessionDir, sessionId);
+
+  // 1. If the session is live, call the spec'd cancel RPC on the right backend.
+  //    This is THE BUG FIX: the legacy handler only rm'd the dir. The new
+  //    flow calls the protocol cancel first, then removes persisted state.
+  const entry = activeSessions.get(sessionId);
+  let cancelled = false;
+  if (entry) {
+    if (entry.kind === "acp") {
+      try {
+        await entry.client.cancel(sessionId);
+        cancelled = true;
+      } catch (err) {
+        // Cancel RPC failed (agent crashed, stream already closed, etc.).
+        // Don't abandon the rm — proceed to the filesystem cleanup step
+        // so the session isn't orphaned. Surface error info in response.
+        cancelled = false;
+        // Attach err for callers that want to inspect it (stringified).
+        (entry as unknown as { _cancelError?: string })._cancelError =
+          err instanceof Error ? err.message : String(err);
+      }
+    } else if (entry.kind === "a2a") {
+      try {
+        const { A2AClient } = await import("../protocols/a2a/client");
+        const client = new A2AClient({ timeout: 30_000 });
+        await client.cancelTask(entry.baseUrl, { id: sessionId });
+        cancelled = true;
+      } catch {
+        cancelled = false;
+      }
+    }
+    activeSessions.delete(sessionId);
+  }
+
+  // 2. Remove persisted state (always attempted; silent if absent).
+  let removed = false;
+  try {
+    await rm(sessionPath, { recursive: true });
+    removed = true;
+  } catch {
+    // Session dir absent: fine if we already cancelled via RPC; otherwise
+    // this is the legacy "session not found" error signal.
+    if (!cancelled) {
+      throw new Error(
+        `Session "${sessionId}" not found. Use am_agent_session_list to see active sessions.`,
+      );
+    }
+  }
+
+  return {
+    action: "cancel",
+    sessionId,
+    status: "cancelled",
+    cancelled, // true if protocol cancel RPC succeeded
+    removed, // true if persisted dir was removed
+  };
 }
 
 // ── MCP Server class ────────────────────────────────────────────
@@ -2045,6 +2471,28 @@ export class McpServer {
   private settings?: Settings;
   /** Auth config (Wave 2.B): tokens + unsafe-local flag. */
   private auth: AuthConfig;
+  /**
+   * Wave D: sink for `notifications/progress` emitted during tool calls.
+   * Default sink writes newline-delimited JSON-RPC to stdout — matches the
+   * format of the `serve()` loop. Tests override this to capture
+   * notifications in memory.
+   */
+  private progressSink: ProgressSink = (notif) => {
+    try {
+      process.stdout.write(`${JSON.stringify(notif)}\n`);
+    } catch {
+      // Best-effort: a broken stdout shouldn't crash the tool call.
+    }
+  };
+
+  /** Install a custom progress sink. Returns a restore function. */
+  setProgressSink(sink: ProgressSink): () => void {
+    const prev = this.progressSink;
+    this.progressSink = sink;
+    return () => {
+      this.progressSink = prev;
+    };
+  }
 
   /**
    * Wave C: per-session initialization state. Per MCP spec the client MUST
@@ -2282,7 +2730,7 @@ export class McpServer {
             capabilities: { tools: {} },
             serverInfo: {
               name: "agent-manager",
-              version: "0.1.0",
+              version: AM_VERSION,
             },
           },
         };
@@ -2381,7 +2829,32 @@ export class McpServer {
         }
 
         try {
-          const result = await tool.handler(toolArgs);
+          // Wave D: build the ToolContext. Extract a progressToken from
+          // params._meta (standard MCP convention). When present, we emit
+          // `notifications/progress` via the configured sink; when absent,
+          // emitProgress is a no-op (graceful fallback for older clients).
+          const meta = (params._meta as Record<string, unknown> | undefined) ?? undefined;
+          const rawToken = meta?.progressToken;
+          const progressToken: string | number | undefined =
+            typeof rawToken === "string" || typeof rawToken === "number" ? rawToken : undefined;
+          const sink = this.progressSink;
+          const ctx: ToolContext = {
+            progressToken,
+            emitProgress: (payload) => {
+              if (progressToken === undefined) return;
+              sink({
+                jsonrpc: "2.0",
+                method: "notifications/progress",
+                params: {
+                  progressToken,
+                  ...(payload.progress !== undefined ? { progress: payload.progress } : {}),
+                  ...(payload.total !== undefined ? { total: payload.total } : {}),
+                  ...(payload.message !== undefined ? { message: payload.message } : {}),
+                },
+              });
+            },
+          };
+          const result = await tool.handler(toolArgs, ctx);
           return {
             jsonrpc: "2.0",
             id,

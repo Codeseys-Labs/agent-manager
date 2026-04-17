@@ -363,6 +363,24 @@ const sessionSubcommand = defineCommand({
   },
 });
 
+/**
+ * Iter4 Wave A: `am acp` top-level namespace for ACP-specific live-session
+ * management. Moved out from under `am run` because the `run` root has
+ * positional args (`<agent> <prompt>`) and citty treated subcommands as a
+ * higher-precedence lookup, making `am run claude "..."` unreachable.
+ *
+ * Today only `session` lives here. Future: `am acp detect`, `am acp probe`.
+ */
+export const acpCommand = defineCommand({
+  meta: {
+    name: "acp",
+    description: "ACP protocol operations (live sessions, agent probing)",
+  },
+  subCommands: {
+    session: () => Promise.resolve(sessionSubcommand),
+  },
+});
+
 // ── Export top-level command ────────────────────────────────────
 
 export const runCommand = defineCommand({
@@ -407,17 +425,19 @@ export const runCommand = defineCommand({
       default: false,
     },
   },
-  subCommands: {
-    agents: () => Promise.resolve(agentsSubcommand),
-    session: () => Promise.resolve(sessionSubcommand),
-  },
+  // Iter4 Wave A: removed conflicting `agents` and `session` subcommands.
+  // citty was routing the first positional through subCommand lookup, making
+  // `am run claude "hello"` unreachable. `agents` deprecation is complete —
+  // use `am agent list`. Live sessions live under `am acp session` (new
+  // top-level namespace) via the exported sessionSubcommand below.
   async run({ args }) {
-    // If we reach here, it's the main `am run <agent> <prompt>` form
+    // The main `am run <agent> <prompt>` form
     const promptText = args.prompt as string | undefined;
     if (!promptText) {
       error(
-        'Usage: am run <agent> "<prompt>" or am run session (for live ACP sessions). ' +
-          "For agent discovery use `am agent list`.",
+        'Usage: am run <agent> "<prompt>". ' +
+          "For agent discovery use `am agent list`. " +
+          "For live sessions use `am acp session list/cancel`.",
         {
           json: args.json,
           quiet: args.quiet,

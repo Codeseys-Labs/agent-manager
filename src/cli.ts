@@ -51,6 +51,7 @@ const main = defineCommand({
     agent: () => import("./commands/agents").then((m) => m.agentsCommand),
     agents: () => import("./commands/agents").then((m) => m.agentsCommand),
     run: () => import("./commands/run").then((m) => m.runCommand),
+    acp: () => import("./commands/run").then((m) => m.acpCommand),
     flow: () => import("./commands/flow").then((m) => m.flowCommand),
     completion: () => import("./commands/completion").then((m) => m.completionCommand),
     marketplace: () => import("./commands/marketplace").then((m) => m.marketplaceCommand),

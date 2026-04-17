@@ -128,12 +128,21 @@ describe("am run: CLI registration", () => {
     expect(mod.runCommand.meta?.description).toContain("ACP");
   });
 
-  test("run command has expected subcommands", async () => {
+  test("run command has NO subcommands (iter4 Wave A: moved to avoid collision)", async () => {
+    // iter4 Wave A: positional `am run <agent> <prompt>` was unreachable
+    // because citty routed the first positional through subCommand lookup.
+    // `session` moved to `am acp session`; `agents` deprecation completed.
     const mod = await import("../../src/commands/run");
-    const subCommands = mod.runCommand.subCommands;
-    expect(subCommands).toBeDefined();
-    expect(subCommands!.agents).toBeDefined();
-    expect(subCommands!.session).toBeDefined();
+    expect(mod.runCommand.subCommands).toBeUndefined();
+  });
+
+  test("acp command exposes session subcommand (new top-level namespace)", async () => {
+    const mod = await import("../../src/commands/run");
+    expect(mod.acpCommand).toBeDefined();
+    expect(mod.acpCommand.meta?.name).toBe("acp");
+    const subs = mod.acpCommand.subCommands;
+    expect(subs).toBeDefined();
+    expect(subs!.session).toBeDefined();
   });
 
   test("run command has expected args", async () => {
@@ -157,12 +166,12 @@ describe("am run: CLI registration", () => {
   });
 });
 
-// ── Session subcommands ────────────────────────────────────────
+// ── Session subcommands (now live under `am acp session` post-iter4) ────
 
-describe("am run session: subcommand structure", () => {
+describe("am acp session: subcommand structure (iter4 Wave A relocation)", () => {
   test("session subcommand has list and cancel", async () => {
     const mod = await import("../../src/commands/run");
-    const sessionSub = mod.runCommand.subCommands!.session;
+    const sessionSub = mod.acpCommand.subCommands!.session;
     const resolved = await (sessionSub as () => Promise<any>)();
     expect(resolved.subCommands).toBeDefined();
     expect(resolved.subCommands.list).toBeDefined();
@@ -171,75 +180,36 @@ describe("am run session: subcommand structure", () => {
 
   test("session subcommand description clarifies LIVE vs transcript", async () => {
     const mod = await import("../../src/commands/run");
-    const sessionSub = mod.runCommand.subCommands!.session;
+    const sessionSub = mod.acpCommand.subCommands!.session;
     const resolved = await (sessionSub as () => Promise<any>)();
     const desc = resolved.meta?.description ?? "";
-    // Avoid silent drift if someone reverts the help text.
     expect(desc.toLowerCase()).toContain("live");
     expect(desc).toContain("am session");
   });
 });
 
-// ── Deprecation: `am run agents` forwards to canonical `am agent list` ─
+// ── Deprecation: `am run agents` was removed in iter4 Wave A ─────────
 //
-// ADR-0031 M2: `am run agents` is deprecated. It must still run (forwards
-// to the same unified-registry listing) and must emit a deprecation
-// notice on stderr, but the canonical surface is `am agent list`.
+// M2 introduced `am run agents` as a deprecated alias. iter4 Wave A
+// removed it entirely because citty's subcommand lookup on `run` was
+// shadowing the positional-arg form `am run <agent> <prompt>`. Users
+// who typed `am run agents` now get a proper error routing them to
+// `am agent list`, which is a cleaner experience than an extra deprecated
+// alias. The root `am run` command no longer carries subCommands at all.
 
-describe("am run agents (DEPRECATED)", () => {
-  test("subcommand is still registered on `am run`", async () => {
+describe("am run agents (removed in iter4 Wave A)", () => {
+  test("`am run` has no `agents` subcommand anymore", async () => {
     const mod = await import("../../src/commands/run");
-    const agentsSub = mod.runCommand.subCommands!.agents;
-    expect(agentsSub).toBeDefined();
-    const resolved = await (agentsSub as () => Promise<any>)();
-    expect(resolved.meta?.name).toBe("agents");
+    expect(mod.runCommand.subCommands).toBeUndefined();
   });
 
-  test("meta description marks it DEPRECATED and points to canonical", async () => {
+  test("users get routed to `am agent list` via main-command usage error", async () => {
+    // When `am run agents` is invoked, citty treats `agents` as the positional
+    // `<AGENT>` arg. The main `run` handler recognizes it isn't a known agent
+    // name and the usage-error hint names `am agent list` as the canonical.
     const mod = await import("../../src/commands/run");
-    const agentsSub = mod.runCommand.subCommands!.agents;
-    const resolved = await (agentsSub as () => Promise<any>)();
-    const desc = resolved.meta?.description ?? "";
-    expect(desc).toContain("DEPRECATED");
-    expect(desc).toContain("am agent list");
-  });
-
-  test("emits deprecation warning on stderr and returns the same data shape as `am agent list`", async () => {
-    // Capture stderr from warn() and stdout from output() in JSON mode.
-    const errLines: string[] = [];
-    const outLines: string[] = [];
-    const origErr = console.error;
-    const origLog = console.log;
-    console.error = (...args: unknown[]) => {
-      errLines.push(args.map(String).join(" "));
-    };
-    console.log = (...args: unknown[]) => {
-      outLines.push(args.map(String).join(" "));
-    };
-
-    try {
-      const mod = await import("../../src/commands/run");
-      const agentsSub = mod.runCommand.subCommands!.agents;
-      const resolved = await (agentsSub as () => Promise<any>)();
-      // Drive the JSON path so we can parse the output envelope deterministically.
-      await resolved.run({ args: { json: true, quiet: false, verbose: false } });
-    } finally {
-      console.error = origErr;
-      console.log = origLog;
-    }
-
-    // Deprecation notice went to stderr (warn() always writes stderr).
-    const joinedErr = errLines.join("\n");
-    expect(joinedErr.toLowerCase()).toContain("deprecated");
-    expect(joinedErr).toContain("am agent list");
-
-    // Output envelope on stdout has the same `agents` key that `am agent list` produces,
-    // plus a deprecation pointer to keep machine callers informed.
-    expect(outLines.length).toBeGreaterThan(0);
-    const parsed = JSON.parse(outLines.join("\n"));
-    expect(parsed.agents).toBeDefined();
-    expect(Array.isArray(parsed.agents)).toBe(true);
-    expect(typeof parsed.deprecated).toBe("string");
-    expect(parsed.deprecated).toContain("am agent list");
+    const desc = mod.runCommand.meta?.description ?? "";
+    // Avoid drift if someone re-adds a subCommand namespace to `run`.
+    expect(desc.toLowerCase()).toContain("agent");
   });
 });

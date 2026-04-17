@@ -127,6 +127,7 @@ export async function showGroupedUsage(cmd: any, parent?: any): Promise<void> {
     return cittyShowUsage(cmd, parent);
   }
 
-  const version = meta?.version ?? "0.1.0";
+  const { AM_VERSION } = await import("./lib/version");
+  const version = meta?.version ?? AM_VERSION;
   console.log(renderGroupedHelp(version));
 }

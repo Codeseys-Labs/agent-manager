@@ -13,6 +13,7 @@ import {
   resolveProjectConfig,
   writeConfig,
 } from "../core/config";
+import { applyResolved, withConfig } from "../core/controller";
 import { commitAll, getStatus, pull as gitPull, push as gitPush } from "../core/git";
 import {
   encryptValue,
@@ -23,6 +24,7 @@ import {
   saveKey,
 } from "../core/secrets";
 import { errorMessage } from "../lib/errors";
+import { AM_VERSION } from "../lib/version";
 
 // ── Token-based authentication for local web server ─────────────
 
@@ -133,7 +135,7 @@ export async function createApp(options?: CreateAppOptions) {
   // --- API Routes ---
 
   app.get("/api/health", (c) => {
-    return c.json({ status: "ok", version: "0.1.0" });
+    return c.json({ status: "ok", version: AM_VERSION });
   });
 
   app.get("/api/config", async (c) => {
@@ -171,45 +173,53 @@ export async function createApp(options?: CreateAppOptions) {
         return c.json({ error: "name and command are required" }, 400);
       }
 
-      const { config, configPath, configDir: dir } = await getConfigAndWritePath();
-      if (!config.servers) config.servers = {};
-      if (config.servers[name]) {
+      const dir = resolveConfigDir();
+      type Outcome = { status: "ok" } | { status: "duplicate" } | { status: "missing-config" };
+      const outcome = await withConfig<Outcome>(dir, async (config) => {
+        if (!config) return { result: { status: "missing-config" }, changed: false };
+        if (!config.servers) config.servers = {};
+        if (config.servers[name]) {
+          return { result: { status: "duplicate" }, changed: false };
+        }
+        config.servers[name] = {
+          command,
+          args: args ?? [],
+          env: env ?? {},
+          tags: tags ?? [],
+          description: description ?? "",
+          transport: transport ?? "stdio",
+          enabled: true,
+        };
+
+        const { scanServerForSecrets, substituteSecret } = await import("../core/secret-detection");
+        const scanResult = await scanServerForSecrets(name, config.servers[name]);
+        if (scanResult.secrets.length > 0) {
+          let key = await loadKey(dir);
+          if (!key) {
+            const b64 = await generateKey();
+            await saveKey(dir, b64);
+            key = await importKey(b64);
+          }
+          for (const secret of scanResult.secrets) {
+            substituteSecret(config.servers[name], secret, secret.suggestedEnvVar);
+            if (!config.settings) config.settings = {};
+            if (!config.settings.env) config.settings.env = {};
+            config.settings.env[secret.suggestedEnvVar] = await encryptValue(secret.value, key);
+          }
+        }
+        return {
+          result: { status: "ok" },
+          commitMessage: `add server: ${name}`,
+          changed: true,
+        };
+      });
+
+      if (outcome.status === "missing-config") {
+        return c.json({ error: "Config not found. Run `am init` first." }, 500);
+      }
+      if (outcome.status === "duplicate") {
         return c.json({ error: `Server "${name}" already exists` }, 409);
       }
-
-      config.servers[name] = {
-        command,
-        args: args ?? [],
-        env: env ?? {},
-        tags: tags ?? [],
-        description: description ?? "",
-        transport: transport ?? "stdio",
-        enabled: true,
-      };
-
-      // Secret detection + encryption
-      const { scanServerForSecrets, substituteSecret } = await import("../core/secret-detection");
-      const scanResult = await scanServerForSecrets(name, config.servers[name]);
-      if (scanResult.secrets.length > 0) {
-        let key = await loadKey(dir);
-        if (!key) {
-          const b64 = await generateKey();
-          await saveKey(dir, b64);
-          key = await importKey(b64);
-        }
-        for (const secret of scanResult.secrets) {
-          substituteSecret(config.servers[name], secret, secret.suggestedEnvVar);
-          if (!config.settings) config.settings = {};
-          if (!config.settings.env) config.settings.env = {};
-          config.settings.env[secret.suggestedEnvVar] = await encryptValue(secret.value, key);
-        }
-      }
-
-      await writeConfig(configPath, config);
-      try {
-        await commitAll(dir, `add server: ${name}`);
-      } catch {}
-
       return c.json({ action: "add", server: name }, 201);
     } catch (err) {
       return c.json({ error: errorMessage(err) }, 500);
@@ -221,25 +231,30 @@ export async function createApp(options?: CreateAppOptions) {
       const serverName = c.req.param("name");
       const body = await c.req.json();
 
-      const { config, configPath, configDir: dir } = await getConfigAndWritePath();
-      if (!config.servers?.[serverName]) {
+      const dir = resolveConfigDir();
+      type Outcome = { status: "ok" } | { status: "not-found" };
+      const outcome = await withConfig<Outcome>(dir, async (config) => {
+        if (!config?.servers?.[serverName]) {
+          return { result: { status: "not-found" }, changed: false };
+        }
+        const existing = config.servers[serverName];
+        if (body.command !== undefined) existing.command = body.command;
+        if (body.args !== undefined) existing.args = body.args;
+        if (body.env !== undefined) existing.env = body.env;
+        if (body.tags !== undefined) existing.tags = body.tags;
+        if (body.description !== undefined) existing.description = body.description;
+        if (body.transport !== undefined) existing.transport = body.transport;
+        if (body.enabled !== undefined) existing.enabled = body.enabled;
+        return {
+          result: { status: "ok" },
+          commitMessage: `update server: ${serverName}`,
+          changed: true,
+        };
+      });
+
+      if (outcome.status === "not-found") {
         return c.json({ error: `Server "${serverName}" not found` }, 404);
       }
-
-      const existing = config.servers[serverName];
-      if (body.command !== undefined) existing.command = body.command;
-      if (body.args !== undefined) existing.args = body.args;
-      if (body.env !== undefined) existing.env = body.env;
-      if (body.tags !== undefined) existing.tags = body.tags;
-      if (body.description !== undefined) existing.description = body.description;
-      if (body.transport !== undefined) existing.transport = body.transport;
-      if (body.enabled !== undefined) existing.enabled = body.enabled;
-
-      await writeConfig(configPath, config);
-      try {
-        await commitAll(dir, `update server: ${serverName}`);
-      } catch {}
-
       return c.json({ action: "update", server: serverName });
     } catch (err) {
       return c.json({ error: errorMessage(err) }, 500);
@@ -250,18 +265,23 @@ export async function createApp(options?: CreateAppOptions) {
     try {
       const serverName = c.req.param("name");
 
-      const { config, configPath, configDir: dir } = await getConfigAndWritePath();
-      if (!config.servers?.[serverName]) {
+      const dir = resolveConfigDir();
+      type Outcome = { status: "ok" } | { status: "not-found" };
+      const outcome = await withConfig<Outcome>(dir, async (config) => {
+        if (!config?.servers?.[serverName]) {
+          return { result: { status: "not-found" }, changed: false };
+        }
+        delete config.servers[serverName];
+        return {
+          result: { status: "ok" },
+          commitMessage: `remove server: ${serverName}`,
+          changed: true,
+        };
+      });
+
+      if (outcome.status === "not-found") {
         return c.json({ error: `Server "${serverName}" not found` }, 404);
       }
-
-      delete config.servers[serverName];
-
-      await writeConfig(configPath, config);
-      try {
-        await commitAll(dir, `remove server: ${serverName}`);
-      } catch {}
-
       return c.json({ action: "delete", server: serverName });
     } catch (err) {
       return c.json({ error: errorMessage(err) }, 500);
@@ -277,55 +297,61 @@ export async function createApp(options?: CreateAppOptions) {
       }
 
       const imported = await adapter.import({});
-      const { config, configPath, configDir: dir } = await getConfigAndWritePath();
+      const dir = resolveConfigDir();
 
-      // Merge imported servers into config
-      if (imported.servers) {
-        if (!config.servers) config.servers = {};
-        for (const [name, srv] of Object.entries(imported.servers)) {
-          config.servers[name] = {
-            command: srv.command,
-            args: srv.args,
-            env: srv.env,
-            transport: srv.transport ?? "stdio",
-            description: srv.description,
-            tags: srv.tags,
-            enabled: srv.enabled ?? true,
-          };
+      const result = await withConfig<{ servers: string[] }>(dir, async (config) => {
+        if (!config) throw new Error("Config not found. Run `am init` first.");
+
+        if (imported.servers) {
+          if (!config.servers) config.servers = {};
+          for (const [name, srv] of Object.entries(imported.servers)) {
+            config.servers[name] = {
+              command: srv.command,
+              args: srv.args,
+              env: srv.env,
+              transport: srv.transport ?? "stdio",
+              description: srv.description,
+              tags: srv.tags,
+              enabled: srv.enabled ?? true,
+            };
+          }
         }
-      }
 
-      // Secret detection + encryption on imported servers
-      if (imported.servers) {
-        const { scanServerForSecrets, substituteSecret } = await import("../core/secret-detection");
-        for (const [name, srv] of Object.entries(imported.servers)) {
-          const scanResult = await scanServerForSecrets(name, srv);
-          if (scanResult.secrets.length > 0) {
-            let key = await loadKey(dir);
-            if (!key) {
-              const b64 = await generateKey();
-              await saveKey(dir, b64);
-              key = await importKey(b64);
-            }
-            for (const secret of scanResult.secrets) {
-              substituteSecret(config.servers![name], secret, secret.suggestedEnvVar);
-              if (!config.settings) config.settings = {};
-              if (!config.settings.env) config.settings.env = {};
-              config.settings.env[secret.suggestedEnvVar] = await encryptValue(secret.value, key);
+        if (imported.servers) {
+          const { scanServerForSecrets, substituteSecret } = await import(
+            "../core/secret-detection"
+          );
+          for (const [name, srv] of Object.entries(imported.servers)) {
+            const scanResult = await scanServerForSecrets(name, srv);
+            if (scanResult.secrets.length > 0) {
+              let key = await loadKey(dir);
+              if (!key) {
+                const b64 = await generateKey();
+                await saveKey(dir, b64);
+                key = await importKey(b64);
+              }
+              for (const secret of scanResult.secrets) {
+                substituteSecret(config.servers![name], secret, secret.suggestedEnvVar);
+                if (!config.settings) config.settings = {};
+                if (!config.settings.env) config.settings.env = {};
+                config.settings.env[secret.suggestedEnvVar] = await encryptValue(secret.value, key);
+              }
             }
           }
         }
-      }
 
-      await writeConfig(configPath, config);
-      try {
-        await commitAll(dir, `import from ${adapterName}`);
-      } catch {}
+        const serverNames = Object.keys(imported.servers ?? {});
+        return {
+          result: { servers: serverNames },
+          commitMessage: `import from ${adapterName}`,
+          changed: serverNames.length > 0,
+        };
+      });
 
       return c.json({
         action: "import",
         adapter: adapterName,
-        servers: Object.keys(imported.servers ?? {}),
+        servers: result.servers,
       });
     } catch (err) {
       return c.json({ error: errorMessage(err) }, 500);
@@ -433,48 +459,16 @@ export async function createApp(options?: CreateAppOptions) {
 
   app.post("/api/apply", async (c) => {
     try {
-      const { config, configDir, profileName } = await getConfigAndProfile();
-
-      // Decrypt encrypted values before building resolved config
-      const encryptionKey = await loadKey(configDir);
-      const { config: interpolated } = await interpolateEnvAsync(config, {
-        encryptionKey: encryptionKey ?? undefined,
-      });
-
-      const resolved = buildResolvedConfig(interpolated, profileName, configDir);
-
-      const adapters = await getDetectedAdapters();
-      const results: Array<{
-        adapter: string;
-        files: Array<{ path: string; written: boolean }>;
-        warnings: string[];
-      }> = [];
-
-      for (const adapter of adapters) {
-        try {
-          const result = await adapter.export(resolved, { dryRun: false });
-          results.push({
-            adapter: adapter.meta.name,
-            files: result.files.map((f) => ({
-              path: f.path,
-              written: f.written,
-            })),
-            warnings: result.warnings,
-          });
-        } catch (e: unknown) {
-          results.push({
-            adapter: adapter.meta.name,
-            files: [],
-            warnings: [errorMessage(e) || "export failed"],
-          });
-        }
-      }
-
+      const applyResult = await applyResolved(resolveConfigDir(), { dryRun: false });
       return c.json({
         action: "apply",
-        profile: profileName,
+        profile: applyResult.profile,
         dryRun: false,
-        results,
+        results: applyResult.results.map((r) => ({
+          adapter: r.adapter,
+          files: r.files,
+          warnings: r.warnings,
+        })),
       });
     } catch (e: unknown) {
       return c.json({ error: errorMessage(e) || "Apply failed" }, 500);
