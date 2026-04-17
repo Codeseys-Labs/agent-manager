@@ -97,7 +97,9 @@ describe("marketplace/installer", () => {
 
       expect(result.skills).toEqual(["my-skill", "other-skill"]);
       expect(config.skills?.["my-skill"]).toBeDefined();
-      expect(config.skills?.["my-skill"].path).toBe("/fake/path/skill-plugin/skills/my-skill/");
+      // `safeResolveInsidePlugin` normalises via path.resolve, which strips
+      // trailing slashes — that's semantically equivalent for fs access.
+      expect(config.skills?.["my-skill"].path).toBe("/fake/path/skill-plugin/skills/my-skill");
       expect(config.skills?.["my-skill"]._marketplace).toBeDefined();
       expect(config.skills?.["my-skill"]._marketplace?.package).toBe("skill-plugin");
     });

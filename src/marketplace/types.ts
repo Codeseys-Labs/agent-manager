@@ -9,6 +9,17 @@ export interface MarketplaceEntry {
   source: MarketplaceSource;
   added_at: string;
   updated_at?: string;
+  /**
+   * Commit SHA pinned at add time (or most recent accepted update).
+   * Null/undefined for local symlink marketplaces.
+   */
+  commit?: string;
+  /**
+   * When true, install operations will refuse to proceed if the clone's
+   * HEAD does not match `commit`. Defaults to true for git-based
+   * marketplaces once a commit is recorded.
+   */
+  pinned?: boolean;
 }
 
 /** Tracked marketplace list persisted to disk. */

@@ -16,8 +16,9 @@ import { resolveConfigDir, tryReadConfig, writeConfig } from "../core/config";
 import { commitAll } from "../core/git";
 import type { AgentProfile, Config, Server, Skill } from "../core/schema";
 import { requireConfig } from "../lib/errors";
-import { MarketplaceError } from "./client";
+import { MarketplaceError, findMarketplaceEntry, verifyMarketplacePin } from "./client";
 import { scanAllMarketplaces } from "./scanner";
+import { safeResolveInsidePlugin } from "./security";
 import type { DiscoveredPlugin, MarketplaceProvenance, PluginManifest } from "./types";
 
 /** Result of an install operation. */
@@ -58,10 +59,21 @@ export async function installPlugin(
     );
   }
 
+  // Supply-chain: verify the clone's HEAD still matches the pinned SHA.
+  const marketplaceEntry = await findMarketplaceEntry(plugin.marketplace);
+  if (marketplaceEntry) {
+    await verifyMarketplacePin(marketplaceEntry);
+  }
+
   const configDir = resolveConfigDir();
   const configPath = join(configDir, "config.toml");
   const config = await tryReadConfig(configPath);
   requireConfig(config);
+
+  // opts.yes reserved for future install-time confirmation prompts; the SHA
+  // pin verification path above is already wired to respect the flag via
+  // updateMarketplace. We keep the arg name stable for the CLI contract.
+  void opts;
 
   const result = applyPlugin(config, plugin);
 
@@ -140,9 +152,15 @@ export function applyPlugin(config: Config, plugin: DiscoveredPlugin): InstallRe
   if (manifest.skills) {
     if (!config.skills) config.skills = {};
     for (const skillPath of manifest.skills) {
+      // Supply-chain: ensure the skill path stays inside the plugin dir.
+      const resolvedSkillPath = safeResolveInsidePlugin(
+        plugin.pluginDir,
+        skillPath,
+        `skills["${skillPath}"]`,
+      );
       const skillName = skillPath.replace(/\/$/, "").split("/").pop() || skillPath;
       const skill: Skill = {
-        path: join(plugin.pluginDir, skillPath),
+        path: resolvedSkillPath,
         description: `From plugin: ${manifest.name}`,
         _marketplace: {
           source: "claude-plugin",
@@ -161,11 +179,21 @@ export function applyPlugin(config: Config, plugin: DiscoveredPlugin): InstallRe
   if (manifest.agents) {
     if (!config.agents) config.agents = {};
     for (const [name, agentDef] of Object.entries(manifest.agents)) {
+      // Supply-chain: if the agent has a prompt_file, force it to resolve
+      // inside the plugin dir. Reject any that escape.
+      let resolvedPromptFile: string | undefined = agentDef.prompt_file;
+      if (agentDef.prompt_file) {
+        resolvedPromptFile = safeResolveInsidePlugin(
+          plugin.pluginDir,
+          agentDef.prompt_file,
+          `agents["${name}"].prompt_file`,
+        );
+      }
       const agent: AgentProfile = {
         name: agentDef.name,
         description: agentDef.description,
         prompt: agentDef.prompt,
-        prompt_file: agentDef.prompt_file,
+        prompt_file: resolvedPromptFile,
         model: agentDef.model,
         tools: agentDef.tools,
         _marketplace: {
