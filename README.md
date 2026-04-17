@@ -1,15 +1,14 @@
 # agent-manager (`am`)
 
-**chezmoi for AI agent configs** -- define your MCP servers, skills, instructions,
-and agent profiles once in TOML, sync via git, and generate native configs for
-every AI coding tool. Single source of truth with MCP registry integration,
-knowledge synthesis, and agent-to-agent protocol support.
+**The control plane for your AI agents.** Define your catalog once (TOML,
+git-backed). Route any agent through a unified MCP gateway. Delegate locally
+via ACP or remotely via A2A. Subscribe to marketplaces. Remember sessions in
+an LLM-wiki. Edit from terminal, local web, or cloud.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Tests: 1864 pass](https://img.shields.io/badge/tests-1864%20pass-green.svg)](#testing)
+[![Tests: 2286 pass](https://img.shields.io/badge/tests-2286%20pass-green.svg)](#testing)
 [![Adapters: 13](https://img.shields.io/badge/adapters-13-purple.svg)](#adapter-support-matrix)
 [![MCP Tools: 33](https://img.shields.io/badge/MCP%20tools-33-orange.svg)](#mcp-server-mode)
-[![Commands: 31](https://img.shields.io/badge/commands-31-blue.svg)](#cli-reference)
 [![Bun](https://img.shields.io/badge/runtime-Bun-f9f1e1.svg)](https://bun.sh)
 
 ```bash
@@ -21,7 +20,36 @@ am use work                # switch to your work profile
 am apply                   # generate native configs for all detected tools
 ```
 
-One TOML file. Thirteen tools. Git-synced across every machine.
+One catalog. Thirteen tools. Git-synced across every machine. Agent-aware.
+
+---
+
+## The six pillars
+
+agent-manager is not "chezmoi for configs" — it outgrew that framing. It is
+a control plane for AI agents, built on six composing pillars:
+
+1. **Catalog + git sync.** Servers, skills, agents, plugins, profiles
+   defined once in TOML. User's choice of git backend. Brownfield import
+   from any supported tool.
+2. **MCP gateway.** `am mcp-serve` exposes the catalog as a stable MCP
+   endpoint. Plumb any agent into it once; the catalog becomes the single
+   source of truth.
+3. **Protocol router.** ACP for local subprocess agents (Claude Code,
+   Codex, Gemini, Cursor, Kiro, Copilot…). A2A for remote agents. Bridge
+   routes remote delegations into local ACP execution.
+4. **Marketplace.** Subscribe to git-backed catalogs of MCPs + skills +
+   plugins + agents. Supply-chain hardened (commit SHA pinning,
+   trust-on-first-use, path traversal scrub, `--ignore-scripts`).
+5. **LLM-wiki.** Karpathy-style session context capture. Globally
+   git-backed, locally mirrored per project. Agents using am have context
+   of what was done and discussed across sessions. Browse via `am wiki`.
+6. **Three UIs over one core.** TUI (`am tui`), local web (`am web`),
+   Cloudflare web (multi-device, auth-gated). All three talk to the same
+   core; they are skins, not competing products.
+
+See [ADR-0031](ADRs/0031-product-scope-and-pillars.md) for the formal
+statement of scope and explicit non-goals.
 
 ---
 
@@ -141,6 +169,24 @@ am marketplace install org/my-plugin                    # install a plugin
 am marketplace remove my-plugin                         # uninstall
 am marketplace update                                   # update marketplace repos
 ```
+
+### LLM-Wiki (pillar 5)
+
+Session context capture that agents using am can read. Globally git-backed;
+locally mirrored per project so the current directory has context of what
+was done. Inspired by Karpathy's LLM-Wiki pattern.
+
+```bash
+am wiki list                            # recent entries
+am wiki show <slug>                     # print one entry
+am wiki search "auth middleware"        # grep + semantic search
+am wiki sync                            # push/pull the global wiki via git
+am wiki path                            # print local wiki dir — cd "$(am wiki path)"
+```
+
+Entries flow in automatically from `am session` (transcript harvest) and can
+be authored manually via `am wiki add`. See [`docs/wiki/`](docs/) for the
+full authoring reference.
 
 ### Brownfield Import
 
