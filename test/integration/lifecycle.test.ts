@@ -1,6 +1,12 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, setDefaultTimeout, test } from "bun:test";
 import { join } from "node:path";
 import { type TestDir, createTestDir } from "../helpers/tmp";
+
+// Each test spawns `bun run src/cli.ts` — cold-start overhead is 1-3s
+// per invocation; some tests chain 5+ calls. The 5s default is too tight
+// under full-suite load. 30s gives comfortable headroom without hiding
+// real regressions (per-invocation should be well under 10s).
+setDefaultTimeout(30_000);
 
 let testDir: TestDir;
 
