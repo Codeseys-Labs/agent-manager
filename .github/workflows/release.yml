@@ -37,6 +37,25 @@ jobs:
             echo "::endgroup::"
           done
 
+      # macOS-only: ad-hoc sign the darwin binaries. Bun emits binaries with
+      # an ad-hoc/linker signature by default on macOS, but actions/upload-artifact
+      # zips files and STRIPS extended attributes including codesign signatures.
+      # Without a valid signature, macOS 14+ arm64 SIGKILLs on exec (exit 137).
+      # Re-sign before upload so the artifact retains a signature through the
+      # zip round-trip. Ad-hoc is sufficient for Gatekeeper once the user runs
+      # `xattr -dr com.apple.quarantine` or the download came via a tool that
+      # didn't set the quarantine bit.
+      - name: Ad-hoc sign darwin binaries (macOS only)
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          set -euo pipefail
+          for bin in dist/am-darwin-*; do
+            echo "Signing $bin"
+            codesign -s - --force --timestamp=none "$bin"
+            codesign -dv "$bin" 2>&1 | head -3
+          done
+
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
@@ -59,6 +78,18 @@ jobs:
         with:
           path: ./artifacts
           merge-multiple: true
+
+      # Even with ad-hoc signing applied on the builder, the round-trip
+      # through actions/upload-artifact (which zips, strips xattrs, then
+      # actions/download-artifact unpacks) can strip the signature again.
+      # This job runs on Linux so we can't codesign here — but we CAN
+      # document the expectation and fail loudly if the darwin binaries
+      # lack a Mach-O LC_CODE_SIGNATURE load command. Users will need to
+      # either trust the ad-hoc signature (macOS usually accepts it in
+      # place) or re-sign locally after download.
+      # TODO: migrate this job to macOS so we can re-sign on the release
+      # runner, or use a self-hosted Apple-ID-signed runner for production
+      # macOS distribution.
 
       - name: Generate checksums
         working-directory: ./artifacts
