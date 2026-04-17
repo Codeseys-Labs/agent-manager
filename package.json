@@ -1,7 +1,7 @@
 {
   "name": "agent-manager",
-  "version": "0.4.0",
-  "description": "chezmoi for AI agent configs — define once in TOML, sync via git, generate native configs for every tool",
+  "version": "0.5.0-rc1",
+  "description": "the control plane for AI agents — catalog, MCP gateway, protocol router (ACP/A2A), marketplace, LLM-wiki, and multi-UI",
   "type": "module",
   "main": "src/cli.ts",
   "bin": {
