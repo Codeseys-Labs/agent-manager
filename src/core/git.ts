@@ -7,7 +7,14 @@ const DEFAULT_AUTHOR = { name: "agent-manager", email: "am@localhost" };
 const GITIGNORE_ENTRIES = [
   "config.local.toml",
   ".agent-manager/state.toml",
+  // Legacy key locations — the master key now lives in the OS data dir (see
+  // `resolveKeyPath` in src/core/secrets.ts and SECURITY.md). These entries
+  // defensively ignore any stray file that lands back in the config dir
+  // (e.g. from an old migration, a manual copy, or a downgraded install).
   ".agent-manager/key.txt",
+  ".agent-manager/key",
+  ".agent-manager/key.*",
+  "**/key.txt",
 ];
 
 export async function initRepo(dir: string): Promise<void> {

@@ -6,7 +6,7 @@ import { getDetectedAdapters } from "../adapters/registry";
 import { resolveConfigDir, tryReadConfig, writeConfig } from "../core/config";
 import { addRemote, initRepo } from "../core/git";
 import type { Config } from "../core/schema";
-import { generateKey, saveKey } from "../core/secrets";
+import { generateKey, resolveKeyPath, saveKey } from "../core/secrets";
 import { errorMessage } from "../lib/errors";
 import { error, info, output } from "../lib/output";
 import { initProject } from "./init-project";
@@ -84,12 +84,10 @@ export const initCommand = defineCommand({
         initialValue: true,
       });
       if (!clack.isCancel(setupKey) && setupKey) {
-        const keyDir = join(configDir, ".agent-manager");
-        await mkdir(keyDir, { recursive: true });
         const base64Key = await generateKey();
         await saveKey(configDir, base64Key);
         keyGenerated = true;
-        info("Encryption key saved to .agent-manager/key.txt (gitignored)", opts);
+        info(`Encryption key saved to ${resolveKeyPath()} (outside git-tracked config dir)`, opts);
         info("Use `am secret set <name> <value>` to encrypt secrets", opts);
       }
     }

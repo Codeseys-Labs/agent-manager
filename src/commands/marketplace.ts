@@ -18,6 +18,35 @@ const addCommand = defineCommand({
   args: {
     url: { type: "positional", description: "Git URL or local path to clone", required: true },
     name: { type: "string", description: "Alias for the marketplace (defaults to repo name)" },
+    yes: {
+      type: "boolean",
+      alias: "y",
+      description: "Skip trust-on-first-use prompt",
+      default: false,
+    },
+    "allow-http": {
+      type: "boolean",
+      description: "Allow http:// URLs (insecure)",
+      default: false,
+    },
+    "allow-file": {
+      type: "boolean",
+      description: "Allow file:// URLs (for local testing)",
+      default: false,
+    },
+    "allow-nonstandard-port": {
+      type: "boolean",
+      description: "Allow ports other than 443/80",
+      default: false,
+    },
+    "max-clone-bytes": {
+      type: "string",
+      description: "Maximum clone size in bytes (default 100MiB)",
+    },
+    "clone-timeout": {
+      type: "string",
+      description: "Clone timeout in milliseconds (default 60000)",
+    },
     json: { type: "boolean", default: false },
     quiet: { type: "boolean", alias: "q", default: false },
     verbose: { type: "boolean", alias: "v", default: false },
@@ -26,8 +55,24 @@ const addCommand = defineCommand({
     const opts = { json: args.json, quiet: args.quiet, verbose: args.verbose };
     try {
       debug(`Adding marketplace from ${args.url}`, opts);
-      const entry = await addMarketplace(args.url, args.name);
+      const maxBytes = args["max-clone-bytes"]
+        ? Number.parseInt(args["max-clone-bytes"] as string, 10)
+        : undefined;
+      const timeoutMs = args["clone-timeout"]
+        ? Number.parseInt(args["clone-timeout"] as string, 10)
+        : undefined;
+      const entry = await addMarketplace(args.url, args.name, {
+        yes: args.yes,
+        allowHttp: args["allow-http"],
+        allowFile: args["allow-file"],
+        allowNonstandardPort: args["allow-nonstandard-port"],
+        maxCloneBytes: maxBytes,
+        cloneTimeoutMs: timeoutMs,
+      });
       info(`Added marketplace "${entry.name}" from ${entry.url}`, opts);
+      if (entry.commit) {
+        info(`  Pinned commit: ${entry.commit.slice(0, 12)}`, opts);
+      }
       output({ action: "add", marketplace: entry }, opts);
     } catch (err) {
       amError(err, opts);
@@ -159,6 +204,12 @@ const updateCommand = defineCommand({
       description: "Marketplace name (omit to update all)",
       required: false,
     },
+    yes: {
+      type: "boolean",
+      alias: "y",
+      description: "Auto-accept new commit SHAs on pinned marketplaces",
+      default: false,
+    },
     json: { type: "boolean", default: false },
     quiet: { type: "boolean", alias: "q", default: false },
     verbose: { type: "boolean", alias: "v", default: false },
@@ -166,7 +217,7 @@ const updateCommand = defineCommand({
   async run({ args }) {
     const opts = { json: args.json, quiet: args.quiet, verbose: args.verbose };
     try {
-      const updated = await updateMarketplace(args.name as string | undefined);
+      const updated = await updateMarketplace(args.name as string | undefined, { yes: args.yes });
       for (const entry of updated) {
         info(`Updated "${entry.name}"`, opts);
       }

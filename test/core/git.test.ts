@@ -36,7 +36,12 @@ describe("initRepo", () => {
     const content = await readFile(join(dir, ".gitignore"), "utf-8");
     expect(content).toContain("config.local.toml");
     expect(content).toContain(".agent-manager/state.toml");
+    // Legacy key paths — master key now lives in OS data dir, but these
+    // entries defensively ignore any stray file that lands back in the
+    // config dir.
     expect(content).toContain(".agent-manager/key.txt");
+    expect(content).toContain(".agent-manager/key");
+    expect(content).toContain("**/key.txt");
   });
 
   test("creates initial commit", async () => {

@@ -6,6 +6,7 @@ import { getAdapter, listAdapters } from "../adapters/registry";
 import { resolveConfigDir, resolveProjectConfig, tryReadConfig } from "../core/config";
 import { getStatus } from "../core/git";
 import { scanConfigForSecrets } from "../core/secret-detection";
+import { legacyKeyPath, resolveKeyPath } from "../core/secrets";
 import { errorMessage } from "../lib/errors";
 import { error, info, output } from "../lib/output";
 
@@ -128,17 +129,31 @@ export const doctorCommand = defineCommand({
       checks.push({ name: "Git status", status: "warn", message: "Could not read git status" });
     }
 
-    // 6. Encryption key
-    const keyPath = join(configDir, ".agent-manager", "key.txt");
+    // 6. Encryption key (new location: OS data dir, NOT the git-tracked config dir)
+    const keyPath = resolveKeyPath();
     try {
       fs.accessSync(keyPath);
-      checks.push({ name: "Encryption key", status: "ok", message: "Present" });
+      checks.push({ name: "Encryption key", status: "ok", message: `Present at ${keyPath}` });
     } catch {
       checks.push({
         name: "Encryption key",
         status: "warn",
-        message: "Not found (secrets will not be encrypted)",
+        message: `Not found at ${keyPath} (secrets will not be encrypted)`,
       });
+    }
+
+    // 6b. Legacy key file inside git-tracked config dir — HIGH severity warn.
+    // If present, it may have been (or may still be) committed to the user's remote.
+    const legacyPath = legacyKeyPath(configDir);
+    try {
+      fs.accessSync(legacyPath);
+      checks.push({
+        name: "Legacy key location",
+        status: "warn",
+        message: `Found key at ${legacyPath} — this is INSIDE the git-tracked config dir. Delete it and ensure it has not been pushed to any remote. The active key now lives at ${keyPath}.`,
+      });
+    } catch {
+      // Absent: good.
     }
 
     // 7. Project config in cwd

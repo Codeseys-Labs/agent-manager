@@ -4,7 +4,14 @@ import { resolveConfigDir, tryReadConfig, writeConfig } from "../core/config";
 import { commitAll } from "../core/git";
 import type { Instruction, Server } from "../core/schema";
 import { scanServerForSecrets, substituteSecret } from "../core/secret-detection";
-import { encryptValue, generateKey, importKey, loadKey, saveKey } from "../core/secrets";
+import {
+  encryptValue,
+  generateKey,
+  importKey,
+  loadKey,
+  resolveKeyPath,
+  saveKey,
+} from "../core/secrets";
 import { requireConfig } from "../lib/errors";
 import { amError, error, info, output } from "../lib/output";
 
@@ -150,7 +157,7 @@ async function addServer(
       const base64Key = await generateKey();
       await saveKey(configDir, base64Key);
       key = await importKey(base64Key);
-      info("Generated encryption key (stored in .agent-manager/key.txt)", opts);
+      info(`Generated encryption key (stored at ${resolveKeyPath()})`, opts);
     }
 
     for (const secret of actionableSecrets) {

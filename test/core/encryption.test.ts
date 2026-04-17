@@ -1,5 +1,5 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdir, writeFile } from "node:fs/promises";
+import { afterEach, describe, expect, test } from "bun:test";
+import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { Config } from "../../src/core/schema";
 import {
@@ -124,6 +124,7 @@ describe("encryption", () => {
 
   describe("loadKey", () => {
     let dir: TestDir;
+    let keyDir: TestDir;
     const origEnv: Record<string, string | undefined> = {};
 
     function setEnv(key: string, value: string) {
@@ -131,8 +132,14 @@ describe("encryption", () => {
       process.env[key] = value;
     }
 
+    function clearEnv(key: string) {
+      origEnv[key] = process.env[key];
+      delete process.env[key];
+    }
+
     afterEach(async () => {
       if (dir) await dir.cleanup();
+      if (keyDir) await keyDir.cleanup();
       for (const [key, value] of Object.entries(origEnv)) {
         if (value === undefined) {
           delete process.env[key];
@@ -147,6 +154,8 @@ describe("encryption", () => {
 
     test("reads from AM_ENCRYPTION_KEY env var", async () => {
       dir = await createTestDir("am-loadkey-");
+      keyDir = await createTestDir("am-keydir-");
+      setEnv("AM_KEY_PATH", join(keyDir.path, "key"));
       const base64 = await generateKey();
       setEnv("AM_ENCRYPTION_KEY", base64);
 
@@ -158,14 +167,15 @@ describe("encryption", () => {
       expect(await decryptValue(encrypted, key!)).toBe("test");
     });
 
-    test("reads from .agent-manager/key.txt file", async () => {
+    test("reads from OS data-dir key file (AM_KEY_PATH override)", async () => {
       dir = await createTestDir("am-loadkey-");
-      process.env.AM_ENCRYPTION_KEY = undefined;
-      origEnv.AM_ENCRYPTION_KEY = undefined;
+      keyDir = await createTestDir("am-keydir-");
+      clearEnv("AM_ENCRYPTION_KEY");
+      const keyPath = join(keyDir.path, "key");
+      setEnv("AM_KEY_PATH", keyPath);
 
       const base64 = await generateKey();
-      await mkdir(join(dir.path, ".agent-manager"), { recursive: true });
-      await writeFile(join(dir.path, ".agent-manager", "key.txt"), `${base64}\n`);
+      await writeFile(keyPath, `${base64}\n`);
 
       const key = await loadKey(dir.path);
       expect(key).not.toBeNull();
@@ -176,12 +186,15 @@ describe("encryption", () => {
 
     test("env var takes priority over file", async () => {
       dir = await createTestDir("am-loadkey-");
+      keyDir = await createTestDir("am-keydir-");
+      const keyPath = join(keyDir.path, "key");
+      setEnv("AM_KEY_PATH", keyPath);
+
       const envBase64 = await generateKey();
       const fileBase64 = await generateKey();
 
       setEnv("AM_ENCRYPTION_KEY", envBase64);
-      await mkdir(join(dir.path, ".agent-manager"), { recursive: true });
-      await writeFile(join(dir.path, ".agent-manager", "key.txt"), fileBase64);
+      await writeFile(keyPath, fileBase64);
 
       const key = await loadKey(dir.path);
       expect(key).not.toBeNull();
@@ -194,8 +207,9 @@ describe("encryption", () => {
 
     test("returns null when no key available", async () => {
       dir = await createTestDir("am-loadkey-");
-      process.env.AM_ENCRYPTION_KEY = undefined;
-      origEnv.AM_ENCRYPTION_KEY = undefined;
+      keyDir = await createTestDir("am-keydir-");
+      clearEnv("AM_ENCRYPTION_KEY");
+      setEnv("AM_KEY_PATH", join(keyDir.path, "missing-key"));
 
       const key = await loadKey(dir.path);
       expect(key).toBeNull();
@@ -203,20 +217,34 @@ describe("encryption", () => {
   });
 
   describe("saveKey", () => {
-    let dir: TestDir;
+    let keyDir: TestDir;
+    const origEnv: Record<string, string | undefined> = {};
 
     afterEach(async () => {
-      if (dir) await dir.cleanup();
+      if (keyDir) await keyDir.cleanup();
+      for (const [key, value] of Object.entries(origEnv)) {
+        if (value === undefined) {
+          delete process.env[key];
+        } else {
+          process.env[key] = value;
+        }
+      }
+      for (const key of Object.keys(origEnv)) {
+        delete origEnv[key];
+      }
     });
 
-    test("writes key to .agent-manager/key.txt", async () => {
-      dir = await createTestDir("am-savekey-");
-      await mkdir(join(dir.path, ".agent-manager"), { recursive: true });
+    test("writes key to AM_KEY_PATH override location", async () => {
+      keyDir = await createTestDir("am-savekey-");
+      const keyPath = join(keyDir.path, "nested", "key");
+      origEnv.AM_KEY_PATH = process.env.AM_KEY_PATH;
+      process.env.AM_KEY_PATH = keyPath;
 
       const base64 = await generateKey();
-      await saveKey(dir.path, base64);
+      // configDir argument is no-op now; pass a dummy.
+      await saveKey("/dev/null", base64);
 
-      const contents = await dir.read(".agent-manager/key.txt");
+      const contents = await readFile(keyPath, "utf-8");
       expect(contents.trim()).toBe(base64);
     });
   });

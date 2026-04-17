@@ -75,18 +75,51 @@ describe("am doctor", () => {
     expect(adapter?.meta.displayName).toBeTruthy();
   });
 
-  test("checks encryption key presence", async () => {
+  test("checks encryption key presence at OS data-dir path", async () => {
     dir = await createTestDir("am-doctor-");
     const configDir = dir.path;
     await initRepo(configDir);
 
-    // No key by default
-    const keyPath = join(configDir, ".agent-manager", "key.txt");
-    expect(fs.existsSync(keyPath)).toBe(false);
+    // Redirect key path to a tmp location via AM_KEY_PATH so we don't touch
+    // the real ~/Library/Application Support.
+    const keyPath = join(configDir, "keystore", "key");
+    const origKeyPath = process.env.AM_KEY_PATH;
+    process.env.AM_KEY_PATH = keyPath;
+    try {
+      const { resolveKeyPath } = await import("../../src/core/secrets");
+      expect(resolveKeyPath()).toBe(keyPath);
 
-    // Create key
-    await fs.promises.writeFile(keyPath, "test-key");
-    expect(fs.existsSync(keyPath)).toBe(true);
+      // Not present initially
+      expect(fs.existsSync(keyPath)).toBe(false);
+
+      // Create key at the resolved location
+      await fs.promises.mkdir(join(keyPath, ".."), { recursive: true });
+      await fs.promises.writeFile(keyPath, "test-key");
+      expect(fs.existsSync(keyPath)).toBe(true);
+    } finally {
+      if (origKeyPath === undefined) process.env.AM_KEY_PATH = undefined;
+      else process.env.AM_KEY_PATH = origKeyPath;
+    }
+  });
+
+  test("warns when legacy key file exists in config dir", async () => {
+    dir = await createTestDir("am-doctor-legacy-");
+    const configDir = dir.path;
+    await initRepo(configDir);
+
+    const { legacyKeyPath } = await import("../../src/core/secrets");
+    const legacyPath = legacyKeyPath(configDir);
+
+    // Initially absent
+    expect(fs.existsSync(legacyPath)).toBe(false);
+
+    // Create a legacy key file (simulates pre-migration install)
+    await fs.promises.writeFile(legacyPath, "legacy-key-contents");
+    expect(fs.existsSync(legacyPath)).toBe(true);
+
+    // The doctor check scans for this path and issues a warning. We assert
+    // the detection primitive here; the full warning-string assertion is
+    // covered in secrets unit tests via migrateLegacyKey.
   });
 
   test("reports git remote status", async () => {

@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdir } from "node:fs/promises";
+import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { Config } from "../../src/core/schema";
 import {
@@ -32,13 +32,24 @@ async function makeEncryptionKey() {
 
 describe("secret pipeline integration", () => {
   let dir: TestDir;
+  let keyDir: TestDir;
+  const origKeyPath = process.env.AM_KEY_PATH;
 
   beforeEach(async () => {
     dir = await createTestDir("am-secret-pipeline-");
+    keyDir = await createTestDir("am-secret-pipeline-keydir-");
+    // Redirect master-key storage so tests never touch ~/.
+    process.env.AM_KEY_PATH = join(keyDir.path, "key");
   });
 
   afterEach(async () => {
     if (dir) await dir.cleanup();
+    if (keyDir) await keyDir.cleanup();
+    if (origKeyPath === undefined) {
+      process.env.AM_KEY_PATH = undefined;
+    } else {
+      process.env.AM_KEY_PATH = origKeyPath;
+    }
   });
 
   // ── Test 1: Import with auto-encrypt ──────────────────────────
@@ -96,14 +107,15 @@ describe("secret pipeline integration", () => {
       );
     });
 
-    test("auto-generates encryption key and persists to key.txt", async () => {
-      // Simulate key generation + persistence
+    test("auto-generates encryption key and persists to OS data-dir path", async () => {
+      // Simulate key generation + persistence — saveKey now writes to AM_KEY_PATH
+      // (set in beforeEach) rather than inside the git-tracked config dir.
       const base64 = await generateKey();
-      await mkdir(join(dir.path, ".agent-manager"), { recursive: true });
       await saveKey(dir.path, base64);
 
-      // Verify key file exists and is valid
-      const keyContents = await dir.read(".agent-manager/key.txt");
+      // Verify key file exists at the configured path and is valid
+      const keyPath = process.env.AM_KEY_PATH!;
+      const keyContents = await readFile(keyPath, "utf-8");
       expect(keyContents.trim()).toBe(base64);
 
       // Verify the saved key is usable

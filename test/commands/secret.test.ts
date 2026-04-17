@@ -1,5 +1,5 @@
-import { afterEach, describe, expect, test } from "bun:test";
-import { mkdir } from "node:fs/promises";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { readConfig, writeConfig } from "../../src/core/config";
 import { initRepo } from "../../src/core/git";
@@ -46,6 +46,7 @@ async function setupConfigDir(
 
 describe("am secret", () => {
   let dir: TestDir;
+  let keyDir: TestDir;
   const origEnv: Record<string, string | undefined> = {};
 
   function setEnv(key: string, value: string) {
@@ -53,8 +54,15 @@ describe("am secret", () => {
     process.env[key] = value;
   }
 
+  beforeEach(async () => {
+    // Redirect master-key writes to a tmp dir so tests never touch ~/.
+    keyDir = await createTestDir("am-secret-keydir-");
+    setEnv("AM_KEY_PATH", join(keyDir.path, "key"));
+  });
+
   afterEach(async () => {
     if (dir) await dir.cleanup();
+    if (keyDir) await keyDir.cleanup();
     for (const [key, value] of Object.entries(origEnv)) {
       if (value === undefined) {
         delete process.env[key];
@@ -68,7 +76,7 @@ describe("am secret", () => {
   });
 
   describe("generate-key", () => {
-    test("creates key file in .agent-manager/key.txt", async () => {
+    test("creates key file at AM_KEY_PATH location", async () => {
       dir = await createTestDir("am-secret-genkey-");
       await initRepo(dir.path);
 
@@ -78,13 +86,14 @@ describe("am secret", () => {
       const loaded = await loadKey(dir.path);
       expect(loaded).not.toBeNull();
 
-      const keyContents = await dir.read(".agent-manager/key.txt");
+      const keyPath = process.env.AM_KEY_PATH!;
+      const keyContents = await readFile(keyPath, "utf-8");
       expect(keyContents.trim()).toBe(base64);
     });
   });
 
   describe("import-key", () => {
-    test("copies key file to config dir", async () => {
+    test("writes key to the configured key path", async () => {
       dir = await createTestDir("am-secret-importkey-");
       await initRepo(dir.path);
 
@@ -93,10 +102,11 @@ describe("am secret", () => {
       const sourcePath = join(dir.path, "external-key.txt");
       await Bun.write(sourcePath, `${base64}\n`);
 
-      // Import by copying
-      const { copyFile } = await import("node:fs/promises");
-      const destPath = join(dir.path, ".agent-manager", "key.txt");
-      await copyFile(sourcePath, destPath);
+      // Write to the configured key path (simulates `am secret import-key`)
+      const keyPath = process.env.AM_KEY_PATH!;
+      await mkdir(join(keyPath, ".."), { recursive: true });
+      const contents = await readFile(sourcePath, "utf-8");
+      await writeFile(keyPath, contents, { encoding: "utf-8", mode: 0o600 });
 
       const loaded = await loadKey(dir.path);
       expect(loaded).not.toBeNull();

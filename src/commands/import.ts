@@ -13,7 +13,14 @@ import {
   scanConfigForSecrets,
   substituteSecret,
 } from "../core/secret-detection";
-import { encryptValue, generateKey, importKey, loadKey, saveKey } from "../core/secrets";
+import {
+  encryptValue,
+  generateKey,
+  importKey,
+  loadKey,
+  resolveKeyPath,
+  saveKey,
+} from "../core/secrets";
 import { AmError, errorMessage, requireConfig } from "../lib/errors";
 import { amError, debug, error, info, output } from "../lib/output";
 
@@ -409,7 +416,7 @@ export const importCommand = defineCommand({
             await saveKey(configDir, base64Key);
             key = await importKey(base64Key);
             if (!args.json) {
-              info("Generated encryption key (stored in .agent-manager/key.txt)", opts);
+              info(`Generated encryption key (stored at ${resolveKeyPath()})`, opts);
             }
           }
 
