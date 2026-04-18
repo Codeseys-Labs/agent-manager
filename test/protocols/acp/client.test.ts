@@ -88,14 +88,18 @@ describe("ACP Agent Registry", () => {
   });
 
   describe("listAgents", () => {
-    test("lists all built-in agents", () => {
+    test("lists all tier-1-native built-in agents", () => {
+      // ADR-0033: BUILT_IN_ACP_AGENTS was collapsed to the four verified
+      // tier-1-native agents. The acp protocol-local registry only surfaces
+      // spawnable entries. Tier-3 catalog-only agents (copilot, cursor, etc.)
+      // are not resolved here; they live in BUILT_IN_AGENTS with runnable=false.
       const agents = listAgents();
-      expect(agents.length).toBeGreaterThan(10);
+      expect(agents.length).toBeGreaterThanOrEqual(4);
       const names = agents.map((a) => a.name);
       expect(names).toContain("claude");
       expect(names).toContain("codex");
       expect(names).toContain("gemini");
-      expect(names).toContain("copilot");
+      expect(names).toContain("kiro");
     });
 
     test("agents are sorted by name", () => {

@@ -88,7 +88,7 @@ describe("Wave D — unified am_agent_* MCP tools", () => {
 
   // ── 1b. am_agent_invoke routes to ACP for a built-in agent ───────
   test("am_agent_invoke with a built-in ACP agent routes to the ACP client", async () => {
-    // `amazon-q` is in BUILT_IN_ACP_AGENTS and spawns `q chat --acp`.
+    // `gemini` is tier-1 in BUILT_IN_AGENTS and spawns `gemini --acp`.
     // On a machine without that binary, connect() raises a spawn/exec error
     // — but crucially, NOT "Unknown agent". The shape of the error proves the
     // router chose the ACP branch. We also verify the protocol field if we
@@ -100,7 +100,7 @@ describe("Wave D — unified am_agent_* MCP tools", () => {
       method: "tools/call",
       params: {
         name: "am_agent_invoke",
-        arguments: { agent: "amazon-q", prompt: "hi", timeout: 500 },
+        arguments: { agent: "gemini", prompt: "hi", timeout: 500 },
       },
     });
     expect(resp).not.toBeNull();

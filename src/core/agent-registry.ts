@@ -1,12 +1,17 @@
 /**
- * Unified Agent Registry — merges config, ACP built-in, and A2A roster agents.
+ * Unified Agent Registry — merges config, ACP built-in, A2A roster, and
+ * catalog-only (adapter-only) agents into a single view.
  *
  * Resolution order (highest wins):
  *   1. Config agents ([agents.<name>.acp] / [agents.<name>.a2a] in TOML)
- *   2. ACP built-in registry (16 known agents)
+ *   2. Built-in agents (tier-1 native ACP, tier-3 catalog-only)
  *   3. A2A roster (agents.toml in config directory)
  *
- * See ADR-0030 for rationale.
+ * ADR-0030 introduced the unified registry.
+ * ADR-0033 introduced the tier structure replacing the old 16-entry
+ * `BUILT_IN_ACP_AGENTS` dict with `BUILT_IN_AGENTS` — each entry now
+ * declares its tier (native / shim / catalog-only) so `am agent list` and
+ * `am run` can tell the user the truth about what works.
  */
 
 import { readFile } from "node:fs/promises";
@@ -14,18 +19,171 @@ import { join } from "node:path";
 import * as TOML from "@iarna/toml";
 import { isNotFound } from "../lib/errors";
 
+// ── Tier-based built-in registry (ADR-0033) ────────────────────
+
+/**
+ * Agent tiers — see ADR-0033.
+ *
+ * - tier-1-native:     Upstream publishes a documented ACP binary we
+ *                      have verified end-to-end. Spawnable by `am run`.
+ * - tier-2-shim:       Wrappable CLIs that don't speak ACP natively; the
+ *                      acp-shell wrapper (Phase B, not in this Phase A)
+ *                      bridges them. Currently unpopulated in this file.
+ * - tier-3-catalog-only: No spawnable ACP runtime exists (VSCode extensions,
+ *                      IDE-only products). `am apply` writes their config,
+ *                      `am run` refuses with a helpful message.
+ */
+export type AgentTier = "tier-1-native" | "tier-2-shim" | "tier-3-catalog-only";
+
+export interface BuiltInAgentSpec {
+  /**
+   * Spawn command. Empty string (`""`) means the agent is catalog-only and
+   * cannot be run. Callers MUST check for `""` before constructing an ACP
+   * client.
+   */
+  command: string;
+  tier: AgentTier;
+  /** Upstream ACP documentation URL. Present for tier-1; omitted for tier-3. */
+  docsUrl?: string;
+}
+
+/**
+ * The canonical built-in agent registry. Replaces the old
+ * `BUILT_IN_ACP_AGENTS` flat dict — the dict had 16 entries, only 4 of
+ * which were actually verified end-to-end (claude, codex, gemini, kiro).
+ * See `docs/reviews/2026-04-18-acp-shell-wrapper/` for the audit.
+ *
+ * Tier breakdown:
+ *   - tier-1-native: claude, codex, gemini, kiro (verified live-smoke).
+ *   - tier-2-shim:   (intentionally empty in Phase A — shim wrapper lands
+ *                    in Phase B per ADR-0033).
+ *   - tier-3-catalog-only: cline, continue, copilot, cursor, kilo-code,
+ *                    roo-code, windsurf. These have paired adapters but
+ *                    no spawnable ACP runtime.
+ *
+ * Removed entirely (were nominal — no upstream binary):
+ *   - devin:     Cognition SaaS, no CLI.
+ *   - amp:       sourcegraph/amp 404, no public ACP docs.
+ *   - aider:     wrappable via shim (→ Phase B). Removed from Phase A.
+ *   - amazon-q:  wrappable via shim (→ Phase B). Removed from Phase A.
+ *   - augment:   binary was wrong (`augment-cli`); real name is `auggie`.
+ *                Will return as tier-1 after Phase B live-smoke.
+ *   - goose:     flag unverified, likely consumes ACP not serves it.
+ *                Candidate for Phase B shim or re-verify.
+ *   - sourcegraph (cody): repo 404, no CLI with ACP. Candidate for shim.
+ */
+export const BUILT_IN_AGENTS: Record<string, BuiltInAgentSpec> = {
+  // ── Tier 1 — native ACP, verified end-to-end ─────────────────
+  claude: {
+    command: "npx -y @agentclientprotocol/claude-agent-acp@latest",
+    tier: "tier-1-native",
+    docsUrl: "https://github.com/agentclientprotocol/claude-agent-acp",
+  },
+  codex: {
+    command: "npx @zed-industries/codex-acp@latest",
+    tier: "tier-1-native",
+    docsUrl: "https://github.com/zed-industries/codex-acp",
+  },
+  gemini: {
+    command: "gemini --acp",
+    tier: "tier-1-native",
+    docsUrl: "https://github.com/google-gemini/gemini-cli",
+  },
+  kiro: {
+    command: "kiro-cli-chat acp",
+    tier: "tier-1-native",
+    // Amazon internal; no public docs URL.
+  },
+
+  // ── Tier 2 — shim-wrapped CLIs (Phase B, NOT populated here) ─
+  //
+  // Placeholder: Phase B of ADR-0033 will add `aider`, `amazon-q`, `cody`,
+  // `gh-copilot`, `cursor-agent`, etc. Each tier-2 entry will need a
+  // ShimConfig alongside its BuiltInAgentSpec (see
+  // docs/reviews/2026-04-18-acp-shell-wrapper/R-A-feasibility.md). Do NOT
+  // add tier-2 entries in this file until the shim wrapper ships.
+
+  // ── Tier 3 — catalog-only (adapter-only, not spawnable) ──────
+  // Each entry has `command: ""` so resolveAgent() can synthesize a
+  // runnable=false UnifiedAgent and `am run` can refuse with a helpful
+  // message ("use it from its native UI").
+  cline: {
+    command: "",
+    tier: "tier-3-catalog-only",
+  },
+  continue: {
+    command: "",
+    tier: "tier-3-catalog-only",
+  },
+  copilot: {
+    // GitHub Copilot is available via the VSCode extension and `gh copilot`
+    // CLI. Per R-C, the CLI's `--acp` flag is not documented upstream; ACP
+    // support is "PREVIEW" and not reliable. Treating as catalog-only until
+    // live-smoke verification proves otherwise.
+    command: "",
+    tier: "tier-3-catalog-only",
+  },
+  cursor: {
+    // Upstream binary rename is unclear (was `cursor-agent`, possibly
+    // `agent`). Until we verify a spawnable binary exists, treat as
+    // catalog-only so users aren't greeted by "command not found".
+    command: "",
+    tier: "tier-3-catalog-only",
+  },
+  "kilo-code": {
+    command: "",
+    tier: "tier-3-catalog-only",
+  },
+  "roo-code": {
+    command: "",
+    tier: "tier-3-catalog-only",
+  },
+  windsurf: {
+    command: "",
+    tier: "tier-3-catalog-only",
+  },
+};
+
+/**
+ * @deprecated Use {@link BUILT_IN_AGENTS}. Kept for source compatibility
+ * with older callers. Only tier-1-native entries are surfaced here —
+ * tier-3 (catalog-only) agents have no spawn command and would break
+ * anything that assumed `BUILT_IN_ACP_AGENTS[name]` yields a runnable
+ * command. Removal targeted for 0.6.0 per ADR-0033.
+ */
+export const BUILT_IN_ACP_AGENTS: Record<string, string> = Object.fromEntries(
+  Object.entries(BUILT_IN_AGENTS)
+    .filter(([_, s]) => s.tier === "tier-1-native")
+    .map(([name, s]) => [name, s.command]),
+);
+
 // ── Types ──────────────────────────────────────────────────────
 
 export interface UnifiedAgent {
   name: string;
   description?: string;
-  source: "config" | "acp-builtin" | "a2a-roster";
+  /**
+   * Which source produced this entry.
+   *   - "config":         user's config.toml [agents.<name>.*] override
+   *   - "acp-builtin":    tier-1-native (and future tier-2-shim) BUILT_IN_AGENTS
+   *   - "a2a-roster":     discovered A2A agent in agents.toml
+   *   - "catalog-only":   tier-3 entry in BUILT_IN_AGENTS (no spawn command)
+   */
+  source: "config" | "acp-builtin" | "a2a-roster" | "catalog-only";
   acp?: { command: string };
   a2a?: { url: string };
+  /** Tier from {@link BUILT_IN_AGENTS}. Absent for pure config / a2a entries. */
+  tier?: AgentTier;
   /** True if the agent's runtime is actually available locally (PATH or paired adapter). */
   installed?: boolean;
   /** Tool version if cheaply derivable. */
   version?: string;
+  /**
+   * True if `am run` can spawn this agent. False for tier-3 catalog-only
+   * entries. Absent means "unknown / defaults to true" — callers should
+   * treat `runnable === false` as the only refusal signal.
+   */
+  runnable?: boolean;
 }
 
 /** Shape of [agents.<name>] in config TOML for the unified registry. */
@@ -39,28 +197,6 @@ export interface ConfigAgentEntry {
 export interface UnifiedRegistryConfig {
   agents?: Record<string, ConfigAgentEntry>;
 }
-
-// ── Built-in ACP registry ──────────────────────────────────────
-
-/** Known ACP-compatible agents and their spawn commands. */
-export const BUILT_IN_ACP_AGENTS: Record<string, string> = {
-  claude: "npx -y @agentclientprotocol/claude-agent-acp@latest",
-  codex: "npx @zed-industries/codex-acp@latest",
-  gemini: "gemini --acp",
-  cursor: "cursor-agent acp",
-  copilot: "copilot --acp --stdio",
-  kiro: "kiro-cli-chat acp",
-  aider: "aider --acp",
-  "amazon-q": "q chat --acp",
-  amp: "amp --acp",
-  augment: "augment-cli --acp",
-  cline: "cline --acp",
-  "roo-code": "roo --acp",
-  goose: "goose --acp",
-  windsurf: "windsurf-cli --acp",
-  devin: "devin --acp",
-  sourcegraph: "cody --acp",
-};
 
 // ── A2A roster reading ─────────────────────────────────────────
 
@@ -97,6 +233,32 @@ async function readRoster(
   return result;
 }
 
+// ── Helpers ────────────────────────────────────────────────────
+
+/** True when this BuiltInAgentSpec represents a spawnable (tier-1/tier-2) runtime. */
+function isSpawnable(spec: BuiltInAgentSpec): boolean {
+  return spec.command !== "" && spec.tier !== "tier-3-catalog-only";
+}
+
+/** Build a UnifiedAgent from a BUILT_IN_AGENTS entry. */
+function builtInToUnified(name: string, spec: BuiltInAgentSpec): UnifiedAgent {
+  if (isSpawnable(spec)) {
+    return {
+      name,
+      source: "acp-builtin",
+      acp: { command: spec.command },
+      tier: spec.tier,
+      runnable: true,
+    };
+  }
+  return {
+    name,
+    source: "catalog-only",
+    tier: spec.tier,
+    runnable: false,
+  };
+}
+
 // ── Resolution ─────────────────────────────────────────────────
 
 /**
@@ -104,12 +266,12 @@ async function readRoster(
  *
  * Resolution order:
  *   1. Config agents (from the parsed config object)
- *   2. ACP built-in registry
+ *   2. Built-in registry (tier-1-native spawnable + tier-3 catalog-only)
  *   3. A2A roster (agents.toml)
  *
  * For sources 2+3, entries are merged: if the same name appears in both
- * the ACP built-in registry and the A2A roster, the result has both
- * acp and a2a fields.
+ * the built-in registry and the A2A roster, the result has both acp and a2a
+ * fields (if the built-in is spawnable) or just a2a + tier metadata.
  *
  * Config agents take full priority — when a name appears in config,
  * built-in and roster entries for that name are ignored.
@@ -128,30 +290,25 @@ export function resolveAgent(
       source: "config",
       ...(configAgent.acp ? { acp: { command: configAgent.acp.command } } : {}),
       ...(configAgent.a2a ? { a2a: { url: configAgent.a2a.url } } : {}),
+      runnable: Boolean(configAgent.acp),
     };
   }
 
-  // 2+3. Merge built-in ACP + A2A roster
-  const builtInCommand = BUILT_IN_ACP_AGENTS[name];
+  // 2+3. Merge built-in + A2A roster
+  const builtInSpec = BUILT_IN_AGENTS[name];
   const rosterEntry = rosterAgents?.[name];
 
-  if (builtInCommand && rosterEntry) {
-    // Both sources — return merged entry, source is acp-builtin (primary)
+  if (builtInSpec && rosterEntry) {
+    const base = builtInToUnified(name, builtInSpec);
     return {
-      name,
+      ...base,
       description: rosterEntry.description,
-      source: "acp-builtin",
-      acp: { command: builtInCommand },
       a2a: { url: rosterEntry.url },
     };
   }
 
-  if (builtInCommand) {
-    return {
-      name,
-      source: "acp-builtin",
-      acp: { command: builtInCommand },
-    };
+  if (builtInSpec) {
+    return builtInToUnified(name, builtInSpec);
   }
 
   if (rosterEntry) {
@@ -160,6 +317,7 @@ export function resolveAgent(
       description: rosterEntry.description,
       source: "a2a-roster",
       a2a: { url: rosterEntry.url },
+      runnable: true,
     };
   }
 
@@ -180,7 +338,7 @@ export async function resolveAgentAsync(
 }
 
 /**
- * List all agents across all three sources, merged without duplicates.
+ * List all agents across all sources, merged without duplicates.
  *
  * Config agents take priority over built-in and roster entries.
  * Built-in and roster entries for the same name are merged into one entry.
@@ -191,13 +349,9 @@ export function listAllAgents(
 ): UnifiedAgent[] {
   const result = new Map<string, UnifiedAgent>();
 
-  // 1. Built-in ACP agents (lowest priority, added first)
-  for (const [name, command] of Object.entries(BUILT_IN_ACP_AGENTS)) {
-    result.set(name, {
-      name,
-      source: "acp-builtin",
-      acp: { command },
-    });
+  // 1. Built-in agents (tier-1 + tier-3). Lowest priority, added first.
+  for (const [name, spec] of Object.entries(BUILT_IN_AGENTS)) {
+    result.set(name, builtInToUnified(name, spec));
   }
 
   // 2. A2A roster agents — merge with existing built-in entries
@@ -205,7 +359,7 @@ export function listAllAgents(
     for (const [name, entry] of Object.entries(rosterAgents)) {
       const existing = result.get(name);
       if (existing) {
-        // Merge: add A2A to existing ACP built-in
+        // Merge: add A2A to existing built-in entry
         existing.a2a = { url: entry.url };
         if (entry.description) existing.description = entry.description;
       } else {
@@ -214,6 +368,7 @@ export function listAllAgents(
           description: entry.description,
           source: "a2a-roster",
           a2a: { url: entry.url },
+          runnable: true,
         });
       }
     }
@@ -229,6 +384,7 @@ export function listAllAgents(
         source: "config",
         ...(agent.acp ? { acp: { command: agent.acp.command } } : {}),
         ...(agent.a2a ? { a2a: { url: agent.a2a.url } } : {}),
+        runnable: Boolean(agent.acp),
       });
     }
   }
@@ -253,6 +409,9 @@ export interface ListAllAgentsAsyncOptions {
  * Async variant of listAllAgents that reads the A2A roster from disk and —
  * unless explicitly disabled — fills in `installed` / `version` on each
  * agent using `detectAllAgents()`.
+ *
+ * Tier-3 catalog-only entries get `installed` from their paired adapter's
+ * detect() signal (PATH is never the right check for a VSCode extension).
  */
 export async function listAllAgentsAsync(
   config?: UnifiedRegistryConfig,
@@ -267,7 +426,7 @@ export async function listAllAgentsAsync(
 
   // Populate installed/version fields. Lazy import to avoid a cycle between
   // core/agent-registry and core/agent-detection (the latter imports
-  // BUILT_IN_ACP_AGENTS from here).
+  // BUILT_IN_AGENTS from here).
   const { detectAllAgents } = await import("./agent-detection");
   const detections = await detectAllAgents();
 

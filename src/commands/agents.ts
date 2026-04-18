@@ -19,8 +19,8 @@ import {
   detectAgentByPath,
   detectAllAgents,
 } from "../core/agent-detection";
-import { BUILT_IN_ACP_AGENTS, listAllAgentsAsync } from "../core/agent-registry";
-import type { UnifiedRegistryConfig } from "../core/agent-registry";
+import { BUILT_IN_AGENTS, listAllAgentsAsync } from "../core/agent-registry";
+import type { AgentTier, UnifiedRegistryConfig } from "../core/agent-registry";
 import { resolveConfigDir, tryReadConfig } from "../core/config";
 import { error, info, output } from "../lib/output";
 import { A2AClient } from "../protocols/a2a/client";
@@ -70,10 +70,15 @@ const listSubcommand = defineCommand({
       // Derive the protocol field explicitly for JSON consumers — the text
       // table does the same derivation inline (line below), so both formats
       // now agree. Fixes iter4 smoke Bug 4.
+      // ADR-0033: tier + runnable are first-class on every entry; defaults
+      // match the built-in spec for native sources and `true` for config /
+      // A2A-roster sources (those are user-authored and inherently spawnable).
       const agentsWithProtocol = agents.map((agent) => ({
         ...agent,
         protocol: agent.acp && agent.a2a ? "ACP/A2A" : agent.acp ? "ACP" : "A2A",
         endpoint: agent.acp?.command ?? agent.a2a?.url ?? null,
+        tier: agent.tier ?? null,
+        runnable: agent.runnable ?? Boolean(agent.acp || agent.a2a),
       }));
       output({ agents: agentsWithProtocol, ...(args.discover ? { discovered } : {}) }, opts);
       return;
@@ -85,16 +90,24 @@ const listSubcommand = defineCommand({
     }
 
     info(
-      `${"Name".padEnd(20)} ${"Protocol".padEnd(10)} ${"Source".padEnd(14)} ${"Installed".padEnd(12)} Endpoint`,
+      `${"Name".padEnd(20)} ${"Protocol".padEnd(10)} ${"Tier".padEnd(10)} ${"Source".padEnd(14)} ${"Installed".padEnd(12)} Endpoint`,
       opts,
     );
     info(
-      `${"\u2500".repeat(20)} ${"\u2500".repeat(10)} ${"\u2500".repeat(14)} ${"\u2500".repeat(12)} ${"\u2500".repeat(40)}`,
+      `${"\u2500".repeat(20)} ${"\u2500".repeat(10)} ${"\u2500".repeat(10)} ${"\u2500".repeat(14)} ${"\u2500".repeat(12)} ${"\u2500".repeat(40)}`,
       opts,
     );
+    let nativeCount = 0;
+    let catalogOnlyCount = 0;
     for (const agent of agents) {
       const protocol = agent.acp && agent.a2a ? "ACP/A2A" : agent.acp ? "ACP" : "A2A";
-      const endpoint = agent.acp?.command ?? agent.a2a?.url ?? "\u2014";
+      const tierLabel = renderTier(agent.tier, agent.source);
+      if (agent.tier === "tier-1-native") nativeCount += 1;
+      else if (agent.tier === "tier-3-catalog-only") catalogOnlyCount += 1;
+      const endpoint =
+        agent.runnable === false
+          ? "(catalog-only)"
+          : (agent.acp?.command ?? agent.a2a?.url ?? "\u2014");
       let installed: string;
       if (agent.installed === true) {
         installed = agent.version ? `yes (v${agent.version})` : "yes";
@@ -104,19 +117,40 @@ const listSubcommand = defineCommand({
         installed = "\u2014";
       }
       info(
-        `${agent.name.padEnd(20)} ${protocol.padEnd(10)} ${agent.source.padEnd(14)} ${installed.padEnd(12)} ${endpoint}`,
+        `${agent.name.padEnd(20)} ${protocol.padEnd(10)} ${tierLabel.padEnd(10)} ${agent.source.padEnd(14)} ${installed.padEnd(12)} ${endpoint}`,
         opts,
       );
     }
     for (const agent of discovered) {
       info(
-        `${agent.name.padEnd(20)} ${"A2A".padEnd(10)} ${"[discovered]".padEnd(14)} ${"\u2014".padEnd(12)} ${agent.url}`,
+        `${agent.name.padEnd(20)} ${"A2A".padEnd(10)} ${"remote".padEnd(10)} ${"[discovered]".padEnd(14)} ${"\u2014".padEnd(12)} ${agent.url}`,
         opts,
       );
     }
-    info(`\n${agents.length} registered, ${discovered.length} discovered`, opts);
+    info(
+      `\n${agents.length} registered (${nativeCount} native / ${catalogOnlyCount} catalog-only), ${discovered.length} discovered`,
+      opts,
+    );
   },
 });
+
+/**
+ * Render the short tier label for the `am agent list` "Tier" column.
+ *   - tier-1-native        → "native"
+ *   - tier-2-shim          → "shim"
+ *   - tier-3-catalog-only  → "catalog"
+ *   - config source        → "config"
+ *   - a2a-roster source    → "remote"
+ *   - no tier / unknown    → "\u2014"
+ */
+function renderTier(tier: AgentTier | undefined, source: string): string {
+  if (tier === "tier-1-native") return "native";
+  if (tier === "tier-2-shim") return "shim";
+  if (tier === "tier-3-catalog-only") return "catalog";
+  if (source === "config") return "config";
+  if (source === "a2a-roster") return "remote";
+  return "\u2014";
+}
 
 const addSubcommand = defineCommand({
   meta: { name: "add", description: "Add an A2A agent by URL" },
@@ -492,12 +526,21 @@ const detectSubcommand = defineCommand({
 
     // Case A: single agent — deep probe.
     if (name) {
-      const command = BUILT_IN_ACP_AGENTS[name];
-      if (!command) {
+      const spec = BUILT_IN_AGENTS[name];
+      if (!spec) {
         error(`Unknown built-in ACP agent: ${name}`, opts);
         process.exitCode = 1;
         return;
       }
+      if (spec.tier === "tier-3-catalog-only" || !spec.command) {
+        error(
+          `"${name}" is a catalog-only integration (tier 3) — it has no spawnable ACP runtime. Use its native UI; see \`am agent list --tier native\` for runnable alternatives.`,
+          opts,
+        );
+        process.exitCode = 1;
+        return;
+      }
+      const command = spec.command;
       const cheap = detectAgentByPath(name);
       const probe = await deepProbe(name, command, timeoutMs);
 
@@ -537,7 +580,7 @@ const detectSubcommand = defineCommand({
       opts,
     );
 
-    const names = Object.keys(BUILT_IN_ACP_AGENTS).sort();
+    const names = Object.keys(BUILT_IN_AGENTS).sort();
     let installedCount = 0;
     for (const agentName of names) {
       const d: AgentDetection = detections[agentName] ?? { installed: false, source: "none" };
@@ -550,7 +593,7 @@ const detectSubcommand = defineCommand({
         opts,
       );
     }
-    info(`\n${installedCount} of ${names.length} built-in ACP agents installed.`, opts);
+    info(`\n${installedCount} of ${names.length} built-in agents installed.`, opts);
   },
 });
 

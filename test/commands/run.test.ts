@@ -17,12 +17,24 @@ import type { AcpSettings } from "../../src/protocols/acp/types";
 // ── Agent resolution (used by run command) ─────────────────────
 
 describe("am run: agent resolution", () => {
-  test("resolves known agents for run command", () => {
-    const knownAgents = ["claude", "codex", "gemini", "copilot", "kiro", "cursor"];
-    for (const name of knownAgents) {
+  test("resolves tier-1-native agents for run command", () => {
+    // ADR-0033: the protocols/acp/registry backed by BUILT_IN_ACP_AGENTS
+    // (now a tier-1-only back-compat alias) only resolves spawnable agents.
+    // Tier-3 catalog-only agents (cursor, copilot, cline, etc.) are NOT
+    // resolved here — `am run` guards them at the CLI layer via runnable=false.
+    const tier1Agents = ["claude", "codex", "gemini", "kiro"];
+    for (const name of tier1Agents) {
       const entry = resolveAgent(name);
       expect(entry).not.toBeNull();
       expect(entry!.command.length).toBeGreaterThan(0);
+    }
+  });
+
+  test("tier-3 catalog-only agents are NOT in the ACP registry shim (ADR-0033)", () => {
+    // These used to be in BUILT_IN_ACP_AGENTS pre-ADR-0033 but were never
+    // actually spawnable. The back-compat alias only surfaces tier-1-native.
+    for (const name of ["cursor", "copilot", "cline", "roo-code", "windsurf"]) {
+      expect(resolveAgent(name)).toBeNull();
     }
   });
 

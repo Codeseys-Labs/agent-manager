@@ -100,7 +100,24 @@ async function runAgent(args: RunAgentArgs): Promise<void> {
 
   // Resolve the agent via unified registry
   const entry = await resolveAgentAsync(agentName, registryConfig, configDir);
-  if (!entry || !entry.acp) {
+  if (!entry) {
+    error(`Unknown agent "${agentName}". Run \`am agent list\` to list available agents.`, opts);
+    process.exitCode = 1;
+    return;
+  }
+
+  // ADR-0033: tier-3 catalog-only agents cannot be spawned. Give the user
+  // a concrete next step rather than "no ACP endpoint".
+  if (entry.runnable === false) {
+    error(
+      `"${agentName}" is a catalog-only integration. am writes its config via \`am apply\` but cannot spawn it. Use it from its native UI (e.g., the ${agentName} VSCode extension). For a runnable alternative, see \`am agent list --tier native\`.`,
+      opts,
+    );
+    process.exitCode = 1;
+    return;
+  }
+
+  if (!entry.acp) {
     error(
       `Unknown agent "${agentName}" or no ACP (local) endpoint. Run \`am agent list\` to list available agents.`,
       opts,

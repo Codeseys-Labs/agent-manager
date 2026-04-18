@@ -59,7 +59,7 @@ describe("am agent detect", () => {
   });
 
   test("no arg: prints a table and summary count (text mode)", async () => {
-    __setWhichFn(mockWhich({ aider: "/usr/local/bin/aider" }));
+    __setWhichFn(mockWhich({ claude: "/usr/local/bin/claude" }));
 
     const detect = await resolveDetectSubcommand();
     await detect.run({
@@ -69,13 +69,13 @@ describe("am agent detect", () => {
     const joined = stdoutLines.join("\n");
     expect(joined).toContain("Name");
     expect(joined).toContain("Installed");
-    expect(joined).toContain("aider");
+    expect(joined).toContain("claude");
     // Summary line mentions the installed count.
-    expect(joined).toMatch(/\d+ of \d+ built-in ACP agents installed/);
+    expect(joined).toMatch(/\d+ of \d+ built-in agents installed/);
   });
 
   test("no arg with --json: returns the full detection map keyed by agent name", async () => {
-    __setWhichFn(mockWhich({ aider: "/usr/local/bin/aider" }));
+    __setWhichFn(mockWhich({ claude: "/usr/local/bin/claude" }));
 
     const detect = await resolveDetectSubcommand();
     await detect.run({
@@ -84,11 +84,12 @@ describe("am agent detect", () => {
 
     const envelope = JSON.parse(stdoutLines.join("\n"));
     expect(envelope.agents).toBeDefined();
-    expect(envelope.agents.aider.installed).toBe(true);
-    expect(envelope.agents.aider.source).toBe("path");
-    expect(envelope.agents.aider.binary).toBe("/usr/local/bin/aider");
-    // Agents that are not installed still have an entry.
-    expect(envelope.agents.devin.installed).toBe(false);
+    expect(envelope.agents.claude.installed).toBe(true);
+    expect(envelope.agents.claude.source).toBe("path");
+    expect(envelope.agents.claude.binary).toBe("/usr/local/bin/claude");
+    // Tier-3 catalog-only agents still have an entry and are never
+    // reported as installed via PATH.
+    expect(envelope.agents.windsurf.installed).toBe(false);
   });
 
   test("with unknown name: exits non-zero and reports the error", async () => {
@@ -148,13 +149,13 @@ describe("am agent detect", () => {
     expect(typeof allFalse).toBe("boolean");
   });
 
-  test("with a known agent name but no --json: text output includes PATH + handshake lines", async () => {
+  test("with a known tier-1 agent name but no --json: text output includes PATH + handshake lines", async () => {
     __setWhichFn(mockWhich({})); // miss — handshake will also fail fast
 
     const detect = await resolveDetectSubcommand();
     await detect.run({
       args: {
-        name: "aider",
+        name: "gemini",
         json: false,
         quiet: false,
         verbose: false,
@@ -164,12 +165,28 @@ describe("am agent detect", () => {
     });
 
     const joined = stdoutLines.join("\n");
-    expect(joined).toContain("Agent: aider");
-    expect(joined).toContain("PATH binary: aider");
+    expect(joined).toContain("Agent: gemini");
+    expect(joined).toContain("PATH binary: gemini");
     expect(joined).toContain("PATH check:");
     expect(joined).toContain("ACP command:");
     expect(joined).toContain("ACP handshake:");
     // handshake should fail (no binary, no server) — "failed" appears in output.
     expect(joined).toMatch(/handshake: (verified|failed)/);
   }, 15_000);
+
+  test("with a tier-3 catalog-only agent name: errors with a 'catalog-only' message", async () => {
+    const detect = await resolveDetectSubcommand();
+    await detect.run({
+      args: {
+        name: "cline",
+        json: false,
+        quiet: false,
+        verbose: false,
+        timeout: "500",
+      },
+    });
+    expect(process.exitCode).toBe(1);
+    const joinedErr = stderrLines.join("\n");
+    expect(joinedErr).toContain("catalog-only");
+  });
 });
