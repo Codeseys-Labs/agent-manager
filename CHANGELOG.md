@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.5.0-rc4] - 2026-04-18
+
 ## [0.5.0-rc1] - 2026-04-17
 
 All notable changes to agent-manager are documented in this file.
