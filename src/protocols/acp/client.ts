@@ -135,11 +135,35 @@ export class AmAcpClient {
 
     this.subprocess = proc as typeof this.subprocess;
 
+    // Bun.spawn's `proc.stdin` is a FileSink, NOT a web-standard
+    // WritableStream. The previous `as unknown as WritableStream<Uint8Array>`
+    // cast compiled fine but blew up at runtime the moment ndJsonStream
+    // (or anything else in @agentclientprotocol/sdk) called `.getWriter()`.
+    // Wrap it in a real WritableStream so the SDK's web-stream path works.
+    const stdinSink = proc.stdin as unknown as {
+      write: (chunk: Uint8Array | string) => number | void;
+      flush?: () => void;
+      end?: () => void;
+    };
+    const writable = new WritableStream<Uint8Array>({
+      write(chunk) {
+        stdinSink.write(chunk);
+        stdinSink.flush?.();
+      },
+      close() {
+        stdinSink.end?.();
+      },
+      abort() {
+        try {
+          stdinSink.end?.();
+        } catch {
+          // best-effort
+        }
+      },
+    });
+
     // Build the NDJSON stream from the subprocess stdio
-    const stream = ndJsonStream(
-      proc.stdin as unknown as WritableStream<Uint8Array>,
-      proc.stdout as unknown as ReadableStream<Uint8Array>,
-    );
+    const stream = ndJsonStream(writable, proc.stdout as ReadableStream<Uint8Array>);
 
     // Create the client-side connection
     const updateHandler = this.updateHandler;
