@@ -23,7 +23,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: useblacksmith/setup-bun@v1
         with:
-          bun-version: 1.3.13
+          bun-version: 1.3.11
       - run: bun install --frozen-lockfile
 
       - name: Build targets
@@ -216,7 +216,7 @@ jobs:
 
       - uses: useblacksmith/setup-bun@v1
         with:
-          bun-version: 1.3.13
+          bun-version: 1.3.11
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
