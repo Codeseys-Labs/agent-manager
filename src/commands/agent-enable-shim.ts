@@ -3,9 +3,11 @@
  *
  * Flips two flags in the catalog for the named agent:
  *   1. [agents.<name>].shim_enabled = true            (bookkeeping)
- *   2. [agents.<name>].adapters.acp.command = "am-acp-shell <name>"
- *                                                    (so `am run` resolves
- *                                                    the agent through the shim)
+ *   2. [agents.<name>].acp.command = "am-acp-shell <name>"
+ *                                                    (so resolveAgent() picks
+ *                                                    the config override and
+ *                                                    routes `am run` through
+ *                                                    the shim)
  *
  * Then prints the ADR-0033 security caveat: Tier-2 wrappers inherit the
  * wrapped CLI's trust posture — `--yes`, `--no-interactive`, etc. bypass
@@ -13,9 +15,9 @@
  * confirmation prompt (or we error out in non-interactive stdin).
  */
 
-import { join } from "node:path";
 import { defineCommand } from "citty";
-import { resolveConfigDir, tryReadConfig, writeConfig } from "../core/config";
+import { resolveConfigDir } from "../core/config";
+import { withConfig } from "../core/controller";
 import type { Config } from "../core/schema";
 import { error, info, output } from "../lib/output";
 import { BUILT_IN_SHIMS } from "../protocols/acp/shell-wrapper";
@@ -87,32 +89,41 @@ export const agentEnableShimCommand = defineCommand({
       return;
     }
 
-    // 3. Flip the flag in the user's config.toml.
+    // 3. Flip the flag in the user's config.toml via withConfig (REV-4 HIGH-3:
+    //    was raw writeConfig, now serialized through configMutex to match
+    //    REV-1 MEDIUM-2).
+    //
+    // REV-4 CRIT-1 fix: write the shim command to `agents.<name>.acp.command`
+    // DIRECTLY, not nested under `adapters.acp.command`. resolveAgent() in
+    // core/agent-registry.ts reads ConfigAgentEntry.acp — which is a direct
+    // property of the agent entry. The old `adapters.acp` path was silently
+    // ignored by resolveAgent, so enable-shim "succeeded" but `am run <name>`
+    // still returned the tier-3 refusal.
     const configDir = resolveConfigDir();
-    const configPath = join(configDir, "config.toml");
-    const existing = (await tryReadConfig(configPath)) ?? ({} as Config);
+    const configPath = await withConfig(configDir, async (existing) => {
+      const draft = existing ?? ({} as Config);
+      const agentsBlock: Record<string, Record<string, unknown>> = {
+        ...((draft.agents ?? {}) as Record<string, Record<string, unknown>>),
+      };
+      const entry: Record<string, unknown> = { ...(agentsBlock[name] ?? {}) };
+      entry.name = name;
+      entry.shim_enabled = true;
+      // Write to the path resolveAgent actually reads.
+      entry.acp = { command: `am-acp-shell ${name}` };
+      agentsBlock[name] = entry;
 
-    const agentsBlock: Record<string, Record<string, unknown>> = {
-      ...((existing.agents ?? {}) as Record<string, Record<string, unknown>>),
-    };
-    const entry: Record<string, unknown> = { ...(agentsBlock[name] ?? {}) };
-    entry.name = name;
-    entry.shim_enabled = true;
-    const adapters: Record<string, Record<string, unknown>> = {
-      ...((entry.adapters as Record<string, Record<string, unknown>> | undefined) ?? {}),
-    };
-    adapters.acp = {
-      ...((adapters.acp as Record<string, unknown> | undefined) ?? {}),
-      command: `am-acp-shell ${name}`,
-    };
-    entry.adapters = adapters;
-    agentsBlock[name] = entry;
+      const next: Config = {
+        ...draft,
+        agents: agentsBlock as unknown as Config["agents"],
+      };
 
-    const next: Config = {
-      ...existing,
-      agents: agentsBlock as unknown as Config["agents"],
-    };
-    await writeConfig(configPath, next);
+      return {
+        result: `${configDir}/config.toml`,
+        changed: true,
+        updated: next,
+        commitMessage: `agent: enable shim for ${name}`,
+      };
+    });
 
     if (opts.json) {
       output(

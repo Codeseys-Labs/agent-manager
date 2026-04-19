@@ -127,16 +127,22 @@ const listSubcommand = defineCommand({
       opts,
     );
     let nativeCount = 0;
+    let shimCount = 0;
     let catalogOnlyCount = 0;
     for (const agent of agents) {
       const protocol = agent.acp && agent.a2a ? "ACP/A2A" : agent.acp ? "ACP" : "A2A";
       const tierLabel = renderTier(agent.tier, agent.source);
       if (agent.tier === "tier-1-native") nativeCount += 1;
+      else if (agent.tier === "tier-2-shim") shimCount += 1;
       else if (agent.tier === "tier-3-catalog-only") catalogOnlyCount += 1;
+      // REV-4 MED-1: tier-2-shim + runnable===false means "shim not enabled".
+      // Distinguish that from true tier-3 catalog-only ("cannot run, period").
       const endpoint =
-        agent.runnable === false
-          ? "(catalog-only)"
-          : (agent.acp?.command ?? agent.a2a?.url ?? "\u2014");
+        agent.tier === "tier-2-shim" && agent.runnable === false
+          ? "(shim — enable-shim to activate)"
+          : agent.runnable === false
+            ? "(catalog-only)"
+            : (agent.acp?.command ?? agent.a2a?.url ?? "\u2014");
       let installed: string;
       if (agent.installed === true) {
         installed = agent.version ? `yes (v${agent.version})` : "yes";
@@ -157,7 +163,7 @@ const listSubcommand = defineCommand({
       );
     }
     info(
-      `\n${agents.length} registered (${nativeCount} native / ${catalogOnlyCount} catalog-only), ${discovered.length} discovered`,
+      `\n${agents.length} registered (${nativeCount} native / ${shimCount} shim / ${catalogOnlyCount} catalog-only), ${discovered.length} discovered`,
       opts,
     );
   },

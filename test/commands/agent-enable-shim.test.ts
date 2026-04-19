@@ -12,6 +12,7 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { join } from "node:path";
 import { tryReadConfig } from "../../src/core/config";
+import { initRepo } from "../../src/core/git";
 import { type TestDir, createTestDir } from "../helpers/tmp";
 
 let consoleOutput: string[] = [];
@@ -43,7 +44,16 @@ describe("am agent enable-shim", () => {
     resetConsole();
     dir = await createTestDir("am-enable-shim-");
     configDir = dir.path;
+    // withConfig() will try to commitAll() after a successful write. Without
+    // a git repo that throws. Init one so the tests exercise the real code
+    // path (lock → write → commit).
+    await initRepo(configDir);
     process.env.AM_CONFIG_DIR = configDir;
+    // Clear any exitCode leaked from prior test files — bun:test shares the
+    // process, and a preceding test that sets process.exitCode = 1 (e.g.
+    // the tier-filter invalid-name test in agents.test.ts) would poison our
+    // happy-path assertions otherwise.
+    process.exitCode = 0;
   });
 
   afterEach(async () => {
@@ -54,7 +64,7 @@ describe("am agent enable-shim", () => {
     process.exitCode = 0;
   });
 
-  test("happy path — aider --yes writes adapters.acp.command to config.toml", async () => {
+  test("happy path — aider --yes writes acp.command and resolveAgent returns it", async () => {
     const { agentEnableShimCommand } = await import(
       "../../src/commands/agent-enable-shim"
     );
@@ -74,15 +84,27 @@ describe("am agent enable-shim", () => {
 
     expect(process.exitCode ?? 0).toBe(0);
 
+    // REV-4 CRIT-1 regression guard: assert both the write path AND the
+    // resolution path. The prior test checked only `adapters.acp.command`,
+    // which nothing reads — enable-shim "succeeded" but am run aider still
+    // hit the tier-3 refusal.
     const config = await tryReadConfig(join(configDir, "config.toml"));
     expect(config).not.toBeNull();
     const aider = config?.agents?.aider as unknown as
-      | {
-          adapters?: { acp?: { command?: string } };
-        }
+      | { acp?: { command?: string }; shim_enabled?: boolean }
       | undefined;
     expect(aider).toBeDefined();
-    expect(aider?.adapters?.acp?.command).toBe("am-acp-shell aider");
+    expect(aider?.shim_enabled).toBe(true);
+    expect(aider?.acp?.command).toBe("am-acp-shell aider");
+
+    // End-to-end: resolveAgent (the function `am run` actually calls) must
+    // return the shim command, not the tier-2 built-in with command: "".
+    const { resolveAgent } = await import("../../src/core/agent-registry");
+    const resolved = resolveAgent("aider", config ?? undefined);
+    expect(resolved).not.toBeNull();
+    expect(resolved?.acp?.command).toBe("am-acp-shell aider");
+    expect(resolved?.source).toBe("config");
+    expect(resolved?.runnable).toBe(true);
   });
 
   test("unknown shim name exits 1 and does not write config", async () => {

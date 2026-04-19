@@ -1693,6 +1693,9 @@ function defineTools(): ToolEntry[] {
         const configDir = resolveConfigDir();
         const agents = await listAllAgentsAsync(config, configDir);
         return {
+          // REV-4 HIGH-2 fix: include tier + runnable so MCP consumers
+          // (LLM agents routing via am_agent_invoke) can tell which agents
+          // will actually spawn vs which will return a refusal.
           agents: agents.map((a) => ({
             name: a.name,
             description: a.description ?? null,
@@ -1700,6 +1703,9 @@ function defineTools(): ToolEntry[] {
             protocol: a.acp && a.a2a ? "both" : a.acp ? "acp" : "a2a",
             acp: a.acp ?? null,
             a2a: a.a2a ?? null,
+            tier: a.tier ?? null,
+            runnable: a.runnable ?? Boolean(a.acp || a.a2a),
+            installed: a.installed ?? null,
           })),
           total: agents.length,
         };
@@ -2264,11 +2270,17 @@ async function invokeAgentImpl(args: Record<string, unknown>, ctx: ToolContext):
     );
   }
 
-  // ADR-0033 / REV-1 #7: catalog-only (tier-3) entries have no spawnable
-  // runtime. Reject with the shared tier-refusal message instead of falling
-  // through to the generic "neither ACP nor A2A endpoint" error that tells
-  // the caller nothing about why.
-  const { isCatalogOnly, tierRefusalMessage } = await import("../core/agent-registry");
+  // ADR-0033 / REV-1 #7 / REV-4 HIGH-1: tier-2 shims (not yet enabled) get a
+  // recovery-path hint; tier-3 catalog-only get the no-recovery message.
+  const {
+    isCatalogOnly,
+    isShimNotEnabled,
+    shimNotEnabledMessage,
+    tierRefusalMessage,
+  } = await import("../core/agent-registry");
+  if (isShimNotEnabled(entry)) {
+    throw new Error(shimNotEnabledMessage(agentName));
+  }
   if (isCatalogOnly(entry)) {
     throw new Error(tierRefusalMessage(agentName));
   }

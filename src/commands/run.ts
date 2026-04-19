@@ -25,8 +25,10 @@ import { defineCommand } from "citty";
 import {
   type UnifiedRegistryConfig,
   isCatalogOnly,
+  isShimNotEnabled,
   listAllAgentsAsync,
   resolveAgentAsync,
+  shimNotEnabledMessage,
   tierRefusalMessage,
 } from "../core/agent-registry";
 import { resolveConfigDir } from "../core/config";
@@ -108,8 +110,14 @@ async function runAgent(args: RunAgentArgs): Promise<void> {
     return;
   }
 
-  // ADR-0033: tier-3 catalog-only agents cannot be spawned. Give the user
-  // a concrete next step rather than "no ACP endpoint".
+  // ADR-0033: tier-2 shims that haven't been enabled get a different hint —
+  // they have a clear next step (`enable-shim`), unlike tier-3 which has no
+  // recovery. Check tier-2 FIRST so the recovery path wins.
+  if (isShimNotEnabled(entry)) {
+    error(shimNotEnabledMessage(agentName), opts);
+    process.exitCode = 1;
+    return;
+  }
   if (isCatalogOnly(entry)) {
     error(tierRefusalMessage(agentName), opts);
     process.exitCode = 1;

@@ -198,4 +198,108 @@ describe("am agents", () => {
       }
     }
   });
+
+  // ── --tier filter (ADR-0033 HIGH-1 from REV-1) ──────────────────
+  //
+  // The refusal messages in run.ts and detectSubcommand tell users to run
+  // `am agent list --tier native`. Before 2026-04-18 that flag was unimplemented
+  // and citty rejected it. These tests exercise the actual list handler so the
+  // flag doesn't regress back to a broken promise.
+
+  describe("list --tier filter", () => {
+    async function runListWithArgs(argv: Record<string, unknown>): Promise<string> {
+      const origConfigDir = process.env.AM_CONFIG_DIR;
+      process.env.AM_CONFIG_DIR = configDir;
+      try {
+        const { agentsCommand } = await import("../../src/commands/agents");
+        const listCmd = await (
+          agentsCommand.subCommands as Record<string, () => Promise<unknown>>
+        ).list();
+        await (
+          listCmd as { run: (ctx: { args: Record<string, unknown> }) => Promise<void> }
+        ).run({
+          args: { json: true, quiet: false, verbose: false, discover: false, ...argv },
+        });
+        return consoleOutput.at(-1) ?? "";
+      } finally {
+        if (origConfigDir !== undefined) {
+          process.env.AM_CONFIG_DIR = origConfigDir;
+        } else {
+          process.env.AM_CONFIG_DIR = undefined;
+        }
+      }
+    }
+
+    test("--tier native only returns tier-1 entries", async () => {
+      const out = await runListWithArgs({ tier: "native" });
+      const parsed = JSON.parse(out) as { agents: Array<{ tier: string; name: string }> };
+      expect(parsed.agents.length).toBeGreaterThan(0);
+      for (const a of parsed.agents) {
+        expect(a.tier).toBe("tier-1-native");
+      }
+      // Tier-1 list per ADR-0033 Phase A.
+      const names = parsed.agents.map((a) => a.name).sort();
+      expect(names).toEqual(["claude", "codex", "gemini", "kiro"]);
+    });
+
+    test("--tier catalog only returns tier-3 entries", async () => {
+      const out = await runListWithArgs({ tier: "catalog" });
+      const parsed = JSON.parse(out) as { agents: Array<{ tier: string; runnable: boolean }> };
+      expect(parsed.agents.length).toBeGreaterThan(0);
+      for (const a of parsed.agents) {
+        expect(a.tier).toBe("tier-3-catalog-only");
+        expect(a.runnable).toBe(false);
+      }
+    });
+
+    test("--tier invalid-name exits with error and does not emit JSON body", async () => {
+      const origConfigDir = process.env.AM_CONFIG_DIR;
+      process.env.AM_CONFIG_DIR = configDir;
+      try {
+        const { agentsCommand } = await import("../../src/commands/agents");
+        const listCmd = await (
+          agentsCommand.subCommands as Record<string, () => Promise<unknown>>
+        ).list();
+        await (
+          listCmd as { run: (ctx: { args: Record<string, unknown> }) => Promise<void> }
+        ).run({
+          args: {
+            json: true,
+            quiet: false,
+            verbose: false,
+            discover: false,
+            tier: "spawnable",
+          },
+        });
+        expect(process.exitCode).toBe(1);
+        // --json routes errors to stdout as a JSON body via lib/output.error().
+        const combined = [...consoleOutput, ...consoleErrors].join("\n");
+        expect(combined).toMatch(/Unknown tier.*spawnable/);
+        expect(combined).toMatch(/native, shim, catalog/);
+      } finally {
+        if (origConfigDir !== undefined) {
+          process.env.AM_CONFIG_DIR = origConfigDir;
+        } else {
+          process.env.AM_CONFIG_DIR = undefined;
+        }
+      }
+    });
+
+    test("--runnable hides catalog-only tier-3 entries", async () => {
+      const out = await runListWithArgs({ runnable: true });
+      const parsed = JSON.parse(out) as { agents: Array<{ runnable: boolean; tier: string }> };
+      for (const a of parsed.agents) {
+        expect(a.runnable).not.toBe(false);
+        expect(a.tier).not.toBe("tier-3-catalog-only");
+      }
+    });
+
+    test("accepts long-form tier aliases (tier-1-native, tier-3-catalog-only)", async () => {
+      const out = await runListWithArgs({ tier: "tier-1-native" });
+      const parsed = JSON.parse(out) as { agents: Array<{ tier: string }> };
+      for (const a of parsed.agents) {
+        expect(a.tier).toBe("tier-1-native");
+      }
+    });
+  });
 });

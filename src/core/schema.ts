@@ -99,6 +99,10 @@ export const AgentProfileSchema = z
     max_turns: z.number().optional(),
     acp: z.object({ command: z.string() }).optional(),
     a2a: z.object({ url: z.string() }).optional(),
+    // ADR-0033 Phase B: bookkeeping flag set by `am agent enable-shim` so
+    // tools (e.g. `am agent list`, `am status`) can tell the user the agent
+    // is running through the acp-shell wrapper.
+    shim_enabled: z.boolean().optional(),
     _marketplace: MarketplaceProvenanceSchema.optional(),
     adapters: adaptersPassthrough,
   })

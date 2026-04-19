@@ -496,11 +496,15 @@ export async function listAllAgentsAsync(
 
 /**
  * Canonical user-facing message for "this agent is catalog-only — `am run`
- * cannot spawn it." Keeping one source of truth means `am run`, `am flow
- * run`, and `am_agent_invoke` all emit the same ADR-0033-quality hint
- * instead of three variants.
+ * cannot spawn it." One source of truth across `am run`, `am flow run`,
+ * and `am_agent_invoke`.
  *
- * Callers decide how to surface it (throw, exit 1, JSON-RPC error, etc.).
+ * REV-4 HIGH-1 fix: tier-2-shim agents that have NOT been enabled yet are
+ * NOT catalog-only — they have a clear path forward (`am agent enable-shim
+ * <name>`). Previous wording called them VSCode extensions, which is
+ * factually wrong for aider/amazon-q/cody. Split into two functions.
+ *
+ * Callers decide how to surface the result (throw, exit 1, JSON-RPC error, etc.).
  */
 export function tierRefusalMessage(agentName: string): string {
   return (
@@ -513,11 +517,38 @@ export function tierRefusalMessage(agentName: string): string {
 }
 
 /**
- * Type guard: true when an agent is explicitly refused by `am run`.
- * Keeps the tier-check idiom a one-liner at each caller site.
+ * Tier-2 hint for a shim-wrapped agent that the user has not yet opted in to.
+ * Separate from tierRefusalMessage because the next step is different:
+ * tier-3 has no recovery; tier-2 just needs `enable-shim`.
+ */
+export function shimNotEnabledMessage(agentName: string): string {
+  return (
+    `"${agentName}" is a Tier-2 wrapped agent and requires opt-in before ` +
+    "`am run` will spawn it. Run:\n" +
+    `  am agent enable-shim ${agentName} --yes\n\n` +
+    "Tier-2 inherits the wrapped CLI's trust posture — `--yes` / " +
+    "`--no-interactive` flags on the wrapped tool bypass am's approval UI. " +
+    "See ADR-0033 Phase B for the full security note."
+  );
+}
+
+/**
+ * Type guard: true when an agent is a tier-3 catalog-only (no recovery).
+ * REV-4 HIGH-1: narrowed from `runnable === false` to `tier === "tier-3"`,
+ * because unenabled tier-2 shims ALSO have runnable === false but they
+ * belong on the isShimNotEnabled path, not catalog-only.
  */
 export function isCatalogOnly(agent: Pick<UnifiedAgent, "runnable" | "tier">): boolean {
-  return agent.runnable === false || agent.tier === "tier-3-catalog-only";
+  return agent.tier === "tier-3-catalog-only";
+}
+
+/**
+ * Type guard: true for a tier-2-shim entry that hasn't been enabled yet.
+ * Callers should check this BEFORE isCatalogOnly so the tier-2 specific
+ * hint wins for aider/amazon-q/cody.
+ */
+export function isShimNotEnabled(agent: Pick<UnifiedAgent, "runnable" | "tier">): boolean {
+  return agent.tier === "tier-2-shim" && agent.runnable === false;
 }
 
 // ── Local-binary preference (Phase C, ADR-0033; borrowed from acpx) ──

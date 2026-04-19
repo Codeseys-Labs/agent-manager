@@ -78,13 +78,17 @@ const flowRunCommand = defineCommand({
         input: initialInput,
         runsDir: args.runsDir as string | undefined,
         acpExecutor: async (agentName, prompt, cwd) => {
-          // ADR-0033 / REV-1 #7: before we spawn, ask the unified registry
-          // whether this agent is catalog-only. If so, emit the shared
-          // tier-refusal message so the user sees the ADR-0033 hint instead
-          // of "Flow failed: Unknown agent <name>".
-          const { resolveAgentAsync, isCatalogOnly, tierRefusalMessage } = await import(
-            "../core/agent-registry"
-          );
+          // ADR-0033 / REV-1 #7 / REV-4 HIGH-1: before we spawn, check the
+          // unified registry for a tier-2 or tier-3 refusal so the user sees
+          // the ADR-0033 hint (tier-2: `enable-shim`, tier-3: native UI)
+          // instead of "Flow failed: Unknown agent <name>".
+          const {
+            resolveAgentAsync,
+            isCatalogOnly,
+            isShimNotEnabled,
+            shimNotEnabledMessage,
+            tierRefusalMessage,
+          } = await import("../core/agent-registry");
           const { resolveConfigDir: rcd, tryReadConfig: trc } = await import(
             "../core/config"
           );
@@ -93,6 +97,9 @@ const flowRunCommand = defineCommand({
             | UnifiedRegistryConfig
             | undefined;
           const entry = await resolveAgentAsync(agentName, cfg, cfgDir);
+          if (entry && isShimNotEnabled(entry)) {
+            throw new Error(shimNotEnabledMessage(agentName));
+          }
           if (entry && isCatalogOnly(entry)) {
             throw new Error(tierRefusalMessage(agentName));
           }
