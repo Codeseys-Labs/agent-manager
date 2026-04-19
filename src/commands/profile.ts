@@ -6,9 +6,8 @@ import {
   resolveConfigDir,
   resolveProjectConfig,
   tryReadConfig,
-  writeConfig,
 } from "../core/config";
-import { commitAll } from "../core/git";
+import { withConfig } from "../core/controller";
 import { resolveProfile } from "../core/resolver";
 import type { Config, Profile } from "../core/schema";
 import { AmError, errorMessage, requireConfig } from "../lib/errors";
@@ -147,45 +146,43 @@ export const profileCreateCommand = defineCommand({
     const opts = { json: args.json, quiet: args.quiet, verbose: args.verbose };
     try {
       const configDir = resolveConfigDir();
-      const configPath = join(configDir, "config.toml");
-
-      const config = await tryReadConfig(configPath);
-      requireConfig(config);
-
       const name = args.name;
 
-      if (config.profiles?.[name]) {
-        process.exitCode = 1;
-        error(`Profile "${name}" already exists.`, opts);
-        return;
-      }
+      // REV-1 MEDIUM-2: serialize RMW via withConfig (was raw read → writeConfig).
+      await withConfig(configDir, async (config) => {
+        requireConfig(config);
 
-      // Validate parent exists if specified
-      if (args.inherits && !config.profiles?.[args.inherits]) {
-        process.exitCode = 1;
-        error(`Parent profile "${args.inherits}" does not exist.`, opts);
-        return;
-      }
+        if (config.profiles?.[name]) {
+          process.exitCode = 1;
+          error(`Profile "${name}" already exists.`, opts);
+          return { result: undefined, changed: false };
+        }
 
-      const profile: Profile = {};
-      if (args.description) profile.description = args.description;
-      if (args.inherits) profile.inherits = args.inherits;
+        // Validate parent exists if specified
+        if (args.inherits && !config.profiles?.[args.inherits]) {
+          process.exitCode = 1;
+          error(`Parent profile "${args.inherits}" does not exist.`, opts);
+          return { result: undefined, changed: false };
+        }
 
-      if (!config.profiles) config.profiles = {};
-      config.profiles[name] = profile;
+        const profile: Profile = {};
+        if (args.description) profile.description = args.description;
+        if (args.inherits) profile.inherits = args.inherits;
 
-      await writeConfig(configPath, config);
+        if (!config.profiles) config.profiles = {};
+        config.profiles[name] = profile;
 
-      try {
-        await commitAll(configDir, `add profile: ${name}`);
-      } catch {
-        // Nothing to commit
-      }
+        info(`Created profile "${name}"`, opts);
+        if (args.json) {
+          output({ action: "create", profile: name, config: profile }, opts);
+        }
 
-      info(`Created profile "${name}"`, opts);
-      if (args.json) {
-        output({ action: "create", profile: name, config: profile }, opts);
-      }
+        return {
+          result: undefined,
+          changed: true,
+          commitMessage: `add profile: ${name}`,
+        };
+      });
     } catch (err) {
       amError(err, opts);
       process.exitCode = 1;
@@ -206,53 +203,51 @@ export const profileDeleteCommand = defineCommand({
     const opts = { json: args.json, quiet: args.quiet, verbose: args.verbose };
     try {
       const configDir = resolveConfigDir();
-      const configPath = join(configDir, "config.toml");
-
-      const config = await tryReadConfig(configPath);
-      requireConfig(config);
-
       const name = args.name;
 
-      if (!config.profiles?.[name]) {
-        process.exitCode = 1;
-        error(`Profile "${name}" does not exist.`, opts);
-        return;
-      }
+      // REV-1 MEDIUM-2: serialize RMW via withConfig (was raw read → writeConfig).
+      await withConfig(configDir, async (config) => {
+        requireConfig(config);
 
-      // Check if any other profile inherits from this one
-      for (const [otherName, otherProfile] of Object.entries(config.profiles ?? {})) {
-        if (otherProfile.inherits === name) {
+        if (!config.profiles?.[name]) {
           process.exitCode = 1;
-          error(`Cannot delete "${name}": profile "${otherName}" inherits from it.`, opts);
-          return;
+          error(`Profile "${name}" does not exist.`, opts);
+          return { result: undefined, changed: false };
         }
-      }
 
-      // Confirmation prompt (skip if --yes flag or non-interactive)
-      if (!args.yes) {
-        const confirmed = await confirm({
-          message: `Delete profile '${name}'? This cannot be undone.`,
-        });
-        if (isCancel(confirmed) || !confirmed) {
-          info("Aborted.", opts);
-          return;
+        // Check if any other profile inherits from this one
+        for (const [otherName, otherProfile] of Object.entries(config.profiles ?? {})) {
+          if (otherProfile.inherits === name) {
+            process.exitCode = 1;
+            error(`Cannot delete "${name}": profile "${otherName}" inherits from it.`, opts);
+            return { result: undefined, changed: false };
+          }
         }
-      }
 
-      delete config.profiles[name];
+        // Confirmation prompt (skip if --yes flag or non-interactive)
+        if (!args.yes) {
+          const confirmed = await confirm({
+            message: `Delete profile '${name}'? This cannot be undone.`,
+          });
+          if (isCancel(confirmed) || !confirmed) {
+            info("Aborted.", opts);
+            return { result: undefined, changed: false };
+          }
+        }
 
-      await writeConfig(configPath, config);
+        delete config.profiles[name];
 
-      try {
-        await commitAll(configDir, `delete profile: ${name}`);
-      } catch {
-        // Nothing to commit
-      }
+        info(`Deleted profile "${name}"`, opts);
+        if (args.json) {
+          output({ action: "delete", profile: name }, opts);
+        }
 
-      info(`Deleted profile "${name}"`, opts);
-      if (args.json) {
-        output({ action: "delete", profile: name }, opts);
-      }
+        return {
+          result: undefined,
+          changed: true,
+          commitMessage: `delete profile: ${name}`,
+        };
+      });
     } catch (err) {
       amError(err, opts);
       process.exitCode = 1;

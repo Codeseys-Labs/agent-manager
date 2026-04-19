@@ -3,7 +3,8 @@ import { join } from "node:path";
 import * as clack from "@clack/prompts";
 import { defineCommand } from "citty";
 import { getDetectedAdapters } from "../adapters/registry";
-import { resolveConfigDir, tryReadConfig, writeConfig } from "../core/config";
+import { resolveConfigDir } from "../core/config";
+import { withConfig } from "../core/controller";
 import { addRemote, initRepo } from "../core/git";
 import type { Config } from "../core/schema";
 import { generateKey, resolveKeyPath, saveKey } from "../core/secrets";
@@ -42,35 +43,51 @@ export const initCommand = defineCommand({
     const configDir = resolveConfigDir();
     const configPath = join(configDir, "config.toml");
 
-    // Check if already initialized
-    const existing = await tryReadConfig(configPath);
-    if (existing) {
-      process.exitCode = 1;
-      if (args.json) {
-        output({ status: "already_initialized", configDir }, opts);
-      } else {
-        error(`Already initialized. Config exists at ${configPath}`, opts);
-      }
-      return;
-    }
-
-    // Create config directory
+    // REV-1 MEDIUM-2: serialize RMW via withConfig (was raw tryReadConfig + writeConfig).
+    // The initialize-if-absent path returns { changed: true, updated: newConfig };
+    // the already-initialized path short-circuits with { changed: false }
+    // after setting exitCode. Create the config dir (idempotent) up front so
+    // withConfig's tryReadConfig has a stable path to probe. initRepo is only
+    // run on the first-run path because it is not idempotent (it makes an
+    // "init" commit).
     await mkdir(configDir, { recursive: true });
 
-    // Initialize git repo
-    await initRepo(configDir);
+    const wasInitialized = await withConfig(configDir, async (existing) => {
+      if (existing) {
+        process.exitCode = 1;
+        if (args.json) {
+          output({ status: "already_initialized", configDir }, opts);
+        } else {
+          error(`Already initialized. Config exists at ${configPath}`, opts);
+        }
+        return { result: false, changed: false };
+      }
 
-    // Write initial config
-    const config: Config = {
-      settings: { default_profile: "default" },
-      servers: {},
-      profiles: {
-        default: {
-          description: "Default profile — all servers",
+      // First-run: initialize the git repo under the lock so concurrent
+      // `am init` invocations can't race on `git init`.
+      await initRepo(configDir);
+
+      const newConfig: Config = {
+        settings: { default_profile: "default" },
+        servers: {},
+        profiles: {
+          default: {
+            description: "Default profile — all servers",
+          },
         },
-      },
-    };
-    await writeConfig(configPath, config);
+      };
+
+      return {
+        result: true,
+        changed: true,
+        updated: newConfig,
+        commitMessage: "initial commit",
+      };
+    });
+
+    if (!wasInitialized) {
+      return;
+    }
 
     // Detect installed tools
     const detected = await getDetectedAdapters();

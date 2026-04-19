@@ -12,8 +12,8 @@ import {
   writeAdaptersToml,
 } from "../adapters/community/loader";
 import type { CommunityAdapterConfig } from "../adapters/community/types";
-import { resolveConfigDir, tryReadConfig, writeConfig } from "../core/config";
-import { commitAll } from "../core/git";
+import { resolveConfigDir, tryReadConfig } from "../core/config";
+import { withConfig } from "../core/controller";
 import type { AgentProfile, Config, Server, Skill } from "../core/schema";
 import { requireConfig } from "../lib/errors";
 import { MarketplaceError, findMarketplaceEntry, verifyMarketplacePin } from "./client";
@@ -66,39 +66,39 @@ export async function installPlugin(
   }
 
   const configDir = resolveConfigDir();
-  const configPath = join(configDir, "config.toml");
-  const config = await tryReadConfig(configPath);
-  requireConfig(config);
 
   // opts.yes reserved for future install-time confirmation prompts; the SHA
   // pin verification path above is already wired to respect the flag via
   // updateMarketplace. We keep the arg name stable for the CLI contract.
   void opts;
 
-  const result = applyPlugin(config, plugin);
+  // REV-1 MEDIUM-2: serialize RMW via withConfig. adapters.toml writes
+  // (setCommunityAdapterConfig) happen inside the span so the whole install
+  // is atomic under a single mutex held against concurrent MCP/CLI callers.
+  return withConfig(configDir, async (config) => {
+    requireConfig(config);
 
-  // Write config.toml for servers/skills/agents
-  await writeConfig(configPath, config);
+    const result = applyPlugin(config, plugin);
 
-  // Register community adapter in adapters.toml if declared
-  if (plugin.manifest.adapter) {
-    const adapterName = plugin.manifest.name;
-    const adapterConfig: CommunityAdapterConfig = {
-      source: plugin.manifest.adapter.source ?? `marketplace:${plugin.marketplace}/${adapterName}`,
-      command: plugin.manifest.adapter.command,
-      installed_at: new Date().toISOString(),
+    // Register community adapter in adapters.toml if declared
+    if (plugin.manifest.adapter) {
+      const adapterName = plugin.manifest.name;
+      const adapterConfig: CommunityAdapterConfig = {
+        source:
+          plugin.manifest.adapter.source ?? `marketplace:${plugin.marketplace}/${adapterName}`,
+        command: plugin.manifest.adapter.command,
+        installed_at: new Date().toISOString(),
+      };
+      await setCommunityAdapterConfig(configDir, adapterName, adapterConfig);
+      result.adapter = adapterName;
+    }
+
+    return {
+      result,
+      changed: true,
+      commitMessage: `marketplace install: ${pluginName}`,
     };
-    await setCommunityAdapterConfig(configDir, adapterName, adapterConfig);
-    result.adapter = adapterName;
-  }
-
-  try {
-    await commitAll(configDir, `marketplace install: ${pluginName}`);
-  } catch {
-    // Nothing to commit
-  }
-
-  return result;
+  });
 }
 
 /**
@@ -218,71 +218,73 @@ export function applyPlugin(config: Config, plugin: DiscoveredPlugin): InstallRe
  */
 export async function uninstallPlugin(pluginName: string): Promise<UninstallResult> {
   const configDir = resolveConfigDir();
-  const configPath = join(configDir, "config.toml");
-  const config = await tryReadConfig(configPath);
-  requireConfig(config);
 
-  const result: UninstallResult = {
-    plugin: pluginName,
-    removedServers: [],
-    removedSkills: [],
-    removedAgents: [],
-  };
+  // REV-1 MEDIUM-2: serialize RMW via withConfig. adapters.toml removal is
+  // scoped inside the same critical section so a concurrent install can't
+  // re-add the adapter between the config.toml write and the adapters.toml
+  // removal (or vice versa).
+  return withConfig(configDir, async (config) => {
+    requireConfig(config);
 
-  // Remove servers with matching provenance
-  if (config.servers) {
-    for (const [name, server] of Object.entries(config.servers)) {
-      if (server._marketplace?.package === pluginName) {
-        delete config.servers[name];
-        result.removedServers.push(name);
+    const result: UninstallResult = {
+      plugin: pluginName,
+      removedServers: [],
+      removedSkills: [],
+      removedAgents: [],
+    };
+
+    // Remove servers with matching provenance
+    if (config.servers) {
+      for (const [name, server] of Object.entries(config.servers)) {
+        if (server._marketplace?.package === pluginName) {
+          delete config.servers[name];
+          result.removedServers.push(name);
+        }
       }
     }
-  }
 
-  // Remove skills with matching provenance
-  if (config.skills) {
-    for (const [name, skill] of Object.entries(config.skills)) {
-      if (skill._marketplace?.package === pluginName) {
-        delete config.skills[name];
-        result.removedSkills.push(name);
+    // Remove skills with matching provenance
+    if (config.skills) {
+      for (const [name, skill] of Object.entries(config.skills)) {
+        if (skill._marketplace?.package === pluginName) {
+          delete config.skills[name];
+          result.removedSkills.push(name);
+        }
       }
     }
-  }
 
-  // Remove agents with matching provenance
-  if (config.agents) {
-    for (const [name, agent] of Object.entries(config.agents)) {
-      if (agent._marketplace?.package === pluginName) {
-        delete config.agents[name];
-        result.removedAgents.push(name);
+    // Remove agents with matching provenance
+    if (config.agents) {
+      for (const [name, agent] of Object.entries(config.agents)) {
+        if (agent._marketplace?.package === pluginName) {
+          delete config.agents[name];
+          result.removedAgents.push(name);
+        }
       }
     }
-  }
 
-  // Remove community adapter if it was installed from this plugin
-  const removed = await removeCommunityAdapterConfig(configDir, pluginName);
-  if (removed) {
-    result.removedAdapter = pluginName;
-  }
+    // Remove community adapter if it was installed from this plugin
+    const removed = await removeCommunityAdapterConfig(configDir, pluginName);
+    if (removed) {
+      result.removedAdapter = pluginName;
+    }
 
-  const totalRemoved =
-    result.removedServers.length +
-    result.removedSkills.length +
-    result.removedAgents.length +
-    (result.removedAdapter ? 1 : 0);
+    const totalRemoved =
+      result.removedServers.length +
+      result.removedSkills.length +
+      result.removedAgents.length +
+      (result.removedAdapter ? 1 : 0);
 
-  if (totalRemoved === 0) {
-    throw new MarketplaceError(`No installed entities found for plugin "${pluginName}".`);
-  }
+    if (totalRemoved === 0) {
+      throw new MarketplaceError(`No installed entities found for plugin "${pluginName}".`);
+    }
 
-  await writeConfig(configPath, config);
-  try {
-    await commitAll(configDir, `marketplace uninstall: ${pluginName}`);
-  } catch {
-    // Nothing to commit
-  }
-
-  return result;
+    return {
+      result,
+      changed: true,
+      commitMessage: `marketplace uninstall: ${pluginName}`,
+    };
+  });
 }
 
 /**
