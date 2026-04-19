@@ -2,6 +2,64 @@
 
 ## [Unreleased]
 
+## [0.5.0-rc6] - 2026-04-18
+
+### Added
+- **ADR-0033 three-tier agent model.** `BUILT_IN_AGENTS` replaces the flat
+  16-entry `BUILT_IN_ACP_AGENTS` dict with three tiers: tier-1-native
+  (claude/codex/gemini/kiro — verified end-to-end), tier-2-shim
+  (aider/amazon-q/cody — opt-in via `am agent enable-shim`), and
+  tier-3-catalog-only (cline/continue/copilot/cursor/kilo-code/roo-code/
+  windsurf — `am apply` writes config, `am run` returns a helpful refusal).
+- **`am agent enable-shim <name>`** — opt-in path for Tier-2 wrappers with a
+  prominent security caveat. Requires `--yes` or interactive confirmation.
+- **`am-acp-shell <name>`** — second bin shipped alongside `am`. Runs a
+  minimal ACP server that spawns the wrapped CLI one-shot per prompt.
+- **`am agent list --tier native|shim|catalog|--runnable`** — filter the
+  unified registry by tier. The refusal messages that already referenced
+  this flag now work.
+- **Agent tier column** in `am agent list` text + JSON output; tier + runnable
+  surface through `am_agent_list` MCP tool.
+- **`resolveInstalledBuiltInAgentLaunch`** — prefer a locally-installed
+  binary over npx cold-start for claude and codex (2–5s startup win per
+  invocation). Borrowed from openclaw/acpx; see
+  `docs/references/openclaw-acpx.md` for attribution.
+
+### Fixed
+- **ACP subprocess env-scrubbing.** `sandboxEnv()` allowlists PATH/HOME/
+  LANG/TERM/etc. and strips AM_*, AWS_*, GITHUB_TOKEN, OPENAI_*,
+  ANTHROPIC_*, GOOGLE_*, and any var matching `*_(TOKEN|SECRET|KEY|
+  PASSWORD|CRED|SESSION)` before spawning. Closes REV-2 HIGH-3.
+- **MCP progress redaction.** `notifications/progress` payloads now run
+  through `redactSecretish` before the sink sees them. An agent streaming
+  `sk-ant-...` in a chunk no longer leaks it to every third-party IDE
+  tailing MCP traffic. Closes REV-2 HIGH-1.
+- **Concurrency: route install/uninstall/update/profile/init/marketplace
+  install/uninstall through `withConfig`.** The Wave B mutex now covers
+  8 more CLI surfaces that previously did raw `writeConfig`. Closes
+  REV-1 MEDIUM-2.
+- **Enable-shim → resolveAgent path.** `enable-shim` previously wrote to
+  `adapters.acp.command` but `resolveAgent` reads `acp.command` directly
+  — the entire tier-2 opt-in flow was silently broken. Fixed to write the
+  correct path; test now asserts the resolved route, not just the write.
+  Closes REV-4 CRIT-1.
+- **Tier-2-specific refusal.** `am run aider` (before `enable-shim`) used
+  to claim aider was a VSCode extension. Now emits a recovery-path hint
+  pointing at `am agent enable-shim aider --yes`. Closes REV-4 HIGH-1.
+
+### Changed
+- **Unified tier refusal across `am run`, `am flow run`, and
+  `am_agent_invoke`.** Three surfaces now emit the same ADR-0033 message
+  via `tierRefusalMessage` / `shimNotEnabledMessage` helpers.
+- **README.md:** added "direction matters" note clarifying that `am apply`
+  uni-directionally pushes catalog → tool (with `mcpServers` replace
+  semantics), and dropped the stale "16 agents" claim.
+
+### Security
+- Tier-2 wrapped agents inherit the wrapped CLI's trust posture (e.g.
+  `aider --yes` auto-approves file mutations without am's UI). Documented
+  in `am agent enable-shim`'s security caveat and the README tier matrix.
+
 ## [0.5.0-rc4] - 2026-04-18
 
 ## [0.5.0-rc1] - 2026-04-17

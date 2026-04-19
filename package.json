@@ -1,6 +1,6 @@
 {
   "name": "agent-manager",
-  "version": "0.5.0-rc5",
+  "version": "0.5.0-rc6",
   "description": "the control plane for AI agents — catalog, MCP gateway, protocol router (ACP/A2A), marketplace, LLM-wiki, and multi-UI",
   "type": "module",
   "main": "src/cli.ts",
