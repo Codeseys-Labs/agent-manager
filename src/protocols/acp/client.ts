@@ -40,6 +40,7 @@ import {
 } from "@agentclientprotocol/sdk";
 
 import path from "node:path";
+import { sandboxEnv } from "./env-sandbox";
 import { parseCommand, resolveAgent } from "./registry";
 import type {
   AcpConnection,
@@ -126,11 +127,16 @@ export class AmAcpClient {
     const { executable, args } = parseCommand(agentCommand);
     const extraArgs = opts?.args ?? [];
 
+    // HIGH-3 fix (REV-2 / ADR-0033 Phase B): scrub parent env before spawn.
+    // Previously passed `{ ...process.env, ...opts?.env }` which leaked
+    // AM_MCP_TOKEN, AM_ENCRYPTION_KEY, AWS creds, bearer tokens, etc. into
+    // the agent subprocess. sandboxEnv() keeps only PATH/HOME/LANG/etc. and
+    // overlays caller-supplied env on top.
     const proc = Bun.spawn([executable, ...args, ...extraArgs], {
       stdin: "pipe",
       stdout: "pipe",
       stderr: "inherit",
-      env: { ...process.env, ...opts?.env },
+      env: sandboxEnv(opts?.env),
     });
 
     this.subprocess = proc as typeof this.subprocess;
@@ -141,7 +147,7 @@ export class AmAcpClient {
     // (or anything else in @agentclientprotocol/sdk) called `.getWriter()`.
     // Wrap it in a real WritableStream so the SDK's web-stream path works.
     const stdinSink = proc.stdin as unknown as {
-      write: (chunk: Uint8Array | string) => number | void;
+      write: (chunk: Uint8Array | string) => number | undefined;
       flush?: () => void;
       end?: () => void;
     };
@@ -507,10 +513,19 @@ function createClientHandler(
     async createTerminal(params: CreateTerminalRequest): Promise<CreateTerminalResponse> {
       // Headless terminal support: spawn the command directly (no shell).
       // HIGH-2 fix: avoid sh -c to prevent shell metacharacter injection.
+      // HIGH-3 fix (REV-2 / ADR-0033 Phase B): scrub env before spawn. When
+      // params.env is undefined we used to inherit the full parent env (the
+      // exfiltration vector described in REV-2 — an agent asking
+      // `createTerminal({ command: "printenv" })` could dump every secret).
+      // Now we pass the scrubbed default env; if the agent supplied explicit
+      // env vars, those overlay on top via sandboxEnv's `extra` param.
       const { executable, args } = parseCommand(params.command);
+      const explicitEnv = params.env
+        ? Object.fromEntries(params.env.map((e) => [e.name, e.value]))
+        : undefined;
       const proc = Bun.spawn([executable, ...args], {
         cwd: params.cwd ?? undefined,
-        env: params.env ? Object.fromEntries(params.env.map((e) => [e.name, e.value])) : undefined,
+        env: sandboxEnv(explicitEnv),
         stdout: "pipe",
         stderr: "pipe",
       });

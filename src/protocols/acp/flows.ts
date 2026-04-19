@@ -522,11 +522,15 @@ async function executeActionNode(
   const { parseCommand } = await import("./registry");
   const { executable, args } = parseCommand(command);
 
+  // HIGH-3 fix (REV-2 / ADR-0033 Phase B): scrub env before spawn. Action
+  // nodes are user-authored shell-style commands; they should not inherit
+  // am-internal secrets or bearer tokens from the parent process.
+  const { sandboxEnv } = await import("./env-sandbox");
   const proc = Bun.spawn([executable, ...args], {
     cwd: actionCwd,
     stdout: "pipe",
     stderr: "pipe",
-    env: { ...process.env },
+    env: sandboxEnv(),
   });
 
   const exitCode = await proc.exited;
