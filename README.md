@@ -208,6 +208,14 @@ am import claude-code --report                  # show conflict report only
 am import claude-code --marketplace             # include plugins/extensions
 ```
 
+**Direction matters.** `am import` merges tool-side config INTO your catalog
+(intelligent merge, conflict prompts). `am apply` pushes the catalog OUT to
+every tool — the catalog is the source of truth, and any `mcpServers` entry
+that exists in a tool's native config but not in your catalog is **replaced
+on apply**. If you added a server by hand in Claude Code or Cursor and want
+to keep it, run `am import <tool>` first to bring it into the catalog. A
+`--merge` mode that preserves unmanaged keys is planned for 0.6.
+
 ---
 
 ## Core Concepts
@@ -360,7 +368,7 @@ The bridge connects remote A2A delegation to local ACP agent execution (ADR-0026
 # Bridge resolves "claude" → ACP spawn → executes → returns A2A response
 ```
 
-The **Unified Agent Registry** (`src/core/agent-registry.ts`) merges three sources with priority: config agents > ACP built-in (16 agents) > A2A roster. Same agent name available both locally and remotely gets both protocols.
+The **Unified Agent Registry** (`src/core/agent-registry.ts`) merges three sources with priority: config agents > ACP built-in (tiered — see ADR-0033) > A2A roster. Same agent name available both locally and remotely gets both protocols.
 
 ---
 
