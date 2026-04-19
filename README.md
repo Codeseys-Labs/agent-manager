@@ -408,7 +408,47 @@ am run session list                            # list active ACP sessions
 am run session cancel <sessionId>              # cancel active session
 ```
 
-Agents are resolved via the **Unified Agent Registry** (ADR-0030): config overrides > 16 built-in ACP agents > A2A roster entries. Register custom agents in config.toml under `[agents.<name>]` with `acp` and/or `a2a` subtables.
+Agents are resolved via the **Unified Agent Registry** (ADR-0030): config
+overrides > built-in ACP agents > A2A roster entries. Register custom agents
+in config.toml under `[agents.<name>]` with `acp` and/or `a2a` subtables.
+
+### Agent tiers (ADR-0033)
+
+Not every agent in the catalog is runnable through `am run`. `am apply` writes
+config for all three tiers, but only Tier 1 and opted-in Tier 2 shims can be
+spawned as ACP subprocesses. See
+[ADR-0033](ADRs/0033-acp-agent-tiers-and-shim-wrapper.md) for the full model.
+
+| Tier | Example | Runnable via | Security posture |
+|------|---------|--------------|------------------|
+| **1 — Native** | `claude`, `codex`, `gemini`, `kiro` | `am run <name>` | ACP permission model + am admission layer. The agent asks via ACP before writing files; am approves / denies per the configured permission policy. |
+| **2 — Shim** | `aider` (opt-in), `amazon-q`, `cody` | `am run <name>` after `am agent enable-shim <name>` | **Inherits the wrapped CLI's trust posture.** Read the shim's `--help` warning before enabling — see caveat below. |
+| **3 — Catalog-only** | `cline`, `continue`, `windsurf`, `cursor`, `kilo-code`, `copilot`, `roo-code` | *not runnable* — `am apply` writes config; use from the native UI | n/a |
+
+**Tier-2 security caveat.** Tier 2 shim wrappers **do not interpose on
+file-write permissions**. If the wrapped CLI's flags auto-approve file
+writes (e.g. `aider --yes`), every file mutation the agent requests
+proceeds without am's approval UI. The shim is a transport bridge, not a
+sandbox. Use Tier 2 only with agents whose auto-approve mode you trust in
+your environment. `am agent enable-shim <name>` is explicit opt-in
+precisely so this trade-off is a deliberate choice.
+
+**Listing by tier.**
+
+```bash
+am agent list --tier native       # tier-1 only — runnable out of the box
+am agent list --tier shim         # tier-2 — needs am agent enable-shim
+am agent list --tier catalog      # tier-3 — config-only, not spawnable
+am-acp-shell <wrapped-agent>      # low-level: invoke the shell-wrapper directly
+```
+
+Config overrides at `[agents.<name>.acp]` are always honoured verbatim —
+they bypass the tier logic. The local-binary preference ([acpx][acpx]-style
+npx short-circuit for `claude`-`claude-agent-acp` and `codex`-`codex-acp`)
+is applied to built-in tier-1 defaults only; user-supplied commands are
+never second-guessed.
+
+[acpx]: docs/references/openclaw-acpx.md
 
 ---
 

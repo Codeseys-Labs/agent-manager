@@ -32,6 +32,17 @@ enumerated in [ADR-0031](ADRs/0031-product-scope-and-pillars.md). Terminology
 (catalog vs config vs Registry vs Marketplace) is locked in
 [ADR-0032](ADRs/0032-terminology-glossary.md).
 
+**ACP agent tiers.** The flat 16-entry built-in ACP agent list was split into
+three explicit tiers in [ADR-0033](ADRs/0033-acp-agent-tiers-and-shim-wrapper.md):
+tier-1-native (spawnable directly — `claude`, `codex`, `gemini`, `kiro`),
+tier-2-shim (spawnable via `am-acp-shell` after `am agent enable-shim <name>`
+— `aider`, `amazon-q`, `cody`), and tier-3-catalog-only (config-only, used
+from native IDE UI — `cline`, `continue`, `copilot`, `cursor`, `kilo-code`,
+`roo-code`, `windsurf`). `am apply` writes config for all three; only tier-1
+and opt-in tier-2 are `am run`-able. Tier-2 shims inherit the wrapped CLI's
+trust posture and do NOT interpose on file-write permissions — read ADR-0033
+before enabling one.
+
 
 ## Tech Stack
 
@@ -74,7 +85,7 @@ src/                                 # 182 TypeScript files
     betterleaks.ts                   # BetterLeaks binary management: detect, install, scan
     instructions.ts                  # Shared instruction generation: CLAUDE.md, AGENTS.md, .mdc, steering, .windsurf rules, copilot + wiki context injection
     session.ts                       # Cross-tool session harvest: types, SessionReader interface, filter/format/estimation
-    agent-registry.ts                # Unified agent registry: config + ACP built-in (16) + A2A roster, merged resolution (ADR-0030)
+    agent-registry.ts                # Unified agent registry: config + tiered ACP built-in + A2A roster, merged resolution (ADR-0030, tier split per ADR-0033)
   adapters/                          # 13 built-in IDE adapters
     types.ts                         # Adapter interface: detect/import/export/diff + SessionReader + all type definitions
     registry.ts                      # Lazy factory registry (ADAPTER_FACTORIES map + cache)
@@ -390,6 +401,9 @@ bun run deploy:web                # Deploy to Cloudflare Workers
 | [0028](ADRs/0028-brownfield-import-merge.md) | Brownfield Import Merge -- two-tier identity matching, interactive conflict resolution |
 | [0029](ADRs/0029-command-grouping.md) | Command Grouping -- grouped help output for root command, gh CLI pattern |
 | [0030](ADRs/0030-unified-agent-registry.md) | Unified Agent Registry -- config + ACP + A2A merged resolution, protocol routing |
+| [0031](ADRs/0031-product-scope-and-pillars.md) | Product Scope and Pillars -- the six-pillar model |
+| [0032](ADRs/0032-terminology-glossary.md) | Terminology Glossary -- Registry vs Marketplace, catalog vs config |
+| [0033](ADRs/0033-acp-agent-tiers-and-shim-wrapper.md) | ACP Agent Tiers and Shim Wrapper -- tier-1-native / tier-2-shim / tier-3-catalog-only |
 
 ## Git Commit Style
 

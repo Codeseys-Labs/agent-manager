@@ -97,7 +97,7 @@ src/
     betterleaks.ts          # BetterLeaks binary shell-out for Tier 2 scanning
     instructions.ts         # Shared instruction generation for all formats + wiki context injection
     session.ts              # Cross-tool session harvest: types, reader interface, filter/format
-    agent-registry.ts       # Unified agent registry: config + ACP built-in (16) + A2A roster (ADR-0030)
+    agent-registry.ts       # Unified agent registry: config + tiered ACP built-in + A2A roster (ADR-0030, ADR-0033)
   adapters/
     types.ts                # Adapter interface + all type definitions
     registry.ts             # Lazy factory adapter registry (13 adapters)
@@ -263,9 +263,42 @@ Spawn, stream output, and cancel ACP-compatible coding agents (Claude Code, Code
 MCP tool exposure. Phase 4 (done) adds A2A-ACP bridge for remote-to-local routing.
 
 **Unified Agent Registry (ADR-0030):** Three-source agent resolution with priority:
-config agents > ACP built-in (16 known agents) > A2A roster. Same-name agents across
-sources are merged (both acp + a2a protocols). The bridge uses this registry to route
-incoming A2A tasks to local ACP agents.
+config agents > ACP built-in > A2A roster. Same-name agents across sources are merged
+(both acp + a2a protocols). The bridge uses this registry to route incoming A2A tasks
+to local ACP agents.
+
+**Tiered ACP agents (ADR-0033):** The flat 16-entry built-in list was split into
+three explicit tiers. `am apply` writes config for all three; `am run` respects the
+tier on spawn.
+
+| Tier | Spawnable | Set |
+|------|-----------|-----|
+| 1 — Native | yes, directly | `claude`, `codex`, `gemini`, `kiro` |
+| 2 — Shim   | yes, after `am agent enable-shim <name>` | `aider`, `amazon-q`, `cody` |
+| 3 — Catalog-only | no — config-only, use from native UI | `cline`, `continue`, `copilot`, `cursor`, `kilo-code`, `roo-code`, `windsurf` |
+
+Tier 2 wrappers inherit the wrapped CLI's trust posture — they do NOT interpose
+on file-write permissions. See ADR-0033 for the full security analysis.
+
+### Adding a Tier-2 shim
+
+Tier-2 entries live in `src/protocols/acp/shell-wrapper.ts` (`BUILT_IN_SHIMS`
+map) and in `BUILT_IN_AGENTS` in `src/core/agent-registry.ts` with
+`tier: "tier-2-shim"` and `command: ""`. A shim entry needs:
+
+1. An entry in `BUILT_IN_AGENTS` with the tier and an empty `command` string
+   (so `resolveAgent` returns `runnable: false` until the user opts in).
+2. An entry in `BUILT_IN_SHIMS` in `shell-wrapper.ts` with the wrapped
+   CLI command, flag wiring, and a user-facing `--help` banner (including
+   the trust-posture caveat).
+3. An entry in `AGENT_BINARIES` in `src/core/agent-detection.ts` so
+   `am agent detect <name>` truthfully reports whether the wrapped CLI is
+   installed.
+4. A test in `test/protocols/acp/shell-wrapper.test.ts`.
+
+`am agent enable-shim <name>` writes
+`[agents.<name>].adapters.acp.command = "am-acp-shell <name>"` into the user's
+config — that's how opt-in flows through the Unified Agent Registry.
 
 ## MCP Registry Integration
 
