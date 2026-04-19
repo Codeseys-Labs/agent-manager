@@ -1,5 +1,10 @@
 import { beforeEach, describe, expect, mock, test } from "bun:test";
 import {
+  BUILT_IN_AGENTS,
+  __setLaunchWhichFnForTests,
+  resolveInstalledBuiltInAgentLaunch,
+} from "../../../src/core/agent-registry";
+import {
   AcpClientError,
   AmAcpClient,
   type PermissionPolicy,
@@ -84,6 +89,100 @@ describe("ACP Agent Registry", () => {
       const entry = resolveAgent("claude", undefined);
       expect(entry).not.toBeNull();
       expect(entry!.source).toBe("built-in");
+    });
+  });
+
+  // ── Local-binary preference (Phase C of ADR-0033, borrowed from acpx) ──
+  //
+  // claude and codex both declare `localBinary` — if the shipped binary is on
+  // PATH, prefer it over the `npx …@latest` cold-start. Uses
+  // __setLaunchWhichFnForTests to stub Bun.which without mutating the real PATH.
+
+  describe("resolveInstalledBuiltInAgentLaunch / local-binary preference", () => {
+    const LOCAL_CLAUDE_PATH = "/usr/local/bin/claude-agent-acp";
+    const LOCAL_CODEX_PATH = "/usr/local/bin/codex-acp";
+
+    test("prefers local binary when claude-agent-acp is on PATH", () => {
+      __setLaunchWhichFnForTests((name) =>
+        name === "claude-agent-acp" ? LOCAL_CLAUDE_PATH : null,
+      );
+      try {
+        const entry = resolveAgent("claude");
+        expect(entry).not.toBeNull();
+        expect(entry!.command).toBe(LOCAL_CLAUDE_PATH);
+        expect(entry!.source).toBe("built-in");
+      } finally {
+        __setLaunchWhichFnForTests(null);
+      }
+    });
+
+    test("prefers local binary when codex-acp is on PATH", () => {
+      __setLaunchWhichFnForTests((name) => (name === "codex-acp" ? LOCAL_CODEX_PATH : null));
+      try {
+        const entry = resolveAgent("codex");
+        expect(entry).not.toBeNull();
+        expect(entry!.command).toBe(LOCAL_CODEX_PATH);
+      } finally {
+        __setLaunchWhichFnForTests(null);
+      }
+    });
+
+    test("falls back to npx command when local binary is not on PATH", () => {
+      __setLaunchWhichFnForTests(() => null);
+      try {
+        const entry = resolveAgent("claude");
+        expect(entry).not.toBeNull();
+        // When localBinary is absent from PATH, resolver returns spec.command.
+        expect(entry!.command).toBe(BUILT_IN_AGENTS.claude.command);
+        expect(entry!.command).toContain("npx");
+      } finally {
+        __setLaunchWhichFnForTests(null);
+      }
+    });
+
+    test("gemini has no localBinary — command stays as native invocation", () => {
+      __setLaunchWhichFnForTests((name) =>
+        name === "gemini" ? "/opt/homebrew/bin/gemini" : null,
+      );
+      try {
+        const entry = resolveAgent("gemini");
+        expect(entry).not.toBeNull();
+        // gemini's command IS the native invocation ("gemini --acp"); we do
+        // not second-guess it with a PATH lookup because localBinary is unset.
+        expect(entry!.command).toBe("gemini --acp");
+      } finally {
+        __setLaunchWhichFnForTests(null);
+      }
+    });
+
+    test("pure function: resolveInstalledBuiltInAgentLaunch honors localBinary", () => {
+      __setLaunchWhichFnForTests((name) =>
+        name === "claude-agent-acp" ? LOCAL_CLAUDE_PATH : null,
+      );
+      try {
+        const resolved = resolveInstalledBuiltInAgentLaunch("claude", BUILT_IN_AGENTS.claude);
+        expect(resolved).toBe(LOCAL_CLAUDE_PATH);
+      } finally {
+        __setLaunchWhichFnForTests(null);
+      }
+    });
+
+    test("config override is NOT second-guessed by local-binary preference", () => {
+      // Even with the local binary on PATH, a config override wins verbatim.
+      __setLaunchWhichFnForTests((name) =>
+        name === "claude-agent-acp" ? LOCAL_CLAUDE_PATH : null,
+      );
+      try {
+        const settings: AcpSettings = {
+          agents: { claude: { command: "/home/me/vendored-claude --acp" } },
+        };
+        const entry = resolveAgent("claude", settings);
+        expect(entry).not.toBeNull();
+        expect(entry!.command).toBe("/home/me/vendored-claude --acp");
+        expect(entry!.source).toBe("config");
+      } finally {
+        __setLaunchWhichFnForTests(null);
+      }
     });
   });
 

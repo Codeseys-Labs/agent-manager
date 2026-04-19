@@ -45,6 +45,20 @@ export interface BuiltInAgentSpec {
   tier: AgentTier;
   /** Upstream ACP documentation URL. Present for tier-1; omitted for tier-3. */
   docsUrl?: string;
+  /**
+   * Optional binary name that, when present on PATH, is preferred over the
+   * `npx …` `command` above. Saves the 2–5s npx cold-start on every
+   * invocation once the user has `npm i -g` (or their package manager's
+   * equivalent) the adapter package.
+   *
+   * Borrowed from openclaw/acpx's `resolveInstalledBuiltInAgentLaunch`
+   * pattern — see `docs/references/openclaw-acpx.md` for scope/attribution.
+   * Only populated for agents whose upstream adapter is distributed as an
+   * npx package (claude, codex). Agents whose `command` already points at
+   * a real on-PATH binary (e.g. `gemini --acp`) don't need this field — the
+   * `command` itself IS the native invocation.
+   */
+  localBinary?: string;
 }
 
 /**
@@ -78,11 +92,18 @@ export const BUILT_IN_AGENTS: Record<string, BuiltInAgentSpec> = {
     command: "npx -y @agentclientprotocol/claude-agent-acp@latest",
     tier: "tier-1-native",
     docsUrl: "https://github.com/agentclientprotocol/claude-agent-acp",
+    // When the user has `@agentclientprotocol/claude-agent-acp` installed
+    // globally, the shipped binary is `claude-agent-acp`. Prefer it over the
+    // npx cold-start path.
+    localBinary: "claude-agent-acp",
   },
   codex: {
     command: "npx @zed-industries/codex-acp@latest",
     tier: "tier-1-native",
     docsUrl: "https://github.com/zed-industries/codex-acp",
+    // `@zed-industries/codex-acp` ships a `codex-acp` bin. Prefer it over
+    // the npx cold-start.
+    localBinary: "codex-acp",
   },
   gemini: {
     command: "gemini --acp",
@@ -497,4 +518,55 @@ export function tierRefusalMessage(agentName: string): string {
  */
 export function isCatalogOnly(agent: Pick<UnifiedAgent, "runnable" | "tier">): boolean {
   return agent.runnable === false || agent.tier === "tier-3-catalog-only";
+}
+
+// ── Local-binary preference (Phase C, ADR-0033; borrowed from acpx) ──
+
+/**
+ * `Bun.which` shim — separated so tests can stub it without touching PATH.
+ * Mirrors the pattern in agent-detection.ts but kept local here to avoid a
+ * cross-module dependency loop when callers already have a BuiltInAgentSpec
+ * in hand.
+ */
+type WhichFn = (name: string) => string | null;
+let resolveWhichFn: WhichFn = (name) => (Bun.which(name) as string | null) ?? null;
+
+/**
+ * Swap the PATH-resolution implementation. Tests call this with a mock, and
+ * pass `null` to restore the default. Production code should never call
+ * this — `Bun.which` is authoritative.
+ */
+export function __setLaunchWhichFnForTests(fn: WhichFn | null): void {
+  resolveWhichFn = fn ?? ((name) => (Bun.which(name) as string | null) ?? null);
+}
+
+/**
+ * Resolve the preferred launch command for a built-in agent, preferring a
+ * locally-installed binary over the `npx` cold-start when available.
+ *
+ * Borrowed from openclaw/acpx's `resolveInstalledBuiltInAgentLaunch`
+ * (<https://github.com/openclaw/acpx/blob/main/src/agent-registry.ts>, MIT).
+ * See `docs/references/openclaw-acpx.md` for attribution + scope boundary.
+ *
+ * Rationale: `npx -y @agentclientprotocol/claude-agent-acp@latest` costs
+ * 2–5s of cold-start on every invocation even when the package is already
+ * cached — npx still walks the registry to resolve `@latest`. If the user
+ * has the adapter installed globally (`npm i -g @agentclientprotocol/
+ * claude-agent-acp`), its shipped binary is on PATH as `claude-agent-acp`
+ * and we can skip npx entirely.
+ *
+ * Returns the original `spec.command` when:
+ *   - `spec.localBinary` is unset (agent opted out of local-bin preference), OR
+ *   - the binary name is not on PATH.
+ *
+ * Returns the local binary path when it IS on PATH.
+ */
+export function resolveInstalledBuiltInAgentLaunch(
+  _name: string,
+  spec: BuiltInAgentSpec,
+): string {
+  if (!spec.localBinary) return spec.command;
+  const resolved = resolveWhichFn(spec.localBinary);
+  if (!resolved) return spec.command;
+  return resolved;
 }

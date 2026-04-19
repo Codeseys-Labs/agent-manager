@@ -3,18 +3,21 @@
  *
  * Resolution order:
  *   1. Config overrides ([settings.acp.agents.<name>] in TOML)
- *   2. Built-in registry (known ACP-compatible agents)
+ *   2. Built-in registry (known ACP-compatible agents; tier-1-native only —
+ *      tier-2-shim and tier-3-catalog-only are excluded by the filter below)
+ *
+ * Phase C (ADR-0033) — Prefer a locally-installed binary over `npx …@latest`
+ * cold-start via `resolveInstalledBuiltInAgentLaunch`. See
+ * `docs/references/openclaw-acpx.md` for the acpx attribution.
  *
  * See ADR-0026 for rationale.
  */
 
-import { BUILT_IN_ACP_AGENTS } from "../../core/agent-registry";
+import {
+  BUILT_IN_AGENTS,
+  resolveInstalledBuiltInAgentLaunch,
+} from "../../core/agent-registry";
 import type { AcpSettings, AgentRegistryEntry } from "./types";
-
-// Canonical ACP built-in list lives in src/core/agent-registry.ts per ADR-0030.
-// This file keeps the thin protocol-local lookup/tokenizer API; the dict is
-// imported to avoid drift.
-const BUILT_IN_REGISTRY = BUILT_IN_ACP_AGENTS;
 
 // ── Resolution ─────────────────────────────────────────────────
 
@@ -22,19 +25,25 @@ const BUILT_IN_REGISTRY = BUILT_IN_ACP_AGENTS;
  * Resolve an agent name to a spawn command.
  *
  * Checks config overrides first, then the built-in registry.
- * Returns null if the agent is unknown.
+ * Returns null if the agent is unknown or if the built-in entry is not a
+ * spawnable tier-1-native (tier-2 shim without opt-in / tier-3 catalog-only
+ * both have `command: ""` and are intentionally excluded here).
  */
 export function resolveAgent(name: string, acpSettings?: AcpSettings): AgentRegistryEntry | null {
-  // 1. Config override
+  // 1. Config override — user-provided command is used as-is; we don't
+  //    second-guess their explicit configuration with a PATH lookup.
   const configAgent = acpSettings?.agents?.[name];
   if (configAgent?.command) {
     return { command: configAgent.command, source: "config" };
   }
 
-  // 2. Built-in registry
-  const builtIn = BUILT_IN_REGISTRY[name];
-  if (builtIn) {
-    return { command: builtIn, source: "built-in" };
+  // 2. Built-in registry (tier-1-native spawnable entries only). For claude
+  //    and codex — which ship as npx packages — prefer a locally-installed
+  //    binary on PATH if one exists.
+  const spec = BUILT_IN_AGENTS[name];
+  if (spec && spec.tier === "tier-1-native" && spec.command !== "") {
+    const command = resolveInstalledBuiltInAgentLaunch(name, spec);
+    return { command, source: "built-in" };
   }
 
   return null;
@@ -43,12 +52,18 @@ export function resolveAgent(name: string, acpSettings?: AcpSettings): AgentRegi
 /**
  * List all known agents (built-in + config overrides).
  * Config overrides replace built-in entries with the same name.
+ *
+ * Only tier-1-native built-ins are listed here — tier-2-shim without opt-in
+ * and tier-3-catalog-only entries are not spawnable via the ACP registry.
  */
 export function listAgents(acpSettings?: AcpSettings): (AgentRegistryEntry & { name: string })[] {
   const result = new Map<string, AgentRegistryEntry & { name: string }>();
 
-  // Add built-in entries
-  for (const [name, command] of Object.entries(BUILT_IN_REGISTRY)) {
+  // Add built-in tier-1-native entries, resolved through the local-binary
+  // preference so `am agent list` reflects what will actually be spawned.
+  for (const [name, spec] of Object.entries(BUILT_IN_AGENTS)) {
+    if (spec.tier !== "tier-1-native" || spec.command === "") continue;
+    const command = resolveInstalledBuiltInAgentLaunch(name, spec);
     result.set(name, { name, command, source: "built-in" });
   }
 
