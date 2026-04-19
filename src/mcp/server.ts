@@ -29,7 +29,7 @@ import { interpolateEnvAsync, legacyKeyPath, loadKey, resolveKeyPath } from "../
 import { filterMessages, formatJson, formatMarkdown } from "../core/session";
 import type { SessionSummary } from "../core/session";
 import { errorMessage } from "../lib/errors";
-import { redactConfigSecrets, safeErrorMessage } from "../lib/redact";
+import { redactConfigSecrets, redactSecretish, safeErrorMessage } from "../lib/redact";
 import { AM_VERSION } from "../lib/version";
 
 // ── JSON-RPC types ──────────────────────────────────────────────
@@ -131,6 +131,29 @@ type ProgressNotification = {
   params: { progressToken: string | number; progress?: number; total?: number; message?: unknown };
 };
 type ProgressSink = (notif: ProgressNotification) => void;
+
+/**
+ * REV-2 HIGH-1 / ADR-0033 Phase B prelaunch gate: walk a progress payload and
+ * apply `redactSecretish` to every string. ACP `session/update` chunks and
+ * A2A status/artifact events are forwarded verbatim to `notifications/progress`
+ * by default — that made an ACP agent echoing `sk-ant-...` stream the key to
+ * every MCP client that subscribed to progress. This walker rewrites each
+ * string leaf through the secret redactor before emission.
+ *
+ * Exported so tests can drive it directly.
+ */
+export function redactProgressMessage(message: unknown): unknown {
+  if (typeof message === "string") return redactSecretish(message);
+  if (Array.isArray(message)) return message.map(redactProgressMessage);
+  if (message && typeof message === "object") {
+    const out: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(message as Record<string, unknown>)) {
+      out[k] = redactProgressMessage(v);
+    }
+    return out;
+  }
+  return message;
+}
 
 // ── Input validation ────────────────────────────────────────────
 
@@ -2241,6 +2264,15 @@ async function invokeAgentImpl(args: Record<string, unknown>, ctx: ToolContext):
     );
   }
 
+  // ADR-0033 / REV-1 #7: catalog-only (tier-3) entries have no spawnable
+  // runtime. Reject with the shared tier-refusal message instead of falling
+  // through to the generic "neither ACP nor A2A endpoint" error that tells
+  // the caller nothing about why.
+  const { isCatalogOnly, tierRefusalMessage } = await import("../core/agent-registry");
+  if (isCatalogOnly(entry)) {
+    throw new Error(tierRefusalMessage(agentName));
+  }
+
   // ── Route: prefer ACP when both available (local-first per ADR-0031).
   if (entry.acp) {
     const { createAcpClient } = await import("../protocols/acp/client");
@@ -2842,6 +2874,13 @@ export class McpServer {
             progressToken,
             emitProgress: (payload) => {
               if (progressToken === undefined) return;
+              // REV-2 HIGH-1 fix: redact secret-shaped content in the progress
+              // message before it leaves the server. ACP agent_message_chunk
+              // content and A2A status/artifact events can contain the user's
+              // own paste of credentials or whatever the remote agent echoes
+              // back. Apply redactSecretish to every string leaf.
+              const safeMessage =
+                payload.message !== undefined ? redactProgressMessage(payload.message) : undefined;
               sink({
                 jsonrpc: "2.0",
                 method: "notifications/progress",
@@ -2849,7 +2888,7 @@ export class McpServer {
                   progressToken,
                   ...(payload.progress !== undefined ? { progress: payload.progress } : {}),
                   ...(payload.total !== undefined ? { total: payload.total } : {}),
-                  ...(payload.message !== undefined ? { message: payload.message } : {}),
+                  ...(safeMessage !== undefined ? { message: safeMessage } : {}),
                 },
               });
             },
