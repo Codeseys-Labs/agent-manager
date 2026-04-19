@@ -9,7 +9,9 @@
  * See ADR-0026 Phase 3.
  */
 
+import { join } from "node:path";
 import { defineCommand } from "citty";
+import type { UnifiedRegistryConfig } from "../core/agent-registry";
 import { debug, error, info, output } from "../lib/output";
 import { type FlowRunState, listRuns, loadRunState } from "../protocols/acp/flows";
 
@@ -76,6 +78,24 @@ const flowRunCommand = defineCommand({
         input: initialInput,
         runsDir: args.runsDir as string | undefined,
         acpExecutor: async (agentName, prompt, cwd) => {
+          // ADR-0033 / REV-1 #7: before we spawn, ask the unified registry
+          // whether this agent is catalog-only. If so, emit the shared
+          // tier-refusal message so the user sees the ADR-0033 hint instead
+          // of "Flow failed: Unknown agent <name>".
+          const { resolveAgentAsync, isCatalogOnly, tierRefusalMessage } = await import(
+            "../core/agent-registry"
+          );
+          const { resolveConfigDir: rcd, tryReadConfig: trc } = await import(
+            "../core/config"
+          );
+          const cfgDir = rcd();
+          const cfg = (await trc(join(cfgDir, "config.toml"))) as
+            | UnifiedRegistryConfig
+            | undefined;
+          const entry = await resolveAgentAsync(agentName, cfg, cfgDir);
+          if (entry && isCatalogOnly(entry)) {
+            throw new Error(tierRefusalMessage(agentName));
+          }
           const { AmAcpClient } = await import("../protocols/acp/client");
           const client = new AmAcpClient();
           try {

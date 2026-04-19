@@ -24,8 +24,10 @@ import { join } from "node:path";
 import { defineCommand } from "citty";
 import {
   type UnifiedRegistryConfig,
+  isCatalogOnly,
   listAllAgentsAsync,
   resolveAgentAsync,
+  tierRefusalMessage,
 } from "../core/agent-registry";
 import { resolveConfigDir } from "../core/config";
 import { tryReadConfig } from "../core/config";
@@ -108,11 +110,8 @@ async function runAgent(args: RunAgentArgs): Promise<void> {
 
   // ADR-0033: tier-3 catalog-only agents cannot be spawned. Give the user
   // a concrete next step rather than "no ACP endpoint".
-  if (entry.runnable === false) {
-    error(
-      `"${agentName}" is a catalog-only integration. am writes its config via \`am apply\` but cannot spawn it. Use it from its native UI (e.g., the ${agentName} VSCode extension). For a runnable alternative, see \`am agent list --tier native\`.`,
-      opts,
-    );
+  if (isCatalogOnly(entry)) {
+    error(tierRefusalMessage(agentName), opts);
     process.exitCode = 1;
     return;
   }

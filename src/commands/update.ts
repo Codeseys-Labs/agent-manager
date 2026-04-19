@@ -1,8 +1,7 @@
-import { join } from "node:path";
 import * as clack from "@clack/prompts";
 import { defineCommand } from "citty";
-import { resolveConfigDir, tryReadConfig, writeConfig } from "../core/config";
-import { commitAll } from "../core/git";
+import { resolveConfigDir } from "../core/config";
+import { withConfig } from "../core/controller";
 import { requireConfig } from "../lib/errors";
 import { amError, error, info, output, warn } from "../lib/output";
 import { RegistryError, getPackage } from "../registry/client";
@@ -41,10 +40,11 @@ export const updateCommand = defineCommand({
       const skipConfirm = args.yes ?? false;
       const skipCache = args["no-cache"] ?? false;
       const configDir = resolveConfigDir();
-      const configPath = join(configDir, "config.toml");
 
-      const config = await tryReadConfig(configPath);
-      requireConfig(config);
+      // REV-1 MEDIUM-2: wrap the entire RMW in withConfig so concurrent
+      // `am install` / `am_add_server` / `am apply` can't interleave.
+      await withConfig(configDir, async (config) => {
+        requireConfig(config);
 
       // Find servers installed from the registry
       const registryServers: Array<{ name: string; provenance: RegistryProvenance }> = [];
@@ -63,7 +63,7 @@ export const updateCommand = defineCommand({
         if (args.json) {
           output({ action: "update", updates: [], total: 0 }, opts);
         }
-        return;
+        return { result: undefined, changed: false };
       }
 
       info(`Checking ${registryServers.length} registry-installed server(s) for updates...`, opts);
@@ -103,7 +103,7 @@ export const updateCommand = defineCommand({
         if (args.json) {
           output({ action: "update", updates: [], errors, total: 0 }, opts);
         }
-        return;
+        return { result: undefined, changed: false };
       }
 
       // Display available updates
@@ -135,7 +135,7 @@ export const updateCommand = defineCommand({
             opts,
           );
         }
-        return;
+        return { result: undefined, changed: false };
       }
 
       // Confirm updates
@@ -146,7 +146,7 @@ export const updateCommand = defineCommand({
         });
         if (clack.isCancel(confirm) || !confirm) {
           info("Cancelled.", opts);
-          return;
+          return { result: undefined, changed: false };
         }
       }
 
@@ -177,15 +177,6 @@ export const updateCommand = defineCommand({
         info(`Updated "${c.name}" ${c.currentVersion} → ${c.latestVersion}`, opts);
       }
 
-      if (updated.length > 0) {
-        await writeConfig(configPath, config);
-        try {
-          await commitAll(configDir, `registry update: ${updated.join(", ")}`);
-        } catch {
-          // Nothing to commit
-        }
-      }
-
       if (args.json) {
         output(
           {
@@ -205,6 +196,14 @@ export const updateCommand = defineCommand({
       if (!args.json && !args.quiet && updated.length > 0) {
         info("\nRun `am apply` to regenerate native configs.", opts);
       }
+
+      return {
+        result: undefined,
+        changed: updated.length > 0,
+        commitMessage:
+          updated.length > 0 ? `registry update: ${updated.join(", ")}` : undefined,
+      };
+      });
     } catch (err) {
       amError(err, opts);
       process.exitCode = 1;

@@ -1,8 +1,7 @@
-import { join } from "node:path";
 import * as clack from "@clack/prompts";
 import { defineCommand } from "citty";
-import { resolveConfigDir, tryReadConfig, writeConfig } from "../core/config";
-import { commitAll } from "../core/git";
+import { resolveConfigDir } from "../core/config";
+import { withConfig } from "../core/controller";
 import type { Server } from "../core/schema";
 import { encryptValue, loadKey } from "../core/secrets";
 import { requireConfig } from "../lib/errors";
@@ -29,7 +28,6 @@ export const installCommand = defineCommand({
       const skipConfirm = args.yes ?? false;
       const skipCache = args["no-cache"] ?? false;
       const configDir = resolveConfigDir();
-      const configPath = join(configDir, "config.toml");
 
       // Parse package names: citty delivers a single positional as a string
       const packageNames: string[] =
@@ -37,7 +35,11 @@ export const installCommand = defineCommand({
           ? args.packages.split(",").map((s) => s.trim())
           : [args.packages];
 
-      const config = await tryReadConfig(configPath);
+      // REV-1 MEDIUM-2 (2026-04-18): serialize RMW through the controller's
+      // withConfig() instead of raw tryReadConfig → writeConfig. This closes
+      // the MCP-vs-CLI race that was exactly the hazard Wave B's mutex was
+      // built to prevent (the Wave B fix closed MCP-vs-MCP only).
+      await withConfig(configDir, async (config) => {
       requireConfig(config);
 
       // Load encryption key for env var secrets
@@ -189,18 +191,12 @@ export const installCommand = defineCommand({
         );
       }
 
-      // Write config and commit
-      if (!dryRun && results.some((r) => r.action === "installed" || r.action === "replaced")) {
-        await writeConfig(configPath, config);
-        const names = results
-          .filter((r) => r.action === "installed" || r.action === "replaced")
-          .map((r) => r.package);
-        try {
-          await commitAll(configDir, `registry install: ${names.join(", ")}`);
-        } catch {
-          // Nothing to commit
-        }
-      }
+      // Defer write + commit to withConfig (single point of RMW).
+      const shouldWrite =
+        !dryRun && results.some((r) => r.action === "installed" || r.action === "replaced");
+      const names = results
+        .filter((r) => r.action === "installed" || r.action === "replaced")
+        .map((r) => r.package);
 
       if (args.json) {
         output({ action: "install", dryRun, results }, opts);
@@ -215,6 +211,13 @@ export const installCommand = defineCommand({
           info("\nRun `am apply` to generate native configs for your tools.", opts);
         }
       }
+
+        return {
+          result: undefined,
+          changed: shouldWrite,
+          commitMessage: shouldWrite ? `registry install: ${names.join(", ")}` : undefined,
+        };
+      });
     } catch (err) {
       amError(err, opts);
       process.exitCode = 1;
