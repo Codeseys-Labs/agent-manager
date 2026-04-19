@@ -19,6 +19,20 @@ const ALL_TARGETS: Target[] = [
 // Phase 1: only macOS arm64
 const PHASE1_TARGETS: Target[] = [{ bun: "bun-darwin-arm64", artifact: "am-darwin-arm64" }];
 
+// ADR-0033 Phase B: am-acp-shell secondary binary.
+// Compiled in lock-step with the main `am` binary so consumers get both from
+// one release. At runtime bin/am-acp-shell.js dispatches to the matching
+// dist/am-acp-shell-<os>-<arch> file or falls back to bun.
+interface Entry {
+  entry: string;
+  artifactBase: string;
+  artifactSuffix?: string; // ".exe" on windows
+}
+const ENTRIES: Entry[] = [
+  { entry: "./src/cli.ts", artifactBase: "am" },
+  { entry: "./src/acp-shell-cli.ts", artifactBase: "am-acp-shell" },
+];
+
 function getTargets(): Target[] {
   const arg = process.argv[2];
   if (arg === "--all") return ALL_TARGETS;
@@ -69,57 +83,71 @@ if (existsSync(createAppPath)) {
   }
 }
 
+function artifactForEntry(entry: Entry, target: Target): string {
+  if (entry.artifactBase === "am") {
+    // Preserve historical file names (am-darwin-arm64, am-windows-x64.exe).
+    return target.artifact;
+  }
+  // Secondary binaries follow <base>-<platform-arch>[.exe]
+  const isWindows = target.artifact.endsWith(".exe");
+  const base = target.artifact.replace(/^am-/, "").replace(/\.exe$/, "");
+  return `${entry.artifactBase}-${base}${isWindows ? ".exe" : ""}`;
+}
+
 for (const target of targets) {
-  const outfile = `./dist/${target.artifact}`;
-  console.log(`  Building ${target.artifact}...`);
+  for (const entry of ENTRIES) {
+    const artifact = artifactForEntry(entry, target);
+    const outfile = `./dist/${artifact}`;
+    console.log(`  Building ${artifact}...`);
 
-  try {
-    // Bun.build() JS API does not support `compile` for standalone executables.
-    // Use Bun.spawn to invoke `bun build --compile` CLI instead.
-    // Externalize optional lazy-loaded deps from Silvery that are never
-    // needed at runtime (Yoga fallback, Termless headless testing).
-    const externals = [
-      "yoga-wasm-web",
-      "yoga-wasm-web/auto",
-      "@termless/core",
-      "@termless/xtermjs",
-      "@termless/ghostty",
-    ].flatMap((pkg) => ["--external", pkg]);
+    try {
+      // Bun.build() JS API does not support `compile` for standalone executables.
+      // Use Bun.spawn to invoke `bun build --compile` CLI instead.
+      // Externalize optional lazy-loaded deps from Silvery that are never
+      // needed at runtime (Yoga fallback, Termless headless testing).
+      const externals = [
+        "yoga-wasm-web",
+        "yoga-wasm-web/auto",
+        "@termless/core",
+        "@termless/xtermjs",
+        "@termless/ghostty",
+      ].flatMap((pkg) => ["--external", pkg]);
 
-    const proc = Bun.spawn(
-      [
-        "bun",
-        "build",
-        "--compile",
-        "--minify",
-        "--sourcemap=linked",
-        ...externals,
-        `--define=process.env.BUILD_VERSION=${JSON.stringify(version)}`,
-        `--define=process.env.BUILD_TIME=${JSON.stringify(timestamp)}`,
-        `--target=${target.bun}`,
-        `--outfile=${outfile}`,
-        "./src/cli.ts",
-      ],
-      {
-        stdout: "inherit",
-        stderr: "inherit",
-        env: {
-          ...process.env,
-          BUILD_VERSION: version,
-          BUILD_TIME: timestamp,
+      const proc = Bun.spawn(
+        [
+          "bun",
+          "build",
+          "--compile",
+          "--minify",
+          "--sourcemap=linked",
+          ...externals,
+          `--define=process.env.BUILD_VERSION=${JSON.stringify(version)}`,
+          `--define=process.env.BUILD_TIME=${JSON.stringify(timestamp)}`,
+          `--target=${target.bun}`,
+          `--outfile=${outfile}`,
+          entry.entry,
+        ],
+        {
+          stdout: "inherit",
+          stderr: "inherit",
+          env: {
+            ...process.env,
+            BUILD_VERSION: version,
+            BUILD_TIME: timestamp,
+          },
         },
-      },
-    );
+      );
 
-    const exitCode = await proc.exited;
-    if (exitCode !== 0) {
-      console.error(`  ✗ ${target.artifact} failed (exit ${exitCode})`);
+      const exitCode = await proc.exited;
+      if (exitCode !== 0) {
+        console.error(`  ✗ ${artifact} failed (exit ${exitCode})`);
+        process.exit(1);
+      }
+      console.log(`  ✓ ${artifact}`);
+    } catch (err) {
+      console.error(`  ✗ ${artifact}: ${err}`);
       process.exit(1);
     }
-    console.log(`  ✓ ${target.artifact}`);
-  } catch (err) {
-    console.error(`  ✗ ${target.artifact}: ${err}`);
-    process.exit(1);
   }
 }
 

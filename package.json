@@ -6,7 +6,8 @@
   "main": "src/cli.ts",
   "bin": {
     "agent-manager": "bin/am.js",
-    "am": "bin/am.js"
+    "am": "bin/am.js",
+    "am-acp-shell": "bin/am-acp-shell.js"
   },
   "files": [
     "src/",

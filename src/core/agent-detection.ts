@@ -64,6 +64,12 @@ export const AGENT_BINARIES: Record<string, string> = {
   codex: "codex",
   gemini: "gemini",
   kiro: "kiro-cli-chat",
+  // tier-2-shim (ADR-0033 Phase B) — probe for the wrapped tool on PATH
+  // so `am agent detect` tells the user truthfully whether they have the
+  // underlying CLI installed before they enable the shim.
+  aider: "aider",
+  "amazon-q": "q",
+  cody: "cody",
   // NOTE: no tier-3 entries here. Catalog-only agents are detected via
   // their paired adapter (see AGENT_ADAPTER_MAP), never via PATH.
 };

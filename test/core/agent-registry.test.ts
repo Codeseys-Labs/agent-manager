@@ -40,6 +40,10 @@ const TIER_1_NAMES = Object.entries(BUILT_IN_AGENTS)
   .filter(([, s]) => s.tier === "tier-1-native")
   .map(([name]) => name);
 
+const TIER_2_NAMES = Object.entries(BUILT_IN_AGENTS)
+  .filter(([, s]) => s.tier === "tier-2-shim")
+  .map(([name]) => name);
+
 const TIER_3_NAMES = Object.entries(BUILT_IN_AGENTS)
   .filter(([, s]) => s.tier === "tier-3-catalog-only")
   .map(([name]) => name);
@@ -58,6 +62,12 @@ describe("BUILT_IN_AGENTS (ADR-0033 shape)", () => {
     }
   });
 
+  test("tier-2-shim entries have an empty command (user opts in via enable-shim)", () => {
+    for (const name of TIER_2_NAMES) {
+      expect(BUILT_IN_AGENTS[name].command).toBe("");
+    }
+  });
+
   test("tier-3-catalog-only entries have an empty command", () => {
     for (const name of TIER_3_NAMES) {
       expect(BUILT_IN_AGENTS[name].command).toBe("");
@@ -68,17 +78,15 @@ describe("BUILT_IN_AGENTS (ADR-0033 shape)", () => {
     expect(new Set(TIER_1_NAMES)).toEqual(new Set(["claude", "codex", "gemini", "kiro"]));
   });
 
-  test("does NOT ship removed nominal agents (devin, amp, aider, amazon-q, augment, goose, sourcegraph)", () => {
-    for (const removed of [
-      "devin",
-      "amp",
-      "aider",
-      "amazon-q",
-      "augment",
-      "auggie",
-      "goose",
-      "sourcegraph",
-    ]) {
+  test("ships the expected tier-2-shim lineup (aider, amazon-q, cody) per ADR-0033 Phase B", () => {
+    expect(new Set(TIER_2_NAMES)).toEqual(new Set(["aider", "amazon-q", "cody"]));
+  });
+
+  test("does NOT ship removed nominal agents (devin, amp, augment, goose, sourcegraph)", () => {
+    // aider / amazon-q moved to tier-2-shim in Phase B — they're present but
+    // not auto-spawnable. devin / amp / augment / goose / sourcegraph remain
+    // fully removed until evidence of a working upstream arrives.
+    for (const removed of ["devin", "amp", "augment", "auggie", "goose", "sourcegraph"]) {
       expect(BUILT_IN_AGENTS[removed]).toBeUndefined();
     }
   });

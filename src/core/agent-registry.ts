@@ -95,13 +95,32 @@ export const BUILT_IN_AGENTS: Record<string, BuiltInAgentSpec> = {
     // Amazon internal; no public docs URL.
   },
 
-  // ── Tier 2 — shim-wrapped CLIs (Phase B, NOT populated here) ─
+  // ── Tier 2 — shim-wrapped CLIs (Phase B, ADR-0033) ───────────
   //
-  // Placeholder: Phase B of ADR-0033 will add `aider`, `amazon-q`, `cody`,
-  // `gh-copilot`, `cursor-agent`, etc. Each tier-2 entry will need a
-  // ShimConfig alongside its BuiltInAgentSpec (see
-  // docs/reviews/2026-04-18-acp-shell-wrapper/R-A-feasibility.md). Do NOT
-  // add tier-2 entries in this file until the shim wrapper ships.
+  // Each tier-2 entry has `command: ""` so the agent is NOT auto-spawnable.
+  // The user must run `am agent enable-shim <name>` to opt in, which writes
+  // `[agents.<name>].adapters.acp.command = "am-acp-shell <name>"` to their
+  // config.toml. Once enabled, `resolveAgent()` sees the config override
+  // and routes `am run <name>` through the shim. Until enabled, running the
+  // agent returns a helpful "enable via am agent enable-shim <name>" message.
+  //
+  // The three initial shims per ADR-0033 Phase B. Shim configs live in
+  // src/protocols/acp/shell-wrapper.ts BUILT_IN_SHIMS.
+  aider: {
+    command: "",
+    tier: "tier-2-shim",
+    docsUrl: "https://aider.chat/docs/scripting.html",
+  },
+  "amazon-q": {
+    command: "",
+    tier: "tier-2-shim",
+    docsUrl: "https://docs.aws.amazon.com/amazonq/latest/qdeveloper-ug/command-line.html",
+  },
+  cody: {
+    command: "",
+    tier: "tier-2-shim",
+    docsUrl: "https://sourcegraph.com/docs/cody",
+  },
 
   // ── Tier 3 — catalog-only (adapter-only, not spawnable) ──────
   // Each entry has `command: ""` so resolveAgent() can synthesize a
@@ -251,6 +270,9 @@ function builtInToUnified(name: string, spec: BuiltInAgentSpec): UnifiedAgent {
       runnable: true,
     };
   }
+  // Non-spawnable: either tier-3 catalog-only OR tier-2-shim without user
+  // opt-in. Keep tier metadata so `am agent list` can render the correct
+  // label and `am run` can print a useful hint.
   return {
     name,
     source: "catalog-only",
@@ -447,4 +469,32 @@ export async function listAllAgentsAsync(
       ...(detection.version ? { version: detection.version } : {}),
     };
   });
+}
+
+// ── Shared refusal (ADR-0033, REV-1 #7) ─────────────────────────
+
+/**
+ * Canonical user-facing message for "this agent is catalog-only — `am run`
+ * cannot spawn it." Keeping one source of truth means `am run`, `am flow
+ * run`, and `am_agent_invoke` all emit the same ADR-0033-quality hint
+ * instead of three variants.
+ *
+ * Callers decide how to surface it (throw, exit 1, JSON-RPC error, etc.).
+ */
+export function tierRefusalMessage(agentName: string): string {
+  return (
+    `"${agentName}" is a catalog-only (tier-3) integration. ` +
+    "am writes its config via `am apply` but cannot spawn it — it has no " +
+    "standalone ACP runtime (VSCode extensions, IDE-only products). " +
+    "Use it from its native UI; run `am agent list --tier native` for " +
+    "runnable alternatives. See ADR-0033."
+  );
+}
+
+/**
+ * Type guard: true when an agent is explicitly refused by `am run`.
+ * Keeps the tier-check idiom a one-liner at each caller site.
+ */
+export function isCatalogOnly(agent: Pick<UnifiedAgent, "runnable" | "tier">): boolean {
+  return agent.runnable === false || agent.tier === "tier-3-catalog-only";
 }

@@ -19,7 +19,11 @@ import {
   detectAgentByPath,
   detectAllAgents,
 } from "../core/agent-detection";
-import { BUILT_IN_AGENTS, listAllAgentsAsync } from "../core/agent-registry";
+import {
+  BUILT_IN_AGENTS,
+  listAllAgentsAsync,
+  tierRefusalMessage,
+} from "../core/agent-registry";
 import type { AgentTier, UnifiedRegistryConfig } from "../core/agent-registry";
 import { resolveConfigDir, tryReadConfig } from "../core/config";
 import { error, info, output } from "../lib/output";
@@ -48,13 +52,38 @@ const listSubcommand = defineCommand({
       description: "Also fetch agents from settings.a2a.discovery_sources",
       default: false,
     },
+    tier: {
+      type: "string",
+      description:
+        "Filter by tier: native (tier-1 spawnable ACP), shim (tier-2 wrapped CLI), catalog (tier-3 adapter-only). See ADR-0033.",
+    },
+    runnable: {
+      type: "boolean",
+      description: "Only show agents where `am run <name>` can actually spawn the agent.",
+      default: false,
+    },
   },
   async run({ args }) {
     const opts = { json: args.json, quiet: args.quiet, verbose: args.verbose };
     const configDir = resolveConfigDir();
     const config = await tryReadConfig(join(configDir, "config.toml"));
     const registryConfig = config as UnifiedRegistryConfig | undefined;
-    const agents = await listAllAgentsAsync(registryConfig, configDir);
+    const rawTier = typeof args.tier === "string" ? args.tier.toLowerCase() : undefined;
+    const tierFilter = normalizeTierFilter(rawTier);
+    if (rawTier && !tierFilter) {
+      error(
+        `Unknown tier "${rawTier}". Valid tiers: native, shim, catalog (see ADR-0033).`,
+        opts,
+      );
+      process.exitCode = 1;
+      return;
+    }
+    const agentsUnfiltered = await listAllAgentsAsync(registryConfig, configDir);
+    const agents = agentsUnfiltered.filter((a) => {
+      if (tierFilter && a.tier !== tierFilter) return false;
+      if (args.runnable && a.runnable === false) return false;
+      return true;
+    });
 
     // Fetch discovered agents from config discovery_sources
     let discovered: { name: string; url: string; description: string }[] = [];
@@ -150,6 +179,33 @@ function renderTier(tier: AgentTier | undefined, source: string): string {
   if (source === "config") return "config";
   if (source === "a2a-roster") return "remote";
   return "\u2014";
+}
+
+/**
+ * Map the short CLI alias (as advertised in refusal messages and `am agent
+ * list --tier <…>` hints) to the canonical AgentTier discriminator. Returns
+ * `undefined` when the caller passed a value that isn't one of the three
+ * ADR-0033 tiers, so the caller can reject with a user-visible error.
+ */
+function normalizeTierFilter(input: string | undefined): AgentTier | undefined {
+  if (!input) return undefined;
+  switch (input) {
+    case "native":
+    case "tier-1":
+    case "tier-1-native":
+      return "tier-1-native";
+    case "shim":
+    case "tier-2":
+    case "tier-2-shim":
+      return "tier-2-shim";
+    case "catalog":
+    case "catalog-only":
+    case "tier-3":
+    case "tier-3-catalog-only":
+      return "tier-3-catalog-only";
+    default:
+      return undefined;
+  }
 }
 
 const addSubcommand = defineCommand({
@@ -533,10 +589,7 @@ const detectSubcommand = defineCommand({
         return;
       }
       if (spec.tier === "tier-3-catalog-only" || !spec.command) {
-        error(
-          `"${name}" is a catalog-only integration (tier 3) — it has no spawnable ACP runtime. Use its native UI; see \`am agent list --tier native\` for runnable alternatives.`,
-          opts,
-        );
+        error(tierRefusalMessage(name), opts);
         process.exitCode = 1;
         return;
       }
@@ -609,5 +662,8 @@ export const agentsCommand = defineCommand({
     detect: () => Promise.resolve(detectSubcommand),
     delegate: () => Promise.resolve(delegateSubcommand),
     cancel: () => Promise.resolve(cancelSubcommand),
+    // ADR-0033 Phase B: opt-in to a tier-2 shim-wrapped agent.
+    "enable-shim": () =>
+      import("./agent-enable-shim").then((m) => m.agentEnableShimCommand),
   },
 });
