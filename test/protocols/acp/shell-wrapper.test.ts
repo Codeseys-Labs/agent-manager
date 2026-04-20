@@ -12,9 +12,9 @@
 
 import { describe, expect, test } from "bun:test";
 import {
+  ShimAcpServer,
   __argNamedWarnedOnce,
   __resetArgNamedWarnedOnceForTests,
-  ShimAcpServer,
 } from "../../../src/protocols/acp/shell-wrapper";
 
 interface Frame {
@@ -27,9 +27,10 @@ interface Frame {
 }
 
 /** Build a server + emit collector. */
-function makeServer(
-  shim: ConstructorParameters<typeof ShimAcpServer>[0],
-): { server: ShimAcpServer; frames: Frame[] } {
+function makeServer(shim: ConstructorParameters<typeof ShimAcpServer>[0]): {
+  server: ShimAcpServer;
+  frames: Frame[];
+} {
   const frames: Frame[] = [];
   const server = new ShimAcpServer(shim, (f) => frames.push(f as Frame));
   return { server, frames };
@@ -182,8 +183,8 @@ describe.skipIf(process.platform === "win32")("ShimAcpServer — env leak probe"
         "x",
       );
       expect(updates).toHaveLength(1);
-      const text = (updates[0].params as { update: { content: { text: string } } }).update
-        .content.text;
+      const text = (updates[0].params as { update: { content: { text: string } } }).update.content
+        .text;
       expect(text).not.toContain("should-not-escape-42");
       expect(text).not.toContain("AM_LEAK_TEST");
     } finally {
@@ -193,78 +194,81 @@ describe.skipIf(process.platform === "win32")("ShimAcpServer — env leak probe"
   });
 });
 
-describe.skipIf(process.platform === "win32")("ShimAcpServer — REV-4 MED-3: arg-named warn-once", () => {
-  test("first arg-named prompt emits warning; second does not", async () => {
-    // Reset rate-limiter state; capture console.warn output.
-    __resetArgNamedWarnedOnceForTests();
-    const originalWarn = console.warn;
-    const warnings: string[] = [];
-    console.warn = (...args: unknown[]) => {
-      warnings.push(args.map((a) => String(a)).join(" "));
-    };
-    try {
-      // Two turns with the same agent name — second should NOT warn again.
-      await driveOneTurn(
-        {
-          command: ["/usr/bin/printf", "%s"],
-          promptTemplate: "arg-named",
-          responseExtractor: "stdout",
-        },
-        "one",
-      );
-      await driveOneTurn(
-        {
-          command: ["/usr/bin/printf", "%s"],
-          promptTemplate: "arg-named",
-          responseExtractor: "stdout",
-        },
-        "two",
-      );
-    } finally {
-      console.warn = originalWarn;
-    }
+describe.skipIf(process.platform === "win32")(
+  "ShimAcpServer — REV-4 MED-3: arg-named warn-once",
+  () => {
+    test("first arg-named prompt emits warning; second does not", async () => {
+      // Reset rate-limiter state; capture console.warn output.
+      __resetArgNamedWarnedOnceForTests();
+      const originalWarn = console.warn;
+      const warnings: string[] = [];
+      console.warn = (...args: unknown[]) => {
+        warnings.push(args.map((a) => String(a)).join(" "));
+      };
+      try {
+        // Two turns with the same agent name — second should NOT warn again.
+        await driveOneTurn(
+          {
+            command: ["/usr/bin/printf", "%s"],
+            promptTemplate: "arg-named",
+            responseExtractor: "stdout",
+          },
+          "one",
+        );
+        await driveOneTurn(
+          {
+            command: ["/usr/bin/printf", "%s"],
+            promptTemplate: "arg-named",
+            responseExtractor: "stdout",
+          },
+          "two",
+        );
+      } finally {
+        console.warn = originalWarn;
+      }
 
-    const argNamedWarnings = warnings.filter((w) => w.includes("arg-named"));
-    expect(argNamedWarnings).toHaveLength(1);
-    expect(argNamedWarnings[0]).toContain("falling back to arg-last");
-    expect(argNamedWarnings[0]).toContain("/usr/bin/printf");
-    // State persisted in the module-level Set across turns.
-    expect(__argNamedWarnedOnce.has("/usr/bin/printf")).toBe(true);
-  });
+      const argNamedWarnings = warnings.filter((w) => w.includes("arg-named"));
+      expect(argNamedWarnings).toHaveLength(1);
+      expect(argNamedWarnings[0]).toContain("falling back to arg-last");
+      expect(argNamedWarnings[0]).toContain("/usr/bin/printf");
+      // State persisted in the module-level Set across turns.
+      expect(__argNamedWarnedOnce.has("/usr/bin/printf")).toBe(true);
+    });
 
-  test("warn-once tracked per wrapped command name", async () => {
-    __resetArgNamedWarnedOnceForTests();
-    const originalWarn = console.warn;
-    const warnings: string[] = [];
-    console.warn = (...args: unknown[]) => {
-      warnings.push(args.map((a) => String(a)).join(" "));
-    };
-    try {
-      await driveOneTurn(
-        {
-          command: ["/usr/bin/printf", "%s"],
-          promptTemplate: "arg-named",
-        },
-        "a",
-      );
-      // Distinct command → distinct warn-once key → second warning.
-      // `/bin/true` ignores argv, exits 0 — perfect for this assertion.
-      await driveOneTurn(
-        {
-          command: ["/bin/true"],
-          promptTemplate: "arg-named",
-        },
-        "b",
-      );
-    } finally {
-      console.warn = originalWarn;
-    }
+    test("warn-once tracked per wrapped command name", async () => {
+      __resetArgNamedWarnedOnceForTests();
+      const originalWarn = console.warn;
+      const warnings: string[] = [];
+      console.warn = (...args: unknown[]) => {
+        warnings.push(args.map((a) => String(a)).join(" "));
+      };
+      try {
+        await driveOneTurn(
+          {
+            command: ["/usr/bin/printf", "%s"],
+            promptTemplate: "arg-named",
+          },
+          "a",
+        );
+        // Distinct command → distinct warn-once key → second warning.
+        // `/bin/true` ignores argv, exits 0 — perfect for this assertion.
+        await driveOneTurn(
+          {
+            command: ["/bin/true"],
+            promptTemplate: "arg-named",
+          },
+          "b",
+        );
+      } finally {
+        console.warn = originalWarn;
+      }
 
-    // Two distinct agents → two warnings.
-    const argNamedWarnings = warnings.filter((w) => w.includes("arg-named"));
-    expect(argNamedWarnings).toHaveLength(2);
-  });
-});
+      // Two distinct agents → two warnings.
+      const argNamedWarnings = warnings.filter((w) => w.includes("arg-named"));
+      expect(argNamedWarnings).toHaveLength(2);
+    });
+  },
+);
 
 describe("ShimAcpServer — spec surface (initialize / session/load)", () => {
   test("initialize advertises loadSession: false and correct protocolVersion", async () => {

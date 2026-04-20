@@ -179,18 +179,14 @@ describe("live env-leak probe — AmAcpClient.connect via /bin/bash", () => {
         //
         // Approach: import sandboxEnv, call it exactly as the client does,
         // spawn bash with that env, capture stdout, assert no leak.
-        const { sandboxEnv: sbx } = await import(
-          "../../../src/protocols/acp/env-sandbox"
-        );
+        const { sandboxEnv: sbx } = await import("../../../src/protocols/acp/env-sandbox");
         const proc = Bun.spawn(["/bin/bash", "-c", "echo ENV=$AM_CANARY"], {
           stdin: "ignore",
           stdout: "pipe",
           stderr: "pipe",
           env: sbx(),
         });
-        const stdout = proc.stdout
-          ? await new Response(proc.stdout as ReadableStream).text()
-          : "";
+        const stdout = proc.stdout ? await new Response(proc.stdout as ReadableStream).text() : "";
         await proc.exited;
         expect(stdout).not.toContain("leak-me-if-you-can-XYZ123");
         // Expected output is "ENV=\n" because AM_CANARY is scrubbed.

@@ -40,6 +40,25 @@ describe("TUI", () => {
     const { launchTui } = await import("../../src/tui/index.tsx");
     expect(typeof launchTui).toBe("function");
   });
+
+  // REV-4 MEDIUM-2 continuation: TUI must route config mutations through
+  // the controller mutex. This is a structural assertion — it fails if
+  // a future refactor reintroduces raw readConfig/writeConfig in the TUI
+  // bootstrap, which was the 2026-04-15 `~/.claude.json` wipe shape.
+  test("TUI module uses controller.withConfig + applyResolved (no parallel pipelines)", async () => {
+    const source = await Bun.file(new URL("../../src/tui/index.tsx", import.meta.url)).text();
+    // Must import the controller — not legacy writeConfig.
+    expect(source).toContain('from "../core/controller.ts"');
+    expect(source).toContain("withConfig");
+    expect(source).toContain("applyResolved");
+    // Must NOT do raw RMW: no readConfig + writeConfig pair in this file.
+    // (writeConfig is still available on core/config.ts; the TUI just
+    // shouldn't reach for it directly.)
+    expect(source).not.toContain("writeConfig(configPath");
+    // Must NOT carry a duplicated apply pipeline (buildResolvedConfig was
+    // the signature call in the old parallel implementation).
+    expect(source).not.toContain("buildResolvedConfig(");
+  });
 });
 
 describe("TUI data types", () => {

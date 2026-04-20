@@ -1,18 +1,10 @@
-import { join } from "node:path";
 import React from "react";
 import { render } from "silvery";
 import { getDetectedAdapters } from "../adapters/registry.ts";
-import { readActiveProfile, writeActiveProfile } from "../commands/use.ts";
-import {
-  buildResolvedConfig,
-  loadResolvedConfig,
-  readConfig,
-  resolveConfigDir,
-  resolveProjectConfig,
-  writeConfig,
-} from "../core/config.ts";
-import { commitAll, pull, push } from "../core/git.ts";
-import { interpolateEnvAsync, loadKey } from "../core/secrets.ts";
+import { writeActiveProfile } from "../commands/use.ts";
+import { resolveConfigDir } from "../core/config.ts";
+import { applyResolved, withConfig } from "../core/controller.ts";
+import { pull, push } from "../core/git.ts";
 import { errorMessage } from "../lib/errors.ts";
 import { App } from "./App.tsx";
 import { loadTuiData } from "./data.ts";
@@ -56,19 +48,37 @@ export async function launchTui(): Promise<void> {
     return "Use `am add server <name>` from CLI to add servers";
   };
 
+  // REV-4 MEDIUM-2 continuation: TUI mutation sites were the last callers
+  // doing raw `writeConfig()` without the controller mutex. Every RMW now
+  // flows through `withConfig`, matching the 8 CLI surfaces that landed in
+  // REV-1 MEDIUM-2 (install / uninstall / update / profile create / profile
+  // delete / init / marketplace install / marketplace uninstall).
+  //
+  // The TUI's React state is not held under the lock — we compute the
+  // next-state value inside `withConfig` and return it as the handler
+  // result, then the component updates state after the lock releases.
   const handleRemoveServer = async (serverName: string): Promise<string> => {
     try {
-      const configPath = join(configDir, "config.toml");
-      const config = await readConfig(configPath);
-      if (!config.servers?.[serverName]) return `Server "${serverName}" not found`;
-      delete config.servers[serverName];
-      await writeConfig(configPath, config);
-      try {
-        await commitAll(configDir, `remove server: ${serverName}`);
-      } catch {
-        /* git commit is best-effort */
-      }
-      return `Removed server "${serverName}"`;
+      return await withConfig<string>(configDir, async (config) => {
+        if (!config) {
+          return {
+            result: "No config found — run `am init` first.",
+            changed: false,
+          };
+        }
+        if (!config.servers?.[serverName]) {
+          return {
+            result: `Server "${serverName}" not found`,
+            changed: false,
+          };
+        }
+        delete config.servers[serverName];
+        return {
+          result: `Removed server "${serverName}"`,
+          changed: true,
+          commitMessage: `remove server: ${serverName}`,
+        };
+      });
     } catch (err) {
       return `Remove failed: ${errorMessage(err)}`;
     }
@@ -79,35 +89,48 @@ export async function launchTui(): Promise<void> {
       const adapters = await getDetectedAdapters();
       if (adapters.length === 0) return "No tools detected to import from";
 
-      const configPath = join(configDir, "config.toml");
-      const config = await readConfig(configPath);
-      if (!config.servers) config.servers = {};
-
-      let imported = 0;
-      for (const adapter of adapters) {
-        try {
-          const result = await adapter.import({});
-          for (const srv of result.servers) {
-            if (!config.servers[srv.name]) {
-              config.servers[srv.name] = {
-                command: srv.command,
-                args: srv.args,
-                env: srv.env,
-                transport: srv.transport ?? "stdio",
-                description: srv.description,
-                tags: srv.tags,
-                enabled: srv.enabled ?? true,
-              };
-              imported++;
-            }
-          }
-        } catch {
-          /* skip failing adapters */
+      return await withConfig<string>(configDir, async (existing) => {
+        if (!existing) {
+          return {
+            result: "No config found — run `am init` first.",
+            changed: false,
+          };
         }
-      }
+        const config = existing;
+        if (!config.servers) config.servers = {};
 
-      if (imported > 0) {
-        // Secret detection + encryption
+        let imported = 0;
+        for (const adapter of adapters) {
+          try {
+            const result = await adapter.import({});
+            for (const srv of result.servers) {
+              if (!config.servers[srv.name]) {
+                config.servers[srv.name] = {
+                  command: srv.command,
+                  args: srv.args,
+                  env: srv.env,
+                  transport: srv.transport ?? "stdio",
+                  description: srv.description,
+                  tags: srv.tags,
+                  enabled: srv.enabled ?? true,
+                };
+                imported++;
+              }
+            }
+          } catch {
+            /* skip failing adapters */
+          }
+        }
+
+        if (imported === 0) {
+          return {
+            result: `No new servers found in ${adapters.length} detected tool(s)`,
+            changed: false,
+          };
+        }
+
+        // Secret detection + encryption (runs under the lock so a second
+        // importer can't race on settings.env writes).
         const { scanConfigForSecrets, substituteSecret } = await import(
           "../core/secret-detection.ts"
         );
@@ -138,42 +161,24 @@ export async function launchTui(): Promise<void> {
           }
         }
 
-        await writeConfig(configPath, config);
-        try {
-          await commitAll(configDir, `import: auto (${imported} servers)`);
-        } catch {
-          /* git commit is best-effort */
-        }
-      }
-
-      return imported > 0
-        ? `Imported ${imported} server(s) from ${adapters.length} tool(s)`
-        : `No new servers found in ${adapters.length} detected tool(s)`;
+        return {
+          result: `Imported ${imported} server(s) from ${adapters.length} tool(s)`,
+          changed: true,
+          commitMessage: `import: auto (${imported} servers)`,
+        };
+      });
     } catch (err) {
       return `Import failed: ${errorMessage(err)}`;
     }
   };
 
+  // README pillar-6 "no parallel implementations": route the TUI apply
+  // button through the same controller.applyResolved() pipeline the CLI
+  // (`am apply`), MCP (`am_apply`), and web (`POST /api/apply`) already
+  // use. The previous TUI apply implementation duplicated ~15 lines of
+  // load→decrypt→export logic and skipped the mutex entirely.
   const handleApply = async () => {
-    const projectFile = resolveProjectConfig(process.cwd());
-    const config = await loadResolvedConfig({ configDir, projectFile });
-    const profileName =
-      (await readActiveProfile(configDir)) ?? config.settings?.default_profile ?? "default";
-
-    // Decrypt encrypted values before building resolved config
-    const encryptionKey = await loadKey(configDir);
-    const { config: interpolated } = await interpolateEnvAsync(config, {
-      encryptionKey: encryptionKey ?? undefined,
-    });
-
-    const resolved = buildResolvedConfig(interpolated, profileName, configDir);
-
-    const adapters = await getDetectedAdapters();
-    for (const adapter of adapters) {
-      await adapter.export(resolved, {
-        projectPath: projectFile ? projectFile.replace(/[/\\][^/\\]+$/, "") : undefined,
-      });
-    }
+    await applyResolved(configDir);
   };
 
   const instance = render(

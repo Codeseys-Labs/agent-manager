@@ -215,9 +215,7 @@ describe("am agents", () => {
         const listCmd = await (
           agentsCommand.subCommands as Record<string, () => Promise<unknown>>
         ).list();
-        await (
-          listCmd as { run: (ctx: { args: Record<string, unknown> }) => Promise<void> }
-        ).run({
+        await (listCmd as { run: (ctx: { args: Record<string, unknown> }) => Promise<void> }).run({
           args: { json: true, quiet: false, verbose: false, discover: false, ...argv },
         });
         return consoleOutput.at(-1) ?? "";
@@ -260,9 +258,7 @@ describe("am agents", () => {
         const listCmd = await (
           agentsCommand.subCommands as Record<string, () => Promise<unknown>>
         ).list();
-        await (
-          listCmd as { run: (ctx: { args: Record<string, unknown> }) => Promise<void> }
-        ).run({
+        await (listCmd as { run: (ctx: { args: Record<string, unknown> }) => Promise<void> }).run({
           args: {
             json: true,
             quiet: false,
@@ -329,9 +325,7 @@ describe("am agents", () => {
         const listCmd = await (
           agentsCommand.subCommands as Record<string, () => Promise<unknown>>
         ).list();
-        await (
-          listCmd as { run: (ctx: { args: Record<string, unknown> }) => Promise<void> }
-        ).run({
+        await (listCmd as { run: (ctx: { args: Record<string, unknown> }) => Promise<void> }).run({
           args: {
             json: false,
             quiet: false,
