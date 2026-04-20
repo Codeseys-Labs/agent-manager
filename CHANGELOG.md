@@ -4,8 +4,6 @@
 
 ## [0.5.0-rc6] - 2026-04-20
 
-## [0.5.0-rc6] - 2026-04-18
-
 ### Added
 - **ADR-0033 three-tier agent model.** `BUILT_IN_AGENTS` replaces the flat
   16-entry `BUILT_IN_ACP_AGENTS` dict with three tiers: tier-1-native
