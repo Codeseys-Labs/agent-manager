@@ -2272,12 +2272,8 @@ async function invokeAgentImpl(args: Record<string, unknown>, ctx: ToolContext):
 
   // ADR-0033 / REV-1 #7 / REV-4 HIGH-1: tier-2 shims (not yet enabled) get a
   // recovery-path hint; tier-3 catalog-only get the no-recovery message.
-  const {
-    isCatalogOnly,
-    isShimNotEnabled,
-    shimNotEnabledMessage,
-    tierRefusalMessage,
-  } = await import("../core/agent-registry");
+  const { isCatalogOnly, isShimNotEnabled, shimNotEnabledMessage, tierRefusalMessage } =
+    await import("../core/agent-registry");
   if (isShimNotEnabled(entry)) {
     throw new Error(shimNotEnabledMessage(agentName));
   }

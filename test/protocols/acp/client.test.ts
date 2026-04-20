@@ -141,9 +141,7 @@ describe("ACP Agent Registry", () => {
     });
 
     test("gemini has no localBinary — command stays as native invocation", () => {
-      __setLaunchWhichFnForTests((name) =>
-        name === "gemini" ? "/opt/homebrew/bin/gemini" : null,
-      );
+      __setLaunchWhichFnForTests((name) => (name === "gemini" ? "/opt/homebrew/bin/gemini" : null));
       try {
         const entry = resolveAgent("gemini");
         expect(entry).not.toBeNull();

@@ -19,11 +19,7 @@ import {
   detectAgentByPath,
   detectAllAgents,
 } from "../core/agent-detection";
-import {
-  BUILT_IN_AGENTS,
-  listAllAgentsAsync,
-  tierRefusalMessage,
-} from "../core/agent-registry";
+import { BUILT_IN_AGENTS, listAllAgentsAsync, tierRefusalMessage } from "../core/agent-registry";
 import type { AgentTier, UnifiedRegistryConfig } from "../core/agent-registry";
 import { resolveConfigDir, tryReadConfig } from "../core/config";
 import { error, info, output } from "../lib/output";
@@ -71,10 +67,7 @@ const listSubcommand = defineCommand({
     const rawTier = typeof args.tier === "string" ? args.tier.toLowerCase() : undefined;
     const tierFilter = normalizeTierFilter(rawTier);
     if (rawTier && !tierFilter) {
-      error(
-        `Unknown tier "${rawTier}". Valid tiers: native, shim, catalog (see ADR-0033).`,
-        opts,
-      );
+      error(`Unknown tier "${rawTier}". Valid tiers: native, shim, catalog (see ADR-0033).`, opts);
       process.exitCode = 1;
       return;
     }
@@ -684,7 +677,6 @@ export const agentsCommand = defineCommand({
     delegate: () => Promise.resolve(delegateSubcommand),
     cancel: () => Promise.resolve(cancelSubcommand),
     // ADR-0033 Phase B: opt-in to a tier-2 shim-wrapped agent.
-    "enable-shim": () =>
-      import("./agent-enable-shim").then((m) => m.agentEnableShimCommand),
+    "enable-shim": () => import("./agent-enable-shim").then((m) => m.agentEnableShimCommand),
   },
 });

@@ -46,163 +46,165 @@ export const updateCommand = defineCommand({
       await withConfig(configDir, async (config) => {
         requireConfig(config);
 
-      // Find servers installed from the registry
-      const registryServers: Array<{ name: string; provenance: RegistryProvenance }> = [];
-      for (const [name, server] of Object.entries(config.servers ?? {})) {
-        const provenance = server._registry;
-        if (provenance?.source === "mcp-registry") {
-          registryServers.push({ name, provenance });
+        // Find servers installed from the registry
+        const registryServers: Array<{ name: string; provenance: RegistryProvenance }> = [];
+        for (const [name, server] of Object.entries(config.servers ?? {})) {
+          const provenance = server._registry;
+          if (provenance?.source === "mcp-registry") {
+            registryServers.push({ name, provenance });
+          }
         }
-      }
 
-      if (registryServers.length === 0) {
+        if (registryServers.length === 0) {
+          info(
+            "No registry-installed servers found. Install packages with `am install <name>`.",
+            opts,
+          );
+          if (args.json) {
+            output({ action: "update", updates: [], total: 0 }, opts);
+          }
+          return { result: undefined, changed: false };
+        }
+
         info(
-          "No registry-installed servers found. Install packages with `am install <name>`.",
+          `Checking ${registryServers.length} registry-installed server(s) for updates...`,
           opts,
         );
-        if (args.json) {
-          output({ action: "update", updates: [], total: 0 }, opts);
-        }
-        return { result: undefined, changed: false };
-      }
 
-      info(`Checking ${registryServers.length} registry-installed server(s) for updates...`, opts);
+        // Check each for updates
+        const candidates: UpdateCandidate[] = [];
+        const errors: Array<{ name: string; error: string }> = [];
 
-      // Check each for updates
-      const candidates: UpdateCandidate[] = [];
-      const errors: Array<{ name: string; error: string }> = [];
-
-      for (const { name, provenance } of registryServers) {
-        try {
-          const latest = await getPackage(provenance.package, { skipCache });
-          if (!latest) {
-            errors.push({ name, error: "Package no longer exists in registry" });
-            continue;
+        for (const { name, provenance } of registryServers) {
+          try {
+            const latest = await getPackage(provenance.package, { skipCache });
+            if (!latest) {
+              errors.push({ name, error: "Package no longer exists in registry" });
+              continue;
+            }
+            if (latest.version !== provenance.version) {
+              candidates.push({
+                name,
+                currentVersion: provenance.version,
+                latestVersion: latest.version,
+                pkg: latest,
+              });
+            }
+          } catch (err) {
+            const msg = err instanceof RegistryError ? err.message : (err as Error).message;
+            errors.push({ name, error: msg });
           }
-          if (latest.version !== provenance.version) {
-            candidates.push({
-              name,
-              currentVersion: provenance.version,
-              latestVersion: latest.version,
-              pkg: latest,
-            });
+        }
+
+        // Report per-package errors encountered while checking for updates.
+        for (const e of errors) {
+          warn(`${e.name}: ${e.error}`, opts);
+        }
+
+        if (candidates.length === 0) {
+          info("All registry-installed servers are up to date.", opts);
+          if (args.json) {
+            output({ action: "update", updates: [], errors, total: 0 }, opts);
           }
-        } catch (err) {
-          const msg = err instanceof RegistryError ? err.message : (err as Error).message;
-          errors.push({ name, error: msg });
+          return { result: undefined, changed: false };
         }
-      }
 
-      // Report per-package errors encountered while checking for updates.
-      for (const e of errors) {
-        warn(`${e.name}: ${e.error}`, opts);
-      }
-
-      if (candidates.length === 0) {
-        info("All registry-installed servers are up to date.", opts);
-        if (args.json) {
-          output({ action: "update", updates: [], errors, total: 0 }, opts);
+        // Display available updates
+        info(`\n${"Server".padEnd(25)} ${"Current".padEnd(12)} ${"Latest".padEnd(12)}`, opts);
+        info(`${"─".repeat(25)} ${"─".repeat(12)} ${"─".repeat(12)}`, opts);
+        for (const c of candidates) {
+          info(
+            `${c.name.padEnd(25)} ${c.currentVersion.padEnd(12)} ${c.latestVersion.padEnd(12)}`,
+            opts,
+          );
         }
-        return { result: undefined, changed: false };
-      }
+        info("", opts);
 
-      // Display available updates
-      info(`\n${"Server".padEnd(25)} ${"Current".padEnd(12)} ${"Latest".padEnd(12)}`, opts);
-      info(`${"─".repeat(25)} ${"─".repeat(12)} ${"─".repeat(12)}`, opts);
-      for (const c of candidates) {
-        info(
-          `${c.name.padEnd(25)} ${c.currentVersion.padEnd(12)} ${c.latestVersion.padEnd(12)}`,
-          opts,
-        );
-      }
-      info("", opts);
+        if (dryRun) {
+          info(`${candidates.length} update(s) available.`, opts);
+          if (args.json) {
+            output(
+              {
+                action: "update",
+                dryRun: true,
+                updates: candidates.map((c) => ({
+                  name: c.name,
+                  currentVersion: c.currentVersion,
+                  latestVersion: c.latestVersion,
+                })),
+                errors,
+                total: candidates.length,
+              },
+              opts,
+            );
+          }
+          return { result: undefined, changed: false };
+        }
 
-      if (dryRun) {
-        info(`${candidates.length} update(s) available.`, opts);
+        // Confirm updates
+        if (!skipConfirm && !args.json && process.stdin.isTTY) {
+          const confirm = await clack.confirm({
+            message: `Apply ${candidates.length} update(s)?`,
+            initialValue: true,
+          });
+          if (clack.isCancel(confirm) || !confirm) {
+            info("Cancelled.", opts);
+            return { result: undefined, changed: false };
+          }
+        }
+
+        // Apply updates
+        const updated: string[] = [];
+        for (const c of candidates) {
+          const existing = config.servers![c.name];
+          const existingEnv = existing.env;
+
+          config.servers![c.name] = {
+            command: c.pkg.server.command,
+            args: c.pkg.server.args,
+            transport: c.pkg.server.transport ?? "stdio",
+            enabled: existing.enabled ?? true,
+            description: c.pkg.description,
+            tags: c.pkg.tags,
+            // Preserve user's env vars
+            ...(existingEnv ? { env: existingEnv } : {}),
+            _registry: {
+              source: "mcp-registry" as const,
+              package: c.pkg.name,
+              version: c.pkg.version,
+              installed_at: new Date().toISOString(),
+            },
+          };
+
+          updated.push(c.name);
+          info(`Updated "${c.name}" ${c.currentVersion} → ${c.latestVersion}`, opts);
+        }
+
         if (args.json) {
           output(
             {
               action: "update",
-              dryRun: true,
               updates: candidates.map((c) => ({
                 name: c.name,
                 currentVersion: c.currentVersion,
                 latestVersion: c.latestVersion,
               })),
               errors,
-              total: candidates.length,
+              total: updated.length,
             },
             opts,
           );
         }
-        return { result: undefined, changed: false };
-      }
 
-      // Confirm updates
-      if (!skipConfirm && !args.json && process.stdin.isTTY) {
-        const confirm = await clack.confirm({
-          message: `Apply ${candidates.length} update(s)?`,
-          initialValue: true,
-        });
-        if (clack.isCancel(confirm) || !confirm) {
-          info("Cancelled.", opts);
-          return { result: undefined, changed: false };
+        if (!args.json && !args.quiet && updated.length > 0) {
+          info("\nRun `am apply` to regenerate native configs.", opts);
         }
-      }
 
-      // Apply updates
-      const updated: string[] = [];
-      for (const c of candidates) {
-        const existing = config.servers![c.name];
-        const existingEnv = existing.env;
-
-        config.servers![c.name] = {
-          command: c.pkg.server.command,
-          args: c.pkg.server.args,
-          transport: c.pkg.server.transport ?? "stdio",
-          enabled: existing.enabled ?? true,
-          description: c.pkg.description,
-          tags: c.pkg.tags,
-          // Preserve user's env vars
-          ...(existingEnv ? { env: existingEnv } : {}),
-          _registry: {
-            source: "mcp-registry" as const,
-            package: c.pkg.name,
-            version: c.pkg.version,
-            installed_at: new Date().toISOString(),
-          },
+        return {
+          result: undefined,
+          changed: updated.length > 0,
+          commitMessage: updated.length > 0 ? `registry update: ${updated.join(", ")}` : undefined,
         };
-
-        updated.push(c.name);
-        info(`Updated "${c.name}" ${c.currentVersion} → ${c.latestVersion}`, opts);
-      }
-
-      if (args.json) {
-        output(
-          {
-            action: "update",
-            updates: candidates.map((c) => ({
-              name: c.name,
-              currentVersion: c.currentVersion,
-              latestVersion: c.latestVersion,
-            })),
-            errors,
-            total: updated.length,
-          },
-          opts,
-        );
-      }
-
-      if (!args.json && !args.quiet && updated.length > 0) {
-        info("\nRun `am apply` to regenerate native configs.", opts);
-      }
-
-      return {
-        result: undefined,
-        changed: updated.length > 0,
-        commitMessage:
-          updated.length > 0 ? `registry update: ${updated.join(", ")}` : undefined,
-      };
       });
     } catch (err) {
       amError(err, opts);

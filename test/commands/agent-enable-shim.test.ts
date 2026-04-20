@@ -66,9 +66,7 @@ describe("am agent enable-shim", () => {
   });
 
   test("happy path — aider --yes writes acp.command and resolveAgent returns it", async () => {
-    const { agentEnableShimCommand } = await import(
-      "../../src/commands/agent-enable-shim"
-    );
+    const { agentEnableShimCommand } = await import("../../src/commands/agent-enable-shim");
     await agentEnableShimCommand.run!({
       args: {
         _: ["enable-shim", "aider"],
@@ -109,9 +107,7 @@ describe("am agent enable-shim", () => {
   });
 
   test("unknown shim name exits 1 and does not write config", async () => {
-    const { agentEnableShimCommand } = await import(
-      "../../src/commands/agent-enable-shim"
-    );
+    const { agentEnableShimCommand } = await import("../../src/commands/agent-enable-shim");
     await agentEnableShimCommand.run!({
       args: {
         _: ["enable-shim", "nonexistent-agent"],
@@ -135,9 +131,7 @@ describe("am agent enable-shim", () => {
   });
 
   test("without --yes (non-JSON) prints caveat, exits 2, leaves config untouched", async () => {
-    const { agentEnableShimCommand } = await import(
-      "../../src/commands/agent-enable-shim"
-    );
+    const { agentEnableShimCommand } = await import("../../src/commands/agent-enable-shim");
     await agentEnableShimCommand.run!({
       args: {
         _: ["enable-shim", "aider"],
@@ -162,9 +156,7 @@ describe("am agent enable-shim", () => {
   });
 
   test("without --yes in --json mode errors with the scripting hint, exits 2", async () => {
-    const { agentEnableShimCommand } = await import(
-      "../../src/commands/agent-enable-shim"
-    );
+    const { agentEnableShimCommand } = await import("../../src/commands/agent-enable-shim");
     await agentEnableShimCommand.run!({
       args: {
         _: ["enable-shim", "aider"],

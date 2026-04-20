@@ -559,9 +559,9 @@ export async function createApp(options?: CreateAppOptions) {
     // Without this, shim-enabled Tier-2 agents (aider/amazon-q/cody) are
     // invisible to A2A delegation even after the user opted in.
     const { tryReadConfig: bridgeTryReadConfig } = await import("../core/config");
-    const bridgeRawConfig = (await bridgeTryReadConfig(
-      join(bridgeCfgDir, "config.toml"),
-    )) as import("../core/agent-registry").UnifiedRegistryConfig | undefined;
+    const bridgeRawConfig = (await bridgeTryReadConfig(join(bridgeCfgDir, "config.toml"))) as
+      | import("../core/agent-registry").UnifiedRegistryConfig
+      | undefined;
     const a2aApp = createA2ARoutes({
       config: bridgeResolved,
       cardOptions: { baseUrl: "http://localhost:3456" },

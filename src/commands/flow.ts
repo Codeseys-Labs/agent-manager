@@ -89,13 +89,9 @@ const flowRunCommand = defineCommand({
             shimNotEnabledMessage,
             tierRefusalMessage,
           } = await import("../core/agent-registry");
-          const { resolveConfigDir: rcd, tryReadConfig: trc } = await import(
-            "../core/config"
-          );
+          const { resolveConfigDir: rcd, tryReadConfig: trc } = await import("../core/config");
           const cfgDir = rcd();
-          const cfg = (await trc(join(cfgDir, "config.toml"))) as
-            | UnifiedRegistryConfig
-            | undefined;
+          const cfg = (await trc(join(cfgDir, "config.toml"))) as UnifiedRegistryConfig | undefined;
           const entry = await resolveAgentAsync(agentName, cfg, cfgDir);
           if (entry && isShimNotEnabled(entry)) {
             throw new Error(shimNotEnabledMessage(agentName));

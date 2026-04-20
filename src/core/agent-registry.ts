@@ -507,13 +507,7 @@ export async function listAllAgentsAsync(
  * Callers decide how to surface the result (throw, exit 1, JSON-RPC error, etc.).
  */
 export function tierRefusalMessage(agentName: string): string {
-  return (
-    `"${agentName}" is a catalog-only (tier-3) integration. ` +
-    "am writes its config via `am apply` but cannot spawn it — it has no " +
-    "standalone ACP runtime (VSCode extensions, IDE-only products). " +
-    "Use it from its native UI; run `am agent list --tier native` for " +
-    "runnable alternatives. See ADR-0033."
-  );
+  return `"${agentName}" is a catalog-only (tier-3) integration. am writes its config via \`am apply\` but cannot spawn it — it has no standalone ACP runtime (VSCode extensions, IDE-only products). Use it from its native UI; run \`am agent list --tier native\` for runnable alternatives. See ADR-0033.`;
 }
 
 /**
@@ -522,14 +516,7 @@ export function tierRefusalMessage(agentName: string): string {
  * tier-3 has no recovery; tier-2 just needs `enable-shim`.
  */
 export function shimNotEnabledMessage(agentName: string): string {
-  return (
-    `"${agentName}" is a Tier-2 wrapped agent and requires opt-in before ` +
-    "`am run` will spawn it. Run:\n" +
-    `  am agent enable-shim ${agentName} --yes\n\n` +
-    "Tier-2 inherits the wrapped CLI's trust posture — `--yes` / " +
-    "`--no-interactive` flags on the wrapped tool bypass am's approval UI. " +
-    "See ADR-0033 Phase B for the full security note."
-  );
+  return `"${agentName}" is a Tier-2 wrapped agent and requires opt-in before \`am run\` will spawn it. Run:\n  am agent enable-shim ${agentName} --yes\n\nTier-2 inherits the wrapped CLI's trust posture — \`--yes\` / \`--no-interactive\` flags on the wrapped tool bypass am's approval UI. See ADR-0033 Phase B for the full security note.`;
 }
 
 /**
@@ -592,10 +579,7 @@ export function __setLaunchWhichFnForTests(fn: WhichFn | null): void {
  *
  * Returns the local binary path when it IS on PATH.
  */
-export function resolveInstalledBuiltInAgentLaunch(
-  _name: string,
-  spec: BuiltInAgentSpec,
-): string {
+export function resolveInstalledBuiltInAgentLaunch(_name: string, spec: BuiltInAgentSpec): string {
   if (!spec.localBinary) return spec.command;
   const resolved = resolveWhichFn(spec.localBinary);
   if (!resolved) return spec.command;

@@ -43,7 +43,11 @@ export const agentEnableShimCommand = defineCommand({
     description: "Opt in to a Tier-2 acp-shell wrapped agent (aider, amazon-q, cody, ...)",
   },
   args: {
-    name: { type: "positional", description: "Shim name (must be in BUILT_IN_SHIMS)", required: true },
+    name: {
+      type: "positional",
+      description: "Shim name (must be in BUILT_IN_SHIMS)",
+      required: true,
+    },
     yes: {
       type: "boolean",
       description: "Skip the interactive security-caveat confirmation prompt",
@@ -72,10 +76,7 @@ export const agentEnableShimCommand = defineCommand({
     if (!args.yes) {
       if (opts.json) {
         // JSON callers (scripts) must pass --yes explicitly; we don't pop a prompt.
-        error(
-          "Enabling a shim requires --yes in JSON mode (cannot prompt on stdin).",
-          opts,
-        );
+        error("Enabling a shim requires --yes in JSON mode (cannot prompt on stdin).", opts);
         process.exitCode = 2;
         return;
       }

@@ -13,10 +13,7 @@
  * See ADR-0026 for rationale.
  */
 
-import {
-  BUILT_IN_AGENTS,
-  resolveInstalledBuiltInAgentLaunch,
-} from "../../core/agent-registry";
+import { BUILT_IN_AGENTS, resolveInstalledBuiltInAgentLaunch } from "../../core/agent-registry";
 import type { AcpSettings, AgentRegistryEntry } from "./types";
 
 // ── Resolution ─────────────────────────────────────────────────
