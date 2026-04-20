@@ -52,38 +52,53 @@ export const initCommand = defineCommand({
     // "init" commit).
     await mkdir(configDir, { recursive: true });
 
-    const wasInitialized = await withConfig(configDir, async (existing) => {
-      if (existing) {
-        process.exitCode = 1;
-        if (args.json) {
-          output({ status: "already_initialized", configDir }, opts);
-        } else {
-          error(`Already initialized. Config exists at ${configPath}`, opts);
+    const wasInitialized = await withConfig(
+      configDir,
+      async (existing) => {
+        if (existing) {
+          process.exitCode = 1;
+          if (args.json) {
+            output({ status: "already_initialized", configDir }, opts);
+          } else {
+            error(`Already initialized. Config exists at ${configPath}`, opts);
+          }
+          return { result: false, changed: false };
         }
-        return { result: false, changed: false };
-      }
 
-      // First-run: initialize the git repo under the lock so concurrent
-      // `am init` invocations can't race on `git init`.
-      await initRepo(configDir);
+        // First-run: initialize the git repo under the lock so concurrent
+        // `am init` invocations can't race on `git init`.
+        //
+        // initRepo makes its own "init: agent-manager repository" commit
+        // (containing .gitignore). We write config.toml here but SKIP
+        // withConfig's auto-commit by returning `changed: true` with a
+        // `noCommit: true` option on withConfig itself — the freshly-written
+        // config.toml gets swept into the next commit (e.g., the user's
+        // first `am add`). This keeps a fresh repo at exactly ONE commit,
+        // so `am undo` right after `am init` correctly reports "Nothing to
+        // undo".
+        await initRepo(configDir);
 
-      const newConfig: Config = {
-        settings: { default_profile: "default" },
-        servers: {},
-        profiles: {
-          default: {
-            description: "Default profile — all servers",
+        const newConfig: Config = {
+          settings: { default_profile: "default" },
+          servers: {},
+          profiles: {
+            default: {
+              description: "Default profile — all servers",
+            },
           },
-        },
-      };
+        };
 
-      return {
-        result: true,
-        changed: true,
-        updated: newConfig,
-        commitMessage: "initial commit",
-      };
-    });
+        return {
+          result: true,
+          changed: true,
+          updated: newConfig,
+          // commitMessage intentionally omitted — withConfig's noCommit
+          // option (below) short-circuits the commit path regardless, but
+          // leaving this undefined makes the intent explicit.
+        };
+      },
+      { noCommit: true },
+    );
 
     if (!wasInitialized) {
       return;

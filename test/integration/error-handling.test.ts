@@ -1,6 +1,12 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, setDefaultTimeout, test } from "bun:test";
 import { join } from "node:path";
 import { type TestDir, createTestDir } from "../helpers/tmp";
+
+// Integration tests spawn bun subprocesses per runAM() call; the cold-start
+// cost of `bun run src/cli.ts` on CI and some dev machines is 1-3s, and these
+// tests chain 2+ calls each. The default 5s test timeout leaves no headroom —
+// bump to 30s so slow CI runners don't cause false flakes.
+setDefaultTimeout(30_000);
 
 let testDir: TestDir;
 

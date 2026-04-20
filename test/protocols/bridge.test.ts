@@ -313,20 +313,28 @@ describe("createBridgeTaskHandler", () => {
     expect((textPart as { text: string }).text).toContain("does not match bridge pattern");
   });
 
-  test("returns error when ACP connect fails (agent binary not found)", async () => {
-    // "claude" is in the built-in ACP registry but the binary won't be installed
-    const handler = createBridgeTaskHandler({ timeout: 5000 });
-    const config = makeResolvedConfig();
-    const msg = textMessage("run claude: fix tests");
+  test(
+    "returns error when ACP connect fails (agent binary not found)",
+    async () => {
+      // "claude" is in the built-in ACP registry but the binary won't be
+      // installed. The bridge's ACP client has its own internal initTimeout
+      // (~10s default). We pass a shorter timeout here AND give the Bun test
+      // itself a generous cap so the bridge's SIGTERM+exit cycle has room
+      // without racing the default 5s test timeout.
+      const handler = createBridgeTaskHandler({ timeout: 3000 });
+      const config = makeResolvedConfig();
+      const msg = textMessage("run claude: fix tests");
 
-    const result = await handler(msg, config);
+      const result = await handler(msg, config);
 
-    // Should fail because the ACP agent binary is not actually installed
-    expect(result.message.role).toBe("agent");
-    const textPart = result.message.parts.find((p) => p.type === "text");
-    expect(textPart).toBeDefined();
-    expect((textPart as { text: string }).text).toContain("failed to execute");
-  });
+      // Should fail because the ACP agent binary is not actually installed
+      expect(result.message.role).toBe("agent");
+      const textPart = result.message.parts.find((p) => p.type === "text");
+      expect(textPart).toBeDefined();
+      expect((textPart as { text: string }).text).toContain("failed to execute");
+    },
+    20_000,
+  );
 });
 
 // ── createBridgedTaskHandler (composite) ──────────────────────
