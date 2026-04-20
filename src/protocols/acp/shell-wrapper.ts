@@ -137,6 +137,22 @@ interface SessionState {
 // ── ShimAcpServer ──────────────────────────────────────────────
 
 /**
+ * Per-process rate limiter for REV-4 MED-3: emit the `arg-named` fallback
+ * warning only once per wrapped agent name/command. Using a `Set` (rather
+ * than a counter) keeps memory bounded and avoids the usual "log spam from
+ * a hot loop" failure mode — we only want operators to see this once per
+ * boot so they know to stop writing `arg-named` in their shim configs.
+ *
+ * Exported so tests can reset state between cases.
+ */
+export const __argNamedWarnedOnce: Set<string> = new Set();
+export function __resetArgNamedWarnedOnceForTests(): void {
+  __argNamedWarnedOnce.clear();
+}
+
+// ── ShimAcpServer ──────────────────────────────────────────────
+
+/**
  * A minimal ACP agent that proxies every prompt to a wrapped CLI.
  *
  * The server owns only four methods: initialize, session/new, session/prompt,
@@ -292,6 +308,21 @@ export class ShimAcpServer {
     const template = this.shim.promptTemplate ?? "stdin";
     const argv = [...this.shim.command];
     if (template === "arg-last" || template === "arg-named") {
+      // REV-4 MED-3: `arg-named` is currently aliased to `arg-last` (same
+      // behaviour). Future shims will specialize this to a named flag like
+      // `--prompt <text>`. Warn ONCE per wrapped agent so community
+      // adapters that wrote `arg-named` expecting distinct semantics know
+      // they're getting the arg-last fallback, without log-spamming in
+      // hot-loop prompt turns.
+      if (template === "arg-named") {
+        const warnKey = this.shim.command[0] ?? "<unknown>";
+        if (!__argNamedWarnedOnce.has(warnKey)) {
+          __argNamedWarnedOnce.add(warnKey);
+          console.warn(
+            `[am-acp-shell] promptTemplate 'arg-named' is not yet implemented for '${warnKey}', falling back to arg-last`,
+          );
+        }
+      }
       argv.push(promptText);
     }
 

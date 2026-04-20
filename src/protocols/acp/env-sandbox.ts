@@ -15,6 +15,15 @@
  * The caller may explicitly overlay env via the `extra` parameter (e.g. from
  * `am run --env KEY=VALUE`) — that overlay IS trusted and bypasses the deny
  * regex so the user can forward a specific var they need.
+ *
+ * REV-4 MED-2: `NODE_OPTIONS` is NOT on the default allow-list. It is an attack
+ * surface because it lets the parent environment inject `--require shim.js`,
+ * `--inspect`, or `--env-file=...` into every Node-based agent subprocess —
+ * including the Phase B tier-2 shim wrappers (aider/amazon-q/cody) that run
+ * under Node in some installs. Callers that genuinely need NODE_OPTIONS for a
+ * specific tier-1 Node-based agent must pass it explicitly via the `extra`
+ * parameter, e.g. `sandboxEnv({ NODE_OPTIONS: "--max-old-space-size=4096" })`.
+ * No built-in ACP agent currently requires this.
  */
 
 /**
@@ -24,8 +33,9 @@
  *   PATH, HOME, USER, SHELL   — required for most CLIs to find binaries / identify caller
  *   LANG, LC_*, TERM          — locale / terminal behaviour (affects output encoding)
  *   TMPDIR                    — tools that write temp files (aider, q) look here first
- *   NODE_OPTIONS              — Node-based ACP agents (claude-agent-acp) may need this
  *   XDG_CONFIG_HOME, XDG_DATA_HOME — config/data path resolution for many CLIs
+ *
+ * Deliberately OMITTED (REV-4 MED-2): NODE_OPTIONS — see module docstring.
  */
 const DEFAULT_ALLOW_LIST = [
   "PATH",
@@ -38,7 +48,6 @@ const DEFAULT_ALLOW_LIST = [
   "TERM",
   "TMPDIR",
   "SHELL",
-  "NODE_OPTIONS",
   "XDG_CONFIG_HOME",
   "XDG_DATA_HOME",
 ] as const;

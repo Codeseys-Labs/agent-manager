@@ -1,6 +1,6 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 
 export interface TestDir {
   path: string;
@@ -11,13 +11,16 @@ export interface TestDir {
 }
 
 export async function createTestDir(prefix = "am-test-"): Promise<TestDir> {
+  // REV-4 LOW-1 / REV-3 Windows portability: use node:path everywhere so the
+  // helper works on both POSIX and Windows. Previously `write()` sliced on a
+  // literal `/` and spawned `mkdir -p` which are both POSIX-only.
   const path = await mkdtemp(join(tmpdir(), prefix));
   return {
     path,
     async write(name: string, content: string) {
       const filePath = join(path, name);
-      const dir = filePath.substring(0, filePath.lastIndexOf("/"));
-      await Bun.spawn(["mkdir", "-p", dir]).exited;
+      const dir = dirname(filePath);
+      await mkdir(dir, { recursive: true });
       await Bun.write(filePath, content);
       return filePath;
     },

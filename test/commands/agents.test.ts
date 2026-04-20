@@ -301,5 +301,62 @@ describe("am agents", () => {
         expect(a.tier).toBe("tier-1-native");
       }
     });
+
+    // REV-4 LOW-3: the text-mode endpoint column and the JSON `runnable`
+    // field must agree about tier-2-shim agents that haven't been enabled.
+    // A tier-2 entry with runnable=false in JSON should show
+    // "(shim — enable-shim to activate)" in the text output — NOT the
+    // catalog-only marker "(catalog-only)".
+    test("tier-2-shim unrun agents: JSON runnable=false aligns with text 'enable-shim' label", async () => {
+      // JSON side.
+      const jsonOut = await runListWithArgs({ tier: "shim" });
+      const parsed = JSON.parse(jsonOut) as {
+        agents: Array<{ tier: string; runnable: boolean; name: string; endpoint: string | null }>;
+      };
+      expect(parsed.agents.length).toBeGreaterThan(0);
+      const notEnabled = parsed.agents.filter((a) => a.runnable === false);
+      expect(notEnabled.length).toBeGreaterThan(0);
+      for (const a of notEnabled) {
+        expect(a.tier).toBe("tier-2-shim");
+      }
+
+      // Text side — same handler, args.json=false.
+      const origConfigDir = process.env.AM_CONFIG_DIR;
+      process.env.AM_CONFIG_DIR = configDir;
+      consoleOutput = [];
+      try {
+        const { agentsCommand } = await import("../../src/commands/agents");
+        const listCmd = await (
+          agentsCommand.subCommands as Record<string, () => Promise<unknown>>
+        ).list();
+        await (
+          listCmd as { run: (ctx: { args: Record<string, unknown> }) => Promise<void> }
+        ).run({
+          args: {
+            json: false,
+            quiet: false,
+            verbose: false,
+            discover: false,
+            tier: "shim",
+          },
+        });
+      } finally {
+        if (origConfigDir !== undefined) {
+          process.env.AM_CONFIG_DIR = origConfigDir;
+        } else {
+          process.env.AM_CONFIG_DIR = undefined;
+        }
+      }
+      const combinedText = consoleOutput.join("\n");
+      for (const a of notEnabled) {
+        const line = consoleOutput.find((l) => l.startsWith(a.name.padEnd(20)));
+        expect(line).toBeDefined();
+        expect(line!).toContain("(shim — enable-shim to activate)");
+        // Regression guard: must NOT be mislabeled as catalog-only.
+        expect(line!).not.toContain("(catalog-only)");
+      }
+      // Sanity: shim label appears at least once in the whole table.
+      expect(combinedText).toContain("enable-shim to activate");
+    });
   });
 });

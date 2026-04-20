@@ -14,7 +14,6 @@
  */
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { AmAcpClient } from "../../../src/protocols/acp/client";
 import { isDeniedEnvName, sandboxEnv } from "../../../src/protocols/acp/env-sandbox";
 
 describe("sandboxEnv — allow-list and deny-regex", () => {
@@ -108,6 +107,28 @@ describe("sandboxEnv — allow-list and deny-regex", () => {
     expect(env.PATH).toBe("/custom/bin");
   });
 
+  test("REV-4 MED-2: NODE_OPTIONS is NOT inherited from process.env by default", () => {
+    process.env.NODE_OPTIONS = "--require /tmp/evil.js";
+    try {
+      const env = sandboxEnv();
+      expect(env.NODE_OPTIONS).toBeUndefined();
+    } finally {
+      process.env.NODE_OPTIONS = undefined;
+    }
+  });
+
+  test("REV-4 MED-2: NODE_OPTIONS can be reinstated by caller via extras", () => {
+    // Even with a dangerous value in process.env, only the explicit `extra`
+    // passed by the caller should survive.
+    process.env.NODE_OPTIONS = "--require /tmp/evil.js";
+    try {
+      const env = sandboxEnv({ NODE_OPTIONS: "--max-old-space-size=4096" });
+      expect(env.NODE_OPTIONS).toBe("--max-old-space-size=4096");
+    } finally {
+      process.env.NODE_OPTIONS = undefined;
+    }
+  });
+
   test("deny pattern matches AM_* names", () => {
     expect(isDeniedEnvName("AM_MCP_TOKEN")).toBe(true);
     expect(isDeniedEnvName("AM_KEY_PATH")).toBe(true);
@@ -181,35 +202,17 @@ describe("live env-leak probe — AmAcpClient.connect via /bin/bash", () => {
     },
   );
 
-  test.skipIf(process.platform === "win32")(
-    "AmAcpClient.connect spawn path uses sandboxed env (no AM_CANARY leak)",
-    async () => {
-      // Drive the full connect() path: spawn `/bin/bash -c` which will exit
-      // (not speak ACP) so connect() throws AFTER the spawn. We can't read
-      // the child's stdout here (connect() does its own ndJsonStream setup),
-      // but if the client's spawn call passed {...process.env} the child
-      // WOULD see AM_CANARY — which is exactly what sandboxEnv prevents.
-      //
-      // This test passes when connect() doesn't crash with an error that
-      // mentions the canary value. The real assertion is that env-sandbox
-      // is on the critical path (see the static import check in client.ts).
-      const originalCanary = process.env.AM_CANARY;
-      process.env.AM_CANARY = "leak-me-if-you-can-ABC";
-      const client = new AmAcpClient();
-      try {
-        await client
-          .connect("/bin/bash -c 'exit 0'", { initTimeout: 500 })
-          .catch(() => {
-            // Expected — bash isn't an ACP agent; connect will error or timeout.
-          });
-      } finally {
-        await client.disconnect().catch(() => {});
-        if (originalCanary === undefined) process.env.AM_CANARY = undefined;
-        else process.env.AM_CANARY = originalCanary;
-      }
-      // If we got here without crashing the test process, the wiring works.
-      // The actual leak-check happens in the previous test via direct spawn.
-      expect(true).toBe(true);
-    },
-  );
+  test("REV-4 LOW-2: AmAcpClient module statically imports sandboxEnv", async () => {
+    // Structural guarantee: client.ts must route every spawn through
+    // sandboxEnv(). Enforced by a string match on the compiled module
+    // source so a refactor that drops the import fails this test instead
+    // of silently regressing the env-leak fix.
+    const clientSource = await Bun.file(
+      new URL("../../../src/protocols/acp/client.ts", import.meta.url),
+    ).text();
+    expect(clientSource).toContain('from "./env-sandbox"');
+    // Both the connect() path and the terminal/spawn path must call it.
+    const sandboxEnvCalls = clientSource.match(/sandboxEnv\s*\(/g) ?? [];
+    expect(sandboxEnvCalls.length).toBeGreaterThanOrEqual(2);
+  });
 });
