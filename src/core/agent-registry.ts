@@ -120,7 +120,7 @@ export const BUILT_IN_AGENTS: Record<string, BuiltInAgentSpec> = {
   //
   // Each tier-2 entry has `command: ""` so the agent is NOT auto-spawnable.
   // The user must run `am agent enable-shim <name>` to opt in, which writes
-  // `[agents.<name>].adapters.acp.command = "am-acp-shell <name>"` to their
+  // `[agents.<name>].acp.command = "am-acp-shell <name>"` to their
   // config.toml. Once enabled, `resolveAgent()` sees the config override
   // and routes `am run <name>` through the shim. Until enabled, running the
   // agent returns a helpful "enable via am agent enable-shim <name>" message.

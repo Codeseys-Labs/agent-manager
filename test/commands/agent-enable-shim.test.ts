@@ -3,7 +3,8 @@
  *
  * Covers:
  *   - Happy path: `am agent enable-shim aider --yes` writes the shim command
- *     to config.toml under [agents.aider.adapters.acp.command].
+ *     to config.toml under [agents.aider.acp.command] (the path resolveAgent
+ *     actually reads — REV-4 CRIT-1 fix).
  *   - Unknown shim name exits 1 with a helpful error.
  *   - Without --yes (and non-JSON) prints the caveat and exits 2 without
  *     touching config.toml.

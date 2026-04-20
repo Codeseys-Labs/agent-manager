@@ -143,16 +143,6 @@ main() {
   OS="$(detect_os)" || { printf "Error: %s\n" "$OS" >&2; exit 1; }
   ARCH="$(detect_arch)" || { printf "Error: %s\n" "$ARCH" >&2; exit 1; }
 
-  ARTIFACT="am-${OS}-${ARCH}"
-  if [ "$OS" = "windows" ]; then
-    ARTIFACT="am-windows-x64.exe"
-  fi
-
-  # Linux arm64 is supported
-  if [ "$OS" = "linux" ] && [ "$ARCH" = "arm64" ]; then
-    ARTIFACT="am-linux-arm64"
-  fi
-
   # Resolve version
   if [ -z "$VERSION" ]; then
     printf "Fetching latest version...\n"
@@ -160,19 +150,30 @@ main() {
   fi
 
   TAG="v${VERSION}"
-  BINARY_URL="${BASE_URL}/releases/download/${TAG}/${ARTIFACT}"
   CHECKSUM_URL="${BASE_URL}/releases/download/${TAG}/checksums.sha256"
 
-  printf "  Platform:  %s/%s\n" "$OS" "$ARCH"
-  printf "  Version:   %s\n" "$VERSION"
-  printf "  Binary:    %s\n" "$ARTIFACT"
-  printf "  Install:   %s/am\n" "$INSTALL_DIR"
+  # ADR-0033 / REV-5 HIGH-1: am ships TWO binaries now. `am` is the CLI, and
+  # `am-acp-shell` is the Tier-2 wrapper that `am run <shim>` spawns after
+  # `am agent enable-shim <name>`. Install both or Tier-2 is dead-on-arrival.
+  if [ "$OS" = "windows" ]; then
+    AM_ARTIFACT="am-windows-x64.exe"
+    SHELL_ARTIFACT="am-acp-shell-windows-x64.exe"
+  else
+    AM_ARTIFACT="am-${OS}-${ARCH}"
+    SHELL_ARTIFACT="am-acp-shell-${OS}-${ARCH}"
+  fi
+
+  printf "  Platform:   %s/%s\n" "$OS" "$ARCH"
+  printf "  Version:    %s\n" "$VERSION"
+  printf "  Binaries:   %s, %s\n" "$AM_ARTIFACT" "$SHELL_ARTIFACT"
+  printf "  Install:    %s/{am,am-acp-shell}\n" "$INSTALL_DIR"
   printf "\n"
 
   if [ "$DRY_RUN" = "1" ]; then
-    printf "[dry-run] Would download: %s\n" "$BINARY_URL"
-    printf "[dry-run] Would verify checksum from: %s\n" "$CHECKSUM_URL"
-    printf "[dry-run] Would install to: %s/am\n" "$INSTALL_DIR"
+    printf "[dry-run] Would download: %s\n" "${BASE_URL}/releases/download/${TAG}/${AM_ARTIFACT}"
+    printf "[dry-run] Would download: %s\n" "${BASE_URL}/releases/download/${TAG}/${SHELL_ARTIFACT}"
+    printf "[dry-run] Would verify checksums from: %s\n" "$CHECKSUM_URL"
+    printf "[dry-run] Would install to: %s/am and %s/am-acp-shell\n" "$INSTALL_DIR" "$INSTALL_DIR"
     exit 0
   fi
 
@@ -183,32 +184,39 @@ main() {
   TMP_DIR="$(mktemp -d)"
   trap 'rm -rf "$TMP_DIR"' EXIT
 
-  printf "Downloading %s...\n" "$ARTIFACT"
-  download "$BINARY_URL" "${TMP_DIR}/${ARTIFACT}"
-
   printf "Downloading checksums...\n"
   download "$CHECKSUM_URL" "${TMP_DIR}/checksums.sha256"
 
-  # Extract expected checksum for this artifact
-  EXPECTED="$(grep "${ARTIFACT}" "${TMP_DIR}/checksums.sha256" | cut -d' ' -f1)"
-  if [ -z "$EXPECTED" ]; then
-    printf "Warning: artifact %s not found in checksums file, skipping verification\n" "$ARTIFACT" >&2
-  else
-    printf "Verifying checksum...\n"
-    verify_checksum "${TMP_DIR}/${ARTIFACT}" "$EXPECTED"
-    printf "Checksum OK\n"
-  fi
+  # --- download + verify + install each binary ---
+  install_binary() {
+    artifact="$1"
+    dest_name="$2"
 
-  # Install
-  DEST="${INSTALL_DIR}/am"
-  if [ "$OS" = "windows" ]; then
-    DEST="${INSTALL_DIR}/am.exe"
-  fi
+    printf "Downloading %s...\n" "$artifact"
+    download "${BASE_URL}/releases/download/${TAG}/${artifact}" "${TMP_DIR}/${artifact}"
 
-  cp "${TMP_DIR}/${ARTIFACT}" "$DEST"
-  chmod +x "$DEST"
+    expected="$(grep "${artifact}" "${TMP_DIR}/checksums.sha256" | cut -d' ' -f1)"
+    if [ -z "$expected" ]; then
+      printf "Warning: artifact %s not found in checksums file, skipping verification\n" "$artifact" >&2
+    else
+      printf "Verifying checksum...\n"
+      verify_checksum "${TMP_DIR}/${artifact}" "$expected"
+      printf "Checksum OK\n"
+    fi
 
-  printf "\nInstalled am %s to %s\n" "$VERSION" "$DEST"
+    dest="${INSTALL_DIR}/${dest_name}"
+    if [ "$OS" = "windows" ]; then
+      dest="${INSTALL_DIR}/${dest_name}.exe"
+    fi
+    cp "${TMP_DIR}/${artifact}" "$dest"
+    chmod +x "$dest"
+    printf "Installed %s to %s\n" "$dest_name" "$dest"
+  }
+
+  install_binary "$AM_ARTIFACT" "am"
+  install_binary "$SHELL_ARTIFACT" "am-acp-shell"
+
+  printf "\nInstalled am %s (am + am-acp-shell) to %s\n" "$VERSION" "$INSTALL_DIR"
 
   # PATH check
   case ":${PATH}:" in

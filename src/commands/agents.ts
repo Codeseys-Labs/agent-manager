@@ -594,7 +594,22 @@ const detectSubcommand = defineCommand({
         process.exitCode = 1;
         return;
       }
-      if (spec.tier === "tier-3-catalog-only" || !spec.command) {
+      // REV-5 HIGH-2: separate tier-2 and tier-3 refusals here too — tier-2
+      // shims have `command: ""` and would fall into the tier-3 message
+      // claiming they're VSCode extensions. The other three surfaces already
+      // do this split (REV-4 HIGH-1); detect was missed in that pass.
+      if (spec.tier === "tier-3-catalog-only") {
+        error(tierRefusalMessage(name), opts);
+        process.exitCode = 1;
+        return;
+      }
+      if (spec.tier === "tier-2-shim") {
+        const { shimNotEnabledMessage } = await import("../core/agent-registry");
+        error(shimNotEnabledMessage(name), opts);
+        process.exitCode = 1;
+        return;
+      }
+      if (!spec.command) {
         error(tierRefusalMessage(name), opts);
         process.exitCode = 1;
         return;

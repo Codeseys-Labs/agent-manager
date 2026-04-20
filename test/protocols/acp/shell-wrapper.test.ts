@@ -11,7 +11,11 @@
  */
 
 import { describe, expect, test } from "bun:test";
-import { ShimAcpServer } from "../../../src/protocols/acp/shell-wrapper";
+import {
+  __argNamedWarnedOnce,
+  __resetArgNamedWarnedOnceForTests,
+  ShimAcpServer,
+} from "../../../src/protocols/acp/shell-wrapper";
 
 interface Frame {
   jsonrpc: "2.0";
@@ -79,10 +83,13 @@ async function driveOneTurn(
 
 describe.skipIf(process.platform === "win32")("ShimAcpServer — arg-last template", () => {
   test("echoes prompt back as a single agent_message_chunk, stopReason=end_turn", async () => {
-    // /bin/echo -n <text> prints exactly <text> to stdout.
+    // REV-5 LOW-2: use `printf '%s'` instead of `/bin/echo -n` for cross-OS
+    // portability. On some Linux distros `/bin/echo` is a standalone binary
+    // that prints `-n` literally instead of suppressing the newline. printf
+    // is POSIX and consistent across macOS + all Linux distros.
     const { updates, promptResponse } = await driveOneTurn(
       {
-        command: ["/bin/echo", "-n"],
+        command: ["/usr/bin/printf", "%s"],
         promptTemplate: "arg-last",
         responseExtractor: "stdout",
       },
@@ -183,6 +190,79 @@ describe.skipIf(process.platform === "win32")("ShimAcpServer — env leak probe"
       if (savedLeak === undefined) process.env.AM_LEAK_TEST = undefined;
       else process.env.AM_LEAK_TEST = savedLeak;
     }
+  });
+});
+
+describe.skipIf(process.platform === "win32")("ShimAcpServer — REV-4 MED-3: arg-named warn-once", () => {
+  test("first arg-named prompt emits warning; second does not", async () => {
+    // Reset rate-limiter state; capture console.warn output.
+    __resetArgNamedWarnedOnceForTests();
+    const originalWarn = console.warn;
+    const warnings: string[] = [];
+    console.warn = (...args: unknown[]) => {
+      warnings.push(args.map((a) => String(a)).join(" "));
+    };
+    try {
+      // Two turns with the same agent name — second should NOT warn again.
+      await driveOneTurn(
+        {
+          command: ["/usr/bin/printf", "%s"],
+          promptTemplate: "arg-named",
+          responseExtractor: "stdout",
+        },
+        "one",
+      );
+      await driveOneTurn(
+        {
+          command: ["/usr/bin/printf", "%s"],
+          promptTemplate: "arg-named",
+          responseExtractor: "stdout",
+        },
+        "two",
+      );
+    } finally {
+      console.warn = originalWarn;
+    }
+
+    const argNamedWarnings = warnings.filter((w) => w.includes("arg-named"));
+    expect(argNamedWarnings).toHaveLength(1);
+    expect(argNamedWarnings[0]).toContain("falling back to arg-last");
+    expect(argNamedWarnings[0]).toContain("/usr/bin/printf");
+    // State persisted in the module-level Set across turns.
+    expect(__argNamedWarnedOnce.has("/usr/bin/printf")).toBe(true);
+  });
+
+  test("warn-once tracked per wrapped command name", async () => {
+    __resetArgNamedWarnedOnceForTests();
+    const originalWarn = console.warn;
+    const warnings: string[] = [];
+    console.warn = (...args: unknown[]) => {
+      warnings.push(args.map((a) => String(a)).join(" "));
+    };
+    try {
+      await driveOneTurn(
+        {
+          command: ["/usr/bin/printf", "%s"],
+          promptTemplate: "arg-named",
+        },
+        "a",
+      );
+      // Distinct command → distinct warn-once key → second warning.
+      // `/bin/true` ignores argv, exits 0 — perfect for this assertion.
+      await driveOneTurn(
+        {
+          command: ["/bin/true"],
+          promptTemplate: "arg-named",
+        },
+        "b",
+      );
+    } finally {
+      console.warn = originalWarn;
+    }
+
+    // Two distinct agents → two warnings.
+    const argNamedWarnings = warnings.filter((w) => w.includes("arg-named"));
+    expect(argNamedWarnings).toHaveLength(2);
   });
 });
 
