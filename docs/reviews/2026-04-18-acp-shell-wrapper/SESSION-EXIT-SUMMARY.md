@@ -202,7 +202,7 @@ Drop into the repo, read:
 
 1. This file (you're here).
 2. `ADRs/0033-acp-agent-tiers-and-shim-wrapper.md` §Implementation status.
-3. The tracking GitHub issue (linked at the end of this doc once filed).
+3. **Tracking GitHub issue: https://github.com/Codeseys-Labs/agent-manager/issues/2**
 
 Then pick an item from "Still open" above. Each one names the files and
 the concrete next step.
