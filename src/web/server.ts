@@ -553,11 +553,21 @@ export async function createApp(options?: CreateAppOptions) {
       profileName: bridgeProfile,
     } = await getConfigAndProfile();
     const bridgeResolved = buildResolvedConfig(bridgeFullConfig, bridgeProfile, bridgeCfgDir);
+    // REV-5 MED-2: the bridge needs the raw config (not just the resolved
+    // one) to honor user config-agent overrides like the
+    // `agents.<name>.acp.command` that `am agent enable-shim` writes.
+    // Without this, shim-enabled Tier-2 agents (aider/amazon-q/cody) are
+    // invisible to A2A delegation even after the user opted in.
+    const { tryReadConfig: bridgeTryReadConfig } = await import("../core/config");
+    const bridgeRawConfig = (await bridgeTryReadConfig(
+      join(bridgeCfgDir, "config.toml"),
+    )) as import("../core/agent-registry").UnifiedRegistryConfig | undefined;
     const a2aApp = createA2ARoutes({
       config: bridgeResolved,
       cardOptions: { baseUrl: "http://localhost:3456" },
       enableBridge: true,
       auth_token: authToken,
+      bridgeConfig: { registryConfig: bridgeRawConfig },
     });
     app.route("/", a2aApp);
   } else {

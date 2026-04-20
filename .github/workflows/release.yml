@@ -128,17 +128,23 @@ jobs:
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
 
-          # Read checksums from artifacts
+          # Read checksums from artifacts. ADR-0033 Phase B / REV-5 HIGH-1:
+          # we now ship TWO binaries per platform (am + am-acp-shell). Tier-2
+          # shim wrappers fail at runtime with ENOENT unless both are installed.
           SHA_DARWIN_ARM64=$(grep 'am-darwin-arm64$' ./artifacts/checksums.sha256 | cut -d' ' -f1)
           SHA_DARWIN_X64=$(grep 'am-darwin-x64$' ./artifacts/checksums.sha256 | cut -d' ' -f1)
           SHA_LINUX_ARM64=$(grep 'am-linux-arm64$' ./artifacts/checksums.sha256 | cut -d' ' -f1)
           SHA_LINUX_X64=$(grep 'am-linux-x64$' ./artifacts/checksums.sha256 | cut -d' ' -f1)
+          SHA_SHELL_DARWIN_ARM64=$(grep 'am-acp-shell-darwin-arm64$' ./artifacts/checksums.sha256 | cut -d' ' -f1)
+          SHA_SHELL_DARWIN_X64=$(grep 'am-acp-shell-darwin-x64$' ./artifacts/checksums.sha256 | cut -d' ' -f1)
+          SHA_SHELL_LINUX_ARM64=$(grep 'am-acp-shell-linux-arm64$' ./artifacts/checksums.sha256 | cut -d' ' -f1)
+          SHA_SHELL_LINUX_X64=$(grep 'am-acp-shell-linux-x64$' ./artifacts/checksums.sha256 | cut -d' ' -f1)
 
           # Regenerate formula from scratch (avoids fragile sed-on-previous-values)
           # Use 'RUBY' (quoted) to prevent shell expansion of Ruby's #{} interpolation
           cat > Formula/am.rb << 'RUBY'
           class Am < Formula
-            desc "chezmoi for AI agent configs — define once in TOML, sync via git, generate native configs for every tool"
+            desc "control plane for AI agents — catalog, MCP gateway, protocol router (ACP/A2A), marketplace"
             homepage "https://github.com/Codeseys-Labs/agent-manager"
             version "RELEASE_VERSION"
             license "MIT"
@@ -147,10 +153,18 @@ jobs:
               on_arm do
                 url "https://github.com/Codeseys-Labs/agent-manager/releases/download/v#{version}/am-darwin-arm64"
                 sha256 "RELEASE_SHA_DARWIN_ARM64"
+                resource "am-acp-shell" do
+                  url "https://github.com/Codeseys-Labs/agent-manager/releases/download/v#{version}/am-acp-shell-darwin-arm64"
+                  sha256 "RELEASE_SHA_SHELL_DARWIN_ARM64"
+                end
               end
               on_intel do
                 url "https://github.com/Codeseys-Labs/agent-manager/releases/download/v#{version}/am-darwin-x64"
                 sha256 "RELEASE_SHA_DARWIN_X64"
+                resource "am-acp-shell" do
+                  url "https://github.com/Codeseys-Labs/agent-manager/releases/download/v#{version}/am-acp-shell-darwin-x64"
+                  sha256 "RELEASE_SHA_SHELL_DARWIN_X64"
+                end
               end
             end
 
@@ -158,16 +172,30 @@ jobs:
               on_arm do
                 url "https://github.com/Codeseys-Labs/agent-manager/releases/download/v#{version}/am-linux-arm64"
                 sha256 "RELEASE_SHA_LINUX_ARM64"
+                resource "am-acp-shell" do
+                  url "https://github.com/Codeseys-Labs/agent-manager/releases/download/v#{version}/am-acp-shell-linux-arm64"
+                  sha256 "RELEASE_SHA_SHELL_LINUX_ARM64"
+                end
               end
               on_intel do
                 url "https://github.com/Codeseys-Labs/agent-manager/releases/download/v#{version}/am-linux-x64"
                 sha256 "RELEASE_SHA_LINUX_X64"
+                resource "am-acp-shell" do
+                  url "https://github.com/Codeseys-Labs/agent-manager/releases/download/v#{version}/am-acp-shell-linux-x64"
+                  sha256 "RELEASE_SHA_SHELL_LINUX_X64"
+                end
               end
             end
 
             def install
+              # Primary binary: install the downloaded artifact as `am`.
               binary_name = stable.url.split("/").last
               bin.install binary_name => "am"
+              # Tier-2 shim binary: fetch + install as `am-acp-shell`.
+              resource("am-acp-shell").stage do
+                shell_binary = Dir["am-acp-shell-*"].first
+                bin.install shell_binary => "am-acp-shell"
+              end
             end
 
             test do
@@ -181,6 +209,11 @@ jobs:
 
                 Then sync your config:
                   am apply
+
+                To use a Tier-2 wrapped agent (aider / amazon-q / cody):
+                  am agent enable-shim <name> --yes
+                Tier-2 wrappers inherit the underlying CLI's trust posture.
+                See ADR-0033 for the security caveat.
               EOS
             end
           end
@@ -192,6 +225,10 @@ jobs:
           sed -i "s/RELEASE_SHA_DARWIN_X64/${SHA_DARWIN_X64}/" Formula/am.rb
           sed -i "s/RELEASE_SHA_LINUX_ARM64/${SHA_LINUX_ARM64}/" Formula/am.rb
           sed -i "s/RELEASE_SHA_LINUX_X64/${SHA_LINUX_X64}/" Formula/am.rb
+          sed -i "s/RELEASE_SHA_SHELL_DARWIN_ARM64/${SHA_SHELL_DARWIN_ARM64}/" Formula/am.rb
+          sed -i "s/RELEASE_SHA_SHELL_DARWIN_X64/${SHA_SHELL_DARWIN_X64}/" Formula/am.rb
+          sed -i "s/RELEASE_SHA_SHELL_LINUX_ARM64/${SHA_SHELL_LINUX_ARM64}/" Formula/am.rb
+          sed -i "s/RELEASE_SHA_SHELL_LINUX_X64/${SHA_SHELL_LINUX_X64}/" Formula/am.rb
 
           echo "Updated formula:"
           cat Formula/am.rb
