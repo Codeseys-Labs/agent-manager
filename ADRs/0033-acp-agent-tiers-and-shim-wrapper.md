@@ -175,12 +175,65 @@ agents anyway.
 4. **Phase D (docs)** — this ADR (done); update README with tier matrix;
    add SECURITY note for Tier 2.
 
+## Implementation status (as of 2026-04-20, v0.5.0-rc6)
+
+Phases A–D shipped. Plus three security gates and two post-landing review
+passes caught a CRITICAL regression before ship:
+
+**Delivered:**
+- Phase A: 14 tiered entries (4 tier-1, 3 tier-2, 7 tier-3). devin, amp,
+  augment (wrong binary), sourcegraph nominal entries removed.
+- Phase B: `am-acp-shell` second binary, `ShimAcpServer`, `BUILT_IN_SHIMS`
+  (aider / amazon-q / cody), `am agent enable-shim <name>` with security
+  caveat and per-agent opt-in flag.
+- Phase C: `resolveInstalledBuiltInAgentLaunch` prefers local
+  `claude-agent-acp` / `codex-acp` binaries over npx cold-start (2–5s
+  saved per invocation).
+- Phase D: README tier matrix, CLAUDE.md + AGENTS.md tier framing,
+  `docs/references/openclaw-acpx.md` attribution doc.
+
+**Security gates (REV-2):**
+- `sandboxEnv()` allowlists env; strips AM_*, AWS_*, *_TOKEN/SECRET/KEY,
+  OPENAI_*, ANTHROPIC_*, GOOGLE_* before spawning ACP subprocesses.
+- `redactProgressMessage` wraps MCP `notifications/progress` emission so
+  streamed secrets don't escape to third-party IDE logs.
+- `enable-shim --yes` gate is prominent and matches the ADR caveat text.
+
+**Concurrency (REV-1 MEDIUM-2):**
+- 8 CLI mutating commands now route through `withConfig` + `configMutex`:
+  install, uninstall, update, profile create/delete, init, marketplace
+  install/uninstall, plus `agent enable-shim`.
+- TUI `handleRemoveServer`, `handleImport`, and `handleApply` collapsed
+  onto the canonical controller pipeline — no more fourth apply path.
+
+**REV-4 CRIT-1 (caught before ship):** `enable-shim` originally wrote to
+`agents.<name>.adapters.acp.command`, but `resolveAgent` reads
+`agents.<name>.acp.command` directly. The entire Tier-2 opt-in flow was
+dead on arrival. Fixed, and the test now asserts the resolved route, not
+just the write. See `docs/reviews/2026-04-18-acp-shell-wrapper/REV-4-integration.md`.
+
+**REV-5 post-ship audit:** caught two additional misses by prior reviews
+— `install.sh` and the Homebrew formula didn't install `am-acp-shell`
+(dead-on-arrival for binary-install users), and `am agent detect`
+emitted the tier-3 message for tier-2 shims. Both fixed post-rc6. See
+`docs/reviews/2026-04-18-acp-shell-wrapper/REV-5-post-rc6-audit.md`.
+
+**CI status (2026-04-20):** green on macOS + Linux + integration. Windows
+remains `continue-on-error: true` (REV-3 pre-existing failures — tracked
+as outstanding).
+
 ## References
 
 - `docs/reviews/2026-04-18-acp-shell-wrapper/00-synthesis.md`
 - `docs/reviews/2026-04-18-acp-shell-wrapper/R-A-feasibility.md`
 - `docs/reviews/2026-04-18-acp-shell-wrapper/R-B-acpx-analysis.md` (openclaw)
 - `docs/reviews/2026-04-18-acp-shell-wrapper/R-C-coverage-gaps.md`
+- `docs/reviews/2026-04-18-acp-shell-wrapper/REV-1-system-review.md`
+- `docs/reviews/2026-04-18-acp-shell-wrapper/REV-2-security.md`
+- `docs/reviews/2026-04-18-acp-shell-wrapper/REV-3-test-ci.md`
+- `docs/reviews/2026-04-18-acp-shell-wrapper/REV-4-integration.md`
+- `docs/reviews/2026-04-18-acp-shell-wrapper/REV-5-post-rc6-audit.md`
+- `docs/references/openclaw-acpx.md`
 - ACP spec: https://agentclientprotocol.com
 - openclaw/acpx: https://github.com/openclaw/acpx (MIT)
 - ADR-0030 (unified agent registry)
