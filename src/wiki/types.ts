@@ -19,6 +19,10 @@ export interface WikiPage {
   created: string; // ISO8601
   updated: string; // ISO8601
   confidence?: number; // 0.0-1.0 for auto-generated pages
+  // Persisted in frontmatter so agent-scoped queries (queryEntries
+  // filter.agent_id, synthesizeContext agentId) survive the page round-trip.
+  // Absent for manually-authored pages. (Added 2026-05-01 for task #31.)
+  agent_id?: string;
 }
 
 export type WikiPageType = "entity" | "concept" | "summary" | "synthesis" | "decision";
