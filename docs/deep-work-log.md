@@ -43,6 +43,60 @@ Phase G (systematic Windows portability) is a separate multi-wave effort
 Phase 2 deferral. Quality ceiling on the wiki, not a correctness issue.
 Not executing in this loop; document only.
 
+---
+
+### Run 2026-05-01 — final state at 8dfd4ca
+
+**Commits in this run (baseline 8a4d5f0):**
+- fd4411d  docs(deep-work-log): start
+- 7463c5a  feat(wave1): quick-wins (7 tasks closed)
+- d6453fb  test(wave1): +61 tests across MCP + wiki + protocols (5 tasks)
+- c6e3e0c  feat(wave2): ADR-0034 shim scope + arg-named promptFlag (3 tasks)
+- a1ff610  docs(deep-work-log): surface blockers (5 tasks)
+- 5ec9a92  feat(wave3): 3 plans + reviewer fixes (3 plans + 2 MED fixes)
+- 8dfd4ca  fix(types): agent_id on WikiPage (completes task #31 fix)
+
+**Artifacts produced:**
+- 1 new ADR (0034 shim scope, proposed)
+- 1 ADR addendum (0021 group reconciliation)
+- 1 ADR extension (0031 meta-tooling category)
+- 3 research reports (docs/research/2026-05-01-*.md)
+- 3 plans (docs/plans/*.md — wiki sync, skill/agent drift, Windows CI)
+- 2 planned ADRs to follow (0035 wiki sync, 0036 drift detection)
+- 61 new tests, 2449 total pass, 0 fail
+- Zero source tsc errors (was 4 pre-existing wiki ones, now fixed as side
+  effect of task #31)
+- 1 pre-existing concurrency flake surfaced (task #32) — NOT regression
+
+**Tasks closed:** 24 of 26 surfaced (including 5 blocked + 2 deferred
+with explicit surfacing). Remaining: #32 is a newly-discovered pre-existing
+flake — it predates baseline 8a4d5f0.
+
+**Reviewer findings addressed:**
+- MED: synthesizeContext had 2 stacked bugs (round-trip agent_id loss +
+  topK budget monopolization) — both fixed
+- MED: am_agent_detect `reachable` renamed to `locallyInstalled` (was
+  misleading for protocol:both entries)
+- LOW: ADR-0034 C2 anchored to 3 concrete sources with 90-day freshness
+- Question: amazon-q vs Kiro IDE conflation clarified in audit table
+
+**What did not ship (deliberately deferred — out of loop budget):**
+- M5 wiki sync implementation (plan written, 3-phase ~2-week effort)
+- Skill/agent drift implementation (plan written, ~8 dev-days effort)
+- Windows CI re-baseline (plan written, awaits a trigger commit)
+- npm publish blockage (user action required)
+- Tier-2 shim E2E tests (CI runner image decision required)
+
+**Exit hash:** `8dfd4ca`
+
+**Two-team sign-off (Phase 8):**
+- Execution team: zero pending tasks in backlog except #32 (pre-existing).
+- Review team: MED findings integrated mid-loop. Adversarial review on
+  wave 1+2 produced durable fixes, not merely nits.
+- `bun test`: 2449 pass / 0 fail / 7183 expect() calls
+- `bun run lint`: 1 pre-existing warning (unchanged)
+- `bun run typecheck` (source only): 0 errors (was 4 pre-existing wiki ones)
+
 **Pre-existing in-flight items (from issue #2):**
 - npm publish not configured (needs NPM_TOKEN secret — **blocked on user**)
 - Release marked isPrerelease:false (workflow fix)
