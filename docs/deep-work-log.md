@@ -8,6 +8,41 @@
 
 **Baseline hash:** `8a4d5f09dcdb91ed94e8295eb0fd50e6170b8a17`
 
+### Blocked items (surfaced, not silently skipped)
+
+**Task #20 — npm publish needs NPM_TOKEN.** User must add the NPM_TOKEN
+repository secret on GitHub. Until then, `.github/workflows/release.yml`
+`Publish to npm` step fails with ENEEDAUTH. `npm install -g agent-manager`
+serves stale 0.5.0-rc3. **Action required by user: settings → secrets →
+actions → new repository secret `NPM_TOKEN`.**
+
+**Task #21 — End-to-end install-path test.** Blocked on #20 and #13
+(prerelease flag, closed in c6e3e0c). Once npm publishes successfully,
+we need a verified install-path run:
+1. `curl … | sh` installs both `am` and `am-acp-shell` to `~/.local/bin`
+2. `brew install am` installs both binaries
+3. `am agent enable-shim aider --yes && am run aider "hello"` completes
+
+Auto-unblocks when #20 lands + a fresh rc is cut.
+
+**Task #25 — Tier-2 shim E2E tests.** Blocked on CI runner image
+decisions — the aider/amazon-q/cody binaries aren't on GitHub-hosted
+runners. Options: self-hosted runners with those CLIs pre-installed,
+container images (slow), or skip and rely on the existing generic-contract
+tests. Needs explicit product decision before unblocking.
+
+### Deferred items (acknowledged, not deleted)
+
+**Task #26 — Phase E/F/G ROADMAP items.** Phase E (community shim
+configs) is now redirected through the ADR-0027 community adapter path
+per ADR-0034. Phase F (release verification job) should land after #20.
+Phase G (systematic Windows portability) is a separate multi-wave effort
+— see task #24's plan for the re-baseline precursor.
+
+**Task #27 — LLM-powered NER extraction.** Explicit ROADMAP line 185
+Phase 2 deferral. Quality ceiling on the wiki, not a correctness issue.
+Not executing in this loop; document only.
+
 **Pre-existing in-flight items (from issue #2):**
 - npm publish not configured (needs NPM_TOKEN secret — **blocked on user**)
 - Release marked isPrerelease:false (workflow fix)
