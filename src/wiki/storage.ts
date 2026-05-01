@@ -332,6 +332,9 @@ export async function writePage(page: WikiPage, wikiDir?: string): Promise<void>
   if (page.confidence !== undefined) {
     metadata.confidence = page.confidence;
   }
+  if (page.agent_id !== undefined) {
+    metadata.agent_id = page.agent_id;
+  }
 
   const content = serializeFrontmatter(metadata, page.content);
   const filePath = pagePath(page.slug, page.type, wikiDir);
@@ -423,6 +426,7 @@ function parseWikiPage(raw: string, fallbackSlug: string): WikiPage | null {
   const created = (metadata.created as string) ?? new Date().toISOString();
   const updated = (metadata.updated as string) ?? created;
   const confidence = typeof metadata.confidence === "number" ? metadata.confidence : undefined;
+  const agent_id = typeof metadata.agent_id === "string" ? metadata.agent_id : undefined;
 
   return {
     slug,
@@ -435,6 +439,7 @@ function parseWikiPage(raw: string, fallbackSlug: string): WikiPage | null {
     created,
     updated,
     confidence,
+    ...(agent_id ? { agent_id } : {}),
   };
 }
 
@@ -566,6 +571,9 @@ function entryToPage(entry: KnowledgeEntry): WikiPage {
     created: entry.extracted_at,
     updated: entry.provenance?.last_modified ?? now,
     confidence: entry.confidence,
+    // Round-trip the agent_id via page frontmatter so agent-scoped filters
+    // (queryEntries({agent_id}), synthesizeContext({agentId})) work.
+    ...(entry.source.agent_id ? { agent_id: entry.source.agent_id } : {}),
   };
 }
 
@@ -594,6 +602,8 @@ function pageToEntry(page: WikiPage): KnowledgeEntry {
     source: {
       type: page.sources.length > 0 ? "session_harvest" : "manual",
       session_id: page.sources[0],
+      // Preserve agent_id across the round-trip so queryEntries filters work.
+      ...(page.agent_id ? { agent_id: page.agent_id } : {}),
       timestamp: page.created,
     },
     extracted_at: page.created,

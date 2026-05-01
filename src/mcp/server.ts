@@ -2199,7 +2199,7 @@ function defineTools(): ToolEntry[] {
       def: {
         name: "am_agent_detect",
         description:
-          "Detect which ACP/A2A agents are available on this host. Combines the unified agent registry (config + built-in ACP + A2A roster) with PATH + adapter-derived liveness signals. `reachable` is `true` when an installation was detected, `false` when we looked and didn't find one, and `null` for agents that have no detection mapping (pure A2A entries, etc.).",
+          "Detect which ACP/A2A agents are available on this host. Combines the unified agent registry with PATH + adapter-derived liveness signals for local install. Returns `locallyInstalled` (true/false/null) — scoped to local ACP install only; it does NOT probe A2A remote endpoints. For agents with A2A endpoints, use `am_agent_status` or `am_agent_invoke` to probe remote reachability.",
         inputSchema: { type: "object", properties: {} },
       },
       tier: "read-only" as ToolTier,
@@ -2219,11 +2219,13 @@ function defineTools(): ToolEntry[] {
               name: a.name,
               source: a.source,
               protocol: a.acp && a.a2a ? "both" : a.acp ? "acp" : "a2a",
-              // `reachable`: true (install found), false (looked, missing),
-              // null (no detection mapping exists — e.g. pure A2A roster entry).
-              reachable: install ? install.installed : null,
+              // Scoped strictly to LOCAL install (PATH + adapter detect).
+              // For A2A remote reachability, callers must invoke am_agent_status
+              // or attempt am_agent_invoke. Renamed from `reachable` to prevent
+              // callers conflating "local install present" with "remote endpoint up".
+              locallyInstalled: install ? install.installed : null,
               // Extra signal for callers that want to distinguish HOW the
-              // detection fired. Absent when `reachable` is null.
+              // detection fired. Absent when locallyInstalled is null.
               ...(install
                 ? {
                     installVia: install.source,

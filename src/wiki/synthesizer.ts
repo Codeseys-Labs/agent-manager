@@ -24,14 +24,25 @@ export async function synthesizeContext(
   // Use MiniSearch BM25 for primary retrieval
   const searchResults = await searchPages(query, topK * 2);
 
-  // Also get agent-specific entries if specified
+  // Also get query-matching entries.
   let entries = await searchEntries(query);
 
+  // When agentId is set, reserve a portion of the topK budget for off-query
+  // agent-scoped entries so they aren't squeezed out by high-ranking BM25
+  // page hits. Default reservation: up to 1/3 of the budget.
+  const agentReservedBudget =
+    options?.agentId !== undefined ? Math.max(1, Math.floor(topK / 3)) : 0;
+
+  let agentOnlyEntries: KnowledgeEntry[] = [];
   if (options?.agentId) {
     const agentEntries = await queryEntries({ agent_id: options.agentId });
     const searchIds = new Set(entries.map((e) => e.id));
-    const extra = agentEntries.filter((e) => !searchIds.has(e.id));
-    entries = [...entries, ...extra];
+    // Entries scoped to the agent that did NOT match the query — these are
+    // the ones that need a reserved budget slot. Query-matching agent
+    // entries are already in `entries`.
+    agentOnlyEntries = agentEntries.filter((e) => !searchIds.has(e.id));
+    // Keep `entries` as the union so downstream rendering can still iterate it.
+    entries = [...entries, ...agentOnlyEntries];
   }
 
   if (entries.length === 0 && searchResults.length === 0) {
@@ -43,12 +54,16 @@ export async function synthesizeContext(
   lines.push(`## Relevant Knowledge: "${query}"`);
   lines.push("");
 
-  // Use searchPages results first (better ranking), then fall back to entries
+  // Cap BM25 page results so agent-scoped off-query entries have a
+  // reserved budget. When agentId is unset, agentReservedBudget is 0
+  // and searchResults get the full topK as before.
+  const pagesBudget = topK - agentReservedBudget;
+
   const seen = new Set<string>();
   let count = 0;
 
   for (const { page, score } of searchResults) {
-    if (count >= topK) break;
+    if (count >= pagesBudget) break;
     if (seen.has(page.slug)) continue;
     seen.add(page.slug);
     count++;
@@ -69,8 +84,17 @@ export async function synthesizeContext(
     lines.push("");
   }
 
-  // Fill remaining slots from entry-based results
-  for (const entry of entries) {
+  // Iterate entries in the order: agent-only first (so the reserved
+  // agentReservedBudget goes to them), then query-matched entries.
+  // When agentId is unset, agentOnlyEntries is empty and this iterates
+  // entries in their original order.
+  const agentOnlyIds = new Set(agentOnlyEntries.map((e) => e.id));
+  const orderedEntries = [
+    ...entries.filter((e) => agentOnlyIds.has(e.id)),
+    ...entries.filter((e) => !agentOnlyIds.has(e.id)),
+  ];
+
+  for (const entry of orderedEntries) {
     if (count >= topK) break;
     if (seen.has(entry.id)) continue;
     seen.add(entry.id);

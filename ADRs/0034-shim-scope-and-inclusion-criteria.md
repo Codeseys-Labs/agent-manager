@@ -58,9 +58,19 @@ community `aqua` backend, not `core`).
 - **C1. Non-expressibility.** The integration cannot be implemented via
   the existing community adapter path (ADR-0027) — e.g., it needs tight
   coupling with `am-acp-shell`'s prompt-passing or permission model.
-- **C2. Top-tier traffic.** The wrapped CLI is in the top 5 by usage in
-  the agent-manager user base (or the upstream ecosystem we serve). We do
-  not pre-optimize for niche tools.
+- **C2. Top-tier traffic (anchored metric).** The wrapped CLI is in the top
+  5 by at least one of the following public, independently-verifiable
+  metrics, evaluated within 90 days of the proposal:
+  - **GitHub stars** of the canonical upstream repo, ranked among
+    AI-coding-CLI peers (reference set maintained in this ADR's §Peer
+    set below — to be added in first amendment).
+  - **npm weekly downloads** if the CLI is an npm package (use the npm
+    stats API; snapshot the value in the proposal PR).
+  - **Homebrew install count** if the CLI is in homebrew-core
+    (`brew info <formula>` → analytics).
+  Popularity alone is not sufficient — this criterion must be cited with
+  a numeric value and a link to the data source. Proposals without a
+  named source fail C2 outright.
 - **C3. am's auth surface.** The integration requires agent-manager's
   own auth or secret-handling surface (e.g., token issuance from
   `am mcp-serve`) to function — it cannot be satisfied by plain env
@@ -187,7 +197,7 @@ a guideline. Cap before the scramble.
 | Shim | C1 non-exp | C2 top-5 | C3 am auth | C4 all targets | C5 one-line | Passes? |
 |------|:---:|:---:|:---:|:---:|:---:|:---:|
 | aider | ✓ (needs shim for prompt-as-arg delivery) | ✓ (top LLM CLI) | — | ✓ | ✓ (inherits aider's LLM auth) | **4/5 ✓** |
-| amazon-q | ✓ (CLI rebranded as Kiro; needs shim) | ✓ (AWS user base) | ✓ (needs AWS credential handling) | ✓ | ✓ | **5/5 ✓** |
+| amazon-q | ✓ (no ACP; shim required) | ✓ (AWS user base, verify via npm downloads at next review) | ✓ (needs AWS credential handling via `aws configure` / SSO) | ✓ | ✓ | **5/5 ✓** (note: `amazon-q` CLI = `q` binary, distinct from Kiro IDE which is a tier-3 catalog-only entry) |
 | cody | ✓ (Sourcegraph-hosted auth) | — | ✓ (needs sourcegraph-cli auth handshake) | ✓ | ✓ | **4/5 ✓** |
 
 All three pass the ≥3 threshold. This ADR is a cap, not a retroactive

@@ -529,21 +529,17 @@ describe("synthesizeContext — I/O path through MiniSearch", () => {
     expect(out).toContain("bearer auth");
   });
 
-  test("agentId filter is declared but does NOT merge off-query agent-scoped entries (current bug)", async () => {
-    // REGRESSION NOTE (surfaced by deep-work-loop Wave 1, 2026-05-01):
-    // synthesizeContext({agentId}) calls queryEntries({agent_id}) but the
-    // page<->entry round-trip drops source.agent_id (see src/wiki/storage.ts
-    // entryToPage/pageToEntry). So the agent-scope branch is dead code — it
-    // filters but source.agent_id is always undefined after the round-trip.
-    //
-    // This test locks in CURRENT behavior: only entries that match the query
-    // via searchEntries surface; agent-scoped entries that don't match the
-    // query are silently dropped. When the storage type is fixed to preserve
-    // agent_id, flip the `.not.toContain` assertion to `.toContain` and add
-    // a mutation test that verifies filtering works for two different agent
-    // IDs distinctly.
-    //
-    // Tracked as: Fix synthesizeContext agentId filter dead code.
+  test("agentId filter surfaces off-query agent-scoped entries via reserved budget", async () => {
+    // Fixed in 2026-05-01 deep-work-loop. Two bugs were stacked:
+    //   (1) entryToPage/pageToEntry dropped source.agent_id on the round-trip
+    //       through page storage — fixed by adding agent_id to WikiPage +
+    //       frontmatter + parseWikiPage.
+    //   (2) synthesizeContext gave BM25 searchResults the full topK budget,
+    //       so agent-scoped off-query entries were squeezed out even when
+    //       queryEntries returned them — fixed by reserving topK/3 slots
+    //       (min 1) for agent-only entries and iterating them first in the
+    //       entry loop.
+    // This test locks in the corrected behavior end-to-end.
     const { addEntry } = await import("../../src/wiki/storage");
     const now = new Date().toISOString();
 
@@ -602,10 +598,50 @@ describe("synthesizeContext — I/O path through MiniSearch", () => {
     const out = await synthesizeContext("Claude extended thinking", {
       agentId: "agent-X",
     });
-    // Query match still works.
+    // Query match works (entry-A).
     expect(out).toContain("Claude Opus supports extended thinking");
-    // Current bug: off-query entry is NOT surfaced via agentId scope.
-    expect(out).not.toContain("User prefers terse responses");
+    // Off-query entry scoped to agent-X is surfaced via the reserved budget.
+    expect(out).toContain("User prefers terse responses");
+  });
+
+  test("agentId filter distinguishes between two different agents", async () => {
+    // Mutation test: adding an agent-Y entry must not leak into agent-X's
+    // result set. Verifies the agent_id frontmatter round-trip is precise.
+    const { addEntry } = await import("../../src/wiki/storage");
+    const now = new Date().toISOString();
+    const mkEntry = (id: string, agentId: string, content: string) => ({
+      id,
+      source: {
+        type: "session_harvest" as const,
+        session_id: `sess-${id}`,
+        agent_id: agentId,
+        timestamp: now,
+      },
+      extracted_at: now,
+      confidence: 0.8,
+      entity_type: "fact" as const,
+      content,
+      context: "test",
+      tags: ["mut"],
+      references: [],
+      provenance: {
+        created_by: "harvester",
+        created_at: now,
+        last_modified: now,
+        modification_history: [{ timestamp: now, action: "created", by: "harvester" }],
+        verified: false,
+      },
+    });
+
+    await addEntry(mkEntry("m-1", "agent-X", "x-only-content-foo"));
+    await addEntry(mkEntry("m-2", "agent-Y", "y-only-content-bar"));
+
+    const outX = await synthesizeContext("unrelated query", { agentId: "agent-X" });
+    const outY = await synthesizeContext("unrelated query", { agentId: "agent-Y" });
+    expect(outX).toContain("x-only-content-foo");
+    expect(outX).not.toContain("y-only-content-bar");
+    expect(outY).toContain("y-only-content-bar");
+    expect(outY).not.toContain("x-only-content-foo");
   });
 
   test("respects topK cap", async () => {
