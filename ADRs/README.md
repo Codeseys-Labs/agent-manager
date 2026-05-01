@@ -39,6 +39,7 @@ This folder contains the architectural decisions for agent-manager.
 | [0031](0031-product-scope-and-pillars.md) | Product Scope and Pillars — Six-Pillar Model | Accepted | 2026-04-16 |
 | [0032](0032-terminology-glossary.md) | Terminology Glossary — Registry vs Marketplace | Accepted | 2026-04-17 |
 | [0033](0033-acp-agent-tiers-and-shim-wrapper.md) | ACP Agent Tiers and Shim Wrapper | Accepted | 2026-04-18 |
+| [0034](0034-shim-scope-and-inclusion-criteria.md) | Scope Fence for First-Party ACP Shims | Proposed | 2026-05-01 |
 
 ## Template
 

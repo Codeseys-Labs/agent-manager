@@ -267,6 +267,49 @@ describe.skipIf(process.platform === "win32")(
       const argNamedWarnings = warnings.filter((w) => w.includes("arg-named"));
       expect(argNamedWarnings).toHaveLength(2);
     });
+
+    test("arg-named with promptFlag appends [flag, prompt] — no warning", async () => {
+      // Positive path for the 2026-05-01 arg-named fix: when promptFlag is
+      // configured, the shim actually delivers the prompt as a named flag
+      // rather than falling back to arg-last. We use /usr/bin/env to echo
+      // its own argv via a printf-trick that proves the ordering.
+      //
+      // Using `env -- printf "%s\n" "$@"` would require shell. Instead we
+      // ask printf directly for a format that interleaves positional args:
+      //   printf "[%s]\n" <flag> <prompt>
+      // so stdout becomes `[--prompt]\n[hello]\n` on success.
+      __resetArgNamedWarnedOnceForTests();
+      const originalWarn = console.warn;
+      const warnings: string[] = [];
+      console.warn = (...args: unknown[]) => {
+        warnings.push(args.map((a) => String(a)).join(" "));
+      };
+      let turn: Awaited<ReturnType<typeof driveOneTurn>>;
+      try {
+        turn = await driveOneTurn(
+          {
+            command: ["/usr/bin/printf", "[%s]\n"],
+            promptTemplate: "arg-named",
+            promptFlag: "--prompt",
+            responseExtractor: "stdout",
+          },
+          "hello",
+        );
+      } finally {
+        console.warn = originalWarn;
+      }
+
+      expect(turn.updates).toHaveLength(1);
+      const update = (turn.updates[0].params as { update: { content: { text: string } } }).update;
+      const text = update.content.text;
+      // Flag comes before the prompt in argv.
+      expect(text).toContain("[--prompt]");
+      expect(text).toContain("[hello]");
+      expect(text.indexOf("[--prompt]")).toBeLessThan(text.indexOf("[hello]"));
+      // No fallback warning — the shim used the configured flag path.
+      const argNamedWarnings = warnings.filter((w) => w.includes("arg-named"));
+      expect(argNamedWarnings).toHaveLength(0);
+    });
   },
 );
 

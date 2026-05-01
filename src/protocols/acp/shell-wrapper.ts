@@ -23,9 +23,9 @@
  *     only supported prompt-delivery modes are:
  *       "stdin"     — feed prompt via proc.stdin (preferred)
  *       "arg-last"  — append prompt as the final argv element
- *       "arg-named" — reserved for future use; currently same as arg-last
- *         (the "named" variant would require a ShimConfig option naming the
- *         flag, which we haven't plumbed through yet).
+ *       "arg-named" — append [promptFlag, promptText] to argv. Requires
+ *         ShimConfig.promptFlag (a literal flag name like "--prompt"); falls
+ *         back to arg-last with a warn-once if promptFlag is missing.
  *   - PB-4 chunk redaction: NOT the shim's job. The MCP progress-sink applies
  *     redactSecretish before emission (REV-2 HIGH-1 fix in src/mcp/server.ts).
  *     The shim emits raw stdout; the MCP boundary redacts. Each layer owns
@@ -51,6 +51,17 @@ export interface ShimConfig {
   command: string[];
   /** How the prompt reaches the CLI. Default: "stdin". */
   promptTemplate?: PromptTemplate;
+  /**
+   * Flag name for the `arg-named` template. The prompt is passed as
+   * `[...command, promptFlag, promptText]`. Required when promptTemplate is
+   * "arg-named"; ignored otherwise. Example: "--prompt" for a CLI whose
+   * usage is `mycli --prompt "<text>"`.
+   *
+   * PB-3 safety: promptFlag itself must be a well-known literal (not
+   * user-controlled) — community shims bake this in their adapter config,
+   * never pass it at prompt time.
+   */
+  promptFlag?: string;
   /** Where to read the response from. Default: "stdout". */
   responseExtractor?: ResponseExtractor;
   /** Hard kill timeout in ms. Default: 120_000. */
@@ -303,27 +314,32 @@ export class ShimAcpServer {
     if (!session) return { stopReason: "error", error: "unknown session" };
 
     // Build argv. PB-3: prompt text NEVER goes into argv unless the template
-    // explicitly names that mode, and even then it's the FINAL element (no
-    // metacharacter substitution, no shell).
+    // explicitly names that mode, and even then it's appended as LITERAL
+    // elements (no metacharacter substitution, no shell).
     const template = this.shim.promptTemplate ?? "stdin";
     const argv = [...this.shim.command];
-    if (template === "arg-last" || template === "arg-named") {
-      // REV-4 MED-3: `arg-named` is currently aliased to `arg-last` (same
-      // behaviour). Future shims will specialize this to a named flag like
-      // `--prompt <text>`. Warn ONCE per wrapped agent so community
-      // adapters that wrote `arg-named` expecting distinct semantics know
-      // they're getting the arg-last fallback, without log-spamming in
-      // hot-loop prompt turns.
-      if (template === "arg-named") {
+    if (template === "arg-last") {
+      argv.push(promptText);
+    } else if (template === "arg-named") {
+      // `arg-named` delivers the prompt as `[...command, promptFlag, promptText]`.
+      // promptFlag is a baked-in literal from the shim config (aider writes
+      // "--prompt" etc.); promptText is user-controlled but guarded by PB-3
+      // (Bun.spawn passes argv directly to execve, no shell interpolation).
+      if (this.shim.promptFlag) {
+        argv.push(this.shim.promptFlag, promptText);
+      } else {
+        // No flag configured — warn ONCE per wrapped agent and fall back to
+        // arg-last so the shim remains usable. Prevents log-spam in hot-loop
+        // prompt turns (rate-limited per agent command).
         const warnKey = this.shim.command[0] ?? "<unknown>";
         if (!__argNamedWarnedOnce.has(warnKey)) {
           __argNamedWarnedOnce.add(warnKey);
           console.warn(
-            `[am-acp-shell] promptTemplate 'arg-named' is not yet implemented for '${warnKey}', falling back to arg-last`,
+            `[am-acp-shell] promptTemplate 'arg-named' requires promptFlag in ShimConfig for '${warnKey}'; falling back to arg-last`,
           );
         }
+        argv.push(promptText);
       }
-      argv.push(promptText);
     }
 
     const timeoutMs = this.shim.timeoutMs ?? 120_000;

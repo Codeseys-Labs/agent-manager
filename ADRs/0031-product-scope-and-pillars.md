@@ -138,6 +138,29 @@ without re-reading the whole repo.
 - am is **not** a general-purpose dotfile manager. It is agent-focused.
   chezmoi remains the right tool for shell configs.
 
+**Explicitly-accepted meta-tooling (orthogonal but permitted):**
+
+Certain surfaces are orthogonal to all six pillars but are standard CLI /
+release hygiene for any project and are intentionally permitted. Flagging
+them in audits as "scope creep" is a false positive — they are accepted
+meta-tooling, not pillar work. These do not expand the user-facing product
+surface and do not need to map to a pillar.
+
+- **Shell completion** (`src/commands/completion.ts`, `am completion
+  <shell>`). Developer ergonomics; zero ongoing maintenance; no pillar
+  impact.
+- **Release distribution infrastructure** — GitHub Releases workflow,
+  Homebrew formula (`Formula/am.rb`), npm publish automation,
+  install.sh. Standard for any CLI; keep lean but don't treat as creep.
+- **CI infrastructure** — `.github/workflows/ci.yml` and `release.yml`.
+  Same principle as distribution.
+- **Developer tooling** — `scripts/build.ts`, Biome / tsc config,
+  test helpers.
+
+Rule of thumb: if removing a surface would make agent-manager **harder to
+ship or harder to develop**, but not **less capable**, it's meta-tooling.
+Keep it, but don't grow it beyond what's needed.
+
 ## Consequences
 
 ### Positive
