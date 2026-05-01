@@ -78,6 +78,36 @@ describe("am_acp_session_cancel path traversal", () => {
     expect(() => resolveSessionPathSafely("/tmp/sessions", "a..b")).toThrow();
   });
 
+  test("resolveSessionPathSafely rejects id longer than 128 chars", () => {
+    const oversize = "a".repeat(129);
+    expect(() => resolveSessionPathSafely("/tmp/sessions", oversize)).toThrow(/1–128/);
+  });
+
+  test("resolveSessionPathSafely accepts the 128-char boundary", () => {
+    const exact = "a".repeat(128);
+    expect(() => resolveSessionPathSafely("/tmp/sessions", exact)).not.toThrow();
+  });
+
+  test("resolveSessionPathSafely rejects non-string sessionIds", () => {
+    // Cast forced — runtime callers can and do pass bogus shapes via JSON-RPC
+    // with weak clients. The guard must catch rather than coerce.
+    const cases: unknown[] = [42, null, undefined, {}, [], true];
+    for (const bad of cases) {
+      expect(() => resolveSessionPathSafely("/tmp/sessions", bad as string)).toThrow(
+        /must be a string/,
+      );
+    }
+  });
+
+  test("resolveSessionPathSafely rejects ids that fail the charset regex", () => {
+    // Chars that sneak past other guards (no dots, no separators, no null)
+    // but still aren't in /^[a-zA-Z0-9_-]+$/.
+    const cases = ["a b", "a:b", "a@b", "a+b", "id#1", "αβγ", "a$b"];
+    for (const bad of cases) {
+      expect(() => resolveSessionPathSafely("/tmp/sessions", bad)).toThrow(/charset|a-zA-Z0-9/);
+    }
+  });
+
   test("resolveSessionPathSafely accepts a valid id", () => {
     const p = resolveSessionPathSafely("/tmp/sessions", "am-abc123_xyz");
     expect(p.endsWith("am-abc123_xyz")).toBe(true);

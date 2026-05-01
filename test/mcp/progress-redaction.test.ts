@@ -68,6 +68,52 @@ describe("redactProgressMessage — structural walker", () => {
     expect(redactProgressMessage(null)).toBe(null);
     expect(redactProgressMessage(undefined)).toBe(undefined);
   });
+
+  test("redacts secrets at deeply nested levels (object > array > object > string)", () => {
+    // Mirrors the ACP spec shape: updates[].content.parts[].text carries user
+    // or model prose where a leaked key could land four levels down. Ensures
+    // the walker recurses rather than bailing at a fixed depth.
+    const payload = {
+      updates: [
+        {
+          content: {
+            parts: [
+              { kind: "text", text: "intro line" },
+              {
+                kind: "text",
+                text: "key is sk-ant-DEEPLEAK9876543210987654321012345 — oops",
+              },
+            ],
+          },
+        },
+      ],
+    };
+    const out = redactProgressMessage(payload) as {
+      updates: Array<{ content: { parts: Array<{ text: string }> } }>;
+    };
+    expect(out.updates[0].content.parts[0].text).toBe("intro line");
+    expect(out.updates[0].content.parts[1].text).not.toContain("DEEPLEAK9876543210987654321012345");
+    expect(out.updates[0].content.parts[1].text).toContain("[REDACTED_ANTHROPIC_KEY]");
+  });
+
+  test("does NOT stack-overflow on reasonable object depth", () => {
+    // Build a 50-level nested object. Real ACP payloads rarely exceed 5 levels,
+    // but a defensive floor protects against adversarial shapes.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    let node: any = { text: "here is sk-ant-DEEPDEPTH123456789012345678901234567" };
+    for (let i = 0; i < 50; i++) {
+      node = { next: node };
+    }
+    const out = redactProgressMessage(node) as unknown;
+    // Walk back down to confirm the leaf was redacted through all 50 levels.
+    let cursor: unknown = out;
+    for (let i = 0; i < 50; i++) {
+      cursor = (cursor as { next: unknown }).next;
+    }
+    const leaf = cursor as { text: string };
+    expect(leaf.text).not.toContain("DEEPDEPTH123456789012345678901234567");
+    expect(leaf.text).toContain("[REDACTED_ANTHROPIC_KEY]");
+  });
 });
 
 describe("McpServer.emitProgress — secrets scrubbed before emission", () => {

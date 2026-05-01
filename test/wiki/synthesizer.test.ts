@@ -1,5 +1,10 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { buildAgentBriefing, generateWikiPage, identifyGaps } from "../../src/wiki/synthesizer";
+import {
+  buildAgentBriefing,
+  generateWikiPage,
+  identifyGaps,
+  synthesizeContext,
+} from "../../src/wiki/synthesizer";
 import type { KnowledgeEntry } from "../../src/wiki/types";
 
 // ── Helpers ─────────────────────────────────────────────────────
@@ -442,5 +447,200 @@ describe("buildAgentBriefing", () => {
     const briefing = buildAgentBriefing(entries, "agent-1");
     // Should NOT contain "Key Facts" because all facts are below threshold
     expect(briefing).not.toContain("## Key Facts");
+  });
+});
+
+// ── synthesizeContext (MiniSearch I/O path) ────────────────────────
+//
+// synthesizeContext is the function behind the am_wiki_synthesize MCP tool.
+// It reads real wiki storage (MiniSearch-indexed pages + knowledge entries)
+// and the existing test suite didn't exercise it — only the pure in-memory
+// helpers were covered. These tests lock in:
+//   (1) happy path — queries return ranked pages
+//   (2) empty-wiki fallback — the caller gets an explicit "no knowledge" string
+//   (3) agentId scope — entries scoped to an agent are merged with dedup
+
+describe("synthesizeContext — I/O path through MiniSearch", () => {
+  const originalEnv = process.env.AM_CONFIG_DIR;
+  let tmpDir: string;
+
+  beforeEach(async () => {
+    const { mkdtemp } = await import("node:fs/promises");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+    tmpDir = await mkdtemp(join(tmpdir(), "am-synth-ctx-"));
+    process.env.AM_CONFIG_DIR = tmpDir;
+  });
+
+  afterEach(async () => {
+    const { rm } = await import("node:fs/promises");
+    if (originalEnv === undefined) process.env.AM_CONFIG_DIR = undefined;
+    else process.env.AM_CONFIG_DIR = originalEnv;
+    try {
+      await rm(tmpDir, { recursive: true, force: true });
+    } catch {
+      // ignore
+    }
+  });
+
+  test("returns 'No knowledge found' when the wiki is empty", async () => {
+    const out = await synthesizeContext("any query at all");
+    expect(out).toContain('No knowledge found for: "any query at all"');
+  });
+
+  test("returns ranked pages for a matching query (happy path)", async () => {
+    const { writePage, addEntry, rebuildSearchIndex } = await import("../../src/wiki/storage");
+    const now = new Date().toISOString();
+    await writePage({
+      title: "MCP Security Hardening",
+      slug: "mcp-security",
+      type: "concept",
+      content: "Notes on MCP gateway security: bearer auth, env sandboxing, progress redaction.",
+      tags: ["mcp", "security"],
+      sources: [],
+      backlinks: [],
+      confidence: 0.85,
+      created: now,
+      updated: now,
+    });
+    await writePage({
+      title: "Unrelated Topic",
+      slug: "unrelated",
+      type: "concept",
+      content: "This page is about gardening and has nothing to do with the query.",
+      tags: ["gardening"],
+      sources: [],
+      backlinks: [],
+      confidence: 0.5,
+      created: now,
+      updated: now,
+    });
+    // Rebuild the search index so searchPages can find the newly-written pages.
+    await rebuildSearchIndex();
+
+    const out = await synthesizeContext("MCP security");
+
+    expect(out).toContain('## Relevant Knowledge: "MCP security"');
+    expect(out).toContain("MCP Security Hardening");
+    // Confidence label should be rendered (0.85 → "high")
+    expect(out).toContain("confidence: high");
+    // Truncation guard: don't assert the full content is present — just
+    // that the preview includes something substantive.
+    expect(out).toContain("bearer auth");
+  });
+
+  test("agentId filter is declared but does NOT merge off-query agent-scoped entries (current bug)", async () => {
+    // REGRESSION NOTE (surfaced by deep-work-loop Wave 1, 2026-05-01):
+    // synthesizeContext({agentId}) calls queryEntries({agent_id}) but the
+    // page<->entry round-trip drops source.agent_id (see src/wiki/storage.ts
+    // entryToPage/pageToEntry). So the agent-scope branch is dead code — it
+    // filters but source.agent_id is always undefined after the round-trip.
+    //
+    // This test locks in CURRENT behavior: only entries that match the query
+    // via searchEntries surface; agent-scoped entries that don't match the
+    // query are silently dropped. When the storage type is fixed to preserve
+    // agent_id, flip the `.not.toContain` assertion to `.toContain` and add
+    // a mutation test that verifies filtering works for two different agent
+    // IDs distinctly.
+    //
+    // Tracked as: Fix synthesizeContext agentId filter dead code.
+    const { addEntry } = await import("../../src/wiki/storage");
+    const now = new Date().toISOString();
+
+    // Entry A matches the query AND is scoped to agent-X.
+    await addEntry({
+      id: "entry-a",
+      source: {
+        type: "session_harvest",
+        session_id: "s1",
+        agent_id: "agent-X",
+        timestamp: now,
+      },
+      extracted_at: now,
+      confidence: 0.9,
+      entity_type: "fact",
+      content: "Claude Opus supports extended thinking.",
+      context: "observed in practice",
+      tags: ["claude"],
+      references: [],
+      provenance: {
+        created_by: "harvester",
+        created_at: now,
+        last_modified: now,
+        modification_history: [{ timestamp: now, action: "created", by: "harvester" }],
+        verified: false,
+      },
+    });
+
+    // Entry B is scoped to agent-X but would NOT match "claude" query text.
+    // Desired behavior: surfaces via agentId scope. Current behavior: dropped
+    // because source.agent_id is lost in the page round-trip.
+    await addEntry({
+      id: "entry-b",
+      source: {
+        type: "session_harvest",
+        session_id: "s2",
+        agent_id: "agent-X",
+        timestamp: now,
+      },
+      extracted_at: now,
+      confidence: 0.8,
+      entity_type: "preference",
+      content: "User prefers terse responses.",
+      context: "user-stated",
+      tags: ["preferences"],
+      references: [],
+      provenance: {
+        created_by: "harvester",
+        created_at: now,
+        last_modified: now,
+        modification_history: [{ timestamp: now, action: "created", by: "harvester" }],
+        verified: false,
+      },
+    });
+
+    const out = await synthesizeContext("Claude extended thinking", {
+      agentId: "agent-X",
+    });
+    // Query match still works.
+    expect(out).toContain("Claude Opus supports extended thinking");
+    // Current bug: off-query entry is NOT surfaced via agentId scope.
+    expect(out).not.toContain("User prefers terse responses");
+  });
+
+  test("respects topK cap", async () => {
+    const { addEntry } = await import("../../src/wiki/storage");
+    const now = new Date().toISOString();
+    for (let i = 0; i < 6; i++) {
+      await addEntry({
+        id: `entry-cap-${i}`,
+        source: {
+          type: "session_harvest",
+          session_id: `s${i}`,
+          agent_id: "agent-cap",
+          timestamp: now,
+        },
+        extracted_at: now,
+        confidence: 0.7,
+        entity_type: "fact",
+        content: `Fact number ${i} about the test topic alpha-beta-gamma.`,
+        context: "test",
+        tags: ["cap"],
+        references: [],
+        provenance: {
+          created_by: "harvester",
+          created_at: now,
+          last_modified: now,
+          modification_history: [{ timestamp: now, action: "created", by: "harvester" }],
+          verified: false,
+        },
+      });
+    }
+
+    const out = await synthesizeContext("alpha-beta-gamma topic", { topK: 3 });
+    // Count how many "### " section headers appear — that's the synthesized
+    // entry count.
+    const headers = (out.match(/^### /gm) ?? []).length;
+    expect(headers).toBeLessThanOrEqual(3);
   });
 });

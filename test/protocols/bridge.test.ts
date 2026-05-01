@@ -333,6 +333,112 @@ describe("createBridgeTaskHandler", () => {
   }, 20_000);
 });
 
+// ── HIGH-2 regression: permissionPolicy + allowedPaths defaults ────────
+//
+// The REV-2 security fix made createBridgeTaskHandler default to
+// permissionPolicy="deny" and allowedPaths=[cwd]. Prior to the fix, those
+// values were declared but never propagated to the ACP client, so every
+// bridged call ran as auto-approve with unrestricted FS. These tests lock
+// the defaults in place so a refactor that drops the propagation fails
+// loudly rather than silently regressing.
+//
+// We drive this by spying on AmAcpClient.setPermissionPolicy /
+// setAllowedPaths. The real client fails at connect() because no ACP
+// binary is installed in CI, but the policy-setters fire BEFORE connect()
+// per the bridge's HIGH-2 fix, so we observe them regardless.
+
+describe("createBridgeTaskHandler — HIGH-2 policy defaults", () => {
+  async function spyPolicySetters(
+    handlerFactory: () => ReturnType<typeof createBridgeTaskHandler>,
+    msg: Message,
+    config: ResolvedConfig,
+  ): Promise<{
+    policyCalls: Array<unknown>;
+    pathsCalls: Array<unknown>;
+  }> {
+    const { AmAcpClient } = await import("../../src/protocols/acp/client");
+    const policyCalls: Array<unknown> = [];
+    const pathsCalls: Array<unknown> = [];
+
+    const origPolicy = AmAcpClient.prototype.setPermissionPolicy;
+    const origPaths = AmAcpClient.prototype.setAllowedPaths;
+    AmAcpClient.prototype.setPermissionPolicy = function (p: unknown) {
+      policyCalls.push(p);
+      return (origPolicy as (this: unknown, p: unknown) => void).call(this, p);
+    } as typeof AmAcpClient.prototype.setPermissionPolicy;
+    AmAcpClient.prototype.setAllowedPaths = function (p: unknown) {
+      pathsCalls.push(p);
+      return (origPaths as (this: unknown, p: unknown) => void).call(this, p);
+    } as typeof AmAcpClient.prototype.setAllowedPaths;
+
+    try {
+      await handlerFactory()(msg, config);
+    } finally {
+      AmAcpClient.prototype.setPermissionPolicy = origPolicy;
+      AmAcpClient.prototype.setAllowedPaths = origPaths;
+    }
+    return { policyCalls, pathsCalls };
+  }
+
+  test("defaults permissionPolicy to 'deny' when unset", async () => {
+    const { policyCalls } = await spyPolicySetters(
+      () => createBridgeTaskHandler({ timeout: 2000 }),
+      textMessage("run claude: fix tests"),
+      makeResolvedConfig(),
+    );
+    expect(policyCalls).toHaveLength(1);
+    expect(policyCalls[0]).toBe("deny");
+  }, 20_000);
+
+  test("defaults allowedPaths to [cwd] when unset", async () => {
+    const customCwd = "/tmp/custom-bridge-cwd";
+    const { pathsCalls } = await spyPolicySetters(
+      () => createBridgeTaskHandler({ timeout: 2000, cwd: customCwd }),
+      textMessage("run claude: fix tests"),
+      makeResolvedConfig(),
+    );
+    expect(pathsCalls).toHaveLength(1);
+    expect(pathsCalls[0]).toEqual([customCwd]);
+  }, 20_000);
+
+  test("defaults allowedPaths to [cwd] when an empty array is passed", async () => {
+    const { pathsCalls } = await spyPolicySetters(
+      () => createBridgeTaskHandler({ timeout: 2000, allowedPaths: [] }),
+      textMessage("run claude: fix tests"),
+      makeResolvedConfig(),
+    );
+    expect(pathsCalls).toHaveLength(1);
+    expect(Array.isArray(pathsCalls[0])).toBe(true);
+    expect((pathsCalls[0] as string[]).length).toBe(1);
+  }, 20_000);
+
+  test("respects caller-supplied permissionPolicy override", async () => {
+    const { policyCalls } = await spyPolicySetters(
+      () =>
+        createBridgeTaskHandler({
+          timeout: 2000,
+          permissionPolicy: "auto-approve",
+        }),
+      textMessage("run claude: fix tests"),
+      makeResolvedConfig(),
+    );
+    expect(policyCalls[0]).toBe("auto-approve");
+  }, 20_000);
+
+  test("respects caller-supplied allowedPaths override", async () => {
+    const { pathsCalls } = await spyPolicySetters(
+      () =>
+        createBridgeTaskHandler({
+          timeout: 2000,
+          allowedPaths: ["/srv/a", "/srv/b"],
+        }),
+      textMessage("run claude: fix tests"),
+      makeResolvedConfig(),
+    );
+    expect(pathsCalls[0]).toEqual(["/srv/a", "/srv/b"]);
+  }, 20_000);
+});
+
 // ── createBridgedTaskHandler (composite) ──────────────────────
 
 describe("createBridgedTaskHandler", () => {

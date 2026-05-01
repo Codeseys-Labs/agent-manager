@@ -211,4 +211,92 @@ describe("live env-leak probe — AmAcpClient.connect via /bin/bash", () => {
     const sandboxEnvCalls = clientSource.match(/sandboxEnv\s*\(/g) ?? [];
     expect(sandboxEnvCalls.length).toBeGreaterThanOrEqual(2);
   });
+
+  // End-to-end integration: go through AmAcpClient.connect() itself (not
+  // Bun.spawn directly) to prove the connect path calls sandboxEnv.
+  //
+  // Approach: the target "agent" is a shell script that dumps its env to a
+  // known file, then exits (never speaks ACP). connect() will fail at the
+  // protocol handshake, but the env file is written BEFORE that failure.
+  // We then read the file and assert no canary secrets leaked.
+  //
+  // Skipped on Windows: /bin/sh, shell heredoc. See env-sandbox.test.ts:167.
+  test.skipIf(process.platform === "win32")(
+    "AmAcpClient.connect scrubs AM_CANARY before spawning agent subprocess",
+    async () => {
+      const { AmAcpClient } = await import("../../../src/protocols/acp/client");
+      const { mkdtemp, writeFile, readFile, unlink, chmod } = await import("node:fs/promises");
+      const { tmpdir } = await import("node:os");
+      const { join } = await import("node:path");
+
+      const workDir = await mkdtemp(join(tmpdir(), "am-env-e2e-"));
+      const envFile = join(workDir, "child-env.txt");
+      const script = join(workDir, "fake-agent.sh");
+
+      // Script: write every env line to $AM_ENV_FILE then exit 1. The exit
+      // prevents connect() from hanging on a handshake that will never come.
+      await writeFile(
+        script,
+        `#!/bin/sh
+env > "${envFile}"
+exit 1
+`,
+        { mode: 0o755 },
+      );
+      await chmod(script, 0o755);
+
+      const originalCanary = process.env.AM_CANARY;
+      const originalToken = process.env.AM_MCP_TOKEN;
+      process.env.AM_CANARY = "e2e-leak-XYZ789";
+      process.env.AM_MCP_TOKEN = "e2e-token-ABC456";
+
+      try {
+        const client = new AmAcpClient();
+        try {
+          // connect() will throw because the fake agent exits 1 without an
+          // ACP handshake. We catch the error and proceed to the assertion —
+          // the env dump has already been written by the script's `env` line.
+          await client.connect(script, { initTimeout: 3000 });
+        } catch {
+          // expected
+        }
+        try {
+          await client.disconnect();
+        } catch {
+          // also fine
+        }
+
+        // Read what the child process saw in its env.
+        let childEnv = "";
+        try {
+          childEnv = await readFile(envFile, "utf8");
+        } catch {
+          // If the script didn't even start, we can't make the assertion.
+          throw new Error(
+            "Fake agent script did not produce env file — connect() may not have spawned it at all.",
+          );
+        }
+        expect(childEnv).not.toContain("e2e-leak-XYZ789");
+        expect(childEnv).not.toContain("e2e-token-ABC456");
+        // Sanity: allow-listed vars should still be there.
+        expect(childEnv).toContain("PATH=");
+      } finally {
+        if (originalCanary === undefined) process.env.AM_CANARY = undefined;
+        else process.env.AM_CANARY = originalCanary;
+        if (originalToken === undefined) process.env.AM_MCP_TOKEN = undefined;
+        else process.env.AM_MCP_TOKEN = originalToken;
+        try {
+          await unlink(envFile);
+        } catch {
+          // ignore
+        }
+        try {
+          await unlink(script);
+        } catch {
+          // ignore
+        }
+      }
+    },
+    15_000,
+  );
 });
