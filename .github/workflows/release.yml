@@ -118,10 +118,18 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          # Mark any tag containing "-rc", "-alpha", or "-beta" as a GitHub prerelease
+          # so these don't appear as "latest" until the stable version ships.
+          # GITHUB_REF_NAME is set by the runner and not user-controlled; safe to interpolate.
+          PRERELEASE_FLAG=""
+          if [[ "$GITHUB_REF_NAME" =~ -(rc|alpha|beta) ]]; then
+            PRERELEASE_FLAG="--prerelease"
+          fi
           gh release create "$GITHUB_REF_NAME" \
             --repo "$GITHUB_REPOSITORY" \
             --title "$GITHUB_REF_NAME" \
             --notes-file /tmp/release-notes.md \
+            $PRERELEASE_FLAG \
             ./artifacts/*
 
       - name: Update Homebrew formula

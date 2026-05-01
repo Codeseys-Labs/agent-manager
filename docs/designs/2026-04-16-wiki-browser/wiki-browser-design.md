@@ -1,7 +1,9 @@
 # Wiki Visual Browser — Design Document
 
 **Date:** 2026-04-16
-**Status:** Proposed
+**Status:** Parked — no scheduled milestone as of 2026-05-01. Maps to Pillars 5+6
+(LLM-wiki surfaced in the web UI). Retained as a design artifact; revisit when
+the wiki has a user population that would benefit from graph navigation.
 **Author:** agent (design agent)
 
 ## Overview

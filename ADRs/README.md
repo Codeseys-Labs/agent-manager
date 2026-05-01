@@ -32,8 +32,13 @@ This folder contains the architectural decisions for agent-manager.
 | [0024](0024-mcp-registry-integration.md) | MCP Registry Integration | Accepted | 2026-04-10 |
 | [0025](0025-worker-multi-backend-auth.md) | Worker Multi-Backend Git Authentication | Accepted | 2026-04-13 |
 | [0026](0026-acpx-acp-runtime-integration.md) | ACP Runtime Integration via ACPX | Accepted | 2026-04-15 |
-| [0027](0027-community-adapter-loading.md) | Community Adapter Loading | Proposed | 2026-04-15 |
-| [0028](0028-brownfield-import-merge.md) | Brownfield Import Merge Strategy | Proposed | 2026-04-15 |
+| [0027](0027-community-adapter-loading.md) | Community Adapter Loading | Accepted | 2026-04-16 |
+| [0028](0028-brownfield-import-merge.md) | Brownfield Import Merge Strategy | Accepted | 2026-04-16 |
+| [0029](0029-command-grouping.md) | Command Grouping — Grouped Help Output | Accepted | 2026-04-14 |
+| [0030](0030-unified-agent-registry.md) | Unified Agent Registry | Accepted | 2026-04-16 |
+| [0031](0031-product-scope-and-pillars.md) | Product Scope and Pillars — Six-Pillar Model | Accepted | 2026-04-16 |
+| [0032](0032-terminology-glossary.md) | Terminology Glossary — Registry vs Marketplace | Accepted | 2026-04-17 |
+| [0033](0033-acp-agent-tiers-and-shim-wrapper.md) | ACP Agent Tiers and Shim Wrapper | Accepted | 2026-04-18 |
 
 ## Template
 

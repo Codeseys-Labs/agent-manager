@@ -685,6 +685,24 @@ agents = ["researcher"]
 | `am run session list` | List active ACP sessions |
 | `am run session cancel <id>` | Cancel an active session |
 
+**Env passthrough.** `am run` scrubs the parent process env before spawning ACP
+agents (ADR-0033 Phase B security gate). The allow-list covers `PATH`, `HOME`,
+`TERM`, `LANG`, etc. — secret-shaped names (`*_TOKEN`, `*_KEY`, `*_PASSWORD`,
+`AWS_*`, `OPENAI_*`, `ANTHROPIC_*`, etc.) are always denied.
+
+If a Tier-1 Node-based agent you're running genuinely needs `NODE_OPTIONS` (e.g.
+`--max-old-space-size=4096` for large transcripts), pass it explicitly instead
+of relying on inheritance:
+
+```bash
+am run --env NODE_OPTIONS="--max-old-space-size=4096" <agent> "<prompt>"
+```
+
+REV-4 MED-2 removed `NODE_OPTIONS` from the inherited allow-list because a
+parent-process `NODE_OPTIONS=--require /tmp/evil.js` would load arbitrary code
+inside the agent subprocess. Explicit forwarding preserves the legitimate use
+case without the injection surface.
+
 ### Flows
 
 | Command | Description |

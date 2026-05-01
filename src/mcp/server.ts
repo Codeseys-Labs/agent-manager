@@ -2199,27 +2199,41 @@ function defineTools(): ToolEntry[] {
       def: {
         name: "am_agent_detect",
         description:
-          "Detect which ACP/A2A agents are available on this host. Currently returns the known built-in ACP registry and any A2A roster entries. PATH-based detection will be expanded when Wave C's agent-detection helper lands.",
+          "Detect which ACP/A2A agents are available on this host. Combines the unified agent registry (config + built-in ACP + A2A roster) with PATH + adapter-derived liveness signals. `reachable` is `true` when an installation was detected, `false` when we looked and didn't find one, and `null` for agents that have no detection mapping (pure A2A entries, etc.).",
         inputSchema: { type: "object", properties: {} },
       },
       tier: "read-only" as ToolTier,
       handler: async () => {
-        // TODO(Wave C agent-auto-detection): replace with the PATH-based helper
-        // once it lands. See docs/reviews/2026-04-17-iter4-system-critique/02-agent-auto-detection.md.
         const { listAllAgentsAsync } = await import("../core/agent-registry");
+        const { detectAllAgents } = await import("../core/agent-detection");
         const { config } = await loadConfigAndProfile();
         const configDir = resolveConfigDir();
-        const agents = await listAllAgentsAsync(config, configDir);
+        const [agents, installMap] = await Promise.all([
+          listAllAgentsAsync(config, configDir),
+          detectAllAgents(),
+        ]);
         return {
-          detected: agents.map((a) => ({
-            name: a.name,
-            source: a.source,
-            protocol: a.acp && a.a2a ? "both" : a.acp ? "acp" : "a2a",
-            // Without Wave C we can't probe binaries on PATH cheaply; return null.
-            // Consumers treat null as "not verified" not "absent".
-            reachable: null,
-          })),
-          note: "PATH-based liveness probe deferred to Wave C agent-auto-detection helper.",
+          detected: agents.map((a) => {
+            const install = installMap[a.name];
+            return {
+              name: a.name,
+              source: a.source,
+              protocol: a.acp && a.a2a ? "both" : a.acp ? "acp" : "a2a",
+              // `reachable`: true (install found), false (looked, missing),
+              // null (no detection mapping exists — e.g. pure A2A roster entry).
+              reachable: install ? install.installed : null,
+              // Extra signal for callers that want to distinguish HOW the
+              // detection fired. Absent when `reachable` is null.
+              ...(install
+                ? {
+                    installVia: install.source,
+                    ...(install.binary ? { binary: install.binary } : {}),
+                    ...(install.version ? { version: install.version } : {}),
+                    ...(install.tier ? { tier: install.tier } : {}),
+                  }
+                : {}),
+            };
+          }),
         };
       },
     },

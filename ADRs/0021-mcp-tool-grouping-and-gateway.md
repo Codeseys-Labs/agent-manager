@@ -120,3 +120,39 @@ there's a proven need (e.g., tools that cannot be expressed as static configs).
 - [ADR-0013: Platform Adapters](0013-platform-adapters.md) — dual-axis adapter pattern
 - `src/core/schema.ts` — SettingsSchema with `mcp_serve.tools`
 - `src/mcp/server.ts` — tool group filtering in `tools/list`
+
+## Addendum — 2026-05-01 reconciliation
+
+The original decision locked the tool-group set at `["core", "registry", "a2a",
+"wiki", "session"]` with a 14+3+4+5 budget totalling 26 tools. ADR-0026 Phase 2
+(ACP runtime integration) shipped a sixth group `"acp"` that was not reflected
+here, and Wave D added unified `am_agent_*` tools under the same group. This
+addendum is the audit trail — the original Decision remains unchanged, the
+group enumeration is expanded.
+
+**Current state as of commit 8a4d5f0 (run 2026-05-01):**
+
+| Group | Count | Notes |
+|-------|-------|-------|
+| `core` | 14 | Config/catalog management (unchanged from original) |
+| `registry` | 3 | Unchanged from original |
+| `a2a` | 4 | Unchanged from original |
+| `wiki` | 5 | Unchanged from original |
+| `session` | 3 | Split out from core per original Decision |
+| `acp` | 9 | **Added by ADR-0026 Phase 2 + Wave D.** `am_run_agent`, `am_acp_list_agents`, `am_acp_session_list`, `am_acp_session_cancel`, `am_agent_invoke`, `am_agent_session_list`, `am_agent_session_cancel`, `am_agent_status`, `am_agent_detect`. |
+| **Total** | **38** | Up from 26 at ADR acceptance. |
+
+**Settings enum.** `McpToolGroup` in `src/core/schema.ts` was extended to
+include `"acp"`; `settings.mcp_serve.tools` accepts all six group names.
+
+**Backward compatibility.** Deployments that set `tools = ["core"]` continue to
+get only the 14 core tools — no ACP surface is exposed unless explicitly opted
+in. Deployments that set `tools = ["acp"]` get the full 9-tool ACP surface, and
+future Wave D merges will re-home `a2a` under a unified `"agents"` group (a
+separate ADR will govern that migration).
+
+**Why this is an addendum, not a supersession.** Adding a sixth group is
+compatible with the original decision: groups exist precisely so tool surface
+can grow without forcing every consumer to see everything. A supersession would
+be warranted if the grouping mechanism itself changed (e.g., per-tool allowlist
+replacing groups) — that hasn't happened.

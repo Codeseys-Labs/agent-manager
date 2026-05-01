@@ -13,7 +13,7 @@ Every feature decision must answer: **which of the six pillars does this serve?*
 1. **Catalog + git sync** — entity types (servers/instructions/skills/agents/
    profiles), user's git choice, brownfield import (ADR-0028), drift detection
    (ADR-0006), AES-256-GCM secret hygiene, MCP Package Registry (ADR-0024).
-2. **MCP gateway** — `am mcp-serve`, 33+ tools, concurrency-safe writers
+2. **MCP gateway** — `am mcp-serve`, 38 tools across 6 groups, concurrency-safe writers
    (iter4 Wave B), bearer auth (iter2 Wave B), streaming via MCP
    notifications/progress (iter4 Wave D).
 3. **Protocol router** — ACP local, A2A remote, bridge, unified `am_agent_*`
@@ -67,6 +67,7 @@ before enabling one.
 ```
 src/                                 # 182 TypeScript files
   cli.ts                             # Entry point -- citty command routing with 31 lazy subcommands
+  acp-shell-cli.ts                   # Secondary binary entry point for am-acp-shell (ADR-0033 Phase B tier-2 shim wrapper)
   help.ts                            # Grouped help output for root command (ADR-0029)
   commands/                          # CLI command handlers (one file per command)
     init.ts, add.ts, list.ts, use.ts, apply.ts, status.ts,
@@ -145,7 +146,7 @@ src/                                 # 182 TypeScript files
     gitlab.ts                        # GitLab platform adapter
     bare.ts                          # Bare git fallback
   mcp/                               # MCP server mode
-    server.ts                        # JSON-RPC 2.0 over stdio, 33 tools, 6 groups, 3 permission tiers (ADR-0009, ADR-0021)
+    server.ts                        # JSON-RPC 2.0 over stdio, 38 tools (core=14, registry=3, a2a=4, wiki=5, session=3, acp=9), 3 permission tiers (ADR-0009, ADR-0021)
   tui/                               # Terminal UI (Silvery + React)
     index.tsx                        # TUI launcher
     App.tsx                          # Root component with tab navigation
@@ -187,7 +188,7 @@ scripts/
 2. **IDE adapters** (13) bridge core TOML to each tool's native format: detect, import, export, diff
 3. **Platform adapters** (3) handle git remote URL detection and auth: GitHub, GitLab, bare
 4. **Two-phase validation** (ADR-0007): Core validates core fields strictly; adapter sections are `z.record(z.string(), z.unknown())` at the core level, then each adapter validates its own section
-5. **MCP server mode** (ADR-0009): agent-manager as an MCP tool server with 33 tools across 6 groups and 3 permission tiers
+5. **MCP server mode** (ADR-0009): agent-manager as an MCP tool server with 38 tools across 6 groups and 3 permission tiers
 6. **Stateless web UI** (ADR-0015): Cloudflare Workers with GitHub OAuth, encrypted cookies, no persistent storage
 
 **Config hierarchy** (highest wins):
