@@ -55,6 +55,25 @@ least **three of the following five** criteria. Popularity alone is not
 sufficient (mise's lesson — popular tools like Rust and Java live in the
 community `aqua` backend, not `core`).
 
+**Provenance note (2026-05-02).** The research document
+`docs/research/2026-05-01-shim-scope-boundaries.md` labels these five tests
+as C1=traffic, C2=non-expressibility, C3=auth/trust, C4=portability,
+C5=trust-posture. This ADR uses a different ordering: C1=non-expressibility,
+C2=traffic, C3=auth, C4=portability, C5=trust-posture. **The ADR numbering
+is authoritative** for any proposal PR; the research's numbering is the
+original brainstorm order and is not load-bearing. Reviewers citing "passed
+C1" or "failed C2" should always reference the criterion TEXT alongside the
+number to avoid cross-doc confusion.
+
+**Tiebreaker rule.** When a proposal scores exactly 3/5 with at least two
+criteria the reviewers disagree on (e.g., C1 "non-expressibility" is judged
+pass by one reviewer and fail by another), **the tie defaults to the
+community-adapter path** (ADR-0027). A proposal must have at least 3
+criteria that both maintainers unambiguously agree pass. This prevents
+litigation-bait scenarios (e.g., the plandex hypothetical in the adversarial
+review of 2026-05-02) from forcing a first-party entry via a marginal
+judgment call.
+
 - **C1. Non-expressibility.** The integration cannot be implemented via
   the existing community adapter path (ADR-0027) — e.g., it needs tight
   coupling with `am-acp-shell`'s prompt-passing or permission model.
@@ -132,6 +151,30 @@ my-custom   tier-2-shim [community]    installed (via adapters.toml)
 
 Both are equally usable; the label informs the user about vetting posture,
 not capability.
+
+### Verification gate (prerequisite to accepting this ADR)
+
+**Before this ADR can flip from `Proposed` to `Accepted`, C2 must be
+validated with live, numerically-cited, independently-reproducible sources
+for each of the three existing shims** (aider, amazon-q, cody). The
+shim-scope research (`docs/research/2026-05-01-shim-scope-boundaries.md`)
+that produced these criteria was explicitly flagged as model-memory-only —
+external research tools were denied in that session. Accepting the ADR
+without closing that gap would launder unverified claims as policy.
+
+The verification PR must add a §Verification section to this ADR containing:
+
+- For each of the three existing shims: one numeric metric (GitHub stars,
+  npm weekly downloads, or Homebrew install count) with a reproducible
+  source URL and the snapshot date.
+- A one-line assessment for each shim: which of C2's sub-criteria (stars /
+  npm / brew) it satisfies at what number.
+- Confirmation that each of the three passes C2 on the live numbers, OR an
+  honest acknowledgement that the audit table's claimed "passes" is
+  retrospectively adjusted.
+
+Until that section exists, the Alternatives §audit table is to be read
+as "plausibly passes based on 2026-05-02 research" — not as verified truth.
 
 ## Consequences
 

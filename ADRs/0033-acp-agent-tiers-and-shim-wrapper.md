@@ -1,9 +1,17 @@
 ---
 status: accepted
 date: 2026-04-18
+amended_by: ADR-0034
 ---
 
 # ADR-0033: ACP Agent Tiers and Shim-Wrapper Architecture
+
+> **Amended 2026-05-02 by [ADR-0034](0034-shim-scope-and-inclusion-criteria.md).**
+> ADR-0034 caps `BUILT_IN_SHIMS` at the three entries shipped here (aider,
+> amazon-q, cody) and establishes a **tier-down-before-remove** deprecation
+> policy for future removals. The clean-cut removal of `devin` and `amp`
+> recorded below is retained as the historical event, but the one-release
+> warn-only cycle described in ADR-0034 is the policy going forward.
 
 ## Context
 

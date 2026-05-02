@@ -161,6 +161,17 @@ Rule of thumb: if removing a surface would make agent-manager **harder to
 ship or harder to develop**, but not **less capable**, it's meta-tooling.
 Keep it, but don't grow it beyond what's needed.
 
+**Tiebreaker (2026-05-02 adversarial-review clarification).** If a feature
+plausibly fits BOTH a pillar AND meta-tooling (e.g., `am auth` could be
+framed as "release-infrastructure meta-tooling" OR "pillar 1 catalog
+authentication"), **assign it to the nearest pillar, not to meta-tooling.**
+Meta-tooling is a narrow escape hatch for items with zero user-visible
+surface beyond the CLI entry point; any surface that expands what users
+can DO with `am` (commands, API routes, config fields) belongs to a
+pillar. The "harder to ship or develop" test is a NECESSARY but not
+SUFFICIENT condition — it must also genuinely NOT expand user-visible
+capability.
+
 ## Consequences
 
 ### Positive
