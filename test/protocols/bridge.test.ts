@@ -355,29 +355,54 @@ describe("createBridgeTaskHandler — HIGH-2 policy defaults", () => {
   ): Promise<{
     policyCalls: Array<unknown>;
     pathsCalls: Array<unknown>;
+    /**
+     * Chronological call order of setPermissionPolicy / setAllowedPaths /
+     * connect — used to verify the HIGH-2 requirement that both setters
+     * fire BEFORE connect(). A mutation that swaps connect ahead of the
+     * setters would satisfy the "setter was called with correct value"
+     * assertions but break the security invariant that the client is
+     * configured before it spawns the subprocess.
+     */
+    orderTrace: string[];
   }> {
     const { AmAcpClient } = await import("../../src/protocols/acp/client");
     const policyCalls: Array<unknown> = [];
     const pathsCalls: Array<unknown> = [];
+    const orderTrace: string[] = [];
 
     const origPolicy = AmAcpClient.prototype.setPermissionPolicy;
     const origPaths = AmAcpClient.prototype.setAllowedPaths;
+    const origConnect = AmAcpClient.prototype.connect;
     AmAcpClient.prototype.setPermissionPolicy = function (p: unknown) {
       policyCalls.push(p);
+      orderTrace.push("setPermissionPolicy");
       return (origPolicy as (this: unknown, p: unknown) => void).call(this, p);
     } as typeof AmAcpClient.prototype.setPermissionPolicy;
     AmAcpClient.prototype.setAllowedPaths = function (p: unknown) {
       pathsCalls.push(p);
+      orderTrace.push("setAllowedPaths");
       return (origPaths as (this: unknown, p: unknown) => void).call(this, p);
     } as typeof AmAcpClient.prototype.setAllowedPaths;
+    AmAcpClient.prototype.connect = async function (
+      ...args: Parameters<typeof AmAcpClient.prototype.connect>
+    ) {
+      orderTrace.push("connect");
+      return (
+        origConnect as (
+          this: unknown,
+          ...a: Parameters<typeof AmAcpClient.prototype.connect>
+        ) => Promise<unknown>
+      ).call(this, ...args) as ReturnType<typeof AmAcpClient.prototype.connect>;
+    } as typeof AmAcpClient.prototype.connect;
 
     try {
       await handlerFactory()(msg, config);
     } finally {
       AmAcpClient.prototype.setPermissionPolicy = origPolicy;
       AmAcpClient.prototype.setAllowedPaths = origPaths;
+      AmAcpClient.prototype.connect = origConnect;
     }
-    return { policyCalls, pathsCalls };
+    return { policyCalls, pathsCalls, orderTrace };
   }
 
   test("defaults permissionPolicy to 'deny' when unset", async () => {
@@ -436,6 +461,29 @@ describe("createBridgeTaskHandler — HIGH-2 policy defaults", () => {
       makeResolvedConfig(),
     );
     expect(pathsCalls[0]).toEqual(["/srv/a", "/srv/b"]);
+  }, 20_000);
+
+  // TEST-1 (2026-05-02 adversarial-review): the HIGH-2 comment in bridge.ts
+  // explicitly warns "setting them after [connect] is a no-op and leaves the
+  // agent unrestricted." Verify the call ordering is setters-first, connect-last.
+  // A mutation that swaps connect ahead of the setters would silently reintroduce
+  // the original HIGH-2 bug with all value-assertions still green.
+  test("setters fire BEFORE connect (HIGH-2 ordering contract)", async () => {
+    const { orderTrace } = await spyPolicySetters(
+      () => createBridgeTaskHandler({ timeout: 2000 }),
+      textMessage("run claude: fix tests"),
+      makeResolvedConfig(),
+    );
+    // Must have seen all three events (setters may fire in either order
+    // between themselves, but both must precede connect).
+    const policyIdx = orderTrace.indexOf("setPermissionPolicy");
+    const pathsIdx = orderTrace.indexOf("setAllowedPaths");
+    const connectIdx = orderTrace.indexOf("connect");
+    expect(policyIdx).toBeGreaterThanOrEqual(0);
+    expect(pathsIdx).toBeGreaterThanOrEqual(0);
+    expect(connectIdx).toBeGreaterThanOrEqual(0);
+    expect(policyIdx).toBeLessThan(connectIdx);
+    expect(pathsIdx).toBeLessThan(connectIdx);
   }, 20_000);
 });
 

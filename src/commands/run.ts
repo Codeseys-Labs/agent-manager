@@ -137,9 +137,16 @@ async function runAgent(args: RunAgentArgs): Promise<void> {
 
   const client = createAcpClient();
 
-  // HIGH-1 fix: when --no-auto-approve is set, deny all permission requests
+  // Permission policy:
+  //   --no-auto-approve → "deny" (already the class default post-2026-05-02
+  //                               secure-by-default flip; re-affirmed here
+  //                               for clarity).
+  //   (default)         → "auto-approve" — `am run` is headless by design;
+  //                       the operator has decided to trust the agent.
   if (args.noAutoApprove) {
     client.setPermissionPolicy("deny");
+  } else {
+    client.setPermissionPolicy("auto-approve");
   }
 
   // Accumulate text for streaming output (non-JSON mode)

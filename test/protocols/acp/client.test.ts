@@ -9,6 +9,7 @@ import {
   AmAcpClient,
   type PermissionPolicy,
   createAcpClient,
+  createClientHandler,
   isPathAllowed,
 } from "../../../src/protocols/acp/client";
 import { listAgents, parseCommand, resolveAgent } from "../../../src/protocols/acp/registry";
@@ -664,23 +665,28 @@ describe("createTerminal shell injection prevention", () => {
 // ── HIGH-1: Permission policy ──────────────────────────────────
 
 describe("AmAcpClient permission policy", () => {
-  test("default permission policy is auto-approve", () => {
+  test("default permission policy is 'deny' (secure-by-default, 2026-05-02)", () => {
+    // Class default was flipped from "auto-approve" to "deny" so callers that
+    // forget to configure the policy fail closed. Any caller that genuinely
+    // needs headless auto-approve must opt in explicitly via
+    // setPermissionPolicy("auto-approve"). Call sites audited in the same
+    // commit: run.ts (headless CLI), flow.ts (headless orchestration),
+    // mcp/server.ts am_agent_invoke (headless MCP tool).
     const client = new AmAcpClient();
-    // Default permissionPolicy is "auto-approve" (private field)
-    expect((client as any).permissionPolicy).toBe("auto-approve");
-  });
-
-  test("setPermissionPolicy changes policy to deny", () => {
-    const client = new AmAcpClient();
-    client.setPermissionPolicy("deny");
     expect((client as any).permissionPolicy).toBe("deny");
   });
 
-  test("setPermissionPolicy can switch back to auto-approve", () => {
+  test("setPermissionPolicy can switch to auto-approve (opt-in for headless callers)", () => {
     const client = new AmAcpClient();
-    client.setPermissionPolicy("deny");
     client.setPermissionPolicy("auto-approve");
     expect((client as any).permissionPolicy).toBe("auto-approve");
+  });
+
+  test("setPermissionPolicy can switch back to deny", () => {
+    const client = new AmAcpClient();
+    client.setPermissionPolicy("auto-approve");
+    client.setPermissionPolicy("deny");
+    expect((client as any).permissionPolicy).toBe("deny");
   });
 });
 
@@ -775,5 +781,122 @@ describe("ACP allowed_paths schema", () => {
       },
     });
     expect(result.success).toBe(false);
+  });
+});
+
+// ── requestPermission deny-policy bypass (2026-05-02 adversarial-review) ──
+//
+// SEC-1: under `permissionPolicy: "deny"`, the old fallback code selected
+// `options[0]` when no `reject_*` option existed. A malicious ACP agent
+// could send `options: [{kind: "allow_always", optionId: "x"}]` and have
+// the "allow_always" selected — trivially bypassing the deny default.
+// The fix returns `{ outcome: "cancelled" }` instead.
+
+describe("requestPermission — deny-policy cannot be bypassed by missing reject option", () => {
+  test("deny + reject option present → returns the reject option (baseline)", async () => {
+    const handler = createClientHandler(null, "deny");
+    const res = await handler.requestPermission({
+      sessionId: "s1",
+      toolCall: {
+        toolCallId: "tc1",
+        title: "test",
+        kind: "execute",
+        status: "pending",
+        content: [],
+      },
+      options: [
+        { kind: "allow_once", optionId: "ok1", name: "Allow" },
+        { kind: "reject_once", optionId: "no1", name: "Reject" },
+      ],
+    });
+    expect(res.outcome.outcome).toBe("selected");
+    if (res.outcome.outcome === "selected") {
+      expect(res.outcome.optionId).toBe("no1");
+    }
+  });
+
+  test("deny + NO reject option → returns 'cancelled' (bypass blocked)", async () => {
+    // The adversarial payload: agent sends only allow_* options hoping the
+    // fallback selects options[0]. Must NOT select allow_always.
+    const handler = createClientHandler(null, "deny");
+    const res = await handler.requestPermission({
+      sessionId: "s1",
+      toolCall: {
+        toolCallId: "tc1",
+        title: "test",
+        kind: "execute",
+        status: "pending",
+        content: [],
+      },
+      options: [
+        { kind: "allow_always", optionId: "dangerous1", name: "Always allow" },
+        { kind: "allow_once", optionId: "dangerous2", name: "Allow once" },
+      ],
+    });
+    // Must not be "selected" — that would grant permission via bypass.
+    expect(res.outcome.outcome).toBe("cancelled");
+  });
+
+  test("createClientHandler default (no policy arg) is 'deny' (secure-by-default)", async () => {
+    // Class-level default flip (2026-05-02). Any caller constructing a client
+    // without passing a policy inherits "deny" — fails closed. Regression-lock
+    // on the class default so a future change to "auto-approve" fails this test.
+    const handler = createClientHandler(null);
+    const res = await handler.requestPermission({
+      sessionId: "s1",
+      toolCall: {
+        toolCallId: "tc1",
+        title: "test",
+        kind: "execute",
+        status: "pending",
+        content: [],
+      },
+      options: [
+        { kind: "allow_once", optionId: "allow1", name: "Allow" },
+        { kind: "reject_once", optionId: "reject1", name: "Reject" },
+      ],
+    });
+    expect(res.outcome.outcome).toBe("selected");
+    if (res.outcome.outcome === "selected") {
+      // Deny policy selects reject, not allow.
+      expect(res.outcome.optionId).toBe("reject1");
+    }
+  });
+
+  test("AmAcpClient instance default is 'deny' (class-level regression)", async () => {
+    // Mirror the handler test against the full AmAcpClient class so a future
+    // refactor can't silently revert the class-field default.
+    const client = new AmAcpClient();
+    // The private field isn't exported; we can only observe behavior via a
+    // spawn. But even without spawning, the field's default is asserted via
+    // createClientHandler's default above. A minimal structural probe:
+    const src = await Bun.file(
+      new URL("../../../src/protocols/acp/client.ts", import.meta.url),
+    ).text();
+    // The class-field initializer must be "deny", not "auto-approve".
+    expect(src).toMatch(/private\s+permissionPolicy:\s*PermissionPolicy\s*=\s*"deny"/);
+    expect(client).toBeInstanceOf(AmAcpClient);
+  });
+
+  test("auto-approve + allow_once option present → selects allow (baseline)", async () => {
+    const handler = createClientHandler(null, "auto-approve");
+    const res = await handler.requestPermission({
+      sessionId: "s1",
+      toolCall: {
+        toolCallId: "tc1",
+        title: "test",
+        kind: "execute",
+        status: "pending",
+        content: [],
+      },
+      options: [
+        { kind: "reject_once", optionId: "no1", name: "Reject" },
+        { kind: "allow_once", optionId: "ok1", name: "Allow" },
+      ],
+    });
+    expect(res.outcome.outcome).toBe("selected");
+    if (res.outcome.outcome === "selected") {
+      expect(res.outcome.optionId).toBe("ok1");
+    }
   });
 });

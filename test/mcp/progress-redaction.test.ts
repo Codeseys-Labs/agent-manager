@@ -96,6 +96,40 @@ describe("redactProgressMessage — structural walker", () => {
     expect(out.updates[0].content.parts[1].text).toContain("[REDACTED_ANTHROPIC_KEY]");
   });
 
+  test("handles a circular reference without stack-overflow (DoS guard)", () => {
+    // Adversarial input: an ACP agent emits a payload where a property points
+    // back to the parent object. Prior to the WeakSet guard (2026-05-02), the
+    // recursive walker would stack-overflow and crash the MCP server process.
+    // Any ACP agent plumbed into `am mcp-serve` can emit such a payload.
+    const cyclic: Record<string, unknown> = {
+      kind: "acp.session_update",
+      text: "here is sk-ant-CYCLELEAK12345678901234567890 do not share",
+    };
+    cyclic.self = cyclic;
+
+    // Must not throw (RangeError: Maximum call stack size exceeded).
+    const out = redactProgressMessage(cyclic) as Record<string, unknown>;
+
+    // Redaction still fires on the non-cyclic leaf.
+    expect(out.text).not.toContain("CYCLELEAK12345678901234567890");
+    expect(out.text).toContain("[REDACTED_ANTHROPIC_KEY]");
+    // The cyclic back-edge is replaced with a sentinel rather than the object
+    // (preserves the redaction-by-walking invariant for downstream JSON.stringify).
+    expect(out.self).toBe("[CIRCULAR]");
+  });
+
+  test("handles a circular reference through an array", () => {
+    // Symmetric guard for arrays — the walker's array branch also needs
+    // cycle detection.
+    const arr: unknown[] = ["sk-ant-CYCARRLEAK1234567890123456789012345"];
+    arr.push(arr);
+
+    const out = redactProgressMessage(arr) as unknown[];
+    expect(out[0]).not.toContain("CYCARRLEAK1234567890123456789012345");
+    expect(out[0]).toContain("[REDACTED_ANTHROPIC_KEY]");
+    expect(out[1]).toBe("[CIRCULAR]");
+  });
+
   test("does NOT stack-overflow on reasonable object depth", () => {
     // Build a 50-level nested object. Real ACP payloads rarely exceed 5 levels,
     // but a defensive floor protects against adversarial shapes.

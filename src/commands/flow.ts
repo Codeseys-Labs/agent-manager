@@ -101,6 +101,9 @@ const flowRunCommand = defineCommand({
           }
           const { AmAcpClient } = await import("../protocols/acp/client");
           const client = new AmAcpClient();
+          // am flow is headless by design; explicitly opt into auto-approve
+          // rather than inheriting the secure-by-default "deny" (2026-05-02).
+          client.setPermissionPolicy("auto-approve");
           try {
             await client.connectByName(agentName);
             const sessionId = await client.newSession({ cwd });

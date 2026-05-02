@@ -77,7 +77,14 @@ export class AmAcpClient {
   } | null = null;
   private connInfo: AcpConnection | null = null;
   private updateHandler: SessionUpdateHandler | null = null;
-  private permissionPolicy: PermissionPolicy = "auto-approve";
+  // Secure-by-default (2026-05-02 adversarial-review fix):
+  // Class default flipped from "auto-approve" to "deny" so callers that
+  // forget to configure the policy fail closed. Any caller that genuinely
+  // needs headless auto-approve (am run, am flow, am_run_agent MCP tool)
+  // must explicitly call setPermissionPolicy("auto-approve"). The bridge
+  // was already forcing "deny" at connect time (HIGH-2), so this class
+  // default aligns with the bridge's A2A-facing posture.
+  private permissionPolicy: PermissionPolicy = "deny";
   private allowedPaths: string[] = [];
   // HIGH-3 fix: per-instance terminal store so terminals don't leak across
   // clients (previously this was a module-level Map shared by every instance).
@@ -96,8 +103,12 @@ export class AmAcpClient {
 
   /**
    * Set the permission policy for ACP permission requests.
-   * "auto-approve" (default): auto-approve all permission requests (headless mode).
-   * "deny": reject all permission requests (--no-auto-approve flag).
+   * "deny" (default, 2026-05-02 secure-by-default flip): reject all permission
+   *         requests — safe default for any caller that doesn't explicitly
+   *         opt into auto-approve.
+   * "auto-approve": auto-approve all permission requests; appropriate for
+   *         headless mode (am run, am flow, am_run_agent MCP tool) where the
+   *         caller has already decided it trusts the agent.
    */
   setPermissionPolicy(policy: PermissionPolicy): void {
     this.permissionPolicy = policy;
@@ -443,10 +454,14 @@ export function isPathAllowed(requestedPath: string, allowedPaths: string[]): bo
  * Create a Client handler that processes incoming agent requests.
  * This is the "client side" of the ACP protocol — the agent calls
  * these methods to request permission, read/write files, etc.
+ *
+ * Exported (2026-05-02) so tests can drive `requestPermission` directly
+ * and assert the deny-policy bypass fix without standing up a full ACP
+ * subprocess handshake.
  */
-function createClientHandler(
+export function createClientHandler(
   updateHandler: SessionUpdateHandler | null,
-  permissionPolicy: PermissionPolicy = "auto-approve",
+  permissionPolicy: PermissionPolicy = "deny",
   allowedPaths: string[] = [],
   terminalStore: Map<string, ReturnType<typeof Bun.spawn>> = new Map(),
   terminalOutputCache: Map<string, string> = new Map(),
@@ -461,8 +476,13 @@ function createClientHandler(
         if (denyOption) {
           return { outcome: { outcome: "selected", optionId: denyOption.optionId } };
         }
-        // If no deny option exists, use the first option (safest available).
-        return { outcome: { outcome: "selected", optionId: params.options[0].optionId } };
+        // Defense-in-depth (2026-05-02 adversarial-review fix): if the agent
+        // omits a reject option, the deny policy is NOT satisfied by falling
+        // through to options[0] — that could be `allow_always`, letting a
+        // malicious agent trivially bypass the A2A-facing deny default.
+        // Return `cancelled` (well-formed per ACP spec) rather than selecting
+        // an option we can't prove is safe.
+        return { outcome: { outcome: "cancelled" } };
       }
       // Auto-approve all permissions in headless mode (default).
       const allowOption = params.options.find((o) => o.kind === "allow_once");

@@ -143,12 +143,29 @@ type ProgressSink = (notif: ProgressNotification) => void;
  * Exported so tests can drive it directly.
  */
 export function redactProgressMessage(message: unknown): unknown {
+  return redactProgressMessageImpl(message, new WeakSet());
+}
+
+/**
+ * Internal walker with cycle-detection. An adversarial ACP agent can emit a
+ * payload where `payload.self = payload` (a.self = a); without a `seen` set
+ * the recursive walker stack-overflows and crashes the MCP server (DoS).
+ * The WeakSet tracks already-visited objects + arrays — on re-entry we
+ * substitute a sentinel rather than recursing.
+ */
+function redactProgressMessageImpl(message: unknown, seen: WeakSet<object>): unknown {
   if (typeof message === "string") return redactSecretish(message);
-  if (Array.isArray(message)) return message.map(redactProgressMessage);
+  if (Array.isArray(message)) {
+    if (seen.has(message)) return "[CIRCULAR]";
+    seen.add(message);
+    return message.map((v) => redactProgressMessageImpl(v, seen));
+  }
   if (message && typeof message === "object") {
+    if (seen.has(message)) return "[CIRCULAR]";
+    seen.add(message);
     const out: Record<string, unknown> = {};
     for (const [k, v] of Object.entries(message as Record<string, unknown>)) {
-      out[k] = redactProgressMessage(v);
+      out[k] = redactProgressMessageImpl(v, seen);
     }
     return out;
   }
@@ -2301,6 +2318,10 @@ async function invokeAgentImpl(args: Record<string, unknown>, ctx: ToolContext):
   if (entry.acp) {
     const { createAcpClient } = await import("../protocols/acp/client");
     const client = createAcpClient();
+    // am_run_agent / am_agent_invoke is headless by design (MCP tool — no
+    // human-in-the-loop). Explicitly opt into auto-approve rather than
+    // inheriting the class secure-by-default "deny" (2026-05-02).
+    client.setPermissionPolicy("auto-approve");
     const sessionId = sessionName ?? `am-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
     // Wire progress: ACP emits onSessionUpdate for every chunk/tool call.
