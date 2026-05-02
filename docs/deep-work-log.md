@@ -153,8 +153,19 @@ design conversation).
 
 ## Wave 1 codex-backlog complete — 2026-05-02
 
-**Commits:** (leader will fill in after integration)
-**Items closed:** CODEX-1 through CODEX-10 + CODEX-11 through CODEX-14 (new from concurrent Codex review).
-**New tests:** adr-frontmatter.test.ts (3 tests pinning the pending_amendment_by pattern).
-**Tests total:** 2462 pass / 0 fail / 7252 expect() calls across 184 files.
-**Zero new tsc errors, zero new lint warnings.**
+**Commits:** `c5d92e4` (phase 1 marker) → `69cdb10` (main Wave 1 set) → `41d65f9` (signoff fixes) → `9cbec70` (flake fix). End hash: `9cbec70`.
+
+**Team:** `am-wave1-codex-backlog` — team-lead + adr-drafter + plan-reconciler + verifier. All teammates shut down cleanly post-commit.
+
+**Items closed:** 14 CODEX findings (1-10 original + 11-14 surfaced by concurrent Codex review during execution) + 2 MAJOR signoff fixes (CODEX-11 cancel ID-confusion, CODEX-14 double-firing streaming callback) + 1 flake timeout raise.
+
+**New tests:** `test/core/adr-frontmatter.test.ts` (3 tests pinning the `pending_amendment_by` pattern until ADR-0034 promotes to accepted).
+
+**New ADR:** `ADRs/0035-community-shim-registration.md` (proposed, 399 lines) — precondition for ADR-0034's Phase-E redirect to be operational.
+
+**Verification (Phase 8):**
+- Execution team: zero pending/in-progress tasks in `am-wave1-codex-backlog`.
+- Review team (Codex final signoff on 69cdb10): caught 2 MAJOR issues (CODEX-11 cancel + CODEX-14 double-fire); both addressed in 41d65f9. All other facets OK or MINOR.
+- `bun test`: **2462 pass / 0 fail / 7252 expect() across 184 files**.
+- `bun run typecheck`: 0 src TS errors.
+- `bun run lint`: 0 errors, 1 pre-existing warning (unchanged).
