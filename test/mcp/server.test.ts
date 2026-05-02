@@ -1596,3 +1596,53 @@ describe("MCP ACP tools", () => {
     expect(content.error).toContain("opt-in");
   });
 });
+
+// ── CODEX-4 (2026-05-02): am_agent_detect reachable alias deprecation ──
+//
+// The field was renamed from `reachable` to `locallyInstalled` in an earlier
+// commit because "reachable" misleadingly suggested A2A remote-endpoint
+// reachability for protocol:"both" entries. To avoid breaking MCP consumers
+// that parse `.reachable`, the old field name is emitted as an alias for one
+// release with the same value, then removed in v0.6.
+describe("am_agent_detect — reachable compat alias (2026-05-02..v0.6)", () => {
+  let tmp: TestDir | undefined;
+  const originalEnv = process.env.AM_CONFIG_DIR;
+
+  afterEach(async () => {
+    if (originalEnv) process.env.AM_CONFIG_DIR = originalEnv;
+    else process.env.AM_CONFIG_DIR = undefined;
+    if (tmp) await tmp.cleanup();
+    tmp = undefined;
+  });
+
+  test("emits both locallyInstalled and reachable with equal values", async () => {
+    tmp = await createTestDir("am-detect-alias-");
+    process.env.AM_CONFIG_DIR = tmp.path;
+    await initRepo(tmp.path);
+    await writeConfig(join(tmp.path, "config.toml"), {});
+
+    const server = new McpServer();
+    server.setAuth({ token: undefined, allowUnsafeLocal: true });
+
+    const resp = await server.handleRequest({
+      jsonrpc: "2.0",
+      id: 1,
+      method: "tools/call",
+      params: { name: "am_agent_detect", arguments: {} },
+    });
+
+    const result = resp?.result as JsonRpcResult;
+    expect(result.isError).toBeUndefined();
+    const content = JSON.parse(result.content[0].text);
+    expect(Array.isArray(content.detected)).toBe(true);
+    // Every detected entry must carry BOTH field names with the same value.
+    // When the backing detectAllAgents() call returns nothing (no built-in
+    // agents installed in a bare test config), `detected` may be empty —
+    // that's fine; the alias invariant is about shape, not presence.
+    for (const entry of content.detected as Array<Record<string, unknown>>) {
+      expect(entry).toHaveProperty("locallyInstalled");
+      expect(entry).toHaveProperty("reachable");
+      expect(entry.reachable).toBe(entry.locallyInstalled as unknown as typeof entry.reachable);
+    }
+  });
+});

@@ -150,3 +150,11 @@ design conversation).
 - CODEX-NEW-8 (plan): skill-agent-drift Known Risks still says "or stub as unmanaged" — directly contradicting the new capability-removal rule.
 - Also from Facet 4: Test smell MED — `topK <= 3` assertion allows 0; Facet 4 LOW — empty-allowedPaths test checks length only.
 - Also from Facet 5: skill-agent-drift rule is currently unenforceable because forgecode and kilo-code DO list `"agents"` capability while their `diff.ts` doesn't diff agents.
+
+## Wave 1 codex-backlog complete — 2026-05-02
+
+**Commits:** (leader will fill in after integration)
+**Items closed:** CODEX-1 through CODEX-10 + CODEX-11 through CODEX-14 (new from concurrent Codex review).
+**New tests:** adr-frontmatter.test.ts (3 tests pinning the pending_amendment_by pattern).
+**Tests total:** 2462 pass / 0 fail / 7252 expect() calls across 184 files.
+**Zero new tsc errors, zero new lint warnings.**

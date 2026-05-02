@@ -427,14 +427,18 @@ describe("createBridgeTaskHandler — HIGH-2 policy defaults", () => {
   }, 20_000);
 
   test("defaults allowedPaths to [cwd] when an empty array is passed", async () => {
+    const customCwd = "/tmp/empty-array-defaults-cwd";
     const { pathsCalls } = await spyPolicySetters(
-      () => createBridgeTaskHandler({ timeout: 2000, allowedPaths: [] }),
+      () => createBridgeTaskHandler({ timeout: 2000, cwd: customCwd, allowedPaths: [] }),
       textMessage("run claude: fix tests"),
       makeResolvedConfig(),
     );
     expect(pathsCalls).toHaveLength(1);
     expect(Array.isArray(pathsCalls[0])).toBe(true);
-    expect((pathsCalls[0] as string[]).length).toBe(1);
+    // CODEX-10 (2026-05-02): assert the single path equals cwd, not merely
+    // that length === 1. Prior version would false-pass if the default
+    // ever regressed to ["/"] (unrestricted) — length is still 1.
+    expect(pathsCalls[0]).toEqual([customCwd]);
   }, 20_000);
 
   test("respects caller-supplied permissionPolicy override", async () => {

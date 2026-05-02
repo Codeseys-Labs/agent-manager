@@ -36,8 +36,6 @@ being silently violated.
   exists as a real directory rather than a symlink, and directs to `am wiki relink`.
 - `am wiki relink` copies newer files from the orphaned real directory into the
   central store, commits, replaces the directory with the correct symlink.
-- `settings.wiki.auto_sync_interval_seconds` (integer ≥ 60) accepted in schema.
-  Runtime timer wiring is a follow-up task (not this milestone).
 - `am wiki export --project <name> --to <url>` performs a one-way subtree-split
   push to the given remote. Documented as one-way, not a sync.
 - All new paths support `--json`. New code has ≥ 90 % line coverage.
@@ -130,7 +128,7 @@ Depends on M5.2.
 
 - M5.1: additive; revert-safe.
 - M5.2: old behaviour preserved under `--allow-dirty`. Regression hotfix = 2-line
-  default flip in the args definition. Schema addition is backward-compatible.
+  default flip in the args definition.
 - M5.3: all additive. Reverting is safe; stale `wiki-conflict.json` is ignored.
 
 ## Risks
@@ -154,3 +152,5 @@ Depends on M5.2.
 5. BetterLeaks text-mode scanning calibration on real wiki pages.
 6. `am wiki resolve --strategy local-wins` / `--strategy remote-wins` for
    non-interactive / CI resolution.
+
+> **Auto-sync schema + timer ship together.** `settings.wiki.auto_sync_interval_seconds` MUST NOT be added to `SettingsSchema` until the runtime timer that reads it is implemented in the SAME milestone. Shipping the field without the timer creates a pit trap: users set it, observe no behavior, file bugs. (CODEX-5 + PLAN-4 reconciliation, 2026-05-02.)

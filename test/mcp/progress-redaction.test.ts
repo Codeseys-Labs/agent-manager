@@ -130,16 +130,16 @@ describe("redactProgressMessage — structural walker", () => {
     expect(out[1]).toBe("[CIRCULAR]");
   });
 
-  test("does NOT stack-overflow on reasonable object depth", () => {
-    // Build a 50-level nested object. Real ACP payloads rarely exceed 5 levels,
-    // but a defensive floor protects against adversarial shapes.
+  test("handles reasonable object depth (50 levels) without truncation", () => {
+    // Build a 50-level nested object — within REDACT_MAX_DEPTH (64). Real
+    // ACP payloads rarely exceed 5 levels, but a defensive floor protects
+    // against adversarial shapes AS LONG AS they don't exceed the cap.
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     let node: any = { text: "here is sk-ant-DEEPDEPTH123456789012345678901234567" };
     for (let i = 0; i < 50; i++) {
       node = { next: node };
     }
     const out = redactProgressMessage(node) as unknown;
-    // Walk back down to confirm the leaf was redacted through all 50 levels.
     let cursor: unknown = out;
     for (let i = 0; i < 50; i++) {
       cursor = (cursor as { next: unknown }).next;
@@ -147,6 +147,33 @@ describe("redactProgressMessage — structural walker", () => {
     const leaf = cursor as { text: string };
     expect(leaf.text).not.toContain("DEEPDEPTH123456789012345678901234567");
     expect(leaf.text).toContain("[REDACTED_ANTHROPIC_KEY]");
+  });
+
+  test("truncates deep acyclic nesting at REDACT_MAX_DEPTH (DoS guard)", () => {
+    // CODEX-1 (2026-05-02): acyclic deep payloads would stack-overflow even
+    // with the WeakSet cycle guard. An adversarial ACP agent sending a 10k-
+    // level deep nested payload could crash the MCP server process. The
+    // depth cap short-circuits at REDACT_MAX_DEPTH with a sentinel string.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    let node: any = { text: "leaf-beyond-cap sk-ant-SHOULDNEVERAPPEAR12345678901234" };
+    // 1000 levels — well beyond REDACT_MAX_DEPTH (64). Must not throw.
+    for (let i = 0; i < 1000; i++) {
+      node = { next: node };
+    }
+    const out = redactProgressMessage(node) as unknown;
+
+    // Walk down the structure until we hit the sentinel or exhaust depth.
+    // The cap is at REDACT_MAX_DEPTH so the leaf we planted (at depth 1000)
+    // is unreachable — the tree is truncated somewhere near depth 64.
+    let cursor: unknown = out;
+    let hops = 0;
+    while (cursor && typeof cursor === "object" && "next" in cursor && hops < 200) {
+      cursor = (cursor as { next: unknown }).next;
+      hops++;
+    }
+    // Somewhere along the way we must have hit the sentinel.
+    expect(typeof cursor).toBe("string");
+    expect(cursor).toBe("[TRUNCATED_DEPTH]");
   });
 });
 

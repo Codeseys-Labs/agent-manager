@@ -675,8 +675,11 @@ describe("synthesizeContext — I/O path through MiniSearch", () => {
 
     const out = await synthesizeContext("alpha-beta-gamma topic", { topK: 3 });
     // Count how many "### " section headers appear — that's the synthesized
-    // entry count.
+    // entry count. Must be > 0 (results actually surfaced) AND <= topK (cap
+    // respected). Prior version asserted only <=3, which passed vacuously on
+    // zero-result outputs (CODEX-6 fix 2026-05-02).
     const headers = (out.match(/^### /gm) ?? []).length;
+    expect(headers).toBeGreaterThan(0);
     expect(headers).toBeLessThanOrEqual(3);
   });
 });

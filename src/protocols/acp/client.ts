@@ -183,14 +183,18 @@ export class AmAcpClient {
     const stream = ndJsonStream(writable, proc.stdout as ReadableStream<Uint8Array>);
 
     // Create the client-side connection
-    const updateHandler = this.updateHandler;
+    const userUpdateHandler = this.updateHandler;
     const policy = this.permissionPolicy;
     // MEDIUM-3: pass allowed paths for file operation restrictions
     const paths = [...this.allowedPaths, ...(opts?.allowedPaths ?? [])];
+    const composedHandler: SessionUpdateHandler = (update) => {
+      this._handleSessionUpdate({ sessionId: "", update } as SessionNotification);
+      userUpdateHandler?.(update);
+    };
     this.connection = new ClientSideConnection(
       (_agent) =>
         createClientHandler(
-          updateHandler,
+          composedHandler,
           policy,
           paths,
           this.terminalStore,

@@ -187,7 +187,10 @@ two-way diff).
 4. **Continue YAML+JSON dual format** — idempotency test uses YAML-only
    fixture; document dual-format as known limitation in ADR-0036.
 5. **ForgeCode/Kilo agent paths unconfirmed** — verify in export.ts before
-   binding, or stub as `unmanaged`.
+   binding. If the path isn't implemented, remove `"agents"` from the
+   adapter's `meta.capabilities` until diff + export both land in the same
+   PR (per Phase 4 rule). Do not stub as `unmanaged` — that is a silent
+   false negative.
 6. **Amazon Q instruction rules project-scoped** — drift only surfaced
    when run inside a project.
 7. **Large skill directories (SHA-256 perf)** — limit to text globs
@@ -219,8 +222,8 @@ All 13 per-adapter diff.ts files (varying extent)
 
 ## Estimated Effort
 
-~8 developer-days total:
-- Phase 1: 2 days
+~11–12 developer-days total:
+- Phase 1: 3.5–4 days (revised 2026-05-02; see Phase 1 body for breakdown)
 - Phase 2: 3 days
 - Phase 3: 1.5 days
 - Phase 4: 1.5 days

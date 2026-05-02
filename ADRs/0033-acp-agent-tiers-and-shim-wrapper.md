@@ -1,17 +1,31 @@
 ---
 status: accepted
 date: 2026-04-18
-amended_by: ADR-0034
+pending_amendment_by: ADR-0034
 ---
 
 # ADR-0033: ACP Agent Tiers and Shim-Wrapper Architecture
 
-> **Amended 2026-05-02 by [ADR-0034](0034-shim-scope-and-inclusion-criteria.md).**
-> ADR-0034 caps `BUILT_IN_SHIMS` at the three entries shipped here (aider,
-> amazon-q, cody) and establishes a **tier-down-before-remove** deprecation
-> policy for future removals. The clean-cut removal of `devin` and `amp`
-> recorded below is retained as the historical event, but the one-release
-> warn-only cycle described in ADR-0034 is the policy going forward.
+> **Pending amendment (2026-05-02) by [ADR-0034](0034-shim-scope-and-inclusion-criteria.md),
+> which is currently `status: proposed`.**
+>
+> When ADR-0034 is promoted to `accepted`, this header flips from
+> `pending_amendment_by` to `amended_by` and the amendment becomes load-bearing
+> policy. Until then:
+>
+> - The clean-cut removal of `devin` and `amp` recorded in the body remains the
+>   operative historical precedent.
+> - ADR-0034's proposed "tier-down-before-remove" deprecation policy is NOT
+>   yet binding. Implementers choosing to remove a shim should follow the body
+>   of this ADR (clean-cut) unless / until ADR-0034 accepts.
+> - ADR-0034 also depends on a community-shim registration path that does not
+>   yet exist (tracked as CODEX-2). That design gap must close before ADR-0034
+>   can plausibly flip to accepted.
+>
+> The `pending_amendment_by` pattern is documented in `ADRs/template.md` —
+> an accepted ADR cannot defer authoritatively to a non-accepted one, but it
+> can forward-reference a proposed amendment so readers see the in-flight
+> change without treating it as settled.
 
 ## Context
 

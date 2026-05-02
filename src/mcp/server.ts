@@ -142,30 +142,49 @@ type ProgressSink = (notif: ProgressNotification) => void;
  *
  * Exported so tests can drive it directly.
  */
+/**
+ * Maximum recursion depth for {@link redactProgressMessage}. Guards against
+ * DoS from adversarial acyclic payloads with extreme nesting (e.g., 10k
+ * levels). Cycles are caught by the WeakSet independently; the depth cap
+ * handles the acyclic-but-pathological case. 64 is well above any real
+ * ACP session-update shape while low enough to avoid stack-overflow on
+ * typical Bun runtimes.
+ */
+export const REDACT_MAX_DEPTH = 64;
+
 export function redactProgressMessage(message: unknown): unknown {
-  return redactProgressMessageImpl(message, new WeakSet());
+  return redactProgressMessageImpl(message, new WeakSet(), 0);
 }
 
 /**
- * Internal walker with cycle-detection. An adversarial ACP agent can emit a
- * payload where `payload.self = payload` (a.self = a); without a `seen` set
- * the recursive walker stack-overflows and crashes the MCP server (DoS).
- * The WeakSet tracks already-visited objects + arrays — on re-entry we
- * substitute a sentinel rather than recursing.
+ * Internal walker with cycle-detection AND depth-cap.
+ *
+ * An adversarial ACP agent can emit two distinct DoS payloads:
+ *   1. Cyclic: `a.self = a` → infinite recursion without `seen`.
+ *   2. Deep acyclic: 10,000-level nesting → stack overflow even with `seen`.
+ *
+ * The WeakSet tracks already-visited objects + arrays. The depth counter
+ * caps acyclic nesting. Both checks substitute a sentinel string rather
+ * than recursing further.
  */
-function redactProgressMessageImpl(message: unknown, seen: WeakSet<object>): unknown {
+function redactProgressMessageImpl(
+  message: unknown,
+  seen: WeakSet<object>,
+  depth: number,
+): unknown {
+  if (depth > REDACT_MAX_DEPTH) return "[TRUNCATED_DEPTH]";
   if (typeof message === "string") return redactSecretish(message);
   if (Array.isArray(message)) {
     if (seen.has(message)) return "[CIRCULAR]";
     seen.add(message);
-    return message.map((v) => redactProgressMessageImpl(v, seen));
+    return message.map((v) => redactProgressMessageImpl(v, seen, depth + 1));
   }
   if (message && typeof message === "object") {
     if (seen.has(message)) return "[CIRCULAR]";
     seen.add(message);
     const out: Record<string, unknown> = {};
     for (const [k, v] of Object.entries(message as Record<string, unknown>)) {
-      out[k] = redactProgressMessageImpl(v, seen);
+      out[k] = redactProgressMessageImpl(v, seen, depth + 1);
     }
     return out;
   }
@@ -2216,7 +2235,7 @@ function defineTools(): ToolEntry[] {
       def: {
         name: "am_agent_detect",
         description:
-          "Detect which ACP/A2A agents are available on this host. Combines the unified agent registry with PATH + adapter-derived liveness signals for local install. Returns `locallyInstalled` (true/false/null) — scoped to local ACP install only; it does NOT probe A2A remote endpoints. For agents with A2A endpoints, use `am_agent_status` or `am_agent_invoke` to probe remote reachability.",
+          "Detect which ACP/A2A agents are available on this host. Combines the unified agent registry with PATH + adapter-derived liveness signals for local install. Returns `locallyInstalled` (true/false/null) — scoped to local ACP install only; it does NOT probe A2A remote endpoints. For agents with A2A endpoints, use `am_agent_status` or `am_agent_invoke` to probe remote reachability. NOTE (2026-05-02): the legacy field `reachable` is emitted alongside `locallyInstalled` for one release of backward compatibility. Consumers should migrate to `locallyInstalled`; `reachable` will be removed in v0.6.",
         inputSchema: { type: "object", properties: {} },
       },
       tier: "read-only" as ToolTier,
@@ -2232,6 +2251,7 @@ function defineTools(): ToolEntry[] {
         return {
           detected: agents.map((a) => {
             const install = installMap[a.name];
+            const locallyInstalled = install ? install.installed : null;
             return {
               name: a.name,
               source: a.source,
@@ -2240,7 +2260,13 @@ function defineTools(): ToolEntry[] {
               // For A2A remote reachability, callers must invoke am_agent_status
               // or attempt am_agent_invoke. Renamed from `reachable` to prevent
               // callers conflating "local install present" with "remote endpoint up".
-              locallyInstalled: install ? install.installed : null,
+              locallyInstalled,
+              // CODEX-4 (2026-05-02): emit the legacy `reachable` field with
+              // the same value for one release of backward compatibility.
+              // Existing MCP consumers that parse `.reachable` continue to
+              // work; they migrate to `locallyInstalled` at leisure. This
+              // field will be removed in v0.6 — track via a future ADR.
+              reachable: locallyInstalled,
               // Extra signal for callers that want to distinguish HOW the
               // detection fired. Absent when locallyInstalled is null.
               ...(install
@@ -2322,29 +2348,51 @@ async function invokeAgentImpl(args: Record<string, unknown>, ctx: ToolContext):
     // human-in-the-loop). Explicitly opt into auto-approve rather than
     // inheriting the class secure-by-default "deny" (2026-05-02).
     client.setPermissionPolicy("auto-approve");
-    const sessionId = sessionName ?? `am-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    // CODEX-12 (2026-05-02): also restrict FS to cwd, matching bridge HIGH-2.
+    // Without this, auto-approve mode leaves FS unrestricted — a malicious
+    // or compromised agent can readTextFile / writeTextFile anywhere on disk.
+    client.setAllowedPaths([cwd]);
+
+    // CODEX-11 (2026-05-02): sessionId MUST come from the ACP server via
+    // newSession(). Previously the code invented a local ID at this point
+    // and discarded newSession()'s return value — subsequent prompt() +
+    // cancel + status operations couldn't find the session. We still accept
+    // a caller-supplied `sessionName` for client-side tracking, but the ACP
+    // transport always uses the server-assigned ID.
+    let serverSessionId: string | undefined;
 
     // Wire progress: ACP emits onSessionUpdate for every chunk/tool call.
     // We forward those as notifications/progress when streaming is requested.
+    // The sessionId reported to the caller is the caller's preferred name
+    // (for tracking) when provided; otherwise it's the server-assigned ID.
     if (streamRequested) {
       client.onSessionUpdate((update: unknown) => {
         ctx.emitProgress({
-          message: { kind: "acp.session_update", sessionId, agent: agentName, data: update },
+          message: {
+            kind: "acp.session_update",
+            sessionId: sessionName ?? serverSessionId ?? "pending",
+            agent: agentName,
+            data: update,
+          },
         });
       });
     }
 
+    const trackingId = sessionName ?? `am-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     try {
       await client.connect(entry.acp.command);
-      activeSessions.set(sessionId, {
+      activeSessions.set(trackingId, {
         kind: "acp",
         agent: agentName,
         client,
       });
-      await client.newSession({ cwd });
-      const result = await client.prompt(sessionId, [{ type: "text", text: promptText }]);
+      serverSessionId = await client.newSession({ cwd });
+      const result = await client.prompt(serverSessionId, [{ type: "text", text: promptText }]);
       return {
-        sessionId,
+        // Expose BOTH identifiers so callers tracking by name can cancel
+        // and the server-authoritative ID is inspectable for debugging.
+        sessionId: trackingId,
+        serverSessionId,
         agent: agentName,
         protocol: "acp",
         result: result.text,
@@ -2355,7 +2403,7 @@ async function invokeAgentImpl(args: Record<string, unknown>, ctx: ToolContext):
         streamed: streamRequested,
       };
     } finally {
-      activeSessions.delete(sessionId);
+      activeSessions.delete(trackingId);
       await client.disconnect().catch(() => {});
     }
   }

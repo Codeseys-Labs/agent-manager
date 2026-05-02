@@ -34,8 +34,20 @@ jobs:
           set +e
           OUTPUT=$(bun test --coverage 2>&1)
           echo "$OUTPUT"
-          FAIL_LINE=$(echo "$OUTPUT" | grep -E '^ [0-9]+ fail$' | tail -1)
+          # CODEX-13 (2026-05-02): hardening parity with build-verify job
+          # (ci.yml:65-88). Even though this job runs on Linux-only and
+          # shouldn't see CRLF today, Bun output-format regressions or a
+          # future matrix expansion would silently false-success here. Apply
+          # the same tr -d '\r' + dual-line-check pattern defensively.
+          # Inputs are from `bun test` stdout — no injection surface.
+          OUTPUT_LF=$(printf '%s' "$OUTPUT" | tr -d '\r')
+          FAIL_LINE=$(echo "$OUTPUT_LF" | grep -E '^ [0-9]+ fail$' | tail -1)
           FAIL_COUNT=$(echo "$FAIL_LINE" | awk '{print $1}')
+          PASS_LINE=$(echo "$OUTPUT_LF" | grep -E '^ [0-9]+ pass$' | tail -1)
+          if [ -z "$FAIL_LINE" ] && [ -z "$PASS_LINE" ]; then
+            echo "::error::Test output did not contain a pass/fail summary line — treat as failure"
+            exit 1
+          fi
           if [ -n "$FAIL_COUNT" ] && [ "$FAIL_COUNT" != "0" ] && [ "$FAIL_COUNT" != "" ]; then
             echo "::error::$FAIL_COUNT test(s) failed"
             exit 1
