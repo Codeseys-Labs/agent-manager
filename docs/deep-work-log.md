@@ -169,3 +169,27 @@ design conversation).
 - `bun test`: **2462 pass / 0 fail / 7252 expect() across 184 files**.
 - `bun run typecheck`: 0 src TS errors.
 - `bun run lint`: 0 errors, 1 pre-existing warning (unchanged).
+
+## Run 2026-05-02-B — started at ffb0751
+
+**Scope:** Drive the 6-pillar review backlog (synthesis at
+`docs/research/2026-05-02-all-pillars-review/00-synthesis.md`) toward
+zero. 15+ findings across 4 tiers + 4 candidate ADRs.
+
+**Budget:** 3 waves max. The full 4-ADR design scope is a multi-week
+effort; this loop ships the A-tier unlocks (variants schema + dry-run +
+serve auth bootstrap) and leaves B/C/D tiers as tracked plans.
+
+**Pragmatic cut-list for this loop:**
+- Tier A1 (variants schema + --variant plumbing) → proposed ADR-0036 + minimal schema + 1 end-to-end path (`am run claude --variant <name>`)
+- Tier B1 (am serve auth bootstrap) → ship the fix (one-day)
+- Tier A2 (dry-run/explain) → proposed ADR-0038 + one implementation as proof-of-concept (`am run --dry-run`)
+- Other Tier B/C/D items: written as plans in `docs/plans/`, not shipped.
+
+**Deferred with explicit justification:**
+- Tier A3 per-tool MCP metadata (ADR-0037): genuine multi-week effort; all 38 tools need metadata.
+- Tier D per-client MCP policies (ADR-0039): architectural, needs design conversation.
+- Tier B2 wiki M5: plan already written (`docs/plans/wiki-sync-m5.md`).
+- Tier B3 marketplace author kit: 3-day effort, standalone.
+
+**Baseline hash:** `ffb07519a848deffa589ccc33866769e6b182c90`
