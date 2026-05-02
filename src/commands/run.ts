@@ -23,6 +23,7 @@
 import { join } from "node:path";
 import { defineCommand } from "citty";
 import {
+  type UnifiedAgent,
   type UnifiedRegistryConfig,
   isCatalogOnly,
   isShimNotEnabled,
@@ -32,9 +33,20 @@ import {
   tierRefusalMessage,
 } from "../core/agent-registry";
 import { resolveConfigDir } from "../core/config";
-import { tryReadConfig } from "../core/config";
+import { tryReadConfig, tryReadProjectConfig } from "../core/config";
+import type { Config, ProjectConfig } from "../core/schema";
+import { isSecretKeyName } from "../core/secret-detection";
+import {
+  type ResolvedVariant,
+  VariantResolverError,
+  type VariantSource,
+  isVariantsEnabled,
+  resolveVariant,
+} from "../core/variant-resolver";
 import { debug, error, info, output, parsePositiveInt, warn } from "../lib/output";
 import { AcpClientError, AmAcpClient, createAcpClient } from "../protocols/acp/client";
+import { sandboxEnv } from "../protocols/acp/env-sandbox";
+import { parseCommand } from "../protocols/acp/registry";
 import type { SessionUpdate } from "../protocols/acp/types";
 
 // ── Helpers ────────────────────────────────────────────────────
@@ -43,13 +55,28 @@ import type { SessionUpdate } from "../protocols/acp/types";
 async function loadRegistryContext(): Promise<{
   registryConfig: UnifiedRegistryConfig | undefined;
   configDir: string;
+  /** Full global config — includes [agents.<name>.variants] for ADR-0036. */
+  globalConfig: Config | undefined;
+  /** Project config (from CWD upward search) — may also carry variants. */
+  projectConfig: ProjectConfig | undefined;
 }> {
   const configDir = resolveConfigDir();
   const config = await tryReadConfig(join(configDir, "config.toml"));
   // Build UnifiedRegistryConfig from [agents.*] entries that have acp/a2a sub-sections
   // The TOML config's agents section may have entries with acp/a2a sub-tables
   const registryConfig = config as UnifiedRegistryConfig | undefined;
-  return { registryConfig, configDir };
+  // ADR-0036: variant resolution needs the typed Config + ProjectConfig.
+  // Project config lookup is cheap — check CWD; no recursive walk is required
+  // for the MVP (users who need project-level defaults put them in the same
+  // directory they run `am run` from).
+  const projectConfig =
+    (await tryReadProjectConfig(join(process.cwd(), ".agent-manager.toml"))) ?? undefined;
+  return {
+    registryConfig,
+    configDir,
+    globalConfig: config ?? undefined,
+    projectConfig,
+  };
 }
 
 /** Format a session update for human-readable output. */
@@ -87,9 +114,251 @@ interface RunAgentArgs {
   cwd?: string;
   timeout?: string;
   noAutoApprove: boolean;
+  dryRun: boolean;
+  /** ADR-0036: explicit variant name from `--variant <name>`. Ignored when
+   *  `AM_VARIANTS=1` is not set (see isVariantsEnabled). */
+  variant?: string;
   json: boolean;
   quiet: boolean;
   verbose: boolean;
+}
+
+// ── Dry-run (ADR-0038) ─────────────────────────────────────────
+
+// VariantSource type imported from variant-resolver (ADR-0036) — single
+// source of truth for the resolution-source vocabulary:
+//   - "cli-flag"         : `--variant <name>` explicitly passed.
+//   - "project-default"  : `default_variant` read from .agent-manager.toml.
+//   - "global-default"   : `default_variant` read from the global config.
+//   - "sole-variant"     : exactly one variant declared; picked implicitly.
+//   - null               : no variants declared at all (back-compat).
+// Ambiguous cases (>1 variant, no default, no --variant) throw at resolve time
+// rather than picking a silent winner — see ADR-0036 Correction 1.
+
+/** Shape of the dry-run explanation payload defined by ADR-0038. */
+interface DryRunExplanation {
+  agent: string;
+  variant: string | null;
+  variant_source: VariantSource;
+  tier: string | null;
+  protocol: "acp";
+  command: string;
+  args: string[];
+  /**
+   * Resolved absolute path of the `command` binary on PATH. null when the
+   * binary is not installed. Added in the 2026-05-02 ADR-0038 patch —
+   * `Bun.which` is cheap, read-only, and lets operators see whether a
+   * live run would actually succeed. Exit code stays 0 on miss: dry-run
+   * explains, doesn't assert runnability (the `warnings` field calls it out).
+   */
+  binary_resolved: string | null;
+  env_keys: string[];
+  env_secrets_redacted: string[];
+  cwd: string;
+  /** Effective permission policy for the live run (CLI-flag-derived today). */
+  permission_policy: "deny" | "auto-approve";
+  /**
+   * Permission policy declared on the selected variant (ADR-0036). Surfaced
+   * so operators see what the variant ASKS for, even though the MVP does NOT
+   * enforce it (schema-only). `null` when no variant override is present.
+   *
+   * When this differs from `permission_policy` a `warnings` entry is emitted
+   * so operators know the declared policy is being ignored until the
+   * enforcement-wiring follow-up ships.
+   */
+  variant_permission_policy: "deny" | "auto-approve" | null;
+  allowed_paths: string[];
+}
+
+interface DryRunPayload {
+  action: "run-agent";
+  would_do: string[];
+  reads_only: true;
+  mutations_prevented: string[];
+  warnings: string[];
+  explanation: DryRunExplanation;
+}
+
+/**
+ * `Bun.which` shim — defaults to the real thing, tests can stub it to assert
+ * both the "binary found" and "binary missing" branches without touching PATH.
+ */
+type WhichFn = (name: string) => string | null;
+let whichFn: WhichFn = (name) => (Bun.which(name) as string | null) ?? null;
+
+/**
+ * Swap the PATH-resolution implementation. Tests call this with a mock and
+ * pass `null` to restore the default.
+ */
+export function __setDryRunWhichFnForTests(fn: WhichFn | null): void {
+  whichFn = fn ?? ((name) => (Bun.which(name) as string | null) ?? null);
+}
+
+/**
+ * Build the dry-run payload for `am run`.
+ *
+ * Pure-ish function — no subprocess spawn, no network, no disk writes.
+ * `Bun.which` IS called to populate `binary_resolved` (2026-05-02 ADR-0038
+ * patch): it's cheap, read-only, and tells the operator whether a live run
+ * would actually find the binary. On miss the exit code stays 0 (dry-run
+ * explains, doesn't assert runnability); a warning is appended instead.
+ *
+ * A `resolvedVariant` (from ADR-0036) may override the agent's top-level
+ * command/args/env. When absent (AM_VARIANTS not set, or the agent declares
+ * no variants) the dry-run falls back to the entry's `acp.command`.
+ *
+ * `variantSource` explains WHERE the variant was chosen. Null when no
+ * variant was selected.
+ */
+function buildDryRunPayload(
+  entry: UnifiedAgent,
+  args: RunAgentArgs,
+  cwd: string,
+  resolvedVariant?: ResolvedVariant | null,
+  variantSource?: VariantSource,
+): DryRunPayload {
+  // Variant command/args take priority over the agent's top-level acp.command.
+  const acpCommand = resolvedVariant?.command ?? entry.acp?.command ?? "";
+  const parsed = parseCommand(acpCommand);
+  const extraArgs = resolvedVariant?.args ?? [];
+  const finalArgs = [...parsed.args, ...extraArgs];
+
+  // Layer the variant env on top of the sandboxed base env — this mirrors
+  // what `AmAcpClient.connect` will do at real spawn time (sandboxEnv merges
+  // the `extra` overlay on top of the allow-listed parent env).
+  const env = sandboxEnv(resolvedVariant?.env);
+  const envKeys = Object.keys(env).sort();
+  const envSecretsRedacted: string[] = [];
+  for (const key of envKeys) {
+    const value = env[key];
+    // Mark as "redacted" if the key name looks secret-shaped OR the value
+    // was produced by ${VAR} interpolation (indicating a templated secret).
+    // sandboxEnv's allow-list strips AWS_* / *_TOKEN / *_SECRET / *_KEY etc,
+    // so this is defence-in-depth — anything that makes it onto the resolved
+    // env AND has a secret-shaped name gets flagged in the preview.
+    if (isSecretKeyName(key) || (typeof value === "string" && value.includes("${"))) {
+      envSecretsRedacted.push(`${key}=<redacted>`);
+    }
+  }
+
+  // Permission policy (ADR-0036 Correction 3 + Codex review):
+  // The dry-run MUST reflect what the LIVE path will actually do so operators
+  // don't get a false sense of security. Live path ignores variant.permission_policy
+  // in the MVP (schema-accepted but not enforced), so dry-run uses the same
+  // CLI-flag-only resolution. Variant's permission_policy is surfaced separately
+  // in `explanation.variant_permission_policy` so operators can see what's declared.
+  // TODO(ADR-0036 follow-up): wire variant.permission_policy to enforcement —
+  //   runAgent() should call client.setPermissionPolicy(resolvedVariant.permission_policy)
+  //   when present, overriding the CLI-flag default. Hook point: around line ~424
+  //   in runAgent(), before the existing args.noAutoApprove branch.
+  const permissionPolicy: "deny" | "auto-approve" = args.noAutoApprove ? "deny" : "auto-approve";
+  const variantPermissionPolicy: "deny" | "auto-approve" | null =
+    resolvedVariant?.permission_policy ?? null;
+
+  const variantName = resolvedVariant?.name ?? null;
+  const resolveStep = variantName
+    ? `resolve agent '${entry.name}' variant '${variantName}'${entry.tier ? ` (${entry.tier})` : ""}`
+    : `resolve agent '${entry.name}'${entry.tier ? ` (${entry.tier})` : ""}`;
+
+  // PATH resolution for the chosen `command`. Skipped for absolute or
+  // relative paths (those are literal file references — `Bun.which` won't
+  // resolve them and a "not on PATH" warning would be misleading).
+  const warnings: string[] = [];
+  let binaryResolved: string | null = null;
+  if (parsed.executable.startsWith("/") || parsed.executable.startsWith("./")) {
+    binaryResolved = null;
+  } else {
+    const resolved = whichFn(parsed.executable);
+    if (resolved) {
+      binaryResolved = resolved;
+    } else {
+      warnings.push(
+        `binary '${parsed.executable}' not found on PATH — a live run would fail to spawn`,
+      );
+    }
+  }
+
+  // ADR-0036 Correction 3: when a variant declares permission_policy but it
+  // differs from the effective (CLI-derived) policy, warn operators loudly
+  // that the declaration is NOT being enforced in this MVP.
+  if (variantPermissionPolicy !== null && variantPermissionPolicy !== permissionPolicy) {
+    warnings.push(
+      `variant declares permission_policy='${variantPermissionPolicy}' but MVP enforces '${permissionPolicy}' (CLI-flag-derived); variant permission_policy is schema-only until ADR-0036 follow-up.`,
+    );
+  }
+
+  return {
+    action: "run-agent",
+    would_do: [resolveStep, "spawn subprocess via ACP", "send prompt and stream updates"],
+    reads_only: true,
+    mutations_prevented: ["process spawn", "session file write"],
+    warnings,
+    explanation: {
+      agent: entry.name,
+      variant: variantName,
+      variant_source: variantSource ?? null,
+      tier: entry.tier ?? null,
+      protocol: "acp",
+      command: parsed.executable,
+      args: finalArgs,
+      binary_resolved: binaryResolved,
+      env_keys: envKeys,
+      env_secrets_redacted: envSecretsRedacted,
+      cwd,
+      permission_policy: permissionPolicy,
+      variant_permission_policy: variantPermissionPolicy,
+      allowed_paths: [cwd],
+    },
+  };
+}
+
+/** Render the dry-run payload as a human-readable table. */
+function renderDryRunTable(payload: DryRunPayload): string {
+  const lines: string[] = [];
+  const e = payload.explanation;
+  lines.push(`action:            ${payload.action}`);
+  lines.push(`reads_only:        ${payload.reads_only}`);
+  lines.push("would_do:");
+  for (const step of payload.would_do) lines.push(`  - ${step}`);
+  lines.push("mutations_prevented:");
+  for (const m of payload.mutations_prevented) lines.push(`  - ${m}`);
+  if (payload.warnings.length > 0) {
+    lines.push("warnings:");
+    for (const w of payload.warnings) lines.push(`  - ${w}`);
+  }
+  lines.push("explanation:");
+  lines.push(`  agent:             ${e.agent}`);
+  lines.push(`  variant:           ${e.variant ?? "<none>"}`);
+  lines.push(`  variant_source:    ${e.variant_source ?? "<none>"}`);
+  lines.push(`  tier:              ${e.tier ?? "<none>"}`);
+  lines.push(`  protocol:          ${e.protocol}`);
+  lines.push(`  command:           ${e.command}`);
+  lines.push(`  args:              ${e.args.length === 0 ? "<none>" : e.args.join(" ")}`);
+  lines.push(`  binary_resolved:   ${e.binary_resolved ?? "<not on PATH>"}`);
+  lines.push(`  env_keys:          ${e.env_keys.length === 0 ? "<none>" : e.env_keys.join(", ")}`);
+  lines.push(
+    `  env_secrets_redacted: ${
+      e.env_secrets_redacted.length === 0 ? "<none>" : e.env_secrets_redacted.join(", ")
+    }`,
+  );
+  lines.push(`  cwd:               ${e.cwd}`);
+  lines.push(`  permission_policy: ${e.permission_policy}`);
+  lines.push(`  allowed_paths:     ${e.allowed_paths.join(", ")}`);
+  return lines.join("\n");
+}
+
+/**
+ * Emit the dry-run payload (JSON when --json, readable table otherwise) and
+ * return. Exported for tests.
+ */
+export function __emitDryRunForTests(
+  entry: UnifiedAgent,
+  args: RunAgentArgs,
+  cwd: string,
+  resolvedVariant?: ResolvedVariant | null,
+  variantSource?: VariantSource,
+): DryRunPayload {
+  return buildDryRunPayload(entry, args, cwd, resolvedVariant, variantSource);
 }
 
 async function runAgent(args: RunAgentArgs): Promise<void> {
@@ -100,12 +369,41 @@ async function runAgent(args: RunAgentArgs): Promise<void> {
   const cwd = args.cwd || process.cwd();
   const timeoutSecs = parsePositiveInt(args.timeout, "timeout", 300);
 
-  const { registryConfig, configDir } = await loadRegistryContext();
+  const { registryConfig, configDir, globalConfig, projectConfig } = await loadRegistryContext();
 
   // Resolve the agent via unified registry
   const entry = await resolveAgentAsync(agentName, registryConfig, configDir);
   if (!entry) {
     error(`Unknown agent "${agentName}". Run \`am agent list\` to list available agents.`, opts);
+    process.exitCode = 1;
+    return;
+  }
+
+  // ADR-0036: resolve variant BEFORE dry-run / tier checks so the preview
+  // and the live path agree on what would be spawned.
+  //
+  // Gating: variants are opt-in via `AM_VARIANTS=1` during the first release
+  // after ADR-0036 accepts. When the flag is off we skip the resolver AND
+  // we refuse an explicit `--variant` flag with an informative error (the
+  // alternative — silently ignoring `--variant` — would surprise the user).
+  let resolvedVariant: ResolvedVariant | null = null;
+  let variantSource: VariantSource = null;
+  if (isVariantsEnabled()) {
+    try {
+      resolvedVariant = resolveVariant(agentName, args.variant, globalConfig, projectConfig);
+      // variantSource comes straight from the resolver (ADR-0036) — single
+      // source of truth for where the chosen variant came from.
+      variantSource = resolvedVariant.source;
+    } catch (err: unknown) {
+      if (err instanceof VariantResolverError) {
+        error(err.message, opts);
+        process.exitCode = 1;
+        return;
+      }
+      throw err;
+    }
+  } else if (args.variant !== undefined) {
+    error("--variant requires AM_VARIANTS=1 (ADR-0036 is opt-in for this release).", opts);
     process.exitCode = 1;
     return;
   }
@@ -134,6 +432,21 @@ async function runAgent(args: RunAgentArgs): Promise<void> {
   }
 
   debug(`Resolved agent: ${agentName} -> ${entry.acp.command} (${entry.source})`, opts);
+
+  // ADR-0038: dry-run short-circuits BEFORE any subprocess spawn or
+  // permission-policy side effect. Resolution + validation has already run;
+  // we just render the plan and return with exit 0.
+  if (args.dryRun) {
+    const payload = buildDryRunPayload(entry, args, cwd, resolvedVariant, variantSource);
+    if (args.json) {
+      output(payload, opts);
+    } else if (!args.quiet) {
+      // Route straight to stdout (not `info`) — the table IS the command's
+      // output, not incidental progress that --quiet should suppress.
+      process.stdout.write(`${renderDryRunTable(payload)}\n`);
+    }
+    return;
+  }
 
   const client = createAcpClient();
 
@@ -166,12 +479,22 @@ async function runAgent(args: RunAgentArgs): Promise<void> {
 
   try {
     // 1. Connect
+    // ADR-0036: when a variant is resolved, its `command` replaces the
+    // agent's top-level `acp.command`. Variant `args` are appended after the
+    // parsed command tokens (via ConnectOptions.args). Variant `env` is
+    // overlaid on the sandboxed base env inside `AmAcpClient.connect` via
+    // `sandboxEnv(opts?.env)`.
+    const connectCommand = resolvedVariant?.command ?? entry.acp.command;
     info(`Connecting to ${agentName}...`, opts);
-    const conn = await client.connect(entry.acp.command, {
+    const conn = await client.connect(connectCommand, {
       initTimeout: 30_000,
+      args: resolvedVariant?.args,
+      env: resolvedVariant?.env,
     });
     debug(
-      `Connected: ${conn.agentInfo?.name ?? "unknown"} v${conn.agentInfo?.version ?? "?"}`,
+      `Connected: ${conn.agentInfo?.name ?? "unknown"} v${conn.agentInfo?.version ?? "?"}${
+        resolvedVariant?.name ? ` [variant: ${resolvedVariant.name}]` : ""
+      }`,
       opts,
     );
 
@@ -447,6 +770,19 @@ export const runCommand = defineCommand({
       description: "Deny all permission requests from the agent (default: auto-approve)",
       default: false,
     },
+    "dry-run": {
+      type: "boolean",
+      description:
+        "Explain what would happen without spawning the subprocess (ADR-0038). Emits resolved command/args/env.",
+      default: false,
+    },
+    // Future: --explain as a dedicated post-execution verb, ADR-0038
+    // §"The explain verb — deferred". MVP ships only --dry-run.
+    variant: {
+      type: "string",
+      description:
+        "Variant name to launch this agent with (ADR-0036). Requires AM_VARIANTS=1. Falls back to default_variant or first-defined variant.",
+    },
     json: { type: "boolean", description: "JSON output", default: false },
     quiet: { type: "boolean", alias: "q", description: "Suppress progress output", default: false },
     verbose: {
@@ -478,13 +814,18 @@ export const runCommand = defineCommand({
       return;
     }
 
+    const raw = args as Record<string, unknown>;
+    const dryRun = Boolean(raw["dry-run"]);
+
     await runAgent({
       agent: args.agent as string,
       prompt: promptText,
       session: args.session as string | undefined,
       cwd: args.cwd as string | undefined,
       timeout: args.timeout as string | undefined,
-      noAutoApprove: ((args as Record<string, unknown>)["no-auto-approve"] as boolean) ?? false,
+      noAutoApprove: (raw["no-auto-approve"] as boolean) ?? false,
+      dryRun,
+      variant: args.variant as string | undefined,
       json: args.json,
       quiet: args.quiet,
       verbose: args.verbose,

@@ -1,6 +1,12 @@
+import { randomBytes } from "node:crypto";
 import { defineCommand } from "citty";
 import { parsePositiveInt } from "../lib/output";
 import { createApp } from "../web/server";
+
+/** Mint a fresh 128-bit session-bound URL token. Exported for testing. */
+export function mintSessionToken(): string {
+  return randomBytes(16).toString("hex");
+}
 
 export const serveCommand = defineCommand({
   meta: { name: "serve", description: "Start the web dashboard" },
@@ -31,16 +37,21 @@ export const serveCommand = defineCommand({
       return;
     }
 
-    const app = await createApp({ enableBridge: args.bridge });
+    // Fresh per-invocation token. Never persisted to disk — restarting
+    // `am serve` invalidates the prior URL.
+    const authToken = mintSessionToken();
+    const app = await createApp({ enableBridge: args.bridge, authToken });
 
     Bun.serve({
       port,
       fetch: app.fetch,
     });
 
-    console.log(`Dashboard running at http://localhost:${port}`);
+    // Log the bootstrap URL to stderr so `am serve | tee log.txt` doesn't
+    // accidentally persist the credential to stdout-captured logs.
+    console.error(`Dashboard ready — open: http://localhost:${port}/?token=${authToken}`);
     if (args.bridge) {
-      console.log("A2A-ACP bridge enabled: incoming A2A tasks will route to local ACP agents");
+      console.error("A2A-ACP bridge enabled: incoming A2A tasks will route to local ACP agents");
     }
   },
 });

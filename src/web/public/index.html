@@ -782,8 +782,36 @@
     }
     tabButtons.forEach(b => b.addEventListener("click", () => switchTab(b.dataset.tab)));
 
+    // --- Token bootstrap (local `am serve`) ---
+    // The CLI prints http://localhost:PORT/?token=<hex>. On first load we
+    // trade that query-string token for an HttpOnly cookie, then strip the
+    // query and reload so the token isn't kept in the address bar, history,
+    // or Referer headers on outbound requests (d3 CDN, marked CDN, etc).
+    async function bootstrapSessionFromUrl() {
+      const params = new URLSearchParams(window.location.search);
+      const token = params.get("token");
+      if (!token) return false;
+      try {
+        await fetch("/auth/session", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ token }),
+          credentials: "same-origin",
+        });
+      } catch {
+        // Network/server error — fall through; the UI will surface 401s.
+      }
+      // Strip the query regardless of outcome so we don't loop on a bad token.
+      params.delete("token");
+      const clean = window.location.pathname + (params.toString() ? "?" + params.toString() : "");
+      window.location.replace(clean);
+      return true; // we are navigating away; stop further init
+    }
+
     // --- Startup ---
     (async () => {
+      if (await bootstrapSessionFromUrl()) return;
+
       const isCloud = await detectCloudMode();
       if (isCloud) {
         // Hide graph tab in cloud mode (no endpoint)

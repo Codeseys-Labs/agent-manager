@@ -311,6 +311,82 @@ describe("AgentProfileSchema", () => {
       }),
     ).toThrow();
   });
+
+  // ADR-0036: variants schema
+  test("parses agent profile with variants + default_variant", () => {
+    const result = AgentProfileSchema.parse({
+      name: "claude",
+      default_variant: "anthropic",
+      variants: {
+        anthropic: {
+          protocol: "acp",
+          command: "npx -y @agentclientprotocol/claude-agent-acp@latest",
+          env: { ANTHROPIC_API_KEY: "${ANTHROPIC_API_KEY}" },
+        },
+        bedrock: {
+          protocol: "acp",
+          command: "npx -y @agentclientprotocol/claude-agent-acp@latest",
+          env: {
+            CLAUDE_CODE_USE_BEDROCK: "1",
+            AWS_PROFILE: "work",
+            AWS_REGION: "us-east-1",
+          },
+          permission_policy: "auto-approve",
+        },
+      },
+    });
+    expect(result.default_variant).toBe("anthropic");
+    expect(result.variants?.anthropic.protocol).toBe("acp");
+    expect(result.variants?.bedrock.env?.AWS_REGION).toBe("us-east-1");
+    expect(result.variants?.bedrock.permission_policy).toBe("auto-approve");
+  });
+
+  test("protocol defaults to 'acp' when omitted on a variant", () => {
+    const result = AgentProfileSchema.parse({
+      name: "claude",
+      variants: {
+        default: { command: "claude-acp" },
+      },
+    });
+    expect(result.variants?.default.protocol).toBe("acp");
+  });
+
+  test("variants field is optional (backward compat with existing agents)", () => {
+    // Parses an agent that predates ADR-0036 — no variants/default_variant.
+    const result = AgentProfileSchema.parse({
+      name: "claude",
+      acp: { command: "npx claude-agent-acp" },
+    });
+    expect(result.variants).toBeUndefined();
+    expect(result.default_variant).toBeUndefined();
+    expect(result.acp?.command).toBe("npx claude-agent-acp");
+  });
+
+  test("rejects variant with an invalid protocol value", () => {
+    expect(() =>
+      AgentProfileSchema.parse({
+        name: "claude",
+        variants: {
+          weird: { protocol: "grpc", command: "foo" },
+        },
+      }),
+    ).toThrow();
+  });
+
+  test("rejects variant with an invalid permission_policy value", () => {
+    expect(() =>
+      AgentProfileSchema.parse({
+        name: "claude",
+        variants: {
+          bedrock: {
+            protocol: "acp",
+            command: "foo",
+            permission_policy: "allow-all",
+          },
+        },
+      }),
+    ).toThrow();
+  });
 });
 
 describe("ProfileSchema", () => {

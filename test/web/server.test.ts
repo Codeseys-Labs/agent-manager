@@ -339,3 +339,90 @@ describe("Web API", () => {
     expect(Array.isArray(data.edges)).toBe(true);
   });
 });
+
+// ── URL-token bootstrap auth (B1) ───────────────────────────────
+// These tests build their own app with an injected session-bound token
+// (mirroring `am serve`) rather than reusing the module-wide persisted one.
+describe("Web API — URL-token bootstrap", () => {
+  const sessionToken = "a".repeat(32); // 128-bit hex
+  let bootApp: Awaited<ReturnType<typeof createApp>>;
+
+  beforeAll(async () => {
+    bootApp = await createApp({ authToken: sessionToken });
+  });
+
+  it("unauthenticated GET /api/servers returns 401", async () => {
+    const res = await bootApp.request("/api/servers");
+    expect(res.status).toBe(401);
+  });
+
+  it("POST /auth/session with wrong token returns 401 and sets no cookie", async () => {
+    const res = await bootApp.request("/auth/session", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ token: "deadbeef" }),
+    });
+    expect(res.status).toBe(401);
+    expect(res.headers.get("set-cookie")).toBeNull();
+  });
+
+  it("POST /auth/session with no body returns 400", async () => {
+    const res = await bootApp.request("/auth/session", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+    });
+    expect(res.status).toBe(400);
+  });
+
+  it("POST /auth/session with correct token sets HttpOnly SameSite=Lax cookie", async () => {
+    const res = await bootApp.request("/auth/session", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ token: sessionToken }),
+    });
+    expect(res.status).toBe(200);
+    const cookie = res.headers.get("set-cookie") ?? "";
+    expect(cookie).toContain("am_session=");
+    expect(cookie.toLowerCase()).toContain("httponly");
+    expect(cookie.toLowerCase()).toContain("samesite=lax");
+    expect(cookie.toLowerCase()).toContain("path=/");
+    // No Secure flag on localhost http.
+    expect(cookie.toLowerCase()).not.toContain("secure");
+  });
+
+  it("GET /api/servers with session cookie succeeds", async () => {
+    const res = await bootApp.request("/api/servers", {
+      headers: { cookie: `am_session=${sessionToken}` },
+    });
+    expect(res.status).toBe(200);
+    const data = await res.json();
+    expect(Array.isArray(data.servers)).toBe(true);
+  });
+
+  it("GET /api/servers with wrong session cookie returns 401", async () => {
+    const res = await bootApp.request("/api/servers", {
+      headers: { cookie: "am_session=not-the-token" },
+    });
+    expect(res.status).toBe(401);
+  });
+
+  it("GET /api/servers with Bearer header still works (MCP-style clients)", async () => {
+    const res = await bootApp.request("/api/servers", {
+      headers: { authorization: `Bearer ${sessionToken}` },
+    });
+    expect(res.status).toBe(200);
+  });
+
+  it("GET /api/health remains unauthenticated", async () => {
+    const res = await bootApp.request("/api/health");
+    expect(res.status).toBe(200);
+  });
+
+  it("POST /auth/logout clears the session cookie", async () => {
+    const res = await bootApp.request("/auth/logout", { method: "POST" });
+    expect(res.status).toBe(200);
+    const cookie = (res.headers.get("set-cookie") ?? "").toLowerCase();
+    expect(cookie).toContain("am_session=");
+    expect(cookie).toContain("max-age=0");
+  });
+});

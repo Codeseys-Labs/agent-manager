@@ -41,6 +41,8 @@ This folder contains the architectural decisions for agent-manager.
 | [0033](0033-acp-agent-tiers-and-shim-wrapper.md) | ACP Agent Tiers and Shim Wrapper | Accepted (pending amendment by [0034](0034-shim-scope-and-inclusion-criteria.md)) | 2026-04-18 |
 | [0034](0034-shim-scope-and-inclusion-criteria.md) | Scope Fence for First-Party ACP Shims | Proposed | 2026-05-01 |
 | [0035](0035-community-shim-registration.md) | Community Shim Registration Protocol | Proposed | 2026-05-02 |
+| [0036](0036-agent-variants.md) | Per-Agent Variants for Multi-Provider Routing | Proposed | 2026-05-02 |
+| [0038](0038-dry-run-explain-surface.md) | Dry-Run / Explain Surface Pattern | Proposed | 2026-05-02 |
 
 ## Template
 

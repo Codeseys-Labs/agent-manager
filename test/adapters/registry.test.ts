@@ -177,24 +177,16 @@ describe("getDetectedAdapters()", () => {
   // filesystem-bound; 30s is a safe ceiling that won't mask a real
   // regression (detection should complete in well under 1s on a healthy
   // host).
-  it(
-    "returns an array of adapters",
-    async () => {
-      const detected = await getDetectedAdapters();
-      expect(Array.isArray(detected)).toBe(true);
-    },
-    30_000,
-  );
+  it("returns an array of adapters", async () => {
+    const detected = await getDetectedAdapters();
+    expect(Array.isArray(detected)).toBe(true);
+  }, 30_000);
 
-  it(
-    "only includes adapters where detect() returns installed: true",
-    async () => {
-      const detected = await getDetectedAdapters();
-      for (const adapter of detected) {
-        const result = adapter.detect();
-        expect(result.installed).toBe(true);
-      }
-    },
-    30_000,
-  );
+  it("only includes adapters where detect() returns installed: true", async () => {
+    const detected = await getDetectedAdapters();
+    for (const adapter of detected) {
+      const result = adapter.detect();
+      expect(result.installed).toBe(true);
+    }
+  }, 30_000);
 });

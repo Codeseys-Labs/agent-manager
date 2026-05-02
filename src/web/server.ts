@@ -1,3 +1,4 @@
+import { timingSafeEqual } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { Hono } from "hono";
@@ -63,6 +64,30 @@ export function getTokenPath(configDir: string): string {
   return join(configDir, TOKEN_FILENAME);
 }
 
+/** Constant-time string compare. Returns false on length mismatch. */
+function safeCompare(a: string, b: string): boolean {
+  const ab = Buffer.from(a);
+  const bb = Buffer.from(b);
+  if (ab.length !== bb.length) {
+    timingSafeEqual(ab, ab);
+    return false;
+  }
+  return timingSafeEqual(ab, bb);
+}
+
+/** Session cookie name set by POST /auth/session and read by the auth middleware. */
+const SESSION_COOKIE = "am_session";
+
+/** Extract `am_session` value from a Cookie header, or undefined. */
+function readSessionCookie(cookieHeader: string | undefined): string | undefined {
+  if (!cookieHeader) return undefined;
+  for (const part of cookieHeader.split(";")) {
+    const [rawName, ...rest] = part.trim().split("=");
+    if (rawName === SESSION_COOKIE) return rest.join("=");
+  }
+  return undefined;
+}
+
 // ── Redact encrypted secrets from config responses ──────────────
 
 function redactSecrets(obj: unknown): unknown {
@@ -81,14 +106,50 @@ function redactSecrets(obj: unknown): unknown {
 export interface CreateAppOptions {
   /** Enable A2A-ACP bridge for incoming A2A tasks. */
   enableBridge?: boolean;
+  /**
+   * Session-bound auth token. When provided (e.g. by `am serve`), the server
+   * uses this token instead of the disk-persisted one. Intended for the
+   * one-time URL bootstrap: each `am serve` run mints a fresh token and
+   * restart invalidates the old URL.
+   */
+  authToken?: string;
 }
 
 export async function createApp(options?: CreateAppOptions) {
   const app = new Hono();
   const configDir = resolveConfigDir();
-  const authToken = ensureAuthToken(configDir);
+  const authToken = options?.authToken ?? ensureAuthToken(configDir);
 
-  // ── Auth middleware — require Bearer token on all non-health endpoints ──
+  // ── Auth bootstrap — POST /auth/session exchanges ?token=X for a cookie.
+  // Mounted BEFORE the bearer-enforcing middleware so the landing page can
+  // seed credentials without already having them.
+  app.post("/auth/session", async (c) => {
+    let token: string | undefined;
+    try {
+      const body = (await c.req.json()) as { token?: unknown };
+      if (typeof body?.token === "string") token = body.token;
+    } catch {
+      // fall through — token remains undefined, 400 below
+    }
+    if (!token) return c.json({ error: "Missing 'token' field" }, 400);
+    if (!safeCompare(token, authToken)) {
+      return c.json({ error: "Invalid token" }, 401);
+    }
+    // HttpOnly + SameSite=Lax + Path=/. No Secure (localhost http).
+    // Session-bound: no Max-Age/Expires — cookie dies with the browser session.
+    c.header(
+      "Set-Cookie",
+      `${SESSION_COOKIE}=${encodeURIComponent(authToken)}; HttpOnly; SameSite=Lax; Path=/`,
+    );
+    return c.json({ ok: true });
+  });
+
+  app.post("/auth/logout", (c) => {
+    c.header("Set-Cookie", `${SESSION_COOKIE}=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0`);
+    return c.json({ ok: true });
+  });
+
+  // ── Auth middleware — require Bearer token OR session cookie on /api/* ──
   app.use("*", async (c, next) => {
     // Allow health check without auth
     if (c.req.path === "/api/health") return next();
@@ -96,19 +157,25 @@ export async function createApp(options?: CreateAppOptions) {
     // Allow static assets without auth
     if (!c.req.path.startsWith("/api/")) return next();
 
+    // Session cookie path (set by POST /auth/session after URL bootstrap)
+    const cookieTok = readSessionCookie(c.req.header("cookie"));
+    if (cookieTok && safeCompare(cookieTok, authToken)) return next();
+
     const authHeader = c.req.header("authorization");
     if (!authHeader) {
       return c.json(
         {
           error: "Authentication required",
-          hint: `Provide Bearer token from ${getTokenPath(configDir)}`,
+          hint: options?.authToken
+            ? "Open the URL printed by `am serve` (includes ?token=...)"
+            : `Provide Bearer token from ${getTokenPath(configDir)}`,
         },
         401,
       );
     }
 
     const [scheme, token] = authHeader.split(" ", 2);
-    if (scheme?.toLowerCase() !== "bearer" || token !== authToken) {
+    if (scheme?.toLowerCase() !== "bearer" || !token || !safeCompare(token, authToken)) {
       return c.json({ error: "Invalid authentication token" }, 401);
     }
 

@@ -82,9 +82,27 @@ export const SkillSchema = z.object({
 });
 export type Skill = z.infer<typeof SkillSchema>;
 
+// --- Agent Variant Schema (ADR-0036) ---
+// A variant is a named { protocol, command, args, env, permission_policy? }
+// tuple: one agent entry, many ways to launch it (anthropic direct vs Bedrock
+// vs OpenRouter, etc). `env` values may use ${VAR} interpolated via the
+// existing secrets layer (ADR-0012) at spawn time.
+export const AgentVariantSchema = z.object({
+  protocol: z.enum(["acp", "a2a"]).default("acp"),
+  command: z.string().optional(),
+  args: z.array(z.string()).optional(),
+  env: z.record(z.string(), z.string()).optional(),
+  // Per-variant override for the ACP permission policy. Unset → inherits
+  // class default. Schema accepts the value; MVP does not wire it to
+  // enforcement (see ADR-0036 out-of-scope).
+  permission_policy: z.enum(["auto-approve", "deny"]).optional(),
+});
+export type AgentVariant = z.infer<typeof AgentVariantSchema>;
+
 // --- Agent Profile Schema ---
 // prompt XOR prompt_file (mutually exclusive)
 // acp/a2a are unified registry protocol entries (ADR-0030)
+// variants / default_variant are ADR-0036 extensions.
 export const AgentProfileSchema = z
   .object({
     name: z.string(),
@@ -103,6 +121,9 @@ export const AgentProfileSchema = z
     // tools (e.g. `am agent list`, `am status`) can tell the user the agent
     // is running through the acp-shell wrapper.
     shim_enabled: z.boolean().optional(),
+    // ADR-0036: per-agent variants for multi-provider / multi-account routing.
+    variants: z.record(z.string(), AgentVariantSchema).optional(),
+    default_variant: z.string().optional(),
     _marketplace: MarketplaceProvenanceSchema.optional(),
     adapters: adaptersPassthrough,
   })
