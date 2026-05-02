@@ -462,6 +462,13 @@ export function resolveSessionPathSafely(sessionDir: string, sessionId: string):
 interface AcpActiveSession {
   kind: "acp";
   agent: string;
+  // CODEX-11 final-signoff (2026-05-02): the server-assigned session ID
+  // from ACP newSession(). This is the ID the agent uses over the wire —
+  // cancel/prompt must use it, NOT the caller's local tracking ID. May be
+  // undefined briefly between activeSessions.set() and newSession()
+  // resolving; cancelSessionImpl treats undefined as "fall back to the
+  // lookup key" for compatibility with pre-CODEX-11 callers.
+  serverSessionId?: string;
   // Loose typing avoids a circular import with protocols/acp/client.ts
   // at module-init time; the registry is only read by the cancel tool
   // which already has the concrete type.
@@ -2381,12 +2388,22 @@ async function invokeAgentImpl(args: Record<string, unknown>, ctx: ToolContext):
     const trackingId = sessionName ?? `am-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     try {
       await client.connect(entry.acp.command);
+      // Register BEFORE newSession so a concurrent cancel sees the entry
+      // even if we haven't learned the server ID yet. Re-set with
+      // serverSessionId once newSession resolves so cancelSessionImpl
+      // routes to the server-assigned ID (CODEX-11 final-signoff fix).
       activeSessions.set(trackingId, {
         kind: "acp",
         agent: agentName,
         client,
       });
       serverSessionId = await client.newSession({ cwd });
+      activeSessions.set(trackingId, {
+        kind: "acp",
+        agent: agentName,
+        serverSessionId,
+        client,
+      });
       const result = await client.prompt(serverSessionId, [{ type: "text", text: promptText }]);
       return {
         // Expose BOTH identifiers so callers tracking by name can cancel
@@ -2541,7 +2558,13 @@ async function cancelSessionImpl(
   if (entry) {
     if (entry.kind === "acp") {
       try {
-        await entry.client.cancel(sessionId);
+        // CODEX-11 final-signoff fix: the ACP server only knows its own
+        // session ID. The `sessionId` argument may be the caller's local
+        // tracking ID (am-${Date.now()}-...) which the server has never
+        // seen. Use the server-assigned ID when registered, fall back to
+        // the lookup key for pre-CODEX-11 entries that don't have one.
+        const cancelId = entry.serverSessionId ?? sessionId;
+        await entry.client.cancel(cancelId);
         cancelled = true;
       } catch (err) {
         // Cancel RPC failed (agent crashed, stream already closed, etc.).

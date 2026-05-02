@@ -183,13 +183,19 @@ export class AmAcpClient {
     const stream = ndJsonStream(writable, proc.stdout as ReadableStream<Uint8Array>);
 
     // Create the client-side connection
-    const userUpdateHandler = this.updateHandler;
     const policy = this.permissionPolicy;
     // MEDIUM-3: pass allowed paths for file operation restrictions
     const paths = [...this.allowedPaths, ...(opts?.allowedPaths ?? [])];
+    // CODEX-14 wiring: route ACP session updates through _handleSessionUpdate
+    // (which accumulates collectedText/collectedToolCalls AND forwards to
+    // the user's updateHandler). Previously createClientHandler received
+    // only the user handler, bypassing aggregation. A prior iteration of
+    // this fix called `_handleSessionUpdate` then also called the user
+    // handler, which double-fired every update — final Codex signoff
+    // caught that. `_handleSessionUpdate` at line ~437 already forwards
+    // via `this.updateHandler?.(update)`, so we only need to hook in there.
     const composedHandler: SessionUpdateHandler = (update) => {
       this._handleSessionUpdate({ sessionId: "", update } as SessionNotification);
-      userUpdateHandler?.(update);
     };
     this.connection = new ClientSideConnection(
       (_agent) =>
