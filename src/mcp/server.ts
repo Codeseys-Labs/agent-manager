@@ -3009,14 +3009,33 @@ export class McpServer {
               });
             },
           };
-          const result = await tool.handler(toolArgs, ctx);
-          return {
-            jsonrpc: "2.0",
-            id,
-            result: {
-              content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
-            },
-          };
+          // C1-lite (2026-05-02, all-pillars P2 §5.2 observability): emit a
+          // tool-timing line to stderr when AM_MCP_TIMING=1. Opt-in only so
+          // we don't spam users who don't care. Format is grep-friendly:
+          // `[am-mcp-timing] <tool> ms=<N> ok=<true|false>`. No user data,
+          // no secret risk — just the tool name + duration + success flag.
+          const timingEnabled = process.env.AM_MCP_TIMING === "1";
+          const t0 = timingEnabled ? Bun.nanoseconds() : 0;
+          try {
+            const result = await tool.handler(toolArgs, ctx);
+            if (timingEnabled) {
+              const ms = ((Bun.nanoseconds() - t0) / 1e6).toFixed(1);
+              process.stderr.write(`[am-mcp-timing] ${toolName} ms=${ms} ok=true\n`);
+            }
+            return {
+              jsonrpc: "2.0",
+              id,
+              result: {
+                content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+              },
+            };
+          } catch (err: unknown) {
+            if (timingEnabled) {
+              const ms = ((Bun.nanoseconds() - t0) / 1e6).toFixed(1);
+              process.stderr.write(`[am-mcp-timing] ${toolName} ms=${ms} ok=false\n`);
+            }
+            throw err;
+          }
         } catch (err: unknown) {
           // Redact secrets from error text before it leaves the server.
           const msg = safeErrorMessage(err);
