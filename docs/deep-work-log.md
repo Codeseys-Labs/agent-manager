@@ -193,3 +193,66 @@ serve auth bootstrap) and leaves B/C/D tiers as tracked plans.
 - Tier B3 marketplace author kit: 3-day effort, standalone.
 
 **Baseline hash:** `ffb07519a848deffa589ccc33866769e6b182c90`
+
+### Run 2026-05-02-B — final state at b752c45
+
+**Commits (baseline ffb0751):**
+- 0fcc27d  docs(deep-work-log): start
+- daad6ba  feat(wave1): ADR-0036 variants + ADR-0038 dry-run + B1 serve auth (team-based)
+- b752c45  feat(wave2): marketplace author guide + MCP timing log + deferred stubs
+
+**Team:** `am-pillar-review-wave1` (team-lead + variants-shipper +
+dry-run-shipper + serve-auth-fixer). All terminated cleanly post-Wave-1.
+Wave 2+3 executed direct (team already disbanded, solo work acceptable
+for doc + small-code-fix scope).
+
+**Artifacts produced:**
+- 2 new ADRs (0036 variants, 0038 dry-run) — both proposed
+- 2 new ADR corrections mid-flight via concurrent Codex review:
+  (a) ADR-0036 dropped "first-defined wins" + raw-layer resolver +
+  permission_policy accept-but-don't-enforce; (b) ADR-0038 dropped
+  --explain alias + allowed Bun.which.
+- 3 new source files: variant-resolver.ts, marketplace-author-guide.md,
+  deferred-pillar-review-items.md
+- 3 new test files: variant-resolver.test.ts, variant.test.ts,
+  dry-run.test.ts, timing-log.test.ts (+1 bonus from C1-lite)
+- +62 tests net (31 variant + 16 dry-run + 12 serve-auth + 3 timing)
+- 1 security-posture improvement: serve-auth bootstrap (B1)
+
+**Items closed:**
+- Tier A1 (variants): SHIPPED as MVP, gated AM_VARIANTS=1
+- Tier A2 (dry-run): SHIPPED for `am run` as MVP
+- Tier B1 (serve auth): SHIPPED — Pillar 6 "borderline stub-ware" fixed
+- Tier B3-lite (marketplace author guide): SHIPPED as docs
+- Tier C1-lite (MCP timing log): SHIPPED as AM_MCP_TIMING=1 opt-in
+
+**Items deferred with tracked stubs** (docs/plans/deferred-pillar-review-items.md):
+- B3-full: marketplace validator CLI (~2-3 days)
+- C2: wiki usage feedback (1 week, blocked on M5)
+- C3: transactional apply (Option C: 2-3 days; A/B: 1+ week)
+- D1: marketplace-of-marketplaces index (2 days + ongoing curation)
+- D2: per-client MCP policies (1 week)
+- ADR-0037 proposed (per-tool MCP metadata, 1 week + 1 week impl)
+- ADR-0039 proposed (per-client policies)
+
+**Verification (Phase 8):**
+- `bun test`: 2532 pass / 0 fail / 7452 expect() (ran 3 times, stable on runs 2+3)
+- `bun run typecheck`: 0 src errors
+- `bun run lint`: 0 errors, 1 pre-existing warning
+- Two-team signoff: execution team (the 3 teammates) reported complete;
+  Codex concurrent review caught 5 ADR flaws during Wave 1 which were
+  patched before teammates finalized. Final Codex signoff hit ChatGPT
+  Plus usage-limit mid-run so Wave 2 lacks cross-model validation —
+  acknowledged in the commit message.
+
+**Exit hash:** `b752c45`
+
+**What this loop did NOT try to do:**
+- Full implementation of any of the 4 proposed ADRs beyond the MVP
+  slice (A1, A2 only; Pillar-review Tier C/D items intentionally
+  deferred as stubs, not shipped).
+- Fix the 1 pre-existing lint warning or the pre-existing flake
+  (tracked separately as task #32 from prior sessions).
+- Remove the `--explain` alias that dry-run-shipper shipped before the
+  ADR-0038 correction reached them. It's a 3-line cleanup tracked in
+  deferred-pillar-review-items.md.
