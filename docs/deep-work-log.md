@@ -123,3 +123,30 @@ flake — it predates baseline 8a4d5f0.
 - `acp-shell-cli.ts` CLAUDE.md directory-map entry
 - Wiki browser design doc status unclear
 
+
+## Run 2026-05-02 — started at 01b44a2
+
+**Scope:** Drive the backlog surfaced by the Codex multi-facet adversarial
+critique to zero. 8 new findings across 6 Codex reviewers (vision,
+security, architecture, tests, plans, executive). Previous Claude-reviewer
+round of fixes already landed in 4905c96 / 482d67a / bd35eeb / 8030f24.
+This run addresses the items Codex caught that Claude missed.
+
+**Budget:** 2-3 execution waves + concurrent review. Most items are small
+doc/test fixes; 1 is a new security hardening (depth-cap DoS); 1 is a
+strategic unblock (community-shim path doesn't exist — may defer to a
+design conversation).
+
+**Baseline hash:** `01b44a2`
+
+**Items surfaced by Codex (2026-05-02):**
+- CODEX-NEW-1 (HIGH): cycle guard prevents cycles but deep acyclic nesting still stack-overflows. Add depth cap + iterative traversal.
+- CODEX-NEW-2 (P1, STRATEGIC): ADR-0034 Phase-E redirect assumes a community-shim path that doesn't exist. ADR-0027's adapter protocol doesn't cover ACP shim registration.
+- CODEX-NEW-3 (P2): ADR-0033 now `amended_by: ADR-0034` which is still `proposed` — accepted ADR defers to non-accepted ADR.
+- CODEX-NEW-4 (P2): `reachable` → `locallyInstalled` MCP API rename landed without compatibility alias.
+- CODEX-NEW-5 (P3): wiki-sync-m5.md acceptance criteria + rollback still reference `auto_sync_interval_seconds` schema field that PLAN-4 said to defer.
+- CODEX-NEW-6 (MED, test): `topK` synthesizer test can false-pass with zero results.
+- CODEX-NEW-7 (plan): skill-agent-drift estimate amended in body (11-12 days) but footer still says 8 days / Phase 1 = 2 days.
+- CODEX-NEW-8 (plan): skill-agent-drift Known Risks still says "or stub as unmanaged" — directly contradicting the new capability-removal rule.
+- Also from Facet 4: Test smell MED — `topK <= 3` assertion allows 0; Facet 4 LOW — empty-allowedPaths test checks length only.
+- Also from Facet 5: skill-agent-drift rule is currently unenforceable because forgecode and kilo-code DO list `"agents"` capability while their `diff.ts` doesn't diff agents.
