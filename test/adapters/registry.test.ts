@@ -170,16 +170,31 @@ describe("getAdapter()", () => {
 // ── Registry: getDetectedAdapters ────────────────────────────────
 
 describe("getDetectedAdapters()", () => {
-  it("returns an array of adapters", async () => {
-    const detected = await getDetectedAdapters();
-    expect(Array.isArray(detected)).toBe(true);
-  });
+  // Timeouts raised from bun:test's default 5s to 30s per test. Under
+  // full-suite load (183+ files executing in parallel), getDetectedAdapters
+  // exceeds 5s on WSL2 + loaded CI runners — surfaced by the Codex final
+  // signoff review of commit 69cdb10 as a flake. The detection calls are
+  // filesystem-bound; 30s is a safe ceiling that won't mask a real
+  // regression (detection should complete in well under 1s on a healthy
+  // host).
+  it(
+    "returns an array of adapters",
+    async () => {
+      const detected = await getDetectedAdapters();
+      expect(Array.isArray(detected)).toBe(true);
+    },
+    30_000,
+  );
 
-  it("only includes adapters where detect() returns installed: true", async () => {
-    const detected = await getDetectedAdapters();
-    for (const adapter of detected) {
-      const result = adapter.detect();
-      expect(result.installed).toBe(true);
-    }
-  });
+  it(
+    "only includes adapters where detect() returns installed: true",
+    async () => {
+      const detected = await getDetectedAdapters();
+      for (const adapter of detected) {
+        const result = adapter.detect();
+        expect(result.installed).toBe(true);
+      }
+    },
+    30_000,
+  );
 });
