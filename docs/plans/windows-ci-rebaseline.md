@@ -115,6 +115,16 @@ FAIL_COUNT=$(echo "$FAIL_LINE" | awk '{print $1}')
 
 Record as `NEW_FAIL_COUNT`.
 
+### Step 2.5 — CRLF grep hardening (already landed 2026-05-02)
+
+The original failure-counting script used `grep -E '^ [0-9]+ fail$'` which
+would silently miss Bun's Windows output if CRLF line endings were present
+— FAIL_COUNT would be empty and the script would exit 0 (false success).
+The script at `ci.yml:65-85` now runs `tr -d '\r'` before grepping and adds
+a defense-in-depth check: if NEITHER a pass line NOR a fail line is found,
+the output is treated as malformed and the job fails. This means the
+re-baseline cannot produce a bogus "0 failures" result on Windows.
+
 ### Step 3 — Record the result
 
 Update "Re-baseline Result" below with run date, commit SHA, `NEW_FAIL_COUNT`,

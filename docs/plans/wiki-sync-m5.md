@@ -54,7 +54,16 @@ Purely additive; zero user-visible change.
   `WikiSyncConflictError` carrying `conflictedFiles` from `git.statusMatrix`.
 - `softResetHead(dir)` in `src/core/git.ts` — reads parent oid from
   `git.log({ depth: 2 })`, `git.writeRef({ ref: 'HEAD', value: parentOid })`,
-  leaves working tree + index untouched. Throws on initial-commit repo.
+  **then calls `git.resetIndex({ fs, dir, filepath })` for each staged path
+  to realign the index with the new HEAD.** This addresses the 2026-05-02
+  adversarial-review finding that `writeRef` alone leaves the index ahead
+  of HEAD — next `am wiki sync` would show the same files as staged-but-
+  uncommitted and could double-commit. Working tree files are preserved
+  (the point of a soft reset). Throws on initial-commit repo.
+
+  Test that explicitly guards this: after commit → softResetHead → call
+  `git.statusMatrix` and assert no path shows as `[1, 2, 2]` (staged and
+  unchanged) that wasn't staged before the commit.
 - `stageWikiFiles(dir, files)` — calls `git.add` for each relative path.
 - `WikiSyncConflictError`, `WikiSyncSecretBlockedError` added to `src/lib/errors.ts`.
 - `test/core/git-wiki-sync.test.ts` covers each primitive with an
@@ -76,8 +85,12 @@ Depends on M5.1.
   Execution: resolve wikiDir → validate → auto-commit (if enabled + tree dirty)
   → `pullFastForwardOnly` (rollback auto-commit on conflict; write
   `wiki-conflict.json` sidecar) → push (retry once on non-FF rejection).
-- `settings.wiki.auto_sync_interval_seconds` added to `SettingsSchema` (no
-  runtime timer in this PR — just schema).
+- **PLAN-4 (2026-05-02): do NOT add the `settings.wiki.auto_sync_interval_seconds`
+  schema field in M5.2.** Shipping a schema field without the runtime timer
+  creates a pit trap — users set it, observe no behavior, file bugs. Move
+  the schema addition to the SAME milestone as the `am serve` / `am mcp-serve`
+  timer integration, which is explicitly a follow-up. Until both ship together,
+  no schema field.
 - `test/commands/wiki-sync.test.ts` covers: clean+pull, dirty+recent+debounce,
   dirty+old+auto-commit, secret-block, non-FF pull rollback, `--no-auto-commit`
   dirty-error, `--allow-dirty` warn+proceed, each `--direction` value,

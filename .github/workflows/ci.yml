@@ -66,8 +66,22 @@ jobs:
           set +e
           OUTPUT=$(bun test 2>&1)
           echo "$OUTPUT"
-          FAIL_LINE=$(echo "$OUTPUT" | grep -E '^ [0-9]+ fail$' | tail -1)
+          # CRLF hardening (2026-05-02 adversarial-review fix). Bun on
+          # Windows may emit the summary line with CRLF; the old grep's
+          # '$' anchor wouldn't match, FAIL_COUNT would be empty, and the
+          # script would exit 0 = false success even if every test failed.
+          # Inputs here (OUTPUT) are from `bun test` stdout, not from any
+          # GitHub event payload — no injection surface.
+          OUTPUT_LF=$(printf '%s' "$OUTPUT" | tr -d '\r')
+          FAIL_LINE=$(echo "$OUTPUT_LF" | grep -E '^ [0-9]+ fail$' | tail -1)
           FAIL_COUNT=$(echo "$FAIL_LINE" | awk '{print $1}')
+          # Defense-in-depth: if we can't find a fail line AND we can't find
+          # a pass line either, the output is malformed — treat as failure.
+          PASS_LINE=$(echo "$OUTPUT_LF" | grep -E '^ [0-9]+ pass$' | tail -1)
+          if [ -z "$FAIL_LINE" ] && [ -z "$PASS_LINE" ]; then
+            echo "::error::Test output did not contain a pass/fail summary line — treat as failure"
+            exit 1
+          fi
           if [ -n "$FAIL_COUNT" ] && [ "$FAIL_COUNT" != "0" ] && [ "$FAIL_COUNT" != "" ]; then
             echo "::error::$FAIL_COUNT test(s) failed"
             exit 1

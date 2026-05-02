@@ -41,7 +41,28 @@ from "user edited the IDE."
 
 ## Phased Rollout
 
-### Phase 1 — Infrastructure (shared strategies + last-apply snapshot)
+### Phase 1 — Infrastructure (shared strategies + last-apply snapshot) — 3.5–4 days, NOT 2
+
+**Revised estimate (2026-05-02 adversarial-review).** The original 2-day
+estimate underestimated items 1.10–1.12 (last-apply snapshot write in
+`apply.ts`, three-way classification in `status.ts`, and the `src/core/last-apply.ts`
+module). Those items modify integration-tested command handlers and touch
+the git-backed state model — not additive, not mechanical. Realistic breakdown:
+
+- 1.1–1.9 (strategies + helpers + naming convention): ~1 day
+- 1.5 `perFileInstructionStrategy` alone: ~0.75 days (six adapters with
+  different frontmatter schemas — Cursor `alwaysApply`, Kiro `inclusion`,
+  Copilot `applyTo`, Windsurf `trigger`)
+- 1.7 `agentFileStrategy`: ~0.5 days (format dispatch; undocumented fields
+  in several adapters requiring enumeration)
+- 1.10–1.12 (snapshot + three-way classification + `apply.ts` mods):
+  ~1.25 days (6 possible states, 4 well-defined; failure-tolerant snapshot
+  write; idempotency oracle test)
+- 1.13–1.14 (unit tests + idempotency round-trip): ~0.5 days
+
+Total Phase 1: **3.5 days realistic, 4 days with buffer.** This pushes the
+overall estimate from 8 dev-days to **11–12 dev-days**. Phase 2–4 estimates
+remain as documented (mechanical binding work).
 
 Purely additive; no behaviour change until Phase 2 binds adapters.
 
@@ -98,9 +119,20 @@ its own native storage).
 
 Agent-capable: claude-code, codex-cli, cursor, kiro, forgecode, kilo-code.
 Bind `agentFileStrategy` per adapter. Before binding for forgecode/kilo-code,
-**verify the export path** in each `export.ts` — if agent export is
-unimplemented, emit an `{ status: "unmanaged" }` stub and file a follow-up
-issue rather than shipping a broken diff.
+**verify the export path** in each `export.ts`. If agent export is
+unimplemented for an adapter, **do NOT ship a `{ status: "unmanaged" }`
+stub** — that is silent false negative (2026-05-02 adversarial-review).
+
+Instead: **remove the `"agents"` capability from that adapter's meta until
+export + diff are both implemented.** The capability declaration is the
+contract; declaring it without a working diff path means the capability
+test will fail, which is the correct loud signal. A capability declared
+but unimplemented is the exact gap `am status` is supposed to prevent.
+
+Concretely: if forgecode's `export.ts` does not yet write agents, the
+forgecode adapter's `meta.capabilities` should NOT list `"agents"` until
+this phase's binding + export both land in the same PR. Same for kilo-code.
+File the follow-up implementation issue, keep the capability off until done.
 
 ## Per-Adapter Audit Table
 
