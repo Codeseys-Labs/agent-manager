@@ -31,6 +31,46 @@ export class AmError extends Error {
 }
 
 /**
+ * Thrown by `pullFastForwardOnly` when the remote has diverged from the
+ * local branch. `conflictedFiles` lists every path `git.statusMatrix`
+ * reports as non-clean at the moment the pull was attempted — `am wiki
+ * resolve` uses this list to present the per-file pick prompt (ADR-0020
+ * M5.3).
+ */
+export class WikiSyncConflictError extends AmError {
+  constructor(
+    public readonly conflictedFiles: string[],
+    message = "Wiki sync refused: remote and local have diverged",
+  ) {
+    super(
+      message,
+      "Run `am wiki resolve` to pick local/remote per file, or pull manually",
+      "WIKI_SYNC_CONFLICT",
+    );
+    this.name = "WikiSyncConflictError";
+  }
+}
+
+/**
+ * Thrown by the auto-commit pipeline (M5.2) when tier-1 or tier-2 secret
+ * detection flags staged content. Carries the offending file list so the
+ * CLI can print per-file hits and so tests can assert on `hits[*].file`.
+ */
+export class WikiSyncSecretBlockedError extends AmError {
+  constructor(
+    public readonly hits: Array<{ file: string; reason: string }>,
+    message = "Wiki auto-commit blocked: potential secret detected",
+  ) {
+    super(
+      message,
+      "Remove the secret or pass `--allow-dirty` after clearing, then retry",
+      "WIKI_SYNC_SECRET_BLOCKED",
+    );
+    this.name = "WikiSyncSecretBlockedError";
+  }
+}
+
+/**
  * Format an error for CLI output, respecting --json flag.
  */
 export function formatError(err: unknown, json: boolean): string {

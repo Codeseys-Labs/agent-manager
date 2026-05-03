@@ -1,6 +1,7 @@
 import * as fs from "node:fs";
 import { join } from "node:path";
 import git from "isomorphic-git";
+import { WikiSyncConflictError } from "../lib/errors.ts";
 
 const DEFAULT_AUTHOR = { name: "agent-manager", email: "am@localhost" };
 
@@ -210,4 +211,91 @@ export async function getStatus(dir: string): Promise<StatusResult> {
 
 export async function addRemote(dir: string, url: string, remote = "origin"): Promise<void> {
   await git.addRemote({ fs, dir, remote, url });
+}
+
+/**
+ * Fast-forward-only pull. Used by the wiki sync pipeline (ADR-0022 / M5.1).
+ * On non-fast-forward divergence, throws a typed `WikiSyncConflictError`
+ * carrying `conflictedFiles` sourced from `git.statusMatrix` so callers
+ * (e.g. `am wiki resolve`) can present a per-file pick prompt without
+ * re-reading the workdir.
+ */
+export async function pullFastForwardOnly(dir: string, branch?: string): Promise<void> {
+  const ref = branch ?? (await git.currentBranch({ fs, dir })) ?? "main";
+  try {
+    await git.pull({
+      fs,
+      http: (await import("isomorphic-git/http/node")).default,
+      dir,
+      remote: "origin",
+      ref,
+      fastForwardOnly: true,
+      author: DEFAULT_AUTHOR,
+    });
+  } catch (err) {
+    // isomorphic-git throws an error with name "FastForwardError" when
+    // fastForwardOnly is set and the remote isn't a fast-forward ancestor.
+    const name = (err as { name?: string })?.name;
+    const code = (err as { code?: string })?.code;
+    if (name === "FastForwardError" || code === "FastForwardFail") {
+      const matrix = await git.statusMatrix({ fs, dir });
+      const conflictedFiles = matrix
+        .filter(([_f, head, workdir, stage]) => !(head === 1 && workdir === 1 && stage === 1))
+        .map(([f]) => f);
+      throw new WikiSyncConflictError(conflictedFiles);
+    }
+    throw err;
+  }
+}
+
+/**
+ * Stage the given repo-relative paths. Thin wrapper around `git.add` with a
+ * single-pass loop so callers can stage the wiki-page subset without
+ * walking the whole worktree.
+ */
+export async function stageWikiFiles(dir: string, files: string[]): Promise<void> {
+  for (const filepath of files) {
+    await git.add({ fs, dir, filepath });
+  }
+}
+
+/**
+ * Soft-reset HEAD to its parent: rewind HEAD by one commit but preserve
+ * workdir contents. Used by the wiki sync pipeline (M5.2) to roll back an
+ * auto-commit when a subsequent pull fails — the user's edits stay on disk
+ * so they can retry or resolve.
+ *
+ * 2026-05-02 adversarial-review fix: writing HEAD alone leaves the index
+ * ahead of HEAD — next status would still show the rolled-back files as
+ * "staged" and a second commit could double-apply them. We realign the
+ * index to the new HEAD by calling `git.resetIndex` on every path whose
+ * head/stage differ after the HEAD rewrite.
+ */
+export async function softResetHead(dir: string): Promise<void> {
+  const commits = await git.log({ fs, dir, depth: 2 });
+  if (commits.length < 2) {
+    throw new Error("Cannot soft-reset: no parent commit (initial-commit repo)");
+  }
+  const parentOid = commits[1].oid;
+
+  await git.writeRef({
+    fs,
+    dir,
+    ref: "HEAD",
+    value: parentOid,
+    force: true,
+  });
+
+  // Realign the index to the new HEAD. statusMatrix returns one row per
+  // known path as [filepath, head, workdir, stage] where 0/1/2/3 each have
+  // specific meanings. Any row with head !== stage is a path the old HEAD
+  // added/modified — resetIndex(ref=HEAD) points the index entry back at
+  // the new-HEAD tree, so subsequent statusMatrix reports the path as
+  // unstaged-but-modified (workdir kept, index realigned).
+  const matrix = await git.statusMatrix({ fs, dir });
+  for (const [filepath, head, _workdir, stage] of matrix) {
+    if (head !== stage) {
+      await git.resetIndex({ fs, dir, filepath });
+    }
+  }
 }
