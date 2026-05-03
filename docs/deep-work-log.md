@@ -264,6 +264,44 @@ to zero, plus the known follow-ups from prior runs.
 
 **Baseline hash:** `0fb8ccd5dac1c69b7e89655494189a1877911804`
 
+### Run 2026-05-03 — final state at 8033e47
+
+**Commits (baseline 0fb8ccd):**
+- b09ebfd  docs(deep-work-log): start
+- 8033e47  feat(wave3): 5 deferred items shipped (validator CLI + apply
+           status + ADR-0037 + concurrency flake fix + deferral doc)
+
+**Items closed this run:** 5 — all from the deferred-pillar-review-items
+backlog + flake-task #32:
+- B3-full marketplace validator (`am marketplace validate <path>`)
+- C3 Option C per-adapter apply status
+- ADR-0037 proposed (per-tool MCP metadata)
+- Task #32 concurrency.test.ts flake (timeout raised to 30s)
+- --explain alias cleanup (confirmed already clean; no action)
+
+**Items STILL deferred with rationale** (documented in
+deferred-pillar-review-items.md Run-2026-05-03 update):
+- C2 wiki usage feedback (blocks on M5)
+- D1 marketplace-index (needs owner decision)
+- D2 per-client MCP policies (needs scenario)
+- A2A variants (needs use case)
+- ADR-0036 permission_policy enforcement (waits on ADR-0037 accept)
+
+**Verification:**
+- bun test: 2553 pass / 0 fail / 7532 expect() across 190 files
+- bun run typecheck: 0 src errors
+- bun run lint: 0 errors, 1 pre-existing warning
+- +18 tests net (14 validator + 4 apply-partial)
+
+**Deviation from skill script:** no teammate spawned + no Codex concurrent
+review this loop. Rationale: 5 independent small changes, low coordination
+value; ChatGPT Plus usage cap persists blocking reliable Codex access.
+Accepted as limitation, not forced.
+
+**Exit hash:** `8033e47`
+
+---
+
 **Backlog source:** `docs/plans/deferred-pillar-review-items.md` (written
 in Run-B at b752c45) enumerates 7 deferred items + 2 candidate ADRs.
 Additional known follow-ups:
