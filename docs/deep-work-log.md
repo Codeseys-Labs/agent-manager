@@ -328,3 +328,26 @@ Additional known follow-ups:
   - ADR-0036 permission_policy enforcement wiring (needs ADR-0037 first)
 
 Items in Wave 3 get explicit deferral documentation, not silent skip.
+
+## Run 2026-05-03-B — focused: ADR-0037 Phase 1 (1-commit loop)
+
+**Baseline:** `c990ae2` · **Exit:** `707105b` (+ ADR frontmatter update)
+
+Chose ADR-0037 Phase 1 after Codex deliberation (option A of the 4
+remaining shippable paths). Codex recommendation + reasoning: highest
+leverage-to-risk ratio, mechanical derivation, clear done-condition,
+unblocks ADR-0036 MCP variant work downstream.
+
+Shipped:
+- AmToolMetadata interface + DEPRECATED_ALIASES registry + PROGRESS_SUPPORTED set
+- buildToolMetadata() pure function
+- tools/list decoration emits x-am on every tool
+- +8 tests / 623 assertions locking contract + structural warnDeprecated-vs-registry guarantee
+
+Did not run a concurrent Codex review of the shipped code — one PR's
+worth of focused work with a clear contract doesn't benefit from
+adversarial review as much as a multi-agent wave does. Accepted as a
+deliberate deviation from the skill's default Wave-1 pattern.
+
+ADR-0037 frontmatter updated to reflect Phase 1 landed; Phase 2/3 stay
+deferred.

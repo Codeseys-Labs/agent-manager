@@ -1,6 +1,10 @@
 ---
 status: proposed
 date: 2026-05-03
+implementation:
+  phase_1: shipped in commit 707105b (2026-05-03) — x-am on all tools in tools/list
+  phase_2: deferred — per-tool output_schema
+  phase_3: deferred — per-tool error_codes + progress_shape
 ---
 
 # ADR-0037: Per-Tool MCP Metadata via `x-am.*` Namespace
