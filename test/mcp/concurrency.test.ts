@@ -81,6 +81,15 @@ describe("MCP concurrency safety (Wave B)", () => {
     // Apply with an empty adapter set (nothing detected in the tmpdir)
     // still exercises the full `applyResolved` pipeline and would
     // previously race if two calls interleaved their state.toml reads.
+    //
+    // Timeout raised from bun:test's default 5s to 30s (2026-05-03): this
+    // test was flaky under full-suite load (187 files in parallel on WSL2)
+    // because `applyResolved` + `getDetectedAdapters` + loading 13 adapters'
+    // detect() results exceeds 5s on loaded hosts. Same fix pattern as
+    // test/adapters/registry.test.ts getDetectedAdapters. Not masking a
+    // real concurrency bug — the test passes 5/5 in isolation; only the
+    // full-suite race produces the timeout. Tracked as the resolution of
+    // task #32 (run-A 2026-05-01 baseline flake).
     const ctx = await setupConfig({
       servers: {
         shared: { command: "echo", transport: "stdio", enabled: true },
@@ -104,7 +113,7 @@ describe("MCP concurrency safety (Wave B)", () => {
     expect(b.action).toBe("apply");
     expect(a.dryRun).toBe(true);
     expect(b.dryRun).toBe(true);
-  });
+  }, 30_000);
 
   test("am_apply + am_add_server race — ordering stays coherent", async () => {
     const ctx = await setupConfig({ servers: {} });

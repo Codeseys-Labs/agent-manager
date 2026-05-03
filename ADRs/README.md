@@ -42,6 +42,7 @@ This folder contains the architectural decisions for agent-manager.
 | [0034](0034-shim-scope-and-inclusion-criteria.md) | Scope Fence for First-Party ACP Shims | Proposed | 2026-05-01 |
 | [0035](0035-community-shim-registration.md) | Community Shim Registration Protocol | Proposed | 2026-05-02 |
 | [0036](0036-agent-variants.md) | Per-Agent Variants for Multi-Provider Routing | Proposed | 2026-05-02 |
+| [0037](0037-per-tool-mcp-metadata.md) | Per-Tool MCP Metadata via x-am Namespace | Proposed | 2026-05-03 |
 | [0038](0038-dry-run-explain-surface.md) | Dry-Run / Explain Surface Pattern | Proposed | 2026-05-02 |
 
 ## Template

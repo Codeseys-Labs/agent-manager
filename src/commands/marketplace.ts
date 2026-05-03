@@ -10,6 +10,7 @@ import {
 } from "../marketplace/client";
 import { installPlugin, listInstalled, uninstallPlugin } from "../marketplace/installer";
 import { scanAllMarketplaces, searchPlugins } from "../marketplace/scanner";
+import { formatValidateSummary, validateMarketplace } from "../marketplace/validate";
 
 // ── Subcommands ──────────────────────────────────────────────────
 
@@ -331,6 +332,36 @@ const uninstallCommand = defineCommand({
 
 // ── Root marketplace command ─────────────────────────────────────
 
+const validateCommand = defineCommand({
+  meta: {
+    name: "validate",
+    description: "Validate a marketplace repo's plugin manifests without installing",
+  },
+  args: {
+    path: { type: "positional", description: "Path to marketplace repo root", required: true },
+    json: { type: "boolean", default: false },
+    quiet: { type: "boolean", alias: "q", default: false },
+    verbose: { type: "boolean", alias: "v", default: false },
+  },
+  async run({ args }) {
+    const opts = { json: args.json, quiet: args.quiet, verbose: args.verbose };
+    try {
+      const result = await validateMarketplace(args.path);
+      if (args.json) {
+        output(result, opts);
+      } else {
+        info(formatValidateSummary(result), opts);
+      }
+      if (!result.valid) {
+        process.exitCode = 1;
+      }
+    } catch (err) {
+      amError(err, opts);
+      process.exitCode = 1;
+    }
+  },
+});
+
 export const marketplaceCommand = defineCommand({
   meta: { name: "marketplace", description: "Manage git-based plugin marketplaces" },
   args: {
@@ -346,5 +377,6 @@ export const marketplaceCommand = defineCommand({
     remove: removeCommand,
     search: searchCommand,
     uninstall: uninstallCommand,
+    validate: validateCommand,
   },
 });

@@ -195,3 +195,78 @@ file or are already tracked:
 - `docs/research/2026-05-02-all-pillars-review/0[1-6]-*.md` — per-pillar
   detail + file:line citations
 - Commit `daad6ba` — Wave 1 (ADR-0036 + ADR-0038 + B1 shipped)
+
+## Run 2026-05-03 update
+
+Loop closed **5 items** from this stub file:
+
+- **B3-full** — `am marketplace validate <path>` CLI subcommand SHIPPED
+  (`src/marketplace/validate.ts` + `src/marketplace/schema.ts` + wiring
+  in `src/commands/marketplace.ts` + 14 tests). Users + authors can
+  validate a marketplace repo offline before pushing.
+- **C3 Option C** — per-adapter status in apply result SHIPPED
+  (`src/commands/apply.ts` JSON now emits `{ adapter, status, files,
+  warnings, error? }` per entry; `applyResolved` pipeline was already
+  doing partial-failure semantics, just not surfacing clearly). +4
+  integration-style tests.
+- **ADR-0037 proposed** — per-tool MCP metadata (`x-am.*` namespace).
+  Phase-1 rollout scoped to 6 required fields; output_schema + error_codes
+  stay follow-up.
+- **Task #32 concurrency.test.ts flake** — resolved by raising the
+  "2x am_apply concurrent" test timeout from bun:test default 5s to 30s.
+  Same pattern as `test/adapters/registry.test.ts` from Run-2026-05-02.
+  Flake is platform-timing, not a real concurrency bug (5/5 pass in
+  isolation; only surfaces under full-suite load on WSL2).
+- **--explain alias cleanup** — CONFIRMED already clean. dry-run-shipper
+  in Run-B DID comply with the ADR-0038 correction: `--explain` is not
+  a recognized flag (see `test/commands/run/dry-run.test.ts:167`).
+  No code change needed. Task closed.
+
+## Run 2026-05-03 — what's STILL deferred + why
+
+**C2 wiki usage feedback** (P2, 1 week effort).
+  Blocked on: M5 wiki sync (`docs/plans/wiki-sync-m5.md`) landing first.
+  The usage log writes need auto-commit + conflict resolution to not
+  corrupt wiki state on multi-machine sync. M5 is a tracked multi-PR
+  effort — out of this loop's budget.
+
+**D1 marketplace-of-marketplaces index** (P3, 2 days + ongoing curation).
+  Blocked on: index repo owner decision. Could ship the code (`am
+  marketplace discover` fetching a JSON file from a known URL) but
+  without a maintained index repo the feature shows an empty list. A
+  design decision is required: who curates? Agent-manager repo org?
+  Community-volunteer? A separate Codeseys-Labs project? Not a
+  Claude-decidable question.
+
+**D2 per-MCP-client policies** (P3, 1 week, needs scenario).
+  Waits on ADR-0037 landing first (typed auth metadata). And waits on
+  a concrete user who has two-AI-clients-with-different-trust-levels
+  sharing one `am mcp-serve` — without that, the design decisions
+  (token-hash vs bearer-header-scope, interaction with `AM_MCP_TOKEN`)
+  are untethered.
+
+**A2A variants (ADR-0036 follow-up)** (P2, medium).
+  Needs a concrete use case. Variants MVP only covers ACP. An A2A
+  scenario would be: user wants to route the same remote agent via
+  different auth configurations (e.g. one API key for prod, one for
+  staging). Worth an ADR-0036 amendment once a user has that need.
+
+**ADR-0036 permission_policy enforcement wiring** (P2, small).
+  Waits on ADR-0037 accepted. With x-am metadata, `am_agent_invoke`
+  gets a `variant` parameter + the client knows the variant's
+  permission_policy. Right now the field is surfaced in dry-run output
+  only — a follow-up PR wires it to `AmAcpClient.setPermissionPolicy`
+  at variant-resolution time.
+
+**Adjacent: ADR-0039 per-client policies ADR draft.** Deferred
+  intentionally. Writing the ADR before a concrete scenario risks
+  over-designing. Circle back when D2 has a user.
+
+## Honesty note
+
+This loop explicitly **did not** try to ship all 15+ synthesis items in
+one run. Wave 1 of the pillar-review loop shipped 3; Wave 2 shipped 3;
+this third run shipped 5 more. Remaining 5 are deferred with explicit
+rationale. The pattern of "ship 3-5 per loop + document what's deferred"
+is working — each loop leaves the repo better but doesn't fake
+completeness.

@@ -84,10 +84,15 @@ export const applyCommand = defineCommand({
             action: "apply",
             profile: applyResult.profile,
             dryRun: args["dry-run"],
+            // C3 Option C (2026-05-03): explicit `status` per adapter so
+            // JSON consumers don't have to infer success from error-presence.
+            // Plus `files`/`warnings`/`error` retained for detail.
             results: applyResult.results.map((r) => ({
               adapter: r.adapter,
+              status: r.error ? "failed" : "ok",
               files: r.files,
               warnings: r.warnings,
+              ...(r.error ? { error: r.error } : {}),
             })),
             succeeded: applyResult.succeeded.length,
             failed: applyResult.failed,
