@@ -25,7 +25,7 @@ import { dirname, join } from "node:path";
 import { defineCommand } from "citty";
 import { getAdapter, listAdapters } from "../adapters/registry";
 import { resolveProjectConfig } from "../core/config";
-import { getStatus, pull as gitPull, push as gitPush } from "../core/git";
+import { getStatus } from "../core/git";
 import { errorCode, errorMessage } from "../lib/errors";
 import { error, info, output, parsePositiveInt, warn } from "../lib/output";
 import { exportGraphForViz, findOrphans, loadGraph } from "../wiki/graph";
@@ -50,6 +50,7 @@ import {
   searchPages,
   writePage,
 } from "../wiki/storage";
+import { type Direction, syncWiki } from "../wiki/sync";
 import { buildAgentBriefing, generateWikiPage, synthesizeContext } from "../wiki/synthesizer";
 import type {
   EntityType,
@@ -1006,32 +1007,62 @@ export const pathSubcommand = defineCommand({
   },
 });
 
-// TODO(ADR-0031/M4 follow-up): wiki sync is currently a thin wrapper around
-// isomorphic-git push/pull on the global wiki root. Project wiki sync is out
-// of scope for M4 because the central store is symlinked per ADR-0022 and the
-// authoritative repo lives in the config dir. A richer sync (commit unstaged
-// wiki edits, conflict resolution, per-project remotes) is left for M5.
+// M5.2 (2026-05-03): correctness-first sync pipeline. Replaces the thin
+// push/pull wrapper with auto-commit + fast-forward-only pull + rollback via
+// `softResetHead` on divergence + wiki-conflict.json sidecar for `am wiki
+// resolve` (M5.3). See `src/wiki/sync.ts` and `docs/plans/wiki-sync-m5.md`.
+//
+// Backward-compat: the existing `--direction push|pull|both --remote --branch`
+// flags are preserved. `--auto-commit` is opt-out by default (per plan risks §)
+// and can be disabled with `--no-auto-commit`. `--allow-dirty` preserves the
+// old warn-and-proceed semantics. The strict-secret-scan heuristic is gated
+// behind `--strict-secret-scan` until BetterLeaks text-mode lands (follow-up
+// #5 in wiki-sync-m5.md).
 export const syncSubcommand = defineCommand({
-  meta: { name: "sync", description: "Push/pull the global wiki via git" },
+  meta: { name: "sync", description: "Push/pull the global wiki via git (M5.2 FF-only)" },
   args: {
     json: { type: "boolean", description: "JSON output", default: false },
     quiet: { type: "boolean", alias: "q", default: false },
     verbose: { type: "boolean", alias: "v", default: false },
     direction: {
       type: "string",
-      description: "push | pull | both",
+      description: "push | pull | both | commit-and-sync",
       default: "both",
     },
     remote: { type: "string", description: "Git remote name", default: "origin" },
     branch: { type: "string", description: "Git branch name (default: current)" },
+    "auto-commit": {
+      type: "boolean",
+      description: "Auto-commit wiki edits older than --debounce seconds before pulling",
+      default: true,
+    },
+    "allow-dirty": {
+      type: "boolean",
+      description: "Skip auto-commit + proceed with a dirty tree (old behavior)",
+      default: false,
+    },
+    debounce: {
+      type: "string",
+      description: "Seconds a file must sit un-edited before auto-commit picks it up",
+      default: "60",
+    },
+    "strict-secret-scan": {
+      type: "boolean",
+      description:
+        "Run tier-1 text secret scan on files before auto-commit (opt-in; may have false positives)",
+      default: false,
+    },
   },
   async run({ args }) {
     const opts = { json: args.json, quiet: args.quiet, verbose: args.verbose };
     const wikiDir = resolveWikiDir({ global: true });
     const direction = (args.direction as string).toLowerCase();
 
-    if (!["push", "pull", "both"].includes(direction)) {
-      error(`Invalid --direction "${direction}". Expected: push | pull | both.`, opts);
+    if (!["push", "pull", "both", "commit-and-sync"].includes(direction)) {
+      error(
+        `Invalid --direction "${direction}". Expected: push | pull | both | commit-and-sync.`,
+        opts,
+      );
       process.exitCode = 1;
       return;
     }
@@ -1057,49 +1088,60 @@ export const syncSubcommand = defineCommand({
       return;
     }
 
-    if (!status.clean && (direction === "pull" || direction === "both")) {
-      warn(
-        `Wiki working tree has ${status.dirty.length} uncommitted change(s); pulling anyway (isomorphic-git will refuse on conflict).`,
-        opts,
-      );
-    }
+    const debounceSeconds = parsePositiveInt(String(args.debounce ?? "60"), "debounce", 60);
+    const autoCommit = args["auto-commit"] as boolean;
+    const allowDirty = args["allow-dirty"] as boolean;
 
-    const remote = args.remote as string;
-    const branch = args.branch as string | undefined;
-    const actions: Array<{ action: "pull" | "push"; ok: boolean; error?: string }> = [];
+    try {
+      const result = await syncWiki(wikiDir, {
+        direction: direction as Direction,
+        remote: args.remote as string,
+        branch: args.branch as string | undefined,
+        autoCommit,
+        allowDirty,
+        debounceSeconds,
+        strictSecretScan: args["strict-secret-scan"] as boolean,
+      });
 
-    if (direction === "pull" || direction === "both") {
-      try {
-        await gitPull(wikiDir, remote, branch);
-        actions.push({ action: "pull", ok: true });
-        info(`Pulled wiki from ${remote}`, opts);
-      } catch (err: unknown) {
-        const msg = errorMessage(err) ?? "pull failed";
-        actions.push({ action: "pull", ok: false, error: msg });
-        error(`Pull failed: ${msg}`, opts);
-        process.exitCode = 1;
-        if (direction === "pull") {
-          if (args.json) output({ action: "sync", wikiDir, remote, results: actions }, opts);
-          return;
+      // Human-readable action summary (skipped in --json and --quiet).
+      for (const a of result.actions) {
+        if (!a.ok) {
+          error(`${a.action}: ${a.error ?? "failed"}`, opts);
+          process.exitCode = 1;
+        } else if (a.detail) {
+          info(`${a.action}: ${a.detail}`, opts);
+        } else {
+          info(`${a.action}: ok`, opts);
         }
       }
-    }
 
-    if (direction === "push" || direction === "both") {
-      try {
-        await gitPush(wikiDir, remote, branch);
-        actions.push({ action: "push", ok: true });
-        info(`Pushed wiki to ${remote}`, opts);
-      } catch (err: unknown) {
-        const msg = errorMessage(err) ?? "push failed";
-        actions.push({ action: "push", ok: false, error: msg });
-        error(`Push failed: ${msg}`, opts);
-        process.exitCode = 1;
+      if (result.sidecarWritten) {
+        warn(
+          `Divergence recorded in ${result.sidecarWritten}. Run \`am wiki resolve\` to pick per-file.`,
+          opts,
+        );
       }
-    }
 
-    if (args.json) {
-      output({ action: "sync", wikiDir, remote, branch: status.branch, results: actions }, opts);
+      if (args.json) {
+        output(
+          {
+            action: "sync",
+            wikiDir,
+            remote: result.remote,
+            branch: result.branch,
+            results: result.actions,
+            sidecarWritten: result.sidecarWritten,
+          },
+          opts,
+        );
+      }
+    } catch (err: unknown) {
+      const msg = errorMessage(err) ?? "sync failed";
+      error(msg, opts);
+      process.exitCode = 1;
+      if (args.json) {
+        output({ action: "sync", wikiDir, error: msg }, opts);
+      }
     }
   },
 });
