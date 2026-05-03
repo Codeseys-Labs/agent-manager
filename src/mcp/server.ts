@@ -84,6 +84,60 @@ interface McpToolDef {
 
 type ToolTier = "read-only" | "write-local" | "write-remote";
 
+// ── ADR-0037 Phase 1: per-tool metadata (x-am namespace) ─────────
+//
+// Self-describing tool surface for MCP clients. Emitted on every tool
+// entry in `tools/list` responses. Phase 1 scope:
+//   - group, tier, auth_required (mechanical, derived from existing
+//     TOOL_GROUP_MAP + ToolEntry.tier + auth config)
+//   - deprecated + deprecation.replacement/removal_version (derived
+//     from the DEPRECATED_ALIASES registry below)
+//   - progress_supported (derived from PROGRESS_SUPPORTED set)
+//
+// Phase 2/3 (output_schema, error_codes, progress_shape) are
+// explicitly deferred — each tool would need bespoke schemas.
+
+export interface AmToolMetadata {
+  group: McpToolGroup;
+  tier: ToolTier;
+  auth_required: boolean;
+  deprecated: boolean;
+  deprecation?: { replacement: string; removal_version: string };
+  progress_supported: boolean;
+}
+
+/**
+ * Registry of deprecated tool aliases. Keys are the OLD (deprecated)
+ * names; values describe what to call instead and the scheduled removal
+ * release. Maintained alongside the `warnDeprecated()` call sites.
+ *
+ * When a new alias is added, add it here so `tools/list` surfaces the
+ * deprecation to discovery clients. When a tool is actually removed,
+ * its entry here is deleted (alongside deleting the alias handler).
+ */
+export const DEPRECATED_ALIASES: Record<string, { replacement: string; removal_version: string }> =
+  {
+    am_agent_delegate: { replacement: "am_agent_invoke", removal_version: "v0.4" },
+    am_run_agent: { replacement: "am_agent_invoke", removal_version: "v0.4" },
+    am_acp_list_agents: { replacement: "am_agent_list", removal_version: "v0.4" },
+    am_acp_session_list: { replacement: "am_agent_session_list", removal_version: "v0.4" },
+    am_acp_session_cancel: { replacement: "am_agent_session_cancel", removal_version: "v0.4" },
+  };
+
+/**
+ * Set of tool names whose handlers emit `notifications/progress` when
+ * `params._meta.progressToken` is supplied. Derived from
+ * `ctx.emitProgress` call sites. Discovery-time signal so clients can
+ * decide whether to set a progressToken for a given call.
+ */
+export const PROGRESS_SUPPORTED = new Set<string>([
+  // Agent invocation (shared by invoke + legacy run_agent alias):
+  "am_agent_invoke",
+  "am_run_agent",
+  // A2A delegation emits status/artifact events:
+  "am_agent_delegate",
+]);
+
 /**
  * Wave D: per-call context passed to tool handlers.
  *
@@ -494,6 +548,37 @@ export function _unregisterActiveSession(sessionId: string): void {
 }
 export function _getActiveSession(sessionId: string): ActiveSession | undefined {
   return activeSessions.get(sessionId);
+}
+
+// ── ADR-0037 Phase 1: x-am metadata builder ─────────────────────
+
+/**
+ * Build the `x-am` metadata object for a tool, to be attached to the
+ * tool definition in `tools/list` responses. Pure function — no I/O,
+ * no surprises. Takes `toolName` + `tier` because alias tools share a
+ * handler but have distinct names in tools/list.
+ *
+ * `auth_required` is scoped to whether THIS TOOL would be gated by
+ * `AM_MCP_TOKEN` when configured. It does NOT depend on whether the
+ * server currently has a token set — a read-only tool stays
+ * `auth_required: false` either way; a write-tier tool stays
+ * `auth_required: true` either way. Clients use this at discovery
+ * time to decide whether to include `_meta.authorization` on the call.
+ */
+export function buildToolMetadata(toolName: string, tier: ToolTier): AmToolMetadata {
+  const group = getToolGroup(toolName);
+  const deprecationInfo = DEPRECATED_ALIASES[toolName];
+  const meta: AmToolMetadata = {
+    group,
+    tier,
+    auth_required: tier !== "read-only",
+    deprecated: deprecationInfo !== undefined,
+    progress_supported: PROGRESS_SUPPORTED.has(toolName),
+  };
+  if (deprecationInfo) {
+    meta.deprecation = deprecationInfo;
+  }
+  return meta;
 }
 
 // ── Deprecation warning helper (Wave D) ─────────────────────────
@@ -2911,7 +2996,14 @@ export class McpServer {
           jsonrpc: "2.0",
           id,
           result: {
-            tools: visibleTools.map((t) => t.def),
+            // ADR-0037 Phase 1 (2026-05-03): augment each tool def with
+            // `x-am` metadata (group, tier, auth_required, deprecated,
+            // deprecation?, progress_supported). MCP spec permits unknown
+            // fields — clients that don't read x-am simply ignore it.
+            tools: visibleTools.map((t) => ({
+              ...t.def,
+              "x-am": buildToolMetadata(t.def.name, t.tier),
+            })),
           },
         };
       }
