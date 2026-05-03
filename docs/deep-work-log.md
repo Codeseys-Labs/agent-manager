@@ -256,3 +256,37 @@ for doc + small-code-fix scope).
 - Remove the `--explain` alias that dry-run-shipper shipped before the
   ADR-0038 correction reached them. It's a 3-line cleanup tracked in
   deferred-pillar-review-items.md.
+
+## Run 2026-05-03 — started at 0fb8ccd
+
+**Scope:** Drive the tracked backlog from `docs/plans/deferred-pillar-review-items.md`
+to zero, plus the known follow-ups from prior runs.
+
+**Baseline hash:** `0fb8ccd5dac1c69b7e89655494189a1877911804`
+
+**Backlog source:** `docs/plans/deferred-pillar-review-items.md` (written
+in Run-B at b752c45) enumerates 7 deferred items + 2 candidate ADRs.
+Additional known follow-ups:
+- Task #32 — pre-existing concurrency.test.ts flake (persists; ADR-0032
+  follow-up or similar)
+- `--explain` alias cleanup (ADR-0038 correction; dry-run-shipper landed
+  it before the ADR was patched)
+- Rate-limit risk: Codex ChatGPT Plus usage caps may limit the concurrent-
+  review lever this session.
+
+**Budget plan:** 3 waves max.
+- Wave 1 (P2 items, low-risk, parallelizable):
+  - Remove --explain alias from `am run` (cleanup)
+  - Ship `am marketplace validate <path>` CLI subcommand (B3-full)
+  - Ship transactional apply Option C — per-adapter status in apply result (C3 lite)
+- Wave 2 (medium-risk, design-first):
+  - ADR-0037 proposed — per-tool MCP metadata
+  - Flaky concurrency.test.ts: investigate + fix OR quarantine with documented reason
+- Wave 3 (items that genuinely can't close in this loop):
+  - C2 wiki usage feedback (depends on M5 wiki sync which remains unshipped)
+  - D1 marketplace-index (needs owner decision)
+  - D2 per-client MCP policies (needs concrete scenario)
+  - A2A variants extension (ADR-0036 follow-up) — needs a use case
+  - ADR-0036 permission_policy enforcement wiring (needs ADR-0037 first)
+
+Items in Wave 3 get explicit deferral documentation, not silent skip.
