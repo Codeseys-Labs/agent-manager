@@ -8,7 +8,7 @@ const main = defineCommand({
     name: "am",
     version: AM_VERSION,
     description:
-      "chezmoi for AI agent configs — define once in TOML, sync via git, generate native configs for every tool",
+      "The control plane for your AI agents — catalog + git sync, MCP gateway, ACP/A2A router, marketplace, LLM-wiki, three UIs",
   },
   args: {
     profile: { type: "string", description: "Override active profile" },

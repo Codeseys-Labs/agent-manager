@@ -351,3 +351,102 @@ deliberate deviation from the skill's default Wave-1 pattern.
 
 ADR-0037 frontmatter updated to reflect Phase 1 landed; Phase 2/3 stay
 deferred.
+
+## Run 2026-05-03-C — M5.1 + M5.2 wiki-sync pipeline (continuation of -B)
+
+**Baseline:** `b48c478` · **Exit:** `f349a5d` (+ cli.ts description fix
+at HEAD)
+
+Continued the autonomous-deliberation pattern from Run-B. First Codex
+pass (option A-E deliberation) picked **A — M5.1 wiki-sync core
+primitives**; shipped at f5f7401. Then ran a 4-agent parallel deep-dive
+(no Codex — ChatGPT Plus usage-limit hit mid-run) covering all 6
+pillars + an onboarding/novice-UX review. Used their findings to pick
+the next slice: **M5.2 wire-up**, because (a) it completes the pipeline
+M5.1 started, (b) the Pillar-5 audit rated it Shippable-in-<2-hours,
+and (c) it unblocks C2 wiki usage feedback (deferred from Run 2026-05-03).
+
+**Commits in this run (baseline b48c478):**
+- f5f7401  feat(wiki-sync): M5.1 core git primitives (+2 typed errors)
+- f349a5d  feat(wiki-sync): M5.2 FF-only pipeline + auto-commit + conflict sidecar
+- (pending this commit)  docs(deep-work-log,wiki-sync-m5): mark M5.1/M5.2 shipped + fix stale am --help description
+
+**Artifacts produced:**
+- 3 new git primitives in src/core/git.ts: `pullFastForwardOnly`,
+  `softResetHead`, `stageWikiFiles`
+- 2 new typed errors in src/lib/errors.ts: `WikiSyncConflictError`
+  (with `conflictedFiles[]`), `WikiSyncSecretBlockedError` (with
+  `hits[]`)
+- 1 new module: src/wiki/sync.ts (auto-commit + FF-only pull + rollback
+  + wiki-conflict.json sidecar + tier-1 text secret scanner)
+- Rewrite of `syncSubcommand` in src/commands/wiki.ts with 5 new CLI
+  flags (--auto-commit, --allow-dirty, --debounce,
+  --strict-secret-scan, --direction=commit-and-sync alias)
+- +28 tests net (9 M5.1 primitive tests + 19 M5.2 pipeline tests)
+- Stale `am --help` description fix: "chezmoi for AI agent configs"
+  → "The control plane for your AI agents …" (aligns with ADR-0031
+  and README headline)
+
+**Items closed:**
+- M5.1 wiki-sync primitives (docs/plans/wiki-sync-m5.md §M5.1)
+- M5.2 wiki-sync pipeline (docs/plans/wiki-sync-m5.md §M5.2)
+- Partial onboarding-audit finding: stale `am --help` description
+
+**Items deferred with rationale:**
+- **M5.3** (`am wiki resolve`, `am doctor` symlink check,
+  `relinkSubcommand`, subtree export) — standalone ~3-day effort.
+  Sidecar format is locked from M5.2, so M5.3 can pick up cold.
+- **C2 wiki usage feedback** — no longer blocked (M5 pipeline now
+  FF-only + sidecar-ready). Can be scheduled independently.
+- **npm publish + install.sh + E2E install-path test** — user-action
+  blockers (NPM_TOKEN secret), tracked in prior runs.
+- **Full-drift across 13 adapters** — 11-12 dev-days, tracked in
+  docs/plans/skill-agent-drift.md.
+
+**Parallel-team deep-dive findings (from 4 subagents on 6 pillars +
+onboarding, run concurrent with M5.1 shipping):**
+- **Pillar 1**: 78% complete. Biggest gaps: skill/agent drift is
+  paper-only across 11 of 13 adapters; `loadResolvedConfig` silently
+  ignores project-local when `opts.projectFile` is null in MCP
+  handler path.
+- **Pillar 2**: 72% complete. ADR-0037 Phase 2 (output_schema) +
+  Phase 3 (error_codes) explicitly deferred. No integration test for
+  `am_apply` via MCP handleRequest writing real files.
+- **Pillar 3**: 78% complete. Tier-2 shim path works for dev builds
+  but `am-acp-shell` was absent from install.sh pre-rc6; tier-2 E2E
+  test blocked on CI runner images (deep-work-log task #25).
+- **Pillar 4**: 72% complete. ADR-0034 + ADR-0035 form a circular
+  dependency; neither can flip to `accepted` without the other, and
+  neither has code. Community shim registration (Phase E of
+  ADR-0034) is a paper decision pointing at another paper decision.
+- **Pillar 5**: 62% complete pre-M5.2, ~75% post-M5.2. LLM
+  extraction (ADR-0020 phases 1-2) still paper — harvester is
+  regex-only. Only 2 of 13 adapters have SessionReader
+  implementations (claude-code, codex-cli).
+- **Pillar 6**: 58% complete. CF Worker is read-only in production
+  (no write routes on `/api/config/:owner/:repo`). Local `am serve`
+  has no `/api/wiki/*` routes. TUI add/edit flows punt to CLI.
+- **Onboarding**: All 4 advertised install paths require a
+  published release; NPM_TOKEN blocker persists from prior runs.
+  `install.sh` exists at repo root (audit mis-identified location).
+  `am import auto` exists (audit was wrong about that), so the
+  `am init` success message IS valid.
+
+**Verification (Phase 8):**
+- `bun test`: **2589 pass / 0 fail / 8210 expect() across 193 files**
+  (+19 M5.2, +9 M5.1 vs. the 2561 post-ADR-0037-Phase-1 baseline).
+- `bun run typecheck`: 0 src errors.
+- `bun run lint`: 0 errors, 1 pre-existing warning (unchanged).
+- No adversarial Codex review this run (rate-limit hit). 4-agent
+  subagent fan-out substituted for it — delivered 6-pillar audit +
+  onboarding review from 4 independent contexts.
+
+**Deviation from skill script:**
+1. Codex rate-limit forced fallback to subagent-only review. The
+   adversarial-Codex lever was unavailable for ~60 min.
+2. Ran *two* shippable slices (M5.1 + M5.2) in one continuation loop
+   rather than the default "one slice per loop" from Run-B. Acceptable
+   because M5.2 is a direct continuation of M5.1 (not a second
+   deliberated pick) and completes a user-coherent unit.
+
+**Exit hash:** `f349a5d` (pre-docs), final at HEAD after this commit.
