@@ -573,3 +573,12 @@ fixes, true exit).
 - 64def23 wave3 (am mcp-superset check|apply)
 - ef196f0 docs (deep-work-log summary)
 - 8f636ce wave3-final-review (3 fixes from final adversarial review)
+
+## Run 2026-05-03-E — started at 37934f4
+
+**Scope:** User explicitly asked: (1) continue draining backlog; (2) try
+multi-Codex background fan-out + TeamCreate + subagent teams
+simultaneously to scout project state; (3) use deep research via
+tavily/exa/deepwiki. Budget: max 5 waves per skill rule.
+
+**Baseline hash:** `37934f4`
