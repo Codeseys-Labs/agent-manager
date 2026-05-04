@@ -128,6 +128,32 @@ describe("checkNativeAgentPreflight (2026-05-03-E novice hints)", () => {
     expect(res.ok).toBe(true);
   });
 
+  test("FINAL-REV-W2: skips ../ parent-relative paths", () => {
+    __setDryRunWhichFnForTests(() => {
+      throw new Error("must not probe ../ commands");
+    });
+    const res = checkNativeAgentPreflight("../shared/bin/claude --acp", "claude");
+    expect(res.ok).toBe(true);
+  });
+
+  test("FINAL-REV-W2: skips Windows backslash relative paths (.\\, ..\\)", () => {
+    __setDryRunWhichFnForTests(() => {
+      throw new Error("must not probe Windows-relative commands");
+    });
+    expect(checkNativeAgentPreflight(".\\bin\\claude.exe --acp", "claude").ok).toBe(true);
+    expect(checkNativeAgentPreflight("..\\shared\\claude.exe --acp", "claude").ok).toBe(true);
+  });
+
+  test("FINAL-REV-W2: skips Windows drive-letter absolute paths", () => {
+    __setDryRunWhichFnForTests(() => {
+      throw new Error("must not probe Windows absolute commands");
+    });
+    expect(checkNativeAgentPreflight("C:\\Program Files\\claude.exe --acp", "claude").ok).toBe(
+      true,
+    );
+    expect(checkNativeAgentPreflight("D:/tools/claude --acp", "claude").ok).toBe(true);
+  });
+
   test("probes npx/bunx wrappers but only to check the runner is installed", () => {
     __setDryRunWhichFnForTests((name) => (name === "npx" ? "/usr/bin/npx" : null));
     const res = checkNativeAgentPreflight("npx -y @vendor/claude-agent-acp", "claude");

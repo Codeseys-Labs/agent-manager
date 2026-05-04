@@ -249,7 +249,23 @@ export function checkNativeAgentPreflight(command: string, agentName: string): S
   // Tier-2 shim is a different check.
   if (exe === "am-acp-shell") return { ok: true };
   // Absolute or relative path — user controls. Skip probe.
-  if (exe.startsWith("/") || exe.startsWith("./") || exe.startsWith("../")) {
+  // FINAL-REV-W2 (2026-05-03-E): also cover Windows forms since
+  // bun-windows-x64 is a supported build target. parseCommand
+  // (shell-style) consumes backslashes as escapes so `.\bin\claude`
+  // arrives as `.binclaude`. We match `.` or `..` followed by any
+  // non-/ character to catch that form defensively.
+  if (
+    exe.startsWith("/") ||
+    exe.startsWith("./") ||
+    exe.startsWith("../") ||
+    exe.startsWith(".\\") ||
+    exe.startsWith("..\\") ||
+    // Post-parse Windows relative (backslash-stripped): `.bin…` / `..share…`
+    /^\.{1,2}[A-Za-z]/.test(exe) ||
+    // Windows drive-letter absolute path. Accept `C:\`, `C:/`, and the
+    // shell-parsed form `C:Program` (backslash consumed).
+    /^[A-Za-z]:(?:[\\/]|[A-Za-z])/.test(exe)
+  ) {
     return { ok: true };
   }
   // Package-runner wrappers fetch on demand. Probe the wrapper itself

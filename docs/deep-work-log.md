@@ -582,3 +582,65 @@ simultaneously to scout project state; (3) use deep research via
 tavily/exa/deepwiki. Budget: max 5 waves per skill rule.
 
 **Baseline hash:** `37934f4`
+
+### Run 2026-05-03-E — final state
+
+**Commits (baseline 37934f4 → final):**
+- 61953cc  docs(deep-work-log): start marker
+- 6dfe8db  feat(wave1): M5.3-lite am wiki resolve + README + codex-B scout
+- c821c44  feat(wave2): novice first-run recovery hints (Codex-B pick)
+- (pending)  fix(wave2-final-review): Windows relative-path prefix
+
+**Items closed this run (11 of 11):**
+
+Scout phase:
+- #90 multi-agent project state audit — 2 subagents + 1 Codex-B
+  delivered. Codex A + C hit usage cap mid-run; subagents substituted.
+
+Cheap backlog (issue #2 stragglers):
+- #91 prerelease flag in release.yml — ALREADY DONE (commit 7463c5a,
+  Run 2026-05-01). Audit was stale.
+- #92 NODE_OPTIONS forwarding doc — README Troubleshooting section
+  added with config-level example.
+- #93 arg-named promptTemplate — ALREADY IMPLEMENTED (shell-wrapper.ts
+  L323-342 + full test coverage L200-275). Audit was stale.
+
+Wave 1 (M5.3-lite):
+- #94 `am wiki resolve` — +9 tests, closes M5.2's open loop
+- #95-98 four adversarial-review fixes before commit:
+  - REV-M53-1 path-traversal guard (sidecar → ../../evil)
+  - REV-M53-2 tag-oid dereference in take-remote
+  - REV-M53-3 take-remote IO test (was missing)
+  - REV-M53-4 EDITOR="code --wait" split
+
+Wave 2 (novice hints — Codex-B pick):
+- #99 recovery hints + checkNativeAgentPreflight — +7 tests
+- #100 Windows relative-path + drive-letter skip rules — +3 tests
+
+**Multi-scout orchestration (per user's explicit request):**
+- 3 Codex background instances (A pillar-audit, B UX-audit, C security).
+  A+C hit ChatGPT Plus usage cap partway; B completed + wrote report.
+- 2 subagent scouts (skill-agent-drift, M5.3-scope) — both delivered.
+- 1 concurrent adversarial reviewer during wave 1 (4 findings, all
+  landed before commit).
+- 1 final-review reviewer (1 finding, landed before close).
+
+**Verification (Phase 8):**
+- `bun test`: **2662 pass / 0 fail / 8390 expect() across 201 files**
+  (+19 new tests vs. the 2643 pre-loop baseline: 9 resolve + 3
+  resolve-traversal + 7 native-preflight + 3 Win-relative-path)
+- `bun run typecheck`: 0 src errors
+- `bun run lint`: 0 errors, 1 pre-existing warning
+
+**Exit hash:** (final commit hash, see next doc update)
+
+**User experience after this run:**
+- `am wiki sync` → tells user to run `am wiki resolve` → `am wiki
+  resolve` now EXISTS and works (M5.2 → M5.3 loop closed).
+- `am init` on a blank machine no longer silent; suggests 3 concrete
+  next commands.
+- `am apply` on zero-tool machine suggests same 3 commands.
+- `am run claude` when `claude-agent-acp` missing now fails with
+  actionable error BEFORE the opaque EPERM deep in ACP client.
+- README has Troubleshooting section covering NODE_OPTIONS + shim
+  install path.
