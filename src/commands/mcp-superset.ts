@@ -25,7 +25,7 @@ import { readFile, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { defineCommand } from "citty";
-import { scanUrlForCredentials } from "../core/url-credentials";
+import { buildSuggestedReplacementUrl, scanUrlForCredentials } from "../core/url-credentials";
 import { errorMessage } from "../lib/errors";
 import { error, info, output } from "../lib/output";
 
@@ -61,7 +61,7 @@ interface ClassifyResult {
   redactedDetectedPattern?: string;
 }
 
-interface SupersetEntry {
+export interface SupersetEntry {
   name: string;
   class: CopyClass;
   sourceShape: ClassifyResult["sourceShape"];
@@ -126,10 +126,12 @@ export function classifyServer(name: string, server: McpServerShape): ClassifyRe
         remediation: {
           kind: "rotate-to-env-var",
           suggestedEnvVar: hit.suggestedEnvVar,
-          rewritePreview: url.replace(
-            `${hit.queryKey}=${hit.redactedValue}`.slice(0, -1),
-            `${hit.queryKey}=${hit.suggestedEnvVar}`,
-          ),
+          // FINAL-REV-1: build the replacement with URL API so the raw
+          // credential never survives into the hint. The previous regex-
+          // with-redactedValue form silently no-op'd (the truncated
+          // redactedValue never matched the full URL) and left the
+          // original credential visible.
+          rewritePreview: buildSuggestedReplacementUrl(url, hit.queryKey, hit.suggestedEnvVar),
         },
         redactedDetectedPattern: `${hit.queryKey}=${hit.redactedValue.replace(/[^…]+…?/, (m) => `${m.slice(0, 4)}****`)}`,
       };
@@ -261,7 +263,7 @@ async function readMcpFile(path: string): Promise<Record<string, McpServerShape>
   return parsed.mcpServers ?? {};
 }
 
-async function writeProjectWithSuperset(
+export async function writeProjectWithSuperset(
   path: string,
   copyEntries: SupersetEntry[],
   globalMap: Record<string, McpServerShape>,
@@ -304,7 +306,7 @@ export const checkSubcommand = defineCommand({
   meta: {
     name: "check",
     description:
-      "Audit: report divergence between global and project MCP configs (nonzero exit on drift)",
+      "Audit global vs project MCP configs. Exit codes: 0 satisfied · 1 drift · 2 refusal (URL credential) · 3 input error. --strict collapses 2 → 1 for binary CI gates.",
   },
   args: {
     global: {
@@ -378,7 +380,7 @@ export const applySubcommand = defineCommand({
   meta: {
     name: "apply",
     description:
-      "Reconcile: copy missing servers from global into project (refuses URL-credential-bearing entries)",
+      "Copy missing safe servers from global into project. Exit codes: 0 applied · 2 refusal (URL credential still needs rotation; nothing written) · 3 input error. Refused entries are NEVER written.",
   },
   args: {
     global: { type: "string" },

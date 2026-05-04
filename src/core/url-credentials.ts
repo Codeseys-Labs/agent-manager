@@ -134,7 +134,11 @@ export function scanServersForUrlCredentials(
  * the suggested-fix output, so copy-pasting the hint never exposes a
  * second raw credential.
  */
-function buildSuggestedReplacementUrl(url: string, queryKey: string, envVar: string): string {
+export function buildSuggestedReplacementUrl(
+  url: string,
+  queryKey: string,
+  envVar: string,
+): string {
   try {
     const u = new URL(url);
     u.searchParams.set(queryKey, envVar);
