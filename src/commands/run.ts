@@ -194,6 +194,37 @@ export function __setDryRunWhichFnForTests(fn: WhichFn | null): void {
   whichFn = fn ?? ((name) => (Bun.which(name) as string | null) ?? null);
 }
 
+export interface ShimPreflightResult {
+  ok: boolean;
+  resolved?: string;
+  /** Human-readable error when ok=false. */
+  error?: string;
+  /** Install-path hint when ok=false. */
+  hint?: string;
+}
+
+/**
+ * Pre-flight check for tier-2 shims: `am-acp-shell <name>` can only spawn
+ * when the `am-acp-shell` binary is on PATH. Prior-rc6 binaries shipped
+ * only `am`, so users on those installs hit an opaque ENOENT when they
+ * try a tier-2 shim. This function translates that case into a typed
+ * result the run command prints before spawning.
+ *
+ * Exported so tests can exercise both branches without spawning.
+ */
+export function checkShimPreflight(command: string): ShimPreflightResult {
+  const parsed = parseCommand(command);
+  if (parsed.executable !== "am-acp-shell") return { ok: true };
+  const resolved = whichFn("am-acp-shell");
+  if (resolved) return { ok: true, resolved };
+  return {
+    ok: false,
+    error:
+      "`am-acp-shell` not found on PATH — tier-2 shim cannot spawn. Reinstall agent-manager (rc6+) to install both binaries.",
+    hint: "curl -fsSL https://raw.githubusercontent.com/Codeseys-Labs/agent-manager/main/install.sh | sh",
+  };
+}
+
 /**
  * Build the dry-run payload for `am run`.
  *
@@ -432,6 +463,27 @@ async function runAgent(args: RunAgentArgs): Promise<void> {
   }
 
   debug(`Resolved agent: ${agentName} -> ${entry.acp.command} (${entry.source})`, opts);
+
+  // Pre-flight check: tier-2 shims spawn via `am-acp-shell <name>`, so that
+  // binary must be on PATH. Binary users who installed am via pre-rc6
+  // install.sh or Homebrew formula got only `am` — the second binary
+  // landed later (see docs/reviews/2026-04-18-acp-shell-wrapper/
+  // REV-5-post-rc6-audit.md HIGH-1). A missing am-acp-shell used to
+  // surface as an opaque ENOENT from Bun.spawn; `checkShimPreflight`
+  // translates that into an actionable error.
+  if (!args.dryRun) {
+    const connectCmd = resolvedVariant?.command ?? entry.acp.command;
+    const preflight = checkShimPreflight(connectCmd);
+    if (!preflight.ok) {
+      error(`${preflight.error} (agent: ${agentName})`, opts);
+      if (preflight.hint) info(preflight.hint, opts);
+      process.exitCode = 1;
+      return;
+    }
+    if (preflight.resolved) {
+      debug(`Pre-flight: am-acp-shell resolves to ${preflight.resolved}`, opts);
+    }
+  }
 
   // ADR-0038: dry-run short-circuits BEFORE any subprocess spawn or
   // permission-policy side effect. Resolution + validation has already run;

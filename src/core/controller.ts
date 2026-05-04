@@ -34,6 +34,7 @@ import { commitAll, isNothingToCommitError } from "./git";
 import { AsyncMutex } from "./locks";
 import type { Config } from "./schema";
 import { interpolateEnvAsync, loadKey } from "./secrets";
+import { formatCredentialHits, scanServersForUrlCredentials } from "./url-credentials";
 
 /**
  * Global locks guarding shared in-process state. Keyed mutexes per
@@ -209,6 +210,17 @@ export async function applyResolved(
       encryptionKey: encryptionKey ?? undefined,
     });
     const resolved = buildResolvedConfig(interpolated, profileName, configDir);
+
+    // Issue #3 URL-credential guard: scan the post-interpolation resolved
+    // config for credential-bearing query params before any adapter.export
+    // writes to disk. `interpolateEnvAsync` has already expanded `${VAR}`
+    // so what we scan is what would land in the user's native configs.
+    // On a hit we refuse the whole apply — catching one leak late is worse
+    // than catching all of them early.
+    const credentialHits = scanServersForUrlCredentials(resolved.servers ?? {});
+    if (credentialHits.length > 0) {
+      throw new Error(formatCredentialHits(credentialHits));
+    }
 
     let adapters: Adapter[];
     if (options.target) {

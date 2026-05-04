@@ -450,3 +450,11 @@ onboarding, run concurrent with M5.1 shipping):**
    deliberated pick) and completes a user-coherent unit.
 
 **Exit hash:** `f349a5d` (pre-docs), final at HEAD after this commit.
+
+## Run 2026-05-03-D — started at 0d6c571
+
+**Scope:** Continue grinding the backlog toward zero. User explicitly
+asked to try multi-Codex background fan-out + TeamCreate + subagent
+teams simultaneously, with deep research via tavily/exa/deepwiki.
+
+**Baseline hash:** `0d6c571`
