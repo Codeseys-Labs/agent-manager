@@ -31,6 +31,12 @@ import { error, info, output, parsePositiveInt, warn } from "../lib/output";
 import { exportGraphForViz, findOrphans, loadGraph } from "../wiki/graph";
 import { harvestSession, harvestSessionAsPages } from "../wiki/harvester";
 import {
+  type ResolveChoice,
+  type ResolveIo,
+  readConflictSidecar,
+  resolveConflicts,
+} from "../wiki/resolve";
+import {
   addEntry,
   createProjectWikiLink,
   deleteEntry,
@@ -1146,6 +1152,124 @@ export const syncSubcommand = defineCommand({
   },
 });
 
+// ── Resolve Subcommand (M5.3-lite, 2026-05-03-E) ──────────────────
+
+const resolveSubcommand = defineCommand({
+  meta: {
+    name: "resolve",
+    description:
+      "Resolve a wiki sync conflict from wiki-conflict.json (per-file pick: keep-local / take-remote / edit)",
+  },
+  args: {
+    json: { type: "boolean", default: false },
+    quiet: { type: "boolean", alias: "q", default: false },
+    verbose: { type: "boolean", alias: "v", default: false },
+    strategy: {
+      type: "string",
+      description:
+        "Non-interactive choice applied to every file: keep-local | take-remote | skip (no default)",
+    },
+  },
+  async run({ args }) {
+    const opts = { json: args.json, quiet: args.quiet, verbose: args.verbose };
+    const wikiDir = resolveWikiDir({ global: true });
+
+    const sidecar = await readConflictSidecar(wikiDir);
+    if (!sidecar) {
+      error(
+        "No wiki-conflict.json in the global wiki — nothing to resolve. Run `am wiki sync` first if divergence is expected.",
+        opts,
+      );
+      process.exitCode = 1;
+      return;
+    }
+
+    // Build the IO handler. When --strategy is given, short-circuit
+    // the prompt; otherwise use @clack/prompts select.
+    const strategyFlag = args.strategy as string | undefined;
+    const io: ResolveIo = {
+      async pickChoice(file) {
+        if (strategyFlag) {
+          if (!["keep-local", "take-remote", "skip"].includes(strategyFlag)) {
+            throw new Error(
+              `Invalid --strategy "${strategyFlag}". Expected: keep-local | take-remote | skip`,
+            );
+          }
+          return strategyFlag as ResolveChoice;
+        }
+        const clack = await import("@clack/prompts");
+        const chosen = await clack.select({
+          message: `Resolve: ${file}`,
+          options: [
+            { value: "keep-local", label: "keep local (your version)" },
+            { value: "take-remote", label: "take remote (their version)" },
+            { value: "edit", label: "open in $EDITOR" },
+            { value: "skip", label: "skip (resolve later)" },
+          ],
+        });
+        if (clack.isCancel(chosen)) return "skip";
+        return chosen as ResolveChoice;
+      },
+      async openEditor(absPath) {
+        // REV-M53-4 (2026-05-03-E): many editors require flags, e.g.
+        // EDITOR="code --wait" or EDITOR="vim -f". Passing the whole
+        // string as argv[0] fails with ENOENT. Split on whitespace so
+        // EDITOR-style env vars work.
+        const editorRaw = process.env.EDITOR ?? process.env.VISUAL ?? "vi";
+        const parts = editorRaw.trim().split(/\s+/);
+        const bin = parts[0];
+        const editorArgs = parts.slice(1);
+        const proc = Bun.spawn([bin, ...editorArgs, absPath], {
+          stdin: "inherit",
+          stdout: "inherit",
+          stderr: "inherit",
+        });
+        await proc.exited;
+      },
+      info(msg) {
+        info(msg, opts);
+      },
+    };
+
+    try {
+      const result = await resolveConflicts(wikiDir, io);
+      if (args.json) {
+        output(
+          {
+            action: "resolve",
+            wikiDir,
+            sidecarPath: result.sidecarPath,
+            sidecarCleared: result.sidecarCleared,
+            commitOid: result.commitOid,
+            resolvedFiles: result.resolvedFiles,
+          },
+          opts,
+        );
+      } else {
+        for (const f of result.resolvedFiles) {
+          info(`  ${f.choice.padEnd(12)} ${f.file}`, opts);
+        }
+        if (result.commitOid) {
+          info(`Committed resolution: ${result.commitOid.slice(0, 8)}`, opts);
+        }
+        if (!result.sidecarCleared) {
+          warn(
+            "Sidecar NOT cleared — some files were skipped. Re-run `am wiki resolve` when ready.",
+            opts,
+          );
+          process.exitCode = 1;
+        } else {
+          info("Sidecar cleared; conflict resolved.", opts);
+        }
+      }
+    } catch (err) {
+      const msg = errorMessage(err) ?? "resolve failed";
+      error(msg, opts);
+      process.exitCode = 1;
+    }
+  },
+});
+
 // ── Init Subcommand (ADR-0022) ──────────────────────────────────
 
 const initSubcommand = defineCommand({
@@ -1219,6 +1343,7 @@ export const wikiCommand = defineCommand({
     show: () => Promise.resolve(showSubcommand),
     search: () => Promise.resolve(searchSubcommand),
     sync: () => Promise.resolve(syncSubcommand),
+    resolve: () => Promise.resolve(resolveSubcommand),
     path: () => Promise.resolve(pathSubcommand),
     // Authoring / maintenance
     init: () => Promise.resolve(initSubcommand),

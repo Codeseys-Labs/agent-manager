@@ -903,6 +903,45 @@ cache for faster downloads.
 
 ---
 
+## Troubleshooting
+
+### `NODE_OPTIONS` doesn't reach your ACP agent
+
+By design, `NODE_OPTIONS` is **not** forwarded from your parent shell into
+spawned ACP agents. This is a security hardening (ADR-0019, REV-4 MED-2) —
+`NODE_OPTIONS` can load arbitrary JS at startup, so inherited values would
+let a compromised parent env attack every subprocess.
+
+If you need it for a specific tier-1 Node agent (e.g. to raise the heap
+with `--max-old-space-size=4096`), pass it explicitly via `ConnectOptions.env`
+in your programmatic ACP client, or add it to the agent's entry under
+`[agents.<name>.acp.env]` in `config.toml`:
+
+```toml
+[agents.claude.acp]
+command = "claude-agent-acp"
+[agents.claude.acp.env]
+NODE_OPTIONS = "--max-old-space-size=4096"
+```
+
+`am_agent_invoke` will merge that map on top of the sandboxed base env
+inside `AmAcpClient.connect` without falling back to the parent shell's
+value.
+
+### `am-acp-shell: command not found` when running a tier-2 shim
+
+The second binary `am-acp-shell` ships alongside `am` in rc6+ installs
+(install.sh, Homebrew formula, binary release). If you installed a
+pre-rc6 binary, `am run <tier-2-shim>` emits a clear error from
+`checkShimPreflight` telling you to reinstall. The install.sh one-liner
+places both binaries into `~/.local/bin`:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Codeseys-Labs/agent-manager/main/install.sh | sh
+```
+
+---
+
 ## License
 
 [MIT](LICENSE)
