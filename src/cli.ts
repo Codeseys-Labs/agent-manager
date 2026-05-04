@@ -40,6 +40,7 @@ const main = defineCommand({
     version: () => import("./commands/version").then((m) => m.versionCommand),
     adapter: () => import("./commands/adapter").then((m) => m.adapterCommand),
     "mcp-serve": () => import("./commands/mcp-serve").then((m) => m.mcpServeCommand),
+    "mcp-superset": () => import("./commands/mcp-superset").then((m) => m.mcpSupersetCommand),
     serve: () => import("./commands/serve").then((m) => m.serveCommand),
     tui: () => import("./commands/tui").then((m) => m.tuiCommand),
     session: () => import("./commands/session").then((m) => m.sessionCommand),
