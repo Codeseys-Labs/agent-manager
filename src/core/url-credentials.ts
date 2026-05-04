@@ -22,7 +22,13 @@
 const CREDENTIAL_QUERY_KEYS = [
   /^api[_-]?key$/i,
   /^[a-z]+ApiKey$/i, // tavilyApiKey, exaApiKey
-  /^[a-z]+_?key$/i, // exa_key, tavily_key
+  // Require a separator to avoid false positives on compound nouns like
+  // `publickey`, `sandboxkey`, `proxykey` (REV-1 2026-05-03): without the
+  // separator, `/^[a-z]+_?key$/i` with case-insensitive matching also
+  // trips on benign 8+-char values. The preceding part may itself contain
+  // separators (my_access_key, tavily-api-key) — `[a-z][a-z_-]*` covers
+  // that while still requiring the terminal `[_-]key`.
+  /^[a-z][a-z_-]*[_-]key$/i, // exa_key, tavily_key, my-key, my_access_key
   /^access[_-]?key$/i,
   /^secret$/i,
   /^secret[_-]?key$/i,
@@ -99,6 +105,12 @@ export function scanServersForUrlCredentials(
   for (const [serverName, server] of Object.entries(servers ?? {})) {
     const urls: string[] = [];
     if (server.command && /^https?:\/\//i.test(server.command)) urls.push(server.command);
+    // REV-NB-2 (2026-05-03): the Codex-CLI style passes the MCP URL via
+    // `args`, not `command` (e.g. `{ command: "npx", args: ["mcp-remote",
+    // "https://…?api_key=…"] }`). Walk every arg that parses as a URL.
+    for (const arg of server.args ?? []) {
+      if (typeof arg === "string" && /^https?:\/\//i.test(arg)) urls.push(arg);
+    }
     // Adapter-specific url fields
     for (const adapter of Object.values(server.adapters ?? {})) {
       if (typeof adapter?.url === "string" && /^https?:\/\//i.test(adapter.url)) {
@@ -110,6 +122,37 @@ export function scanServersForUrlCredentials(
     }
   }
   return hits;
+}
+
+/**
+ * Build a replacement URL using URL.searchParams.set so ONLY the offending
+ * query param is rewritten to the placeholder. Regex replace would edit
+ * the first `=([^&]+)` match regardless of which param it belongs to.
+ *
+ * Additionally (REV-2 strengthening 2026-05-03): any OTHER credential-
+ * shaped param in the same URL gets its value masked to ***REDACTED*** in
+ * the suggested-fix output, so copy-pasting the hint never exposes a
+ * second raw credential.
+ */
+function buildSuggestedReplacementUrl(url: string, queryKey: string, envVar: string): string {
+  try {
+    const u = new URL(url);
+    u.searchParams.set(queryKey, envVar);
+    // Mask every OTHER credential-shaped param so the displayed URL is
+    // safe to copy verbatim.
+    for (const [k, _v] of u.searchParams.entries()) {
+      if (k === queryKey) continue;
+      if (CREDENTIAL_QUERY_KEYS.some((re) => re.test(k))) {
+        u.searchParams.set(k, "***REDACTED***");
+      }
+    }
+    // searchParams.set percent-encodes `${VAR}` → `%24%7BVAR%7D`. Undo
+    // that for the human-readable hint — ${VAR} is what the user has to
+    // type into their TOML verbatim.
+    return u.toString().replace(encodeURIComponent(envVar), envVar);
+  } catch {
+    return url; // fallback: show original if URL parse fails
+  }
 }
 
 /** Build a human-readable error message from a set of hits. */
@@ -128,7 +171,11 @@ export function formatCredentialHits(hits: CredentialHit[]): string {
   lines.push("", "Fix: replace each credential with an env-var placeholder in config.toml:");
   for (const h of hits) {
     lines.push(
-      `  servers.${h.serverName}.command = "${h.url.replace(/=([^&]+)/, `=${h.suggestedEnvVar}`)}"`,
+      `  servers.${h.serverName}.command = "${buildSuggestedReplacementUrl(
+        h.url,
+        h.queryKey,
+        h.suggestedEnvVar,
+      )}"`,
     );
   }
   lines.push("", "Then set the env var at run time (never commit the real value).");

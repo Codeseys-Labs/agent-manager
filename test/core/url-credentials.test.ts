@@ -70,6 +70,23 @@ describe("scanUrlForCredentials", () => {
     const hits = scanUrlForCredentials("https://example.com/mcp/?session=abc123xyz456&timeout=30");
     expect(hits).toHaveLength(0);
   });
+
+  test("REV-1: does NOT match compound-noun 'publickey'/'sandboxkey'/'proxykey'", () => {
+    // Pre-REV-1 the `/^[a-z]+_?key$/i` pattern had optional `_` which
+    // caused `publickey` (no separator) to be a false positive. Now the
+    // pattern requires a separator ([_-]key).
+    for (const key of ["publickey", "sandboxkey", "proxykey", "sshkey", "pubkey"]) {
+      const hits = scanUrlForCredentials(`https://example.com/?${key}=testvalue1234`);
+      expect(hits, `false positive on ${key}`).toHaveLength(0);
+    }
+  });
+
+  test("REV-1: DOES still match separator-bearing compounds 'exa_key', 'tavily-key'", () => {
+    for (const key of ["exa_key", "tavily-key", "my_access_key"]) {
+      const hits = scanUrlForCredentials(`https://example.com/?${key}=longenoughvalue123`);
+      expect(hits.length, `missed ${key}`).toBeGreaterThan(0);
+    }
+  });
 });
 
 describe("scanServersForUrlCredentials", () => {
@@ -109,6 +126,22 @@ describe("scanServersForUrlCredentials", () => {
   test("handles empty map", () => {
     expect(scanServersForUrlCredentials({})).toEqual([]);
   });
+
+  test("REV-NB-2: walks server.args[] for URL-shaped tokens (Codex-CLI wrapper style)", () => {
+    // Before REV-NB-2 a server like { command:'npx', args:['mcp-remote',
+    // 'https://…?api_key=…'] } would pass the guard silently because the
+    // credential was in args, not command. After: args[] URL-shaped
+    // tokens are scanned too.
+    const hits = scanServersForUrlCredentials({
+      wrapped: {
+        command: "npx",
+        args: ["mcp-remote", "https://mcp.example.com/?api_key=abcdefghijklmnop1234"],
+      },
+    });
+    expect(hits).toHaveLength(1);
+    expect(hits[0].serverName).toBe("wrapped");
+    expect(hits[0].queryKey).toBe("api_key");
+  });
 });
 
 describe("formatCredentialHits", () => {
@@ -130,5 +163,27 @@ describe("formatCredentialHits", () => {
 
   test("returns empty string when hits is empty", () => {
     expect(formatCredentialHits([])).toBe("");
+  });
+
+  test("REV-2: multi-param URLs never leak the second raw credential in suggested-fix", () => {
+    // Pre-REV-2 the error message used /=([^&]+)/.replace which replaced
+    // only the first `=…` match, leaving the second raw credential in the
+    // displayed fix. Now the URL API's searchParams.set is used so only
+    // the offending param is rewritten.
+    const rawTwo = "other-raw-credential-value-xyz-1234";
+    const msg = formatCredentialHits([
+      {
+        serverName: "twokeys",
+        url: `https://example.com/?api_key=first-raw-credential&token=${rawTwo}`,
+        queryKey: "api_key",
+        redactedValue: "first-…",
+        suggestedEnvVar: "${API_KEY}",
+      },
+    ]);
+    // api_key should be placeholdered.
+    expect(msg).toContain("${API_KEY}");
+    // The second raw credential (in a DIFFERENT param) must not leak
+    // into the suggested-fix line.
+    expect(msg).not.toContain(rawTwo);
   });
 });

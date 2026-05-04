@@ -90,14 +90,13 @@ describe("atomic-write backup hook", () => {
     expect(backups).toHaveLength(0);
   });
 
-  test("prune keeps at most 10 entries", async () => {
+  test("prune keeps at most 10 entries — manifest AND on-disk in lockstep (REV-3)", async () => {
     await writeFile(target, "v0");
     for (let i = 1; i <= 12; i++) {
       await atomicWriteFile(target, `v${i}`, { backup: true });
     }
     const backups = await listBackupsForTarget(target);
-    // manifest.json still records all 12 entries, but .bak files on disk
-    // are capped — verify the on-disk file count.
+    // On-disk .bak files are capped...
     const dirContents = fs.readdirSync(join(cfgDir, "backups")).flatMap((k) => {
       const p = join(cfgDir, "backups", k);
       return fs
@@ -106,9 +105,14 @@ describe("atomic-write backup hook", () => {
         .map((f) => join(p, f));
     });
     expect(dirContents.length).toBeLessThanOrEqual(10);
-    // Returned-list length equals manifest.json entries (12 here) — that's
-    // the desired behavior for `am undo` to list historical activity.
-    expect(backups.length).toBeGreaterThanOrEqual(10);
+    // ...AND the manifest is pruned in lockstep so listBackupsForTarget
+    // never returns paths that point at deleted files (REV-3 fix).
+    expect(backups.length).toBe(dirContents.length);
+    expect(backups.length).toBeLessThanOrEqual(10);
+    // Every returned path must actually exist on disk.
+    for (const b of backups) {
+      expect(fs.existsSync(b.path)).toBe(true);
+    }
   });
 
   test("atomicWriteFileSync also snapshots", () => {

@@ -82,12 +82,21 @@ function targetKey(target: string): string {
   return createHash("sha256").update(target).digest("hex").slice(0, 8);
 }
 
-/** 20260503T142207Z formatted ISO-basic-UTC timestamp. NTFS-safe (no `:`). */
+/**
+ * 20260503T142207Z-NNNNNNNNN formatted ISO-basic-UTC + process.hrtime
+ * tail — NTFS-safe (no `:`) AND monotonic within a single process even
+ * when multiple backups land in the same millisecond. Without the
+ * monotonic tail, identical-timestamp .bak filenames would sort by hash
+ * (not by insertion), causing the manifest prune and on-disk prune to
+ * diverge (REV-3 follow-up).
+ */
 function isoBasic(d = new Date()): string {
-  return d
+  const ts = d
     .toISOString()
     .replace(/[-:]/g, "")
     .replace(/\.\d+Z$/, "Z");
+  const hr = process.hrtime.bigint().toString().padStart(19, "0").slice(-9);
+  return `${ts}-${hr}`;
 }
 
 interface BackupMeta {
@@ -140,6 +149,11 @@ async function maybeBackup(target: string, data: string | Uint8Array): Promise<B
     // first write
   }
   manifest.entries.push({ name, sha, ts });
+  // REV-3 (2026-05-03): prune the manifest alongside the .bak files so
+  // listBackupsForTarget never returns paths pointing to deleted files.
+  if (manifest.entries.length > DEFAULT_KEEP_COUNT) {
+    manifest.entries = manifest.entries.slice(-DEFAULT_KEEP_COUNT);
+  }
   await writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, "utf-8");
   await pruneBackups(dir, DEFAULT_KEEP_COUNT);
   return { target, timestamp: ts, sha, path };
@@ -179,6 +193,11 @@ function maybeBackupSync(target: string, data: string | Uint8Array): BackupMeta 
     // first write
   }
   manifest.entries.push({ name, sha, ts });
+  // REV-3 (2026-05-03): prune the manifest alongside .bak files so
+  // listBackupsForTarget never returns paths pointing to deleted files.
+  if (manifest.entries.length > DEFAULT_KEEP_COUNT) {
+    manifest.entries = manifest.entries.slice(-DEFAULT_KEEP_COUNT);
+  }
   fsSync.writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, "utf-8");
   // Sync prune: best-effort, swallow errors.
   try {
