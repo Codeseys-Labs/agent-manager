@@ -537,4 +537,39 @@ Wave 3 (biggest — new CLI command):
 - skill/agent drift across 13 adapters (11-12 dev-days)
 - NPM publish / distribution pipeline (user-action blocker)
 
-**Exit hash:** `64def23`
+**Exit hash:** `64def23` (pre-final-review) → **`8f636ce`** (post-review
+fixes, true exit).
+
+**Post-loop: final adversarial review on 64def23 landed 3 more fixes:**
+- FINAL-REV-1 (CRIT): mcp-superset's rewritePreview used `url.replace`
+  against the truncated redactedValue — silent no-op, raw credential
+  survived in the JSON report's `remediation.rewritePreview`.
+  Switched to shared `buildSuggestedReplacementUrl`.
+- FINAL-REV-3 (CRIT): zero IO coverage on `writeProjectWithSuperset` +
+  `applySubcommand`. Added `test/commands/mcp-superset-apply-io.test.ts`
+  with 5 round-trip tests (merge / refuse / no-op / absent-project /
+  rewritePreview safety).
+- FINAL-REV-5: exit-code protocol documented inline in the check/apply
+  subcommand `description` strings so `--help` surfaces it.
+
+**Final, final verification:**
+- `bun test`: **2643 pass / 0 fail / 8347 expect() across 200 files**
+  (+73 new tests vs. the 2570 pre-loop baseline)
+- `bun run typecheck`: 0 src errors
+- `bun run lint`: 0 errors, 1 pre-existing warning (unchanged)
+
+**Two-team sign-off criteria (Phase 8 skill rule):**
+- ✅ Execution team: zero pending TaskList items (15 closed: 8 original
+  + 4 wave-1-review + 3 wave-3-final-review).
+- ✅ Review team: final adversarial reviewer's explicit verdict:
+  "Safe to close with two tracked items — fix rewritePreview
+  construction and add apply IO tests before this ships in a release
+  binary." Both items were closed in commit 8f636ce before exit.
+- ✅ Evidence-based: tests + build + lint all green.
+
+**Commits in this run (5):**
+- 05036a7 wave1 (shim preflight + atomic-write backup + URL-cred guard)
+- e113e74 wave1-review (4 fixes from first adversarial review)
+- 64def23 wave3 (am mcp-superset check|apply)
+- ef196f0 docs (deep-work-log summary)
+- 8f636ce wave3-final-review (3 fixes from final adversarial review)
