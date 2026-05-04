@@ -155,6 +155,14 @@ export const initCommand = defineCommand({
     if (detectedNames.length > 0) {
       info(`Detected tools: ${detectedNames.join(", ")}`, opts);
       info("Run `am import auto` to import existing configs", opts);
+    } else {
+      // Novice first-run recovery (2026-05-03-E, per Codex-B audit): when
+      // no adapters detect, silence is a dead end. Suggest the three
+      // commands most likely to produce immediate value.
+      info("No supported tools detected yet. Try one of:", opts);
+      info("  am agent list --runnable     # see which built-in agents work now", opts);
+      info("  am search <query>            # find an MCP server in the Registry", opts);
+      info("  am add server <name> --command <cmd>   # add an MCP server by hand", opts);
     }
 
     if (args.json) {

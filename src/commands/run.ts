@@ -226,6 +226,53 @@ export function checkShimPreflight(command: string): ShimPreflightResult {
 }
 
 /**
+ * Novice-recovery preflight (2026-05-03-E, per Codex-B audit): before
+ * spawning any native agent, check that its executable is actually on
+ * PATH. Without this, `am run claude "hello"` on a machine without the
+ * claude CLI installed used to fail deep inside AmAcpClient.connect with
+ * an opaque EPERM/ENOENT from the send() call. The new preflight refuses
+ * upfront with an actionable message.
+ *
+ * Skip rules:
+ *  - `am-acp-shell` command → handled by checkShimPreflight (distinct path)
+ *  - absolute / relative path → user has taken explicit control; no PATH probe
+ *  - npx/bunx/uvx/pipx wrappers → these fetch on demand; PATH-probing the
+ *    wrapper is not the question the user cares about. We skip and let
+ *    the deeper spawn surface the error if the WRAPPER itself is missing
+ *    (rare: npx ships with node, bunx with bun).
+ */
+const PACKAGE_RUNNER_WRAPPERS = new Set(["npx", "bunx", "uvx", "pipx"]);
+
+export function checkNativeAgentPreflight(command: string, agentName: string): ShimPreflightResult {
+  const parsed = parseCommand(command);
+  const exe = parsed.executable;
+  // Tier-2 shim is a different check.
+  if (exe === "am-acp-shell") return { ok: true };
+  // Absolute or relative path — user controls. Skip probe.
+  if (exe.startsWith("/") || exe.startsWith("./") || exe.startsWith("../")) {
+    return { ok: true };
+  }
+  // Package-runner wrappers fetch on demand. Probe the wrapper itself
+  // (e.g. npx) — if even THAT isn't on PATH we surface that clearly.
+  if (PACKAGE_RUNNER_WRAPPERS.has(exe)) {
+    const resolved = whichFn(exe);
+    if (resolved) return { ok: true, resolved };
+    return {
+      ok: false,
+      error: `Package runner "${exe}" not found on PATH — agent "${agentName}" cannot spawn.`,
+      hint: `Install the runtime that ships "${exe}" (e.g. Node.js for npx, Bun for bunx) and retry.`,
+    };
+  }
+  const resolved = whichFn(exe);
+  if (resolved) return { ok: true, resolved };
+  return {
+    ok: false,
+    error: `Native agent "${agentName}" expects "${exe}" on PATH, but it was not found.`,
+    hint: `Install the CLI that provides "${exe}", OR run \`am agent list --runnable\` to see which agents are available right now.`,
+  };
+}
+
+/**
  * Build the dry-run payload for `am run`.
  *
  * Pure-ish function — no subprocess spawn, no network, no disk writes.
@@ -473,15 +520,24 @@ async function runAgent(args: RunAgentArgs): Promise<void> {
   // translates that into an actionable error.
   if (!args.dryRun) {
     const connectCmd = resolvedVariant?.command ?? entry.acp.command;
-    const preflight = checkShimPreflight(connectCmd);
-    if (!preflight.ok) {
-      error(`${preflight.error} (agent: ${agentName})`, opts);
-      if (preflight.hint) info(preflight.hint, opts);
+    const shimPreflight = checkShimPreflight(connectCmd);
+    if (!shimPreflight.ok) {
+      error(`${shimPreflight.error} (agent: ${agentName})`, opts);
+      if (shimPreflight.hint) info(shimPreflight.hint, opts);
       process.exitCode = 1;
       return;
     }
-    if (preflight.resolved) {
-      debug(`Pre-flight: am-acp-shell resolves to ${preflight.resolved}`, opts);
+    if (shimPreflight.resolved) {
+      debug(`Pre-flight: am-acp-shell resolves to ${shimPreflight.resolved}`, opts);
+    }
+    // Codex-B audit (2026-05-03-E): native agents got no preflight; a
+    // missing CLI surfaced as EPERM deep in ACP. Probe here.
+    const nativePreflight = checkNativeAgentPreflight(connectCmd, agentName);
+    if (!nativePreflight.ok) {
+      error(nativePreflight.error ?? "Agent cannot spawn", opts);
+      if (nativePreflight.hint) info(nativePreflight.hint, opts);
+      process.exitCode = 1;
+      return;
     }
   }
 

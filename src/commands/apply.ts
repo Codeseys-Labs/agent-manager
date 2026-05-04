@@ -42,7 +42,14 @@ export const applyCommand = defineCommand({
 
       const total = applyResult.results.length;
       if (total === 0) {
+        // Novice first-run recovery (2026-05-03-E, per Codex-B audit):
+        // don't leave the user at a dead end. Point at the three commands
+        // most likely to produce immediate value.
         info("No tools detected. Nothing to apply.", opts);
+        info("Get started with one of:", opts);
+        info("  am agent list --runnable     # see which built-in agents work now", opts);
+        info("  am search <query>            # find an MCP server in the Registry", opts);
+        info("  am add server <name> --command <cmd>   # add an MCP server by hand", opts);
         return;
       }
 

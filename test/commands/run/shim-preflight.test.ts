@@ -20,7 +20,11 @@
  */
 
 import { afterEach, describe, expect, test } from "bun:test";
-import { __setDryRunWhichFnForTests, checkShimPreflight } from "../../../src/commands/run";
+import {
+  __setDryRunWhichFnForTests,
+  checkNativeAgentPreflight,
+  checkShimPreflight,
+} from "../../../src/commands/run";
 
 afterEach(() => {
   __setDryRunWhichFnForTests(null);
@@ -73,5 +77,69 @@ describe("checkShimPreflight", () => {
     // `am-acp-shell`, so check skips.
     const res = checkShimPreflight("claude-agent-acp --acp");
     expect(res.ok).toBe(true);
+  });
+});
+
+describe("checkNativeAgentPreflight (2026-05-03-E novice hints)", () => {
+  afterEach(() => {
+    __setDryRunWhichFnForTests(null);
+  });
+
+  test("returns ok with resolved when binary is on PATH", () => {
+    __setDryRunWhichFnForTests((name) =>
+      name === "claude-agent-acp" ? "/usr/local/bin/claude-agent-acp" : null,
+    );
+    const res = checkNativeAgentPreflight("claude-agent-acp --acp", "claude");
+    expect(res.ok).toBe(true);
+    expect(res.resolved).toBe("/usr/local/bin/claude-agent-acp");
+  });
+
+  test("refuses with actionable error when binary missing (no more opaque EPERM)", () => {
+    __setDryRunWhichFnForTests(() => null);
+    const res = checkNativeAgentPreflight("claude-agent-acp --acp", "claude");
+    expect(res.ok).toBe(false);
+    expect(res.error).toContain("claude"); // agent name
+    expect(res.error).toContain("claude-agent-acp"); // executable
+    expect(res.error).toContain("PATH");
+    expect(res.hint).toContain("am agent list --runnable");
+  });
+
+  test("passes through am-acp-shell — that's checkShimPreflight's job", () => {
+    __setDryRunWhichFnForTests(() => {
+      throw new Error("must not probe for shim — distinct check");
+    });
+    const res = checkNativeAgentPreflight("am-acp-shell aider", "aider");
+    expect(res.ok).toBe(true);
+  });
+
+  test("skips absolute paths — user has explicit control", () => {
+    __setDryRunWhichFnForTests(() => {
+      throw new Error("must not probe absolute-path commands");
+    });
+    const res = checkNativeAgentPreflight("/opt/special/claude --acp", "claude");
+    expect(res.ok).toBe(true);
+  });
+
+  test("skips relative paths", () => {
+    __setDryRunWhichFnForTests(() => {
+      throw new Error("must not probe relative-path commands");
+    });
+    const res = checkNativeAgentPreflight("./bin/local-claude --acp", "claude");
+    expect(res.ok).toBe(true);
+  });
+
+  test("probes npx/bunx wrappers but only to check the runner is installed", () => {
+    __setDryRunWhichFnForTests((name) => (name === "npx" ? "/usr/bin/npx" : null));
+    const res = checkNativeAgentPreflight("npx -y @vendor/claude-agent-acp", "claude");
+    expect(res.ok).toBe(true);
+    expect(res.resolved).toBe("/usr/bin/npx");
+  });
+
+  test("missing npx wrapper → error names the runner (not the inner package)", () => {
+    __setDryRunWhichFnForTests(() => null);
+    const res = checkNativeAgentPreflight("npx -y @vendor/claude-agent-acp", "claude");
+    expect(res.ok).toBe(false);
+    expect(res.error).toContain("npx");
+    expect(res.hint).toContain("Node.js");
   });
 });
