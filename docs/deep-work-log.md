@@ -458,3 +458,83 @@ asked to try multi-Codex background fan-out + TeamCreate + subagent
 teams simultaneously, with deep research via tavily/exa/deepwiki.
 
 **Baseline hash:** `0d6c571`
+
+### Run 2026-05-03-D — final state at 64def23
+
+**Commits (baseline 0d6c571):**
+- 05036a7  feat(wave1): 3 P0/P1 safety features + 2 research reports
+- e113e74  fix(wave1-review): 4 findings from adversarial review
+- 64def23  feat(wave3): am mcp-superset check|apply (closes issue #3 problem 1)
+
+**Backlog items closed this run (12 of 12):**
+
+Wave 1 (code-shipping, ~2 hrs):
+- #75 Tier-2 shim pre-flight (`checkShimPreflight` in src/commands/run.ts)
+- #76 atomic-write snapshot-before-overwrite hook (closes issue #1)
+- #77 URL-credential refusal in applyResolved (closes issue #3 prob 2)
+- #79 /api/wiki/* already present — closed as no-op (audit was stale)
+
+Wave 1 review fixes (adversarial reviewer found 4 real issues):
+- #83 REV-1: credential-key regex false-positive on compound nouns
+  (publickey/sandboxkey) — tightened to /^[a-z][a-z_-]*[_-]key$/i
+- #84 REV-2: formatCredentialHits leaked second raw credential from
+  multi-param URLs via naive .replace — switched to URL API + mask
+  every other credential-shaped param
+- #85 REV-3: manifest grew unbounded while .bak files were pruned;
+  listBackupsForTarget returned dead paths — slice manifest in lockstep
+- #86 REV-NB-2: scanServersForUrlCredentials didn't walk args[]; Codex-
+  CLI wrapper style (npx mcp-remote URL) snuck credentials past — fixed
+
+Wave 2 (test-only):
+- #78 am_apply MCP integration — closed; test/mcp/server.test.ts:635
+  already pins dry-run path
+- #81 migrateLegacyKey conflict-branch coverage — new test file
+- #82 MCP auth-reject — closed; test/mcp/auth-gate.test.ts:169+
+  already comprehensive
+
+Wave 3 (biggest — new CLI command):
+- #80 `am mcp-superset check|apply` — 4 copy classes
+  (copy/refuse/skip/rewrite), git-push-style exit codes (0/1/2/3),
+  JSON schema with schema_version=1, remediation suggestions
+
+**Research reports produced (2):**
+- docs/research/2026-05-03-config-backup-patterns.md — drove the
+  atomic-write backup hook design (centralized dir, N=10 retention,
+  ISO-basic-UTC + hrtime filename)
+- docs/research/2026-05-03-mcp-superset-prior-art.md — drove the
+  am-superset command shape (chezmoi check/apply split,
+  git-push-style refuse UX, exit-code 2 for security findings)
+
+**Multi-agent orchestration (per user's explicit request):**
+- 2 parallel research agents in phase 3 (background)
+- 1 concurrent adversarial reviewer during wave 1 (found 4 real issues;
+  all patched in e113e74)
+- Codex deliberation not usable this run (ChatGPT Plus usage limit);
+  subagent-based reviewer substituted
+
+**Verification (Phase 8):**
+- `bun test`: **2638 pass / 0 fail / 8334 expect() across 199 files**
+  (+68 new tests vs. the 2570 pre-loop baseline: 5 preflight +
+  8 backup + 13+3 url-cred + 4 apply-refuse + 3 secrets + 12 superset)
+- `bun run typecheck`: 0 src errors
+- `bun run lint`: 0 errors, 1 pre-existing warning (unchanged)
+- Final adversarial review on 05036a7+e113e74+64def23: in-flight at
+  commit time; findings will be integrated into next loop's backlog
+  per skill rule 5 (review concurrent with execution)
+
+**Closes GitHub issues:**
+- Issue #1 (global MCP config wipe resilience): snapshot-before-
+  overwrite hook + URL-credential refuse guard both shipped
+- Issue #3 (MCP superset invariant + URL-credential redaction): BOTH
+  problems closed — superset CLI (problem 1) + URL-cred refuse
+  (problem 2)
+
+**Not closed this run (explicit deferrals):**
+- M5.3 wiki resolve/relink/subtree export (separate ~3-day effort)
+- ADR-0034 + ADR-0035 circular dependency (needs user/product
+  decision on community-shim-registration scope)
+- Windows CI re-baseline (needs CI trigger)
+- skill/agent drift across 13 adapters (11-12 dev-days)
+- NPM publish / distribution pipeline (user-action blocker)
+
+**Exit hash:** `64def23`
