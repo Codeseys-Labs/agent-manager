@@ -759,3 +759,16 @@ Wave-2 final review (Phase 8, three lenses on the wave-1+2 work):
   doesn't reflect code. Not unsafe; correct on next ADR amendment cycle.
 - 2 dead `case "adapter/schema"` branches in test mocks
   (low-severity, documented as forward-compat).
+
+## Run 2026-05-05-B — two-track Hermes deep-work-loop — started at 14ed1dc
+
+**Scope:** Two parallel tracks, no file overlap.
+- **Track A:** Hosted-UX/secrets foundations from the design memo.
+  Wave 1A = ADR-0042 (universal secrets) + ADR-0043 (hosted UI auth).
+  Wave 2A = SecretsBackend interface scaffolding (additive only).
+- **Track B:** LLM-wiki vision + plan. Two-tier (global vs project-local)
+  knowledge base, sync semantics, MCP surface, cross-tool harvest gap.
+  Research + design docs only.
+
+**Budget:** 2 waves; 3 concurrent subagents (delegation cap).
+**Plan doc:** docs/plans/2026-05-05-B-two-track-plan.md
