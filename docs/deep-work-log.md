@@ -657,3 +657,105 @@ Wave 2 (novice hints — Codex-B pick):
 **Budget:** 3 waves max. Token budget unbounded; wall-clock ~2h.
 
 **Baseline hash:** `488f7772ea5e9433f7b9e2ba3d7934e26f9af946`
+
+### Run 2026-05-05 — final state at 6403884
+
+**Items closed this run (10 of 10):**
+
+Pre-flight:
+- B-00 Hermes per-task model/provider override bug — fixed in
+  `~/.hermes/hermes-agent` commit 6dd1575d6 (155 LOC, 2 new tests).
+  Diagnosis at `docs/research/2026-05-05-hermes-provider-routing-bug.md`.
+
+Wave 1 (P0 security, parallel):
+- B-01 Marketplace command allowlist — `src/marketplace/security.ts`
+  +204 LOC, 17 new tests covering canonical RCE shape + classifier.
+- B-03 Community adapter env sandbox — `src/adapters/community/proxy.ts`
+  via `sandboxEnv()`, 6 new tests, REV-2 HIGH-3 propagation closed.
+- B-07 Wiki API slug path-traversal — `src/web/server.ts` regex guard,
+  8 new tests covering encoded + raw + length-overflow.
+
+Wave 2 (ADR hygiene, serialized):
+- B-02 ADR-0039 marketplace v1 retire decision (revised in final-review
+  to NOT supersede ADR-0034/0035 which are shim ADRs; added 5
+  verification gates that block promotion).
+- B-04 ADR-0031a pillar 6 amendment (CF Worker scope clarified) +
+  AGENTS.md pillar 6 corrected.
+- B-05 ADR-0040 controller scope + concurrency (documents the
+  withConfig + AsyncMutex shipped 2026-04-17). Reviewer grade A-.
+- B-06 ADR-0041 ADR-0007 Phase 2 deferred — schema field deleted
+  from Adapter interface + 13 per-adapter schema.ts files (256 LOC,
+  was dead code).
+- B-08 SECURITY.md plaintext-downstream note added.
+
+Wave-2 final review (Phase 8, three lenses on the wave-1+2 work):
+- Lens 1 (regression risk): CONFIRMED CLEAN with 2 LOW issues
+  (lint format drift fixed; dead test-mock branches left as
+  forward-compat per proxy.ts comment).
+- Lens 2 (ADR-0039 rigor): REVISE — found wrong-supersedes bug,
+  fixed in commit 6403884. Net result: ADR-0039 status `proposed`
+  with 5 explicit verification gates.
+- Lens 3 (ADR-0040 accuracy): ACCURATE, grade A-, one minor drift
+  noted for follow-up.
+
+**Verification (Phase 8 acceptance criteria):**
+- `bun test`: 2693 pass / 0 fail / 8495 expects across 204 files
+  (+31 net new tests vs 2662 pre-loop baseline).
+- `bun run typecheck`: 0 src errors. 183 test/ errors all
+  pre-existing (test/wiki/synthesizer.test.ts ModificationRecord
+  type drift, unrelated to this run).
+- `bun run lint`: 0 errors, 1 pre-existing warning.
+
+**Two-team sign-off:**
+- Execution team: Wave 1 + Wave 2 + Wave-2 final-review = 10/10
+  closed, working tree clean.
+- Review team: same-family prompt-lens scatter only (3 lenses,
+  all routed to Opus 4.7 via Bedrock). The Hermes router fix (B-00)
+  is on disk but the running Hermes process loaded delegate_tool.py
+  at startup; cross-family verification needs a Hermes restart +
+  re-run before declaring full two-family sign-off. This is a
+  partial sign-off. The work is shippable on the strength of
+  prompt-lens convergence (3 lenses agreed B-06 cascade was clean,
+  the ADR-0039 finding was caught and fixed in-run, ADR-0040 was
+  accurate).
+
+**Commits in this run (5):**
+- a8200da docs(deep-work-log): start marker
+- 2062275 docs(research,plans): router-bug diagnosis + Wave-1 backlog
+- d0ba4e6 feat(wave1): marketplace RCE gate + community env sandbox
+  + wiki slug guard
+- 3562098 feat(wave2): ADR hygiene + retire marketplace + delete
+  dead Phase 2 schema
+- 6403884 fix(wave2-final-review): ADR-0039 scope correction +
+  B-06 lint cleanup
+
+**Exit hash:** `6403884`
+
+**User-facing improvements delivered this loop:**
+1. Marketplace plugin install no longer accepts `command: "sh"` /
+   `args: ["-c", "..."]` style RCE shapes — 12 shells + path-separator
+   + shell-args denylisted; novel commands flagged for explicit
+   `trustCommands: true` opt-in. (B-01)
+2. Community adapter children no longer inherit AM_ENCRYPTION_KEY,
+   AM_MCP_TOKEN, ANTHROPIC/OPENAI/GITHUB/AWS tokens. (B-03)
+3. Wiki API rejects path-traversal slugs before reading the
+   filesystem. (B-07)
+4. SECURITY.md no longer overstates encryption — explicit note
+   that `am apply` writes plaintext to downstream IDE configs. (B-08)
+5. ADR catalog hygiene improved: pillar 6 now matches shipped
+   architecture (ADR-0031a), controller invariant documented
+   (ADR-0040), Phase 2 dead code removed with rationale (ADR-0041),
+   marketplace retirement decision proposed with verification
+   gates (ADR-0039).
+
+**Follow-ups this run did NOT close (parked for next):**
+- ADR-0031b pillar 4 amendment (gate 1 of ADR-0039 promotion).
+- Marketplace deprecation warnings + JSDoc (gate 2).
+- README marketplace scrub (gate 3).
+- Re-run Phase 8 with REAL cross-family scatter (Gemini 3.1 Pro
+  Preview / GPT-5.5 / DeepSeek V4 Pro) once Hermes process picks up
+  the B-00 router fix (requires Hermes restart).
+- ADR-0040 minor drift: aspirational "am init bootstrap exception"
+  doesn't reflect code. Not unsafe; correct on next ADR amendment cycle.
+- 2 dead `case "adapter/schema"` branches in test mocks
+  (low-severity, documented as forward-compat).
