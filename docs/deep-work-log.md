@@ -772,3 +772,86 @@ Wave-2 final review (Phase 8, three lenses on the wave-1+2 work):
 
 **Budget:** 2 waves; 3 concurrent subagents (delegation cap).
 **Plan doc:** docs/plans/2026-05-05-B-two-track-plan.md
+
+### Run 2026-05-05-B — final state
+
+**Outcome:** SHIPPED. Two parallel tracks, all 4 phases (waves + review +
+finalize) completed. 4 commits ahead of baseline 14ed1dc. All pushed.
+
+**Commits:**
+- `ecc4e74` plan + log marker
+- `31edf67` Wave 1: ADR-0042 + ADR-0043 (proposed) + LLM-wiki research + vision
+- `5826859` Wave 2A: SecretsBackend interface scaffolding (additive only)
+- `3ec50b5` Phase 8: 7 review fixes from cross-lens reviewer findings
+
+**Track A — hosted-UX + secrets foundations:**
+- ADR-0042 Universal Secrets Strategy (proposed, 366→~395 lines after
+  Phase 8 fixes). Key change post-review: `enc:v2:<backend>:<payload>`
+  discriminator added so legacy `enc:v1:` AES-GCM and new age envelopes
+  are distinguishable on the wire (caught a migration footgun in review).
+  Revocation terminology aligned (`rewrap` not `rotate` for recipient
+  removal). Circular gate with 0043 broken.
+- ADR-0043 Hosted UI Auth + Git Backend Tiers (proposed, 330→~370 lines).
+  Frontmatter `amends: ADR-0025`. New §Relationship to ADR-0025 enumerates
+  three amendments (per-tier auth flows, cookie payload, CORS proxy as
+  net-new). `route()` pseudocode bug fixed (SSH fast-path before `new URL()`).
+- Wave 2A scaffolding: `src/core/secrets-backend.ts` (108 LOC), augmented
+  `src/core/secrets.ts` (+69 LOC additive only), `test/core/secrets-backend.test.ts`
+  (106 LOC, 8 tests). 2693→2701 tests passing.
+
+**Track B — LLM-wiki vision:**
+- `docs/research/2026-05-05-llm-wiki-prior-art.md` (171 lines). Karpathy
+  origin + comparison matrix (mem0, Letta/MemGPT, Cursor, Continue, Codex
+  memories, Obsidian Smart Connections). Synthesis: two tiers is industry
+  floor; cross-tool session harvest is am's unique contribution.
+- `docs/design/2026-05-05-llm-wiki-vision.md` (377 lines). Two-tier
+  (global am-repo vs project-local `.am-wiki/`). Recommends copy-not-symlink
+  (will need ADR-0044 amending ADR-0022 §3-4). 8 open decisions for the
+  maintainer; Phase A (1-2 weeks) vs Phase B (quarter bet) phasing.
+  Phase-A precondition added post-review: if gitignore default flips to
+  commit, ADR-0042 must land first.
+
+**Tests:**
+- bun test: 2701 pass / 0 fail / 8514 expects across 205 files
+  (+8 new vs 2693 baseline; matches the 8 new contract tests).
+- typecheck: 0 src errors; 183 test/ errors all pre-existing.
+- biome lint: 0 errors, 1 pre-existing warning.
+
+**Process notes (lessons):**
+- Hermes router fix (committed locally as 6dd1575d6 in
+  `~/.hermes/hermes-agent`) is on disk but the running process still has
+  the old delegate_tool.py loaded. All 6 subagents this run still routed
+  to Opus 4.7 via Bedrock regardless of per-task `model` parameter.
+  Diversity of review came from different lenses, not different families.
+  Reviewer convergence on independent findings (ADR-0025 silent replacement,
+  enc:v1 wire ambiguity, ADR-0022 reframing) is real signal but somewhat
+  weakened by single-family aggregation.
+- Same systemic failure mode as ADR-0039 (silently superseding accepted
+  ADRs without declaring the relationship) almost slipped through again
+  with ADR-0025. Caught in Phase 8. Worth promoting to a checklist item
+  in the ADR template: "List every accepted ADR you read; for each, state
+  preserves / amends / supersedes."
+- One subagent timed out on Wave 2A test verification (work was complete
+  on disk, just hung on result reporting). Same pattern as last week.
+  Workaround working: parent runs `bun test` independently after timeout.
+- Heredoc commit messages (`git commit -m "$(cat <<'EOF'`) still trip
+  user's security policy. Plain `-m "..."` with embedded newlines works.
+
+**Open follow-ups for the next run:**
+1. Three-browser-KDFs harmonization (Argon2id config + PBKDF2 PATs +
+   HKDF OAuth cookies) — flagged in review, not patched. Real design call.
+2. Wave 2B: split `MultiRecipientSecretsBackend extends SecretsBackend`,
+   brand `SecretEnvelope`, add edge-case tests (unicode, empty, large,
+   concurrent, malformed envelope, factory isolation). Reviewer gave B+
+   on Wave 2A: implementation accept, interface revise.
+3. Author ADR-0044 (wiki copy-not-symlink amending ADR-0022 §3-4) when
+   implementation begins.
+4. Restart Hermes process to pick up router fix; re-run the most
+   consequential review (ADR-0042 wire-format choice) with REAL
+   cross-family scatter.
+5. Maintainer decisions on the 8 open questions in the wiki vision doc
+   (especially #2 copy/symlink, #4 gitignore default, #7 harvest gap).
+6. Maintainer decision on the open ADR-0042 questions (Argon2id vs scrypt
+   for identity wrap; cross-keychain vs Bun-FFI; pair-token format).
+
+**HEAD:** 3ec50b5 — pushed to origin/main.
