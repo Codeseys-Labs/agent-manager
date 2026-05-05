@@ -41,7 +41,6 @@ export const copilotAdapter: Adapter = {
     return diffConfig(config);
   },
 
-
   scanMarketplace(): MarketplaceResult {
     return scanVSCodeExtensions("copilot");
   },

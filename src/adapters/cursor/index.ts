@@ -41,7 +41,6 @@ export const cursorAdapter: Adapter = {
     return diffConfig(config);
   },
 
-
   scanMarketplace(): MarketplaceResult {
     return scanVSCodeExtensions("cursor");
   },

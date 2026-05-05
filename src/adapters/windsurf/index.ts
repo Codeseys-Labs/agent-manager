@@ -41,7 +41,6 @@ export const windsurfAdapter: Adapter = {
     return diffConfig(config);
   },
 
-
   scanMarketplace(): MarketplaceResult {
     return scanVSCodeExtensions("windsurf");
   },

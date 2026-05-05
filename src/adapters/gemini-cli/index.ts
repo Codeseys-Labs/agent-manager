@@ -38,5 +38,4 @@ export const geminiCliAdapter: Adapter = {
   diff(config: ResolvedConfig): DiffResult {
     return diffConfig(config);
   },
-
 };

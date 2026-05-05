@@ -38,5 +38,4 @@ export const continueAdapter: Adapter = {
   diff(config: ResolvedConfig): DiffResult {
     return diffConfig(config);
   },
-
 };

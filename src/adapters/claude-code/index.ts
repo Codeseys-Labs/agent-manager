@@ -52,7 +52,6 @@ export const claudeCodeAdapter: Adapter = {
     return diffConfig(config);
   },
 
-
   sessionReader: createClaudeCodeSessionReader(),
 
   scanMarketplace(): MarketplaceResult {

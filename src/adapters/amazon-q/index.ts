@@ -38,5 +38,4 @@ export const amazonQAdapter: Adapter = {
   diff(config: ResolvedConfig): DiffResult {
     return diffConfig(config);
   },
-
 };

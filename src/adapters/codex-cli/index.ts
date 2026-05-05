@@ -40,6 +40,5 @@ export const codexCliAdapter: Adapter = {
     return diffConfig(config);
   },
 
-
   sessionReader: createCodexSessionReader(),
 };

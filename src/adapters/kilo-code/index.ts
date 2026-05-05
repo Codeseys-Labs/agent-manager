@@ -43,5 +43,4 @@ export const kiloCodeAdapter: Adapter = {
   diff(config: ResolvedConfig): DiffResult {
     return diffConfig(config);
   },
-
 };

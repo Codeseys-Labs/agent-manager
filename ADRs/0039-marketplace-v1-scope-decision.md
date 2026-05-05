@@ -1,10 +1,9 @@
 ---
 status: proposed
 date: 2026-05-05
-supersedes: ADR-0034, ADR-0035
 ---
 
-# ADR-0039: Marketplace v1 Scope Decision — Retire in favor of MCP Registry + git-subtree bundles
+# ADR-0039: Marketplace v1 Scope Decision — Retire pillar 4 in favor of MCP Registry + git-subtree bundles
 
 ## Context
 
@@ -13,12 +12,17 @@ disagreement (D1) about pillar 4 (Marketplace, ADR-0031) that the
 project must decide before further work in this area:
 
 - **Vision lens** flagged marketplace as "cut or defer." Evidence:
-  ADR-0034 ("Shim scope and inclusion criteria") and ADR-0035
-  ("Community shim registration") are mutually-referencing,
-  `status: proposed`, with ~72% of described surface area as paperware
-  (no shipped code path actually exercises them end-to-end). Pillar 4
-  is one of two pillars in ADR-0031 that the audit graded "load-bearing
-  but partial."
+  the synthesis described ADR-0034/0035 as "circular paperware,"
+  but **on direct verification those ADRs govern shims (pillar 3),
+  not the marketplace (pillar 4)** — they ARE backed by shipped code
+  (`src/protocols/acp/shell-wrapper.ts`, `src/acp-shell-cli.ts`,
+  `src/commands/agent-enable-shim.ts`). The synthesis erred in
+  conflating the two surfaces. The legitimate "paperware" concern is
+  that pillar 4 ITSELF (as enumerated in ADR-0031) has no committed
+  customer and `src/marketplace/*` (1,612 LOC) ships without external
+  validation. This ADR addresses pillar 4 in ADR-0031 — NOT
+  ADR-0034/0035, which remain `proposed` and continue to govern the
+  shim scope policy they were always about.
 - **Security lens** flagged the marketplace installer as actively
   exploitable: `serverDef.command` / `args` were copied verbatim into
   `am apply` with `z.string().min(1)` as the only validation. Wave 1's
@@ -32,8 +36,8 @@ project must decide before further work in this area:
 
 These positions are not all reconcilable. Either marketplace becomes a
 load-bearing v1 surface with active customer-finding work, or it
-retires. "Leave as paperware while ADR-0034/0035 sit in proposed
-limbo" is the worst of all worlds — the security cost stays on the
+retires. "Keep pillar 4 active while doing nothing concrete" is the
+worst of all worlds — the security cost stays on the
 books, no positive customer evidence accumulates, and every future
 ADR that touches plugin distribution adds another link to the
 circular reference chain.
@@ -57,11 +61,10 @@ circular reference chain.
 
 ## Decision
 
-**Retire the marketplace as a distinct pillar 4 surface.** Mark
-[ADR-0034](0034-shim-scope-and-inclusion-criteria.md) and
-[ADR-0035](0035-community-shim-registration.md) as `superseded` by
-this ADR. Re-route the user-facing problem ("install a curated bundle
-of MCPs + skills + instructions + agents") through two existing
+**Retire the marketplace as a distinct pillar 4 surface.** Do NOT touch
+ADR-0034/0035 — they govern shims (pillar 3), not the marketplace, and
+remain in force. Re-route the user-facing problem ("install a curated
+bundle of MCPs + skills + instructions + agents") through two existing
 mechanisms:
 
 1. **MCP servers** → already handled by MCP Package Registry (ADR-0024).
@@ -79,14 +82,16 @@ mechanisms:
 - Update [ADR-0031](0031-product-scope-and-pillars.md) pillar 4 to
   read "Marketplace (v0, retired) — see ADR-0039." Defer in-place edit
   to a future companion amendment (ADR-0031b) consistent with
-  ADR-0031a's pattern; out of scope for this ADR.
-- Promote ADR-0034 and ADR-0035 to `superseded_by: ADR-0039`. Close
-  open paperware.
-- Mark `src/marketplace/*` and the `am marketplace *` commands as
-  **frozen** — Wave 1's B-01 hardening stays in place to keep the
-  surface non-exploitable for any user who has wired a private
-  catalog, but no new feature work lands. A removal ADR can follow if
-  no non-trivial dependent work materializes by v1.0.
+  ADR-0031a's pattern; **MUST land before this ADR can be promoted to
+  `accepted`** — see Verification Gates below.
+- Deprecate `src/marketplace/*` and the `am marketplace *` commands:
+  (a) add a `@deprecated` JSDoc to the public entry points with a
+  pointer to this ADR, (b) print a one-line deprecation warning when
+  `am marketplace *` is invoked. Wave 1's B-01 hardening stays in place
+  to keep the surface non-exploitable for any user who has wired a
+  private catalog. **Removal target: v1.0.** If no non-trivial dependent
+  work materializes before then, a follow-up ADR flips this from
+  "deprecated" to "removed."
 - Remove the "marketplace" pillar bullet's promise of "many
   marketplaces, each pinned independently" from README/AGENTS.md
   marketing copy.
@@ -104,8 +109,9 @@ once a maintainer has signed off.
 - Removes the single largest open supply-chain surface from the
   product's ongoing maintenance burden. B-01's allowlist becomes a
   capstone, not a foundation for further work.
-- Closes the ADR-0034/0035 circular-reference paperware debt that
-  parallel-critique called out (D1, C3).
+- Resolves the pillar 4 paperware debt that parallel-critique called
+  out (D1, C3) — without conflating it with ADR-0034/0035 (shims),
+  which the synthesis incorrectly grouped together.
 - Cuts the "what is the marketplace v1 API?" decision the project
   has been deferring for ~6 months. The API is now: there isn't one,
   use git + ADR-0024.
@@ -149,8 +155,8 @@ once a maintainer has signed off.
 Take the integration lens seriously: ship a v1 with concrete API
 (`install`, `uninstall`, `list`, `search`, `update`), publish a real
 public catalog with at least one external bundle (Hermes), and use
-that to validate ADR-0034/0035 with shipping evidence rather than
-paperware. Now that B-01 has landed (command allowlist + prompt on
+that to validate the marketplace v1 model with shipping evidence
+rather than paperware. Now that B-01 has landed (command allowlist + prompt on
 novel executables), the exploit-shaped objections are bounded.
 
 **Why this was rejected:**
@@ -184,25 +190,48 @@ catalog requirements that git-subtree cannot meet.
 ### Option B — Retire (this ADR's choice)
 
 Above. Selected because the evidence weight (zero customers + MCP
-Registry already covers the server case + ADR-0034/0035 paperware
+Registry already covers the server case + pillar-4 paperware
 debt + maintenance surface) outweighs the speculative integration
 upside.
 
 ### Option C — Ambiguous status quo
 
-Leave ADR-0034/0035 as `proposed`, leave `src/marketplace/*` as-is,
+Leave pillar 4 alive in ADR-0031 + leave `src/marketplace/*` as-is,
 defer the decision to "after some signal." Rejected explicitly. The
 parallel-critique synthesis named this state as the worst of all
 worlds: ongoing security surface without ongoing customer evidence.
 "Defer the decision" is itself a decision, and it has been the
 decision for ~6 months. Force the choice.
 
+## Verification gates (must hold before promoting to `accepted`)
+
+1. **ADR-0031 pillar 4 amendment** — write `ADRs/0031b-pillar-4-amendment.md`
+   per the same pattern ADR-0031a used for pillar 6. Mark pillar 4 as
+   "v0, retired — see ADR-0039." This MUST land in the same PR series
+   as the promotion, not as a deferred follow-up.
+2. **Code-side deprecation lands** — `src/marketplace/installer.ts`,
+   `src/marketplace/security.ts`, `src/marketplace/client.ts`,
+   `src/commands/marketplace.ts` carry `@deprecated` JSDoc with a
+   pointer to this ADR. `am marketplace *` invocations print a
+   one-line deprecation warning to stderr.
+3. **Doc-marketing scrub** — README and AGENTS.md no longer advertise
+   "many marketplaces, each pinned independently." A grep for
+   `marketplace` in those files returns either zero hits or hits that
+   reference this ADR's deprecation.
+4. **No-callers verification** — `rg "from .*marketplace"` outside
+   `src/marketplace/*` and `src/commands/marketplace.ts` returns zero.
+   If anything else imports it, that import must be deprecated too.
+5. **Removal target tracked** — a `v1.0` milestone exists on the repo
+   issue tracker referencing this ADR's removal step.
+
+If any of (1)–(5) is unmet at promotion time, this ADR stays
+`proposed` and the maintainer must address the gap or write the gap
+into a follow-up ADR before promoting.
+
 ## References
 
 - [ADR-0024 MCP Registry integration](0024-mcp-registry-integration.md)
 - [ADR-0031 Product scope and pillars](0031-product-scope-and-pillars.md)
 - [ADR-0032 Terminology glossary](0032-terminology-glossary.md) — Registry vs Marketplace
-- [ADR-0034 Shim scope and inclusion criteria](0034-shim-scope-and-inclusion-criteria.md) — superseded by this ADR
-- [ADR-0035 Community shim registration](0035-community-shim-registration.md) — superseded by this ADR
 - `docs/reviews/2026-05-05-parallel-critique/synthesis.md` — D1 disagreement, C3 finding
 - `docs/plans/2026-05-05-backlog.md` — B-01 hardening (Wave 1) and OOS-5 (Hermes-as-marketplace)

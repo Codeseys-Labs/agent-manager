@@ -43,5 +43,4 @@ export const forgeCodeAdapter: Adapter = {
   diff(config: ResolvedConfig): DiffResult {
     return diffConfig(config);
   },
-
 };

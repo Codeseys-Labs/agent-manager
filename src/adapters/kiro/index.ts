@@ -41,7 +41,6 @@ export const kiroAdapter: Adapter = {
     return diffConfig(config);
   },
 
-
   scanMarketplace(): MarketplaceResult {
     return scanVSCodeExtensions("kiro");
   },
