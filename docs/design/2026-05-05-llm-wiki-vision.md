@@ -2,9 +2,14 @@
 
 **Date:** 2026-05-05 · **Status:** design proposal, pre-ADR
 **Companion research:** `docs/research/2026-05-05-llm-wiki-prior-art.md`
-**Supersedes in part:** ADR-0022 (symlink-only model) — this doc argues for
-a hybrid: global source-of-truth stays in the am repo, project-local
-content is a **committed sibling** rather than a symlink.
+**Proposes ADR-0044** amending ADR-0022 §Decision points 3-4 (the symlink
+mechanic + project-side gitignore) only. ADR-0022's central claims
+(global-as-source-of-truth, per-project subdir, local-only mode) are
+preserved. This vision document does NOT itself amend ADR-0022; ADR-0044
+will, if/when authored.
+
+This doc argues for a hybrid: global source-of-truth stays in the am repo,
+project-local content is a **committed sibling** rather than a symlink.
 
 ---
 
@@ -199,6 +204,17 @@ project repo explicitly add it. Mirrors ADR-0022's choice and avoids
 "surprise" commits on first `am wiki init`. But if the maintainer wants
 the aggressive-visibility default, flip to committed-by-default and add a
 `--private` flag on init. Both are defensible.
+
+**Phase-A precondition (added post-review).** If Open Decision 4
+(gitignore default) flips to "committed-by-default", then ADR-0042
+age-envelope integration is a Phase-A prerequisite, NOT Phase B.
+Harvester output today contains raw session text that may include
+prompts, error messages, and command output with embedded secrets.
+Committing those to the project repo before envelope encryption is
+available creates a leak path that gitignore alone does not protect
+against (rebases, force-pushes, fork mirrors). If Phase A ships with
+gitignore=on as the default, ADR-0042 stays Phase B; if it ships
+with gitignore=off, ADR-0042 must land first.
 
 ---
 

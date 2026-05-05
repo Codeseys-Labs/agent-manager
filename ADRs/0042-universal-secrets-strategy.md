@@ -33,7 +33,7 @@ operational problems that have surfaced since:
    is no middle path in the current design.
 4. **Revocation.** A single symmetric key is an all-or-nothing
    credential. There is no `git rm recipients/laptop.pub && am secrets
-   rotate` equivalent. Revocation today means rotate master + re-encrypt
+   rewrap` equivalent. Revocation today means rotate master + re-encrypt
    every value + re-distribute to every device.
 
 The 2026-05-05 universal-secrets research
@@ -66,15 +66,25 @@ that uses age-envelope storage.
 
 ## Decision
 
-### Wire format: unchanged
+### Wire format: backend-tagged v2, with v1 preserved
 
-The on-disk envelope stays `enc:v1:<iv>:<ct>`. This is the ADR-0012
-contract and it is not up for renegotiation. What changes is what
-`<ct>` contains: an age-encrypted stanza (multi-recipient X25519 +
-ChaCha20-Poly1305) rather than a single-recipient AES-GCM ciphertext.
-Decryption becomes "unwrap age to a file key, then decrypt the
-value"; writing becomes "encrypt to all configured recipients in
-`.am-secrets.toml`".
+ADR-0012's `enc:v1:<iv>:<ct>` wire format is preserved unchanged for
+existing legacy AES-GCM ciphertexts. New writes from this ADR onward
+use a backend-tagged form: `enc:v2:<backend>:<payload>` where
+`<backend>` is the registered backend name from `.am-secrets.toml`
+(e.g. `enc:v2:age:<base64-age-armor>`).
+
+This explicitly rejects overloading `enc:v1:`. The Phase-8 review of
+this ADR surfaced that decrypting a `enc:v1:` value would otherwise
+require a try-AES-then-try-age heuristic during migration — a
+silent-failure footgun. The `enc:v2:<backend>:` discriminator means
+every reader can dispatch on the prefix without trial decryption.
+
+Readers MUST accept both `enc:v1:` (route to the legacy AES-GCM
+backend) and `enc:v2:<name>:` (route to the named backend). Writers
+MUST emit `enc:v2:<name>:` on new installs and on any value rewritten
+by `am secrets migrate`. ADR-0012 stays `accepted` as the spec for
+the v1 wire format; this ADR introduces v2 alongside.
 
 ### Primary primitive: age
 
@@ -186,7 +196,7 @@ am secrets rotate                # generate new identity, rewrap all, push
 
 Adding a machine is a normal git commit of `recipients/<name>.pub`
 and a rewrap pass. Revoking is `git rm recipients/<name>.pub && am
-secrets rotate`. No server-side state; no out-of-band key transfer.
+secrets rewrap`. No server-side state; no out-of-band key transfer.
 
 ### Web UI: browser as pseudo-machine
 
@@ -230,7 +240,7 @@ click-to-reveal with 30s auto-lock.
   cached; CI uses `AM_ENCRYPTION_KEY` env tier identical to today).
 - **Multi-machine sync is a git commit.** No out-of-band key
   distribution. Adding a machine is `am pair accept`; removing is
-  `git rm` + `am secrets rotate`.
+  `git rm` + `am secrets rewrap`.
 - **Web UI can read and write encrypted values** without the Worker
   ever seeing plaintext. Closes the gap ADR-0015 left open.
 - **Public-leak survivable.** A leaked repo exposes ciphertext and
@@ -309,12 +319,13 @@ layer is the part that needs to grow up.
 
 This ADR ships `proposed`. Promotion to `accepted` requires all of:
 
-1. **ADR-0043 (hosted UI auth + git adapter tiers) lands and is
-   consistent with this ADR's web-UI decrypt story.** The two ADRs
-   are co-dependent: ADR-0042 describes how the browser decrypts;
-   ADR-0043 describes how the browser authenticates to the git
-   backend. If ADR-0043's auth model cannot preserve "Worker never
-   sees plaintext or KEK," this ADR must be revised.
+1. **ADR-0043 (hosted UI auth) lands as `proposed` and is consistent
+   on the browser-secret model.** The two ADRs are co-dependent:
+   ADR-0042 describes how the browser decrypts; ADR-0043 describes
+   how the browser authenticates to the git backend. If ADR-0043's
+   auth model cannot preserve "Worker never sees plaintext or KEK,"
+   this ADR must be revised. Both ADRs are intentionally promoted as
+   a pair; this gate verifies coherence, not chronological precedence.
 2. **Keyring library audited.** `cross-keychain` (or the chosen
    alternative) evaluated against the November 2025 `node-keytar`
    supply-chain incident. Bun compatibility verified on macOS,

@@ -1,6 +1,7 @@
 ---
 status: proposed
 date: 2026-05-05
+amends: ADR-0025
 ---
 
 # ADR-0043: Hosted UI Auth + Git Backend Tiers
@@ -47,6 +48,44 @@ through the full matrix. This ADR formalizes the result as a
 five-tier decision, bound by the statelessness constraint and
 routable by URL inspection alone.
 
+### Relationship to ADR-0025
+
+ADR-0025 (`accepted` 2026-04-13) defined the original Worker
+multi-backend authentication: a `GitProvider` interface, a runtime
+provider registry, an encrypted session cookie carrying
+`{ token, provider, created }`, and parameterized OAuth routes
+`/auth/:provider/login` + `/auth/:provider/callback`.
+
+This ADR amends ADR-0025 in three places:
+
+1. **Per-tier auth flows** — ADR-0025's "OAuth everywhere" model is
+   replaced by the 5-tier matrix below. GitHub specifically moves
+   from OAuth App to GitHub App (per-repo install + per-request
+   installation token mint). GitLab keeps OAuth2 with the explicit
+   scope-bug workaround. Codeberg keeps OAuth2. Self-hosted Gitea
+   moves from OAuth (which requires admin-side dynamic registration
+   that many admins disable) to PAT-with-WebCrypto entry. Tier 4
+   (generic) and Tier 5 (SSH-only) are net-new.
+2. **Cookie payload** — extended from `{ token, provider, created }`
+   to `{ token, refresh_token?, provider, tier, created, expires_at }`.
+   Per-tier branching means the cookie now records which tier the
+   session is on, not just which provider.
+3. **CORS proxy** — net-new, not in ADR-0025. Required for Tier 4
+   isomorphic-git fetches against generic HTTPS git remotes.
+
+ADR-0025 retains its core: stateless Worker, encrypted session
+cookie, per-tenant provider routing. The interface boundary moves
+from `GitProvider` (one shape per backend) to `Route` (one shape per
+tier) — the shapes overlap heavily; ADR-0025's `GitProvider` becomes
+a per-tier helper inside the Tier 1/2 branches of the new `route()`
+dispatcher.
+
+If this ADR is promoted to `accepted`, ADR-0025 status becomes
+`amended-by: 0043` and its §Decision is annotated with explicit
+strikethroughs/replacements; ADR-0025 is not superseded outright
+because its statelessness + provider-registry shape is still load-
+bearing for Tier 1 and Tier 2.
+
 ## Decision
 
 **Five tiers, auto-selected by URL. The tier is a property of the
@@ -84,9 +123,12 @@ type Route =
   | { kind: 'ssh-blocked';    url: string };
 
 async function route(url: string, creds: Creds): Promise<Route> {
-  const u = new URL(normalizeGitUrl(url));           // handles git@host:o/r form
-  if (u.protocol === 'ssh:' || url.startsWith('git@'))
+  // Tier 5 fast-path: scp-style SSH URLs cannot be parsed by URL().
+  // Match before any URL parse to avoid a throw.
+  if (url.startsWith('git@') || url.startsWith('ssh://')) {
     return { kind: 'ssh-blocked', url };
+  }
+  const u = new URL(normalizeGitUrl(url));           // safe now: non-SSH only
   if (u.hostname === 'github.com')
     return { kind: 'github-app',   ...creds.github,    ...parseOwnerRepo(u) };
   if (u.hostname === 'gitlab.com' || await isGitlab(u))
