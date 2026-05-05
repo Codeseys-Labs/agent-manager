@@ -644,3 +644,16 @@ Wave 2 (novice hints — Codex-B pick):
   actionable error BEFORE the opaque EPERM deep in ACP client.
 - README has Troubleshooting section covering NODE_OPTIONS + shim
   install path.
+
+## Run 2026-05-05 — Hermes-driven deep-work-loop — started at 488f7772ea5e9433f7b9e2ba3d7934e26f9af946
+
+**Scope:** Execute the three "next moves" from `docs/reviews/2026-05-05-parallel-critique/synthesis.md`:
+1. Marketplace security fix + decision ADR
+2. ADR-0007 Phase 2 resolution + controller scope ADR + ADR-0031 pillar 6 amendment
+3. Megafile split (deferred pending Wave-1 signal)
+
+**Pre-flight item:** Fix Hermes OpenRouter provider-routing bug so Phase 8 cross-family review actually uses different model families.
+
+**Budget:** 3 waves max. Token budget unbounded; wall-clock ~2h.
+
+**Baseline hash:** `488f7772ea5e9433f7b9e2ba3d7934e26f9af946`
