@@ -730,9 +730,18 @@ export async function createApp(options?: CreateAppOptions) {
 
   app.get("/api/wiki/pages/:slug", async (c) => {
     const { readPage, resolveWikiDir } = await import("../wiki/storage");
+    const slug = c.req.param("slug");
+    // B-07: path-traversal guard. Without this, a slug like
+    // "../../../.ssh/id_rsa" composed with `join("/wiki/notes", slug)` inside
+    // readPage()'s pagePath() escapes the wiki dir and reads arbitrary `.md`
+    // files post-auth. Allow only safe slug shapes; do NOT echo the raw
+    // slug back to the caller.
+    if (!/^[a-z0-9][a-z0-9._-]{0,127}$/.test(slug)) {
+      return c.json({ error: "Invalid slug" }, 400);
+    }
     const global = c.req.query("global") === "true";
     const wikiDir = resolveWikiDir({ global });
-    const page = await readPage(c.req.param("slug"), wikiDir);
+    const page = await readPage(slug, wikiDir);
     if (!page) return c.json({ error: "Page not found" }, 404);
     return c.json({ page });
   });

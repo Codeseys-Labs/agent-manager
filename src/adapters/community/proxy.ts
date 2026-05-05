@@ -7,6 +7,7 @@
  */
 
 import type { Subprocess } from "bun";
+import { sandboxEnv } from "../../protocols/acp/env-sandbox";
 import type {
   Adapter,
   AdapterMeta,
@@ -41,6 +42,7 @@ export class CommunityAdapterProxy implements Adapter {
     private args: string[],
     meta: AdapterMeta,
     schema: AdapterSchema,
+    private extraEnv?: Record<string, string>,
   ) {
     this.meta = meta;
     this.schema = schema;
@@ -49,9 +51,17 @@ export class CommunityAdapterProxy implements Adapter {
   /**
    * Create and initialize a community adapter proxy.
    * Spawns the subprocess, performs the initialize handshake, and fetches meta + schema.
+   *
+   * Security (B-03 / REV-2 HIGH-3 propagation): the child env is scrubbed via
+   * `sandboxEnv(opts?.env)` so `AM_ENCRYPTION_KEY`, `AM_MCP_TOKEN`, AWS / GitHub /
+   * provider tokens, etc. do NOT leak into the community adapter subprocess.
    */
-  static async create(command: string, args: string[] = []): Promise<CommunityAdapterProxy> {
-    const proxy = new CommunityAdapterProxy(command, args, {} as AdapterMeta, {});
+  static async create(
+    command: string,
+    args: string[] = [],
+    opts?: { env?: Record<string, string> },
+  ): Promise<CommunityAdapterProxy> {
+    const proxy = new CommunityAdapterProxy(command, args, {} as AdapterMeta, {}, opts?.env);
     proxy.spawn();
     await proxy.initialize();
     return proxy;
@@ -62,6 +72,10 @@ export class CommunityAdapterProxy implements Adapter {
       stdin: "pipe",
       stdout: "pipe",
       stderr: "pipe",
+      // B-03 fix: scrub parent env. Without this, the child inherited
+      // `process.env` wholesale (AM_ENCRYPTION_KEY, AM_MCP_TOKEN, AWS_*,
+      // ANTHROPIC_API_KEY, GITHUB_TOKEN, ...). Mirrors AmAcpClient.connect.
+      env: sandboxEnv(this.extraEnv),
     });
     this.readLoop();
   }

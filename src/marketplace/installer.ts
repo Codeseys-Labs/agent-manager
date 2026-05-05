@@ -18,7 +18,7 @@ import type { AgentProfile, Config, Server, Skill } from "../core/schema";
 import { requireConfig } from "../lib/errors";
 import { MarketplaceError, findMarketplaceEntry, verifyMarketplacePin } from "./client";
 import { scanAllMarketplaces } from "./scanner";
-import { safeResolveInsidePlugin } from "./security";
+import { assertServerCommandSafe, safeResolveInsidePlugin } from "./security";
 import type { DiscoveredPlugin, MarketplaceProvenance, PluginManifest } from "./types";
 
 /** Result of an install operation. */
@@ -48,7 +48,7 @@ export interface UninstallResult {
  */
 export async function installPlugin(
   pluginName: string,
-  opts?: { yes?: boolean },
+  opts?: { yes?: boolean; trustCommands?: boolean },
 ): Promise<InstallResult> {
   // Find the plugin across all marketplaces
   const allPlugins = await scanAllMarketplaces();
@@ -70,6 +70,9 @@ export async function installPlugin(
   // opts.yes reserved for future install-time confirmation prompts; the SHA
   // pin verification path above is already wired to respect the flag via
   // updateMarketplace. We keep the arg name stable for the CLI contract.
+  // opts.trustCommands is forwarded through applyPlugin into the
+  // command-allowlist enforcement so unsafe commands can be installed
+  // anyway when the user has explicitly opted in.
   void opts;
 
   // REV-1 MEDIUM-2: serialize RMW via withConfig. adapters.toml writes
@@ -78,7 +81,7 @@ export async function installPlugin(
   return withConfig(configDir, async (config) => {
     requireConfig(config);
 
-    const result = applyPlugin(config, plugin);
+    const result = applyPlugin(config, plugin, { trustCommands: opts?.trustCommands });
 
     // Register community adapter in adapters.toml if declared
     if (plugin.manifest.adapter) {
@@ -104,8 +107,17 @@ export async function installPlugin(
 /**
  * Apply a plugin's manifest entries to an in-memory config.
  * Mutates the config object and returns what was added.
+ *
+ * Server `command` values are gated through {@link assertServerCommandSafe}
+ * before being copied into config. Pass `opts.trustCommands = true` to
+ * bypass the denylist (e.g. when the user has answered "yes" to a trust
+ * prompt at the CLI layer).
  */
-export function applyPlugin(config: Config, plugin: DiscoveredPlugin): InstallResult {
+export function applyPlugin(
+  config: Config,
+  plugin: DiscoveredPlugin,
+  opts: { trustCommands?: boolean } = {},
+): InstallResult {
   const manifest = plugin.manifest;
   const provenance: MarketplaceProvenance = {
     source: "marketplace",
@@ -127,6 +139,16 @@ export function applyPlugin(config: Config, plugin: DiscoveredPlugin): InstallRe
   if (manifest.servers) {
     if (!config.servers) config.servers = {};
     for (const [name, serverDef] of Object.entries(manifest.servers)) {
+      // Supply-chain: gate the command + argv pair through the allowlist
+      // BEFORE copying it into config. Throws MarketplaceSecurityError on
+      // shells / shell-equivalents / `-c` smuggling unless the caller has
+      // explicitly opted in via trustCommands.
+      assertServerCommandSafe(
+        serverDef.command,
+        serverDef.args,
+        `plugin "${manifest.name}".servers["${name}"].command`,
+        { trustCommands: opts.trustCommands },
+      );
       const server: Server = {
         command: serverDef.command,
         args: serverDef.args,
