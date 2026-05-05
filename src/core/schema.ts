@@ -178,6 +178,15 @@ export const SettingsSchema = z
         inject_on_apply: z.boolean().optional(),
       })
       .optional(),
+    // ADR-0042: per-repo selection of the SecretsBackend used when NEW
+    // envelopes are produced. Existing `enc:v1:` envelopes continue to
+    // decrypt via `aes-gcm-legacy` regardless of this setting.
+    secrets: z
+      .object({
+        backend: z.enum(["age", "aes-gcm-legacy"]).optional(),
+      })
+      .passthrough()
+      .optional(),
     env: z.record(z.string(), z.string()).optional(),
   })
   .passthrough();

@@ -4,7 +4,7 @@ import { dirname, join } from "node:path";
 import { atomicWriteFile } from "./atomic-write";
 import type { Config } from "./schema";
 import type { SecretEnvelope, SecretsBackend } from "./secrets-backend";
-import { registerBackend } from "./secrets-backend";
+import { getBackend, registerBackend } from "./secrets-backend";
 
 // --- Encryption constants ---
 const ALGO = "AES-GCM";
@@ -392,3 +392,132 @@ registerBackend({
     return new AesGcmLegacyBackend(cfg.key ?? null);
   },
 });
+
+// --- Backend selection (ADR-0042) --------------------------------------
+
+/**
+ * Name of the backend used when NEW envelopes are produced. Reading
+ * legacy `enc:v1:` envelopes always delegates to `AesGcmLegacyBackend`
+ * regardless of this value — this only controls the write-side choice.
+ */
+export type SelectableBackendName = "age" | "aes-gcm-legacy";
+
+/**
+ * Inspect a `Config` (from `config.toml` or a merged resolved config)
+ * and return the configured default backend name. Falls back to
+ * `aes-gcm-legacy` when unset or unrecognised.
+ *
+ * Priority order:
+ *   1. `AM_SECRETS_BACKEND` env var (`age` or `aes-gcm-legacy`)
+ *   2. `config.settings.secrets.backend`
+ *   3. `"aes-gcm-legacy"` (default)
+ */
+export function selectBackendName(config: Config | null | undefined): SelectableBackendName {
+  const envChoice = process.env.AM_SECRETS_BACKEND?.trim().toLowerCase();
+  if (envChoice === "age" || envChoice === "aes-gcm-legacy") {
+    return envChoice;
+  }
+  const cfgChoice = (config?.settings as { secrets?: { backend?: string } } | undefined)?.secrets
+    ?.backend;
+  if (cfgChoice === "age" || cfgChoice === "aes-gcm-legacy") {
+    return cfgChoice;
+  }
+  return "aes-gcm-legacy";
+}
+
+/**
+ * Options accepted by `getDefaultBackend`. Most callers can pass `{}`
+ * — the loader resolves the config, imports the legacy key, and wires
+ * the `age` backend with an env-var passphrase provider by default.
+ */
+export interface GetDefaultBackendOptions {
+  /** Override the config read from disk (useful for tests). */
+  config?: Config | null;
+  /**
+   * Force a specific backend regardless of config. Still falls back to
+   * the legacy backend if `"age"` is requested but the age module has
+   * not been imported (registered) yet.
+   */
+  override?: SelectableBackendName;
+  /**
+   * Passphrase provider for the `age` backend. Defaults to the env-var
+   * provider reading `AM_AGE_PASSPHRASE`. Not used when the selected
+   * backend is `aes-gcm-legacy`.
+   */
+  passphraseProvider?: (kind: "create" | "unlock") => Promise<string>;
+}
+
+/**
+ * Resolve the active `SecretsBackend` for a given config directory.
+ *
+ * - Reads `config.toml` to discover `settings.secrets.backend`.
+ * - If `"age"` is selected, dynamically imports `./secrets-age` (which
+ *   self-registers the factory), then loads it with a passphrase
+ *   provider (env-var by default).
+ * - Otherwise loads the legacy AES-GCM backend with the machine key
+ *   resolved via `loadKey`. Throws a descriptive error when the key
+ *   is missing so callers can surface a clear message.
+ *
+ * Callers should not cache the result across config edits — the
+ * selection can change when `settings.secrets.backend` is flipped.
+ */
+export async function getDefaultBackend(
+  configDir: string,
+  options: GetDefaultBackendOptions = {},
+): Promise<SecretsBackend> {
+  let config: Config | null | undefined = options.config;
+  if (config === undefined) {
+    // Lazy import to avoid a cycle (`core/config` pulls `core/secrets`).
+    const { tryReadConfig } = await import("./config");
+    config = await tryReadConfig(join(configDir, "config.toml"));
+  }
+
+  const chosen = options.override ?? selectBackendName(config ?? null);
+
+  if (chosen === "age") {
+    // Side-effect import registers the `age` factory.
+    const ageModule = await import("./secrets-age");
+    const factory = getBackend("age");
+    if (!factory) {
+      throw new Error(
+        "getDefaultBackend: `age` backend selected but its factory is not registered — check that `src/core/secrets-age.ts` is importable.",
+      );
+    }
+    return factory.load({
+      passphraseProvider: options.passphraseProvider ?? ageModule.envPassphraseProvider(),
+    });
+  }
+
+  // Legacy AES-GCM. Load the machine key up front so encrypt/decrypt
+  // don't fail with a vague "no key loaded" message.
+  const key = await loadKey(configDir);
+  if (!key) {
+    throw new Error(
+      "getDefaultBackend: aes-gcm-legacy selected but no encryption key is available — run `am secret generate-key` or set AM_ENCRYPTION_KEY.",
+    );
+  }
+  return new AesGcmLegacyBackend(key);
+}
+
+/**
+ * Return `true` when `envelope` is an ADR-0012 v1 AES-GCM envelope
+ * (`enc:v1:<iv>:<ct>`). Anything else — including the ADR-0042 v2 age
+ * envelope (`enc:v2:age:...`) — returns `false`.
+ *
+ * Used by migration logic to decide whether a value should be piped
+ * through `AesGcmLegacyBackend` for a forward-port to the current
+ * backend.
+ */
+export function isLegacyV1Envelope(value: string): boolean {
+  return typeof value === "string" && value.startsWith(PREFIX);
+}
+
+/**
+ * Return `true` when `envelope` is any recognised encrypted envelope
+ * (v1 legacy or v2 age). Useful for generic scans that don't care
+ * about the backend.
+ */
+export function isAnyEnvelope(value: string): boolean {
+  if (typeof value !== "string") return false;
+  return value.startsWith(PREFIX) || value.startsWith("enc:v2:age:");
+}

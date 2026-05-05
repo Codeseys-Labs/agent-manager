@@ -37,6 +37,7 @@ const main = defineCommand({
     undo: () => import("./commands/undo").then((m) => m.undoCommand),
     log: () => import("./commands/log").then((m) => m.logCommand),
     secret: () => import("./commands/secret").then((m) => m.secretCommand),
+    secrets: () => import("./commands/secrets").then((m) => m.secretsCommand),
     version: () => import("./commands/version").then((m) => m.versionCommand),
     adapter: () => import("./commands/adapter").then((m) => m.adapterCommand),
     "mcp-serve": () => import("./commands/mcp-serve").then((m) => m.mcpServeCommand),
