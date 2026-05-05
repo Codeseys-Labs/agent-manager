@@ -3,7 +3,6 @@ import { getAdapter, getDetectedAdapters, listAdapters } from "../../src/adapter
 import type {
   Adapter,
   AdapterMeta,
-  AdapterSchema,
   Capability,
   DetectResult,
   DiffChange,
@@ -163,7 +162,6 @@ describe("getAdapter()", () => {
     expect(typeof adapter?.import).toBe("function");
     expect(typeof adapter?.export).toBe("function");
     expect(typeof adapter?.diff).toBe("function");
-    expect(adapter?.schema).toBeDefined();
   });
 });
 

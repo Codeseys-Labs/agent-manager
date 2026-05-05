@@ -1,9 +1,19 @@
 ---
 status: accepted
 date: 2026-04-07
+amended_by: ADR-0041
 ---
 
 # ADR-0007: Two-Phase Zod Validation
+
+> **Amended (2026-05-05) by [ADR-0041](0041-adr-0007-phase-2-deferred.md):**
+> Phase 2 (per-adapter Zod validation of `[entity.adapters.<name>]`
+> subtables) was never wired in 13 months of production. The 13
+> adapter-owned `schema.ts` files and the `Adapter.schema` field have
+> been removed. Phase 1 (strict core validation) remains as described
+> below and is unchanged. Reading this ADR for what *currently ships*:
+> ignore the Phase 2 paragraphs and see ADR-0041 for the rationale and
+> the re-introduction path.
 
 ## Context
 

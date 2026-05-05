@@ -23,9 +23,10 @@ describe("CommunityAdapterProxy", () => {
     expect(proxy.meta.capabilities).toContain("instructions");
   });
 
-  it("fetches schema", () => {
-    expect(proxy.schema).toBeDefined();
-  });
+  // Schema fetch test removed 2026-05-05 per ADR-0041 (ADR-0007 Phase 2
+  // resolution). The `Adapter.schema` field and the `adapter/schema`
+  // JSON-RPC method were removed; the proxy no longer exposes a `schema`
+  // property and no longer issues the schema handshake during initialize.
 
   it("calls detect() via async IPC", async () => {
     const result = await proxy.detect();

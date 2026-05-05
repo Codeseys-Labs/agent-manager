@@ -12,7 +12,6 @@ import { detect } from "./detect.ts";
 import { diffConfig } from "./diff.ts";
 import { exportConfig } from "./export.ts";
 import { importConfig } from "./import.ts";
-import { clineSchema } from "./schema.ts";
 
 const CAPABILITIES: Capability[] = ["mcp", "instructions"];
 
@@ -40,5 +39,4 @@ export const clineAdapter: Adapter = {
     return diffConfig(config);
   },
 
-  schema: clineSchema,
 };

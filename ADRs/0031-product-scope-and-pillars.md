@@ -1,9 +1,17 @@
 ---
 status: accepted
 date: 2026-04-16
+amended_by: ADR-0031a
 ---
 
 # ADR-0031: Product Scope and Pillars
+
+> **Amended (2026-05-05) by [ADR-0031a](0031a-pillar-6-amendment.md):**
+> pillar 6's literal claim that "all three [UIs] are skins over the same
+> core via `core/controller.ts`" is corrected. TUI + local web do route
+> through the controller; the Cloudflare Worker is an independently-
+> deployed git-over-HTTP client per ADR-0015 and intentionally does NOT
+> share `src/core/*`. See ADR-0031a for the corrected wording.
 
 ## Context
 

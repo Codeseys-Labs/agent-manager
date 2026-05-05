@@ -14,7 +14,6 @@ import { detect } from "./detect.ts";
 import { diffConfig } from "./diff.ts";
 import { exportConfig } from "./export.ts";
 import { importConfig } from "./import.ts";
-import { cursorSchema } from "./schema.ts";
 
 const CAPABILITIES: Capability[] = ["mcp", "instructions", "agents", "marketplace"];
 
@@ -42,7 +41,6 @@ export const cursorAdapter: Adapter = {
     return diffConfig(config);
   },
 
-  schema: cursorSchema,
 
   scanMarketplace(): MarketplaceResult {
     return scanVSCodeExtensions("cursor");

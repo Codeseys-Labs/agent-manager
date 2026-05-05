@@ -85,6 +85,33 @@ On first `loadKey` call after upgrading:
 - `am mcp-serve` write-tier tools require a bearer token (`AM_MCP_TOKEN`) or
   explicit `AM_MCP_ALLOW_UNSAFE_LOCAL=1`, but read-only tools remain open.
 
+## Plaintext in downstream config files
+
+`am`'s value-prop is generating native config files for ~13 IDEs from one
+encrypted source of truth. At `am apply` time, secrets are necessarily
+**decrypted** — `src/core/secrets.ts::interpolateEnvAsync` resolves
+`${VAR}` and `enc:v1:` ciphertext into plaintext, then
+`src/core/controller.ts::applyResolved` writes the result to native
+files: `~/.claude.json`, `~/.codex/*`, `~/.config/Continue/*`, etc.
+Those files are **plaintext on disk**. This is unavoidable; the IDE
+itself reads them.
+
+The encryption boundary is `config.toml` (the canonical store), NOT the
+downstream files. Treat the downstream files as you would any plaintext
+secret material:
+
+- Do not commit them to git. Most IDE configs are already in your global
+  `.gitignore`; verify before adding new tools.
+- Do not sync them to a non-encrypted backup.
+- Be aware that `git status` outside the `am` config repo may show them
+  as untracked changes if they live inside a project.
+
+The only `am`-side guard against accidental leakage is
+`scanServersForUrlCredentials` in `src/core/url-credentials.ts`, which
+refuses to write servers whose URL fields embed credentials (e.g.
+`https://user:pass@host`). Other plaintext leak paths — env vars,
+header secrets, command-line tokens — are written as-is, by design.
+
 ## Rotating the key
 
 There is no in-place rotation command yet. The safe procedure is:

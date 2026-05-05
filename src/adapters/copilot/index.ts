@@ -14,7 +14,6 @@ import { detect } from "./detect.ts";
 import { diffConfig } from "./diff.ts";
 import { exportConfig } from "./export.ts";
 import { importConfig } from "./import.ts";
-import { copilotSchema } from "./schema.ts";
 
 const CAPABILITIES: Capability[] = ["mcp", "instructions", "marketplace"];
 
@@ -42,7 +41,6 @@ export const copilotAdapter: Adapter = {
     return diffConfig(config);
   },
 
-  schema: copilotSchema,
 
   scanMarketplace(): MarketplaceResult {
     return scanVSCodeExtensions("copilot");

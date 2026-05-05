@@ -11,7 +11,6 @@ import { sandboxEnv } from "../../protocols/acp/env-sandbox";
 import type {
   Adapter,
   AdapterMeta,
-  AdapterSchema,
   DetectResult,
   DiffResult,
   ExportOptions,
@@ -35,22 +34,19 @@ export class CommunityAdapterProxy implements Adapter {
   >();
 
   meta: AdapterMeta;
-  schema: AdapterSchema;
 
   private constructor(
     private command: string,
     private args: string[],
     meta: AdapterMeta,
-    schema: AdapterSchema,
     private extraEnv?: Record<string, string>,
   ) {
     this.meta = meta;
-    this.schema = schema;
   }
 
   /**
    * Create and initialize a community adapter proxy.
-   * Spawns the subprocess, performs the initialize handshake, and fetches meta + schema.
+   * Spawns the subprocess, performs the initialize handshake, and fetches meta.
    *
    * Security (B-03 / REV-2 HIGH-3 propagation): the child env is scrubbed via
    * `sandboxEnv(opts?.env)` so `AM_ENCRYPTION_KEY`, `AM_MCP_TOKEN`, AWS / GitHub /
@@ -61,7 +57,7 @@ export class CommunityAdapterProxy implements Adapter {
     args: string[] = [],
     opts?: { env?: Record<string, string> },
   ): Promise<CommunityAdapterProxy> {
-    const proxy = new CommunityAdapterProxy(command, args, {} as AdapterMeta, {}, opts?.env);
+    const proxy = new CommunityAdapterProxy(command, args, {} as AdapterMeta, opts?.env);
     proxy.spawn();
     await proxy.initialize();
     return proxy;
@@ -175,16 +171,16 @@ export class CommunityAdapterProxy implements Adapter {
       throw new Error("Community adapter did not return a valid initialize response");
     }
 
-    // Fetch meta and schema
+    // Fetch meta
     this.meta = (await this.call("adapter/meta", {})) as AdapterMeta;
     if (!this.meta?.name) {
       throw new Error("Community adapter did not return valid metadata");
     }
 
-    // Schema is returned as JSON Schema (not Zod) — store as-is for now.
-    // Future: convert JSON Schema to Zod for validation.
-    const schemaResult = (await this.call("adapter/schema", {})) as Record<string, unknown>;
-    this.schema = schemaResult as unknown as AdapterSchema;
+    // Phase 2 of ADR-0007 (per-adapter schema validation) was removed
+    // 2026-05-05 per ADR-0041. The `adapter/schema` JSON-RPC method is no
+    // longer requested by the host. Community adapters MAY still implement
+    // it for forward-compat, but the host ignores any response.
   }
 
   async detect(): Promise<DetectResult> {

@@ -12,7 +12,6 @@ import { detect } from "./detect.ts";
 import { diffConfig } from "./diff.ts";
 import { exportConfig } from "./export.ts";
 import { importConfig } from "./import.ts";
-import { kiloCodeSchema } from "./schema.ts";
 
 // CODEX-9 (2026-05-02): removed "agents" capability. The diff.ts and
 // export.ts paths do not process config.agents — declaring a capability
@@ -45,5 +44,4 @@ export const kiloCodeAdapter: Adapter = {
     return diffConfig(config);
   },
 
-  schema: kiloCodeSchema,
 };

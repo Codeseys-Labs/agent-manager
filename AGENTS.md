@@ -28,8 +28,13 @@ this serve?** Features orthogonal to all six are flagged for reconsideration.
 5. **LLM-wiki** — Karpathy-style session context. Session harvest (ADR-0016)
    is the cross-tool read pipeline — without it, pillar 5 is an empty shelf.
    Global git-backed + per-project local mirror. `am wiki` + MCP `am_wiki_*`.
-6. **Three UIs over one core** — TUI, local web, Cloudflare web. All three
-   route through `core/controller.ts` — no parallel implementations.
+6. **Three editing surfaces, one local write path** — TUI (`am tui`) and
+   local web (`am serve`) both route writes through `core/controller.ts`
+   via `withConfig` + `applyResolved`; no parallel admission/apply paths
+   on the user's machine. The Cloudflare Worker UI is an independently-
+   deployed git-over-HTTP client per [ADR-0015](ADRs/0015-stateless-web-ui.md)
+   and ADR-0031a — it does NOT share `src/core/*`, cannot apply to native
+   IDE files, and treats the config repo as the source of truth.
 
 Explicit non-goals: am is NOT a workflow orchestrator (flows serve pillar 3
 composition only), NOT a hosted inference product, NOT a replacement for native

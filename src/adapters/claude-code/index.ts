@@ -14,7 +14,6 @@ import { diffConfig } from "./diff.ts";
 import { exportConfig } from "./export.ts";
 import { importConfig } from "./import.ts";
 import { scanClaudePlugins } from "./marketplace.ts";
-import { claudeCodeSchema } from "./schema.ts";
 import { createClaudeCodeSessionReader } from "./session.ts";
 
 const CAPABILITIES: Capability[] = [
@@ -53,7 +52,6 @@ export const claudeCodeAdapter: Adapter = {
     return diffConfig(config);
   },
 
-  schema: claudeCodeSchema,
 
   sessionReader: createClaudeCodeSessionReader(),
 

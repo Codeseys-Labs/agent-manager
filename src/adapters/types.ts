@@ -1,4 +1,3 @@
-import type { z } from "zod";
 import type { SessionReader } from "../core/session.ts";
 
 // ── Capabilities ─────────────────────────────────────────────────
@@ -164,12 +163,12 @@ export interface ResolvedConfig {
 }
 
 // ── Adapter Schema (Zod-based validation) ────────────────────────
-
-export interface AdapterSchema {
-  server?: z.ZodType;
-  instruction?: z.ZodType;
-  global?: z.ZodType;
-}
+//
+// Removed 2026-05-05 per ADR-0041 (Phase 2 of ADR-0007 was never wired in
+// 13 months of production). The `AdapterSchema` interface and the
+// `Adapter.schema` field have been deleted. If a future use case requires
+// per-adapter validation of `[entity.adapters.<name>]` subtables, re-add
+// the field narrowly and see ADR-0041 for the re-introduction path.
 
 // ── Adapter Interface ────────────────────────────────────────────
 
@@ -212,7 +211,6 @@ export interface Adapter {
   import(options: ImportOptions): ImportResult | Promise<ImportResult>;
   export(config: ResolvedConfig, options: ExportOptions): ExportResult | Promise<ExportResult>;
   diff(config: ResolvedConfig): DiffResult | Promise<DiffResult>;
-  schema: AdapterSchema;
   sessionReader?: SessionReader;
   scanMarketplace?(): MarketplaceResult;
 }

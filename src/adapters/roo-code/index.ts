@@ -12,7 +12,6 @@ import { detect } from "./detect.ts";
 import { diffConfig } from "./diff.ts";
 import { exportConfig } from "./export.ts";
 import { importConfig } from "./import.ts";
-import { rooCodeSchema } from "./schema.ts";
 
 const CAPABILITIES: Capability[] = ["mcp", "instructions", "modes"];
 
@@ -40,5 +39,4 @@ export const rooCodeAdapter: Adapter = {
     return diffConfig(config);
   },
 
-  schema: rooCodeSchema,
 };

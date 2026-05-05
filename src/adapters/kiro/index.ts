@@ -14,7 +14,6 @@ import { detect } from "./detect.ts";
 import { diffConfig } from "./diff.ts";
 import { exportConfig } from "./export.ts";
 import { importConfig } from "./import.ts";
-import { kiroSchema } from "./schema.ts";
 
 const CAPABILITIES: Capability[] = ["mcp", "instructions", "skills", "agents", "marketplace"];
 
@@ -42,7 +41,6 @@ export const kiroAdapter: Adapter = {
     return diffConfig(config);
   },
 
-  schema: kiroSchema,
 
   scanMarketplace(): MarketplaceResult {
     return scanVSCodeExtensions("kiro");

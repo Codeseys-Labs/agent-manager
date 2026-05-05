@@ -12,7 +12,6 @@ import { detect } from "./detect.ts";
 import { diffConfig } from "./diff.ts";
 import { exportConfig } from "./export.ts";
 import { importConfig } from "./import.ts";
-import { codexCliSchema } from "./schema.ts";
 import { createCodexSessionReader } from "./session.ts";
 
 const CAPABILITIES: Capability[] = ["mcp", "instructions", "permissions", "agents"];
@@ -41,7 +40,6 @@ export const codexCliAdapter: Adapter = {
     return diffConfig(config);
   },
 
-  schema: codexCliSchema,
 
   sessionReader: createCodexSessionReader(),
 };
