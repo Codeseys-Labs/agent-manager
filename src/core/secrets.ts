@@ -3,6 +3,8 @@ import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { atomicWriteFile } from "./atomic-write";
 import type { Config } from "./schema";
+import type { SecretEnvelope, SecretsBackend } from "./secrets-backend";
+import { registerBackend } from "./secrets-backend";
 
 // --- Encryption constants ---
 const ALGO = "AES-GCM";
@@ -319,3 +321,74 @@ export async function interpolateEnvAsync(
   const decrypted = (await walkDecrypt(result.config)) as Config;
   return { config: decrypted, warnings: result.warnings };
 }
+
+// --- SecretsBackend adapter (ADR-0042 scaffolding) ---
+//
+// Thin wrapper over `encryptValue`/`decryptValue` that conforms to the
+// `SecretsBackend` interface. Today's behaviour is unchanged — the
+// adapter is additive scaffolding that future apply/decrypt paths can
+// depend on without committing to a particular implementation.
+//
+// Not yet wired into any caller. Recipient-management methods are
+// intentionally omitted because AES-GCM is single-key.
+
+/** Optional shape accepted by `AesGcmLegacyBackendFactory.load`. */
+export interface AesGcmLegacyBackendConfig {
+  /** Pre-imported key. If omitted, must be set via `setKey` before use. */
+  key?: CryptoKey;
+}
+
+/**
+ * Adapter implementing `SecretsBackend` over the legacy module-level
+ * AES-256-GCM primitives. Single-key, single-recipient.
+ */
+export class AesGcmLegacyBackend implements SecretsBackend {
+  readonly name = "aes-gcm-legacy" as const;
+  readonly version = 1;
+
+  #key: CryptoKey | null;
+
+  constructor(key: CryptoKey | null = null) {
+    this.#key = key;
+  }
+
+  /** Install or replace the active CryptoKey. */
+  setKey(key: CryptoKey): void {
+    this.#key = key;
+  }
+
+  /** Whether a key has been installed. */
+  hasKey(): boolean {
+    return this.#key !== null;
+  }
+
+  async encrypt(plaintext: string): Promise<SecretEnvelope> {
+    if (!this.#key) {
+      throw new Error(
+        "AesGcmLegacyBackend: no key loaded — call setKey() or pass one to the constructor.",
+      );
+    }
+    return encryptValue(plaintext, this.#key);
+  }
+
+  async decrypt(envelope: SecretEnvelope): Promise<string> {
+    if (!this.#key) {
+      throw new Error(
+        "AesGcmLegacyBackend: no key loaded — call setKey() or pass one to the constructor.",
+      );
+    }
+    return decryptValue(envelope, this.#key);
+  }
+}
+
+// Side-effect registration: importing `core/secrets` registers the
+// legacy backend under the name `aes-gcm-legacy`. The factory accepts
+// `{ key?: CryptoKey }`; callers that do not supply a key must install
+// one via `backend.setKey(key)` before calling `encrypt`/`decrypt`.
+registerBackend({
+  name: "aes-gcm-legacy",
+  async load(config: unknown): Promise<SecretsBackend> {
+    const cfg = (config ?? {}) as AesGcmLegacyBackendConfig;
+    return new AesGcmLegacyBackend(cfg.key ?? null);
+  },
+});
