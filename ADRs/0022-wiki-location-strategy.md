@@ -1,6 +1,7 @@
 ---
-status: accepted
+status: superseded-in-part-by-ADR-0044
 date: 2026-04-09
+amended_by: ADR-0044
 ---
 
 # ADR-0022: Wiki Location Strategy — Global Store with Project Symlinks
