@@ -133,7 +133,7 @@ describe("ADR-0044 Wave B — wiki init/migrate/publish/pull", () => {
   afterEach(async () => {
     restoreConsole();
     process.chdir(savedCwd);
-    if (savedEnv === undefined) delete process.env.AM_CONFIG_DIR;
+    if (savedEnv === undefined) process.env.AM_CONFIG_DIR = undefined;
     else process.env.AM_CONFIG_DIR = savedEnv;
     process.exitCode = 0;
     await projectDir.cleanup();

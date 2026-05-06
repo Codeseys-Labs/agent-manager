@@ -48,12 +48,7 @@ function seedGlobalEntry(
   return filePath;
 }
 
-function seedLocalEntry(
-  projectDir: string,
-  subdir: string,
-  slug: string,
-  content: string,
-): string {
+function seedLocalEntry(projectDir: string, subdir: string, slug: string, content: string): string {
   const dir = join(projectDir, WIKI_PROJECT_DIRNAME, subdir);
   mkdirSync(dir, { recursive: true });
   const filePath = join(dir, `${slug}.md`);
@@ -78,7 +73,7 @@ describe("ADR-0044: materialiseProject + pushToGlobal", () => {
   });
 
   afterEach(async () => {
-    if (savedEnv === undefined) delete process.env.AM_CONFIG_DIR;
+    if (savedEnv === undefined) process.env.AM_CONFIG_DIR = undefined;
     else process.env.AM_CONFIG_DIR = savedEnv;
     await projectDir.cleanup();
     await configHome.cleanup();
@@ -96,13 +91,7 @@ describe("ADR-0044: materialiseProject + pushToGlobal", () => {
   test("materialiseProject('all') copies every entry across subdirs", async () => {
     seedGlobalEntry(configHome.path, projectName, "entities", "alice", PAGE_MD("alice", "Alice"));
     seedGlobalEntry(configHome.path, projectName, "concepts", "beta", PAGE_MD("beta", "Beta"));
-    seedGlobalEntry(
-      configHome.path,
-      projectName,
-      "decisions",
-      "gamma",
-      PAGE_MD("gamma", "Gamma"),
-    );
+    seedGlobalEntry(configHome.path, projectName, "decisions", "gamma", PAGE_MD("gamma", "Gamma"));
 
     const result = await materialiseProject(projectDir.path, "all");
     expect(result.copied.sort()).toEqual(["alice", "beta", "gamma"]);
@@ -205,9 +194,7 @@ describe("ADR-0044: materialiseProject + pushToGlobal", () => {
     const localBytes = readFileSync(
       join(projectDir.path, WIKI_PROJECT_DIRNAME, "concepts", "beta.md"),
     );
-    const globalBytes = readFileSync(
-      join(getProjectWikiDir(projectName), "concepts", "beta.md"),
-    );
+    const globalBytes = readFileSync(join(getProjectWikiDir(projectName), "concepts", "beta.md"));
     expect(globalBytes.equals(localBytes)).toBe(true);
   });
 
@@ -221,12 +208,7 @@ describe("ADR-0044: materialiseProject + pushToGlobal", () => {
   });
 
   test("pushToGlobal: differing-existing returns conflict:true and does NOT overwrite", async () => {
-    seedLocalEntry(
-      projectDir.path,
-      "entities",
-      "alice",
-      PAGE_MD("alice", "Alice", "LOCAL body"),
-    );
+    seedLocalEntry(projectDir.path, "entities", "alice", PAGE_MD("alice", "Alice", "LOCAL body"));
     const globalPath = seedGlobalEntry(
       configHome.path,
       projectName,
@@ -245,12 +227,7 @@ describe("ADR-0044: materialiseProject + pushToGlobal", () => {
   });
 
   test("pushToGlobal with force: true: overwrites a differing existing global entry", async () => {
-    seedLocalEntry(
-      projectDir.path,
-      "entities",
-      "alice",
-      PAGE_MD("alice", "Alice", "LOCAL WINS"),
-    );
+    seedLocalEntry(projectDir.path, "entities", "alice", PAGE_MD("alice", "Alice", "LOCAL WINS"));
     const globalPath = seedGlobalEntry(
       configHome.path,
       projectName,
@@ -281,12 +258,7 @@ describe("ADR-0044: materialiseProject + pushToGlobal", () => {
 
   test("pushToGlobal finds an entry regardless of which PAGE_SUBDIRS subdir holds it", async () => {
     // Seed in `decisions/`, not the default `entities/`.
-    seedLocalEntry(
-      projectDir.path,
-      "decisions",
-      "adr-007",
-      PAGE_MD("adr-007", "ADR 007"),
-    );
+    seedLocalEntry(projectDir.path, "decisions", "adr-007", PAGE_MD("adr-007", "ADR 007"));
 
     const result = await pushToGlobal(projectDir.path, "adr-007");
     expect(result).toEqual({ pushed: "adr-007", conflict: false });

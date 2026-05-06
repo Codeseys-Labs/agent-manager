@@ -257,20 +257,13 @@ export const doctorCommand = defineCommand({
         checks.push({
           name: "Team passphrase (ADR-0046)",
           status: "fail",
-          message:
-            `team_passphrase field found in: ${teamPassphraseFiles.join(", ")}. ` +
-            "This anti-pattern is rejected by ADR-0046. Migrate to per-recipient X25519 " +
-            "identities: run `am secrets add-recipient <pubkey>` for each team member, " +
-            "then re-encrypt secrets with `am secrets rewrap`.",
+          message: `team_passphrase field found in: ${teamPassphraseFiles.join(", ")}. This anti-pattern is rejected by ADR-0046. Migrate to per-recipient X25519 identities: run \`am secrets add-recipient <pubkey>\` for each team member, then re-encrypt secrets with \`am secrets rewrap\`.`,
         });
       } else if (envHints.length > 0) {
         checks.push({
           name: "Team passphrase (ADR-0046)",
           status: "warn",
-          message:
-            `Legacy shared-passphrase env var(s) set: ${envHints.join(", ")}. ` +
-            "These are not used by current am, but their presence suggests a legacy " +
-            "shared-passphrase setup. See ADR-0046; migrate to per-recipient identities.",
+          message: `Legacy shared-passphrase env var(s) set: ${envHints.join(", ")}. These are not used by current am, but their presence suggests a legacy shared-passphrase setup. See ADR-0046; migrate to per-recipient identities.`,
         });
       } else {
         checks.push({

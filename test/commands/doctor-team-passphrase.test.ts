@@ -14,32 +14,30 @@ describe("ADR-0046: doctor team_passphrase detection — regex behaviors", () =>
   const teamPassphraseRegex = /^\s*team_passphrase\s*=/m;
 
   test("matches simple TOML key at line start", () => {
-    expect(teamPassphraseRegex.test("team_passphrase = \"x\"")).toBe(true);
+    expect(teamPassphraseRegex.test('team_passphrase = "x"')).toBe(true);
   });
 
   test("matches indented key (inside table)", () => {
-    expect(
-      teamPassphraseRegex.test("[settings.secrets]\n  team_passphrase = \"x\""),
-    ).toBe(true);
+    expect(teamPassphraseRegex.test('[settings.secrets]\n  team_passphrase = "x"')).toBe(true);
   });
 
   test("matches with extra spaces around equals", () => {
-    expect(teamPassphraseRegex.test("team_passphrase    =    \"x\"")).toBe(true);
+    expect(teamPassphraseRegex.test('team_passphrase    =    "x"')).toBe(true);
   });
 
   test("does NOT match comment containing the word", () => {
     // Conservative: only flag actual key=value, not commentary.
-    const config = "# do not use team_passphrase, see ADR-0046\nbackend = \"age\"";
+    const config = '# do not use team_passphrase, see ADR-0046\nbackend = "age"';
     expect(teamPassphraseRegex.test(config)).toBe(false);
   });
 
   test("does NOT match when team_passphrase is on the right of an equals", () => {
-    const config = "comment = \"see team_passphrase docs\"";
+    const config = 'comment = "see team_passphrase docs"';
     expect(teamPassphraseRegex.test(config)).toBe(false);
   });
 
   test("does NOT match similar-but-different keys", () => {
-    expect(teamPassphraseRegex.test("team_passphrase_hint = \"x\"")).toBe(false);
+    expect(teamPassphraseRegex.test('team_passphrase_hint = "x"')).toBe(false);
     // The regex is anchored on `team_passphrase\s*=`, so suffixed keys
     // would only match if they matched `team_passphrase=` literally.
     // `team_passphrase_hint = "x"` includes `team_passphrase_hint` as
@@ -48,7 +46,7 @@ describe("ADR-0046: doctor team_passphrase detection — regex behaviors", () =>
   });
 
   test("matches at file start (no leading newline)", () => {
-    expect(teamPassphraseRegex.test("team_passphrase = \"x\"\n")).toBe(true);
+    expect(teamPassphraseRegex.test('team_passphrase = "x"\n')).toBe(true);
   });
 
   test("matches with surrounding context", () => {
@@ -74,9 +72,9 @@ describe("ADR-0046: legacy environment variable hints", () => {
       AGENT_MANAGER_TEAM_PASSPHRASE: process.env.AGENT_MANAGER_TEAM_PASSPHRASE,
       AM_SHARED_PASSPHRASE: process.env.AM_SHARED_PASSPHRASE,
     };
-    delete process.env.AM_TEAM_PASSPHRASE;
-    delete process.env.AGENT_MANAGER_TEAM_PASSPHRASE;
-    delete process.env.AM_SHARED_PASSPHRASE;
+    process.env.AM_TEAM_PASSPHRASE = undefined;
+    process.env.AGENT_MANAGER_TEAM_PASSPHRASE = undefined;
+    process.env.AM_SHARED_PASSPHRASE = undefined;
   });
 
   afterEach(() => {
@@ -112,11 +110,7 @@ describe("ADR-0046: legacy environment variable hints", () => {
     process.env.AGENT_MANAGER_TEAM_PASSPHRASE = "y";
     process.env.AM_SHARED_PASSPHRASE = "z";
     expect(envHints().sort()).toEqual(
-      [
-        "AM_SHARED_PASSPHRASE",
-        "AM_TEAM_PASSPHRASE",
-        "AGENT_MANAGER_TEAM_PASSPHRASE",
-      ].sort(),
+      ["AM_SHARED_PASSPHRASE", "AM_TEAM_PASSPHRASE", "AGENT_MANAGER_TEAM_PASSPHRASE"].sort(),
     );
   });
 

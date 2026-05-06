@@ -356,7 +356,6 @@ describe("Fix 5 — SSE heartbeat is emitted on idle streams", () => {
     // during the subscription lifecycle.
     const intervalsInstalled: number[] = [];
     const origSetInterval = globalThis.setInterval;
-    // biome-ignore lint/suspicious/noExplicitAny: intentional monkey-patch
     (globalThis as any).setInterval = (fn: (...a: unknown[]) => unknown, ms: number) => {
       intervalsInstalled.push(ms);
       return origSetInterval(fn, ms);

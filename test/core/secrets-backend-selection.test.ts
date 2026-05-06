@@ -30,19 +30,19 @@ import "../../src/core/secrets-age"; // side-effect: register `age` factory
 describe("selectBackendName", () => {
   const origEnv = process.env.AM_SECRETS_BACKEND;
   afterEach(() => {
-    if (origEnv === undefined) delete process.env.AM_SECRETS_BACKEND;
+    if (origEnv === undefined) process.env.AM_SECRETS_BACKEND = undefined;
     else process.env.AM_SECRETS_BACKEND = origEnv;
   });
 
   test("defaults to aes-gcm-legacy when nothing is configured", () => {
-    delete process.env.AM_SECRETS_BACKEND;
+    process.env.AM_SECRETS_BACKEND = undefined;
     expect(selectBackendName(null)).toBe("aes-gcm-legacy");
     expect(selectBackendName({})).toBe("aes-gcm-legacy");
     expect(selectBackendName({ settings: {} })).toBe("aes-gcm-legacy");
   });
 
   test("honours settings.secrets.backend when set to a known value", () => {
-    delete process.env.AM_SECRETS_BACKEND;
+    process.env.AM_SECRETS_BACKEND = undefined;
     const cfg = { settings: { secrets: { backend: "age" } } } as unknown as Parameters<
       typeof selectBackendName
     >[0];
@@ -50,7 +50,7 @@ describe("selectBackendName", () => {
   });
 
   test("ignores settings.secrets.backend with an unknown value", () => {
-    delete process.env.AM_SECRETS_BACKEND;
+    process.env.AM_SECRETS_BACKEND = undefined;
     const cfg = { settings: { secrets: { backend: "bogus" } } } as unknown as Parameters<
       typeof selectBackendName
     >[0];
@@ -104,19 +104,19 @@ describe("getDefaultBackend", () => {
   beforeEach(async () => {
     tmp = await makeTempConfigDir();
     process.env.AM_KEY_PATH = join(tmp.configDir, "key");
-    delete process.env.AM_ENCRYPTION_KEY;
-    delete process.env.AM_SECRETS_BACKEND;
+    process.env.AM_ENCRYPTION_KEY = undefined;
+    process.env.AM_SECRETS_BACKEND = undefined;
   });
   afterEach(async () => {
-    if (origKeyPath === undefined) delete process.env.AM_KEY_PATH;
+    if (origKeyPath === undefined) process.env.AM_KEY_PATH = undefined;
     else process.env.AM_KEY_PATH = origKeyPath;
-    if (origEncKey === undefined) delete process.env.AM_ENCRYPTION_KEY;
+    if (origEncKey === undefined) process.env.AM_ENCRYPTION_KEY = undefined;
     else process.env.AM_ENCRYPTION_KEY = origEncKey;
-    if (origAgePp === undefined) delete process.env.AM_AGE_PASSPHRASE;
+    if (origAgePp === undefined) process.env.AM_AGE_PASSPHRASE = undefined;
     else process.env.AM_AGE_PASSPHRASE = origAgePp;
-    if (origAgeDir === undefined) delete process.env.AM_AGE_IDENTITY_DIR;
+    if (origAgeDir === undefined) process.env.AM_AGE_IDENTITY_DIR = undefined;
     else process.env.AM_AGE_IDENTITY_DIR = origAgeDir;
-    if (origBackendEnv === undefined) delete process.env.AM_SECRETS_BACKEND;
+    if (origBackendEnv === undefined) process.env.AM_SECRETS_BACKEND = undefined;
     else process.env.AM_SECRETS_BACKEND = origBackendEnv;
     await tmp.cleanup();
   });
@@ -186,11 +186,11 @@ describe("secrets migrate — walk + re-encrypt", () => {
     process.env.AM_AGE_PASSPHRASE = "migrate-pw";
   });
   afterEach(async () => {
-    if (origKeyPath === undefined) delete process.env.AM_KEY_PATH;
+    if (origKeyPath === undefined) process.env.AM_KEY_PATH = undefined;
     else process.env.AM_KEY_PATH = origKeyPath;
-    if (origAgePp === undefined) delete process.env.AM_AGE_PASSPHRASE;
+    if (origAgePp === undefined) process.env.AM_AGE_PASSPHRASE = undefined;
     else process.env.AM_AGE_PASSPHRASE = origAgePp;
-    if (origAgeDir === undefined) delete process.env.AM_AGE_IDENTITY_DIR;
+    if (origAgeDir === undefined) process.env.AM_AGE_IDENTITY_DIR = undefined;
     else process.env.AM_AGE_IDENTITY_DIR = origAgeDir;
     await tmp.cleanup();
   });
@@ -243,7 +243,7 @@ describe("secrets migrate — walk + re-encrypt", () => {
         },
       });
     } finally {
-      if (configDirBefore === undefined) delete process.env.AM_CONFIG_DIR;
+      if (configDirBefore === undefined) process.env.AM_CONFIG_DIR = undefined;
       else process.env.AM_CONFIG_DIR = configDirBefore;
     }
 
