@@ -153,7 +153,14 @@ export function createProjectWikiLink(projectDir: string, projectName: string): 
   symlinkSync(target, wikiLink, symlinkType);
 }
 
-/** Ensure .agent-manager/wiki is in the project's .gitignore. (ADR-0022) */
+/**
+ * Ensure `.agent-manager/wiki` is in the project's `.gitignore`.
+ *
+ * **@deprecated** Since ADR-0044 (Wave B). Use {@link ensureAmWikiGitignore}
+ * which adds `.am-wiki/` instead. Retained for backward compatibility with
+ * ADR-0022 legacy callers — no new flow should invoke this. See
+ * ADR-0022 §5 and ADR-0044 §3-4.
+ */
 export function ensureWikiGitignore(projectDir: string): void {
   const gitignorePath = join(projectDir, ".gitignore");
   const entry = ".agent-manager/wiki";
@@ -332,12 +339,18 @@ export async function materialiseProject(
  * Behavior:
  *   - Locates `<projectDir>/.am-wiki/<subdir>/<slug>.md` by walking every
  *     PAGE_SUBDIRS subdir. Throws if no such file exists.
- *   - If the global slot is empty → copy, return `conflict: false`.
- *   - If the global slot holds a byte-identical file → no-op, `conflict: false`.
+ *   - If the global slot is empty → copy, return `{ pushed: slug, conflict: false }`.
+ *   - If the global slot holds a byte-identical file → no-op,
+ *     `{ pushed: slug, conflict: false }`.
  *   - If the global slot holds a different file and `opts.force !== true` →
- *     return `conflict: true` WITHOUT overwriting. Caller is expected to
- *     surface a diff and retry with `force: true`.
- *   - If `opts.force === true` → overwrite, return `conflict: false`.
+ *     return `{ pushed: null, conflict: true }` WITHOUT overwriting. Caller is
+ *     expected to surface a diff and retry with `force: true`.
+ *   - If `opts.force === true` → overwrite, return `{ pushed: slug, conflict: false }`.
+ *
+ * The return shape is a discriminated pair: `pushed` is the slug only on a
+ * successful push (including idempotent no-ops), and `null` on conflict. This
+ * prevents callers from treating a conflict as a successful push by inspecting
+ * only the `pushed` field.
  *
  * @param projectDir Absolute path to the project directory.
  * @param slug       Slug of the `.am-wiki/<subdir>/<slug>.md` entry to push.
@@ -347,7 +360,7 @@ export async function pushToGlobal(
   projectDir: string,
   slug: string,
   opts?: { force?: boolean },
-): Promise<{ pushed: string; conflict: boolean }> {
+): Promise<{ pushed: string | null; conflict: boolean }> {
   const localRoot = join(projectDir, WIKI_PROJECT_DIRNAME);
 
   // Locate the entry under one of the PAGE_SUBDIRS subdirs.
@@ -377,7 +390,7 @@ export async function pushToGlobal(
       return { pushed: slug, conflict: false };
     }
     if (!opts?.force) {
-      return { pushed: slug, conflict: true };
+      return { pushed: null, conflict: true };
     }
   }
 

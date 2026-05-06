@@ -219,7 +219,7 @@ describe("ADR-0044: materialiseProject + pushToGlobal", () => {
     const beforeBytes = readFileSync(globalPath, "utf-8");
 
     const result = await pushToGlobal(projectDir.path, "alice");
-    expect(result).toEqual({ pushed: "alice", conflict: true });
+    expect(result).toEqual({ pushed: null, conflict: true });
 
     const afterBytes = readFileSync(globalPath, "utf-8");
     expect(afterBytes).toBe(beforeBytes);

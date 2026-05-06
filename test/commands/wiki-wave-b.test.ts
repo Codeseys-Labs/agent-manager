@@ -310,6 +310,44 @@ describe("ADR-0044 Wave B — wiki init/migrate/publish/pull", () => {
     expect(allErr).toMatch(/both/i);
   });
 
+  // ── path ──────────────────────────────────────────────────────
+
+  test("path: post-migration project prints .am-wiki/ path", async () => {
+    const localWikiDir = join(projectDir.path, ".am-wiki");
+    const legacyDir = join(projectDir.path, ".agent-manager", "wiki");
+    const globalDir = getProjectWikiDir(projectName);
+    mkdirSync(localWikiDir, { recursive: true });
+    seedGlobalEntry(configHome.path, projectName, "entities", "alice", PAGE_MD("alice", "Alice"));
+
+    await runSub("path", { json: true, quiet: false, verbose: false, global: false });
+
+    const parsed = JSON.parse(stdoutLines.join("\n"));
+    expect(parsed.path).toBe(localWikiDir);
+    expect(parsed.path).toContain(".am-wiki");
+    expect(parsed.path).not.toBe(legacyDir);
+    expect(parsed.path).not.toBe(globalDir);
+    expect(parsed.path).not.toContain(".agent-manager/wiki");
+    expect(parsed.global).toBe(false);
+  });
+
+  test("path: legacy-only project prints legacy wiki path", async () => {
+    const legacyDir = join(projectDir.path, ".agent-manager", "wiki");
+    const localWikiDir = join(projectDir.path, ".am-wiki");
+    const globalDir = getProjectWikiDir(projectName);
+    mkdirSync(legacyDir, { recursive: true });
+    writeFileSync(join(legacyDir, "marker.txt"), "legacy");
+
+    await runSub("path", { json: true, quiet: false, verbose: false, global: false });
+
+    const parsed = JSON.parse(stdoutLines.join("\n"));
+    expect(parsed.path).toBe(legacyDir);
+    expect(parsed.path).toContain(".agent-manager/wiki");
+    expect(parsed.path).not.toBe(localWikiDir);
+    expect(parsed.path).not.toBe(globalDir);
+    expect(parsed.path).not.toContain(".am-wiki");
+    expect(parsed.global).toBe(false);
+  });
+
   // ── publish ───────────────────────────────────────────────────
 
   test("publish: explicit slug copies entry to global store", async () => {
