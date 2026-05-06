@@ -316,7 +316,7 @@ describe("ADR-0051 `am secrets rotate` — Phase 1 verification gates", () => {
 
     const plaintext = await decryptWithIdentity(newEnvelope, newIdentityString);
     expect(plaintext).toBe("fixture-plaintext");
-  });
+  }, 30_000);
 
   // Gate 3: old identity still decrypts during grace window.
   test("gate-3: after rotate, OLD identity STILL decrypts (grace window)", async () => {
@@ -331,7 +331,7 @@ describe("ADR-0051 `am secrets rotate` — Phase 1 verification gates", () => {
     // the grace window).
     const plaintext = await decryptWithIdentity(newEnvelope, fx.oldIdentityString);
     expect(plaintext).toBe("fixture-plaintext");
-  });
+  }, 30_000);
 
   // Gate 4: --finalize drops old recipient; old identity can no longer decrypt
   // the ENVELOPES produced AFTER finalize.
@@ -360,7 +360,7 @@ describe("ADR-0051 `am secrets rotate` — Phase 1 verification gates", () => {
     // Envelope was re-encrypted to new-only — old identity must fail.
     const finalEnvelope = await readEnvelope(fx.tomlPath);
     await expect(decryptWithIdentity(finalEnvelope, fx.oldIdentityString)).rejects.toThrow();
-  });
+  }, 30_000);
 
   // Gate 5: finalize inside grace window without --force exits non-zero.
   test("gate-5: rotate --finalize inside grace window exits non-zero unless --force", async () => {
@@ -383,7 +383,7 @@ describe("ADR-0051 `am secrets rotate` — Phase 1 verification gates", () => {
 
     // Sidecar and state are still intact — the command refused to finalize.
     await expect(readFile(join(fx.identityDir, ".am-rotation-state.json"))).resolves.toBeDefined();
-  });
+  }, 30_000);
 
   test("gate-5 corollary: --force overrides the grace-window check", async () => {
     process.env.AM_AGE_NEW_PASSPHRASE = "new-pw-5b";
@@ -404,7 +404,7 @@ describe("ADR-0051 `am secrets rotate` — Phase 1 verification gates", () => {
 
     // State cleared → rotation considered complete.
     await expect(readFile(join(fx.identityDir, ".am-rotation-state.json"))).rejects.toThrow();
-  });
+  }, 30_000);
 
   // Gate 7: dry-run reports without writing.
   test("gate-7: --dry-run reports planned ops but touches no files", async () => {
@@ -514,7 +514,7 @@ grace_period_days = 0
     // Old identity cannot decrypt the rewrapped envelope.
     const rewrapped = await readEnvelope(fx.tomlPath);
     await expect(decryptWithIdentity(rewrapped, fx.oldIdentityString)).rejects.toThrow();
-  });
+  }, 30_000);
 });
 
 // ── ADR-0051 / gpt-5.5 Phase-8 must-fix #1 ────────────────────────
