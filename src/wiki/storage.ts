@@ -44,19 +44,23 @@ const PAGE_SUBDIRS: Record<WikiPageType, string> = {
   decision: "decisions",
 };
 
-/** Resolve the wiki directory based on context (project vs global). (ADR-0022) */
-export function resolveWikiDir(opts?: { global?: boolean }): string {
+/** Resolve the wiki directory based on context (project vs global). (ADR-0022/ADR-0044) */
+export function resolveWikiDir(opts?: { global?: boolean; projectDir?: string }): string {
   const configDir = resolveConfigDir();
 
   if (opts?.global) {
     return join(configDir, "wiki", "global");
   }
 
-  // Check if we're in a project with a wiki symlink
-  const projectFile = resolveProjectConfig(process.cwd());
+  // Check if we're in a project with a local wiki. ADR-0044's `.am-wiki/`
+  // takes precedence over ADR-0022's legacy `.agent-manager/wiki` symlink.
+  const projectFile = resolveProjectConfig(opts?.projectDir ?? process.cwd());
   if (projectFile) {
     const projectDir = dirname(projectFile);
-    const wikiLink = join(projectDir, ".agent-manager", "wiki");
+    const wikiDir = join(projectDir, WIKI_PROJECT_DIRNAME);
+    if (existsSync(wikiDir)) return wikiDir;
+
+    const wikiLink = join(projectDir, LEGACY_WIKI_PROJECT_DIRNAME);
     if (existsSync(wikiLink)) return wikiLink; // follows symlink transparently
   }
 
@@ -352,7 +356,6 @@ export async function pushToGlobal(
   await copyFile(localPath, globalPath);
   return { pushed: slug, conflict: false };
 }
-
 
 function searchIndexPath(baseDir?: string): string {
   return join(baseDir ?? getWikiDir(), "index.json");
