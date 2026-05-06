@@ -143,9 +143,9 @@ describe("getDefaultBackend", () => {
     process.env.AM_AGE_PASSPHRASE = "test-pw";
 
     const backend = await getDefaultBackend(tmp.configDir, {
-      config: { settings: { secrets: { backend: "age" } } } as Parameters<
-        typeof getDefaultBackend
-      >[1]["config"],
+      config: { settings: { secrets: { backend: "age" } } } as NonNullable<
+        Parameters<typeof getDefaultBackend>[1]
+      >["config"],
     });
     expect(backend.name).toBe("age");
 
@@ -162,9 +162,9 @@ describe("getDefaultBackend", () => {
     process.env.AM_AGE_PASSPHRASE = "pw";
 
     const backend = await getDefaultBackend(tmp.configDir, {
-      config: { settings: { secrets: { backend: "aes-gcm-legacy" } } } as Parameters<
-        typeof getDefaultBackend
-      >[1]["config"],
+      config: { settings: { secrets: { backend: "aes-gcm-legacy" } } } as NonNullable<
+        Parameters<typeof getDefaultBackend>[1]
+      >["config"],
       override: "age" as SelectableBackendName,
     });
     expect(backend.name).toBe("age");
@@ -264,9 +264,9 @@ describe("secrets migrate — walk + re-encrypt", () => {
     // 5. Round-trip through the age backend to verify the content is
     //    still "value-a"/"value-b".
     const ageBackend = await getDefaultBackend(tmp.configDir, {
-      config: { settings: { secrets: { backend: "age" } } } as Parameters<
-        typeof getDefaultBackend
-      >[1]["config"],
+      config: { settings: { secrets: { backend: "age" } } } as NonNullable<
+        Parameters<typeof getDefaultBackend>[1]
+      >["config"],
     });
     expect(await ageBackend.decrypt(after.settings.env.FOO)).toBe("value-a");
     expect(await ageBackend.decrypt(after.servers.alpha.env.BAR)).toBe("value-b");

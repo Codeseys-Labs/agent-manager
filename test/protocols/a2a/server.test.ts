@@ -18,6 +18,7 @@ import {
   safeTokenCompare,
 } from "../../../src/protocols/a2a/server";
 import type {
+  DataPart,
   TaskArtifactUpdateEvent,
   TaskStatusUpdateEvent,
 } from "../../../src/protocols/a2a/types";
@@ -1471,7 +1472,9 @@ describe("A2A Server", () => {
       await waitForTask(store, "cmd-config");
       const task = store.get("cmd-config")!;
       expect(task.status.state).toBe("completed");
-      const dataPart = task.status.message!.parts.find((p) => p.type === "data") as {
+      const dataPart = task.status.message!.parts.find(
+        (p) => p.type === "data",
+      ) as unknown as DataPart & {
         data: { servers: string[]; agents: string[]; instructions: string[]; skills: string[] };
       };
       expect(dataPart).toBeDefined();
@@ -1546,7 +1549,9 @@ describe("A2A Server", () => {
       await waitForTask(store, "cmd-agents");
       const task = store.get("cmd-agents")!;
       expect(task.status.state).toBe("completed");
-      const dataPart = task.status.message!.parts.find((p) => p.type === "data") as {
+      const dataPart = task.status.message!.parts.find(
+        (p) => p.type === "data",
+      ) as unknown as DataPart & {
         data: { agents: Array<{ name: string }> };
       };
       expect(dataPart.data.agents).toHaveLength(1);

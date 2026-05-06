@@ -29,6 +29,7 @@ function buildResolvedConfig(
     servers,
     instructions: {},
     skills: {},
+    agents: {},
     profile: profileName,
     adapters: (config.adapters as Record<string, Record<string, unknown>>) ?? {},
   };

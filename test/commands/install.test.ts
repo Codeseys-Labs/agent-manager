@@ -36,7 +36,7 @@ function mockFetchResponse(data: unknown, status = 200) {
     new Response(JSON.stringify(data), {
       status,
       headers: { "Content-Type": "application/json" },
-    })) as typeof fetch;
+    })) as unknown as typeof fetch;
 }
 
 describe("am install", () => {
@@ -193,7 +193,8 @@ describe("am install", () => {
     await writeConfig(join(configDir, "config.toml"), config);
 
     // Return 404 from registry
-    globalThis.fetch = (async () => new Response("Not Found", { status: 404 })) as typeof fetch;
+    globalThis.fetch = (async () =>
+      new Response("Not Found", { status: 404 })) as unknown as typeof fetch;
 
     const { installCommand } = await import("../../src/commands/install");
     await installCommand.run!({

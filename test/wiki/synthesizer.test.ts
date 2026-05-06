@@ -609,7 +609,7 @@ describe("synthesizeContext — I/O path through MiniSearch", () => {
     // result set. Verifies the agent_id frontmatter round-trip is precise.
     const { addEntry } = await import("../../src/wiki/storage");
     const now = new Date().toISOString();
-    const mkEntry = (id: string, agentId: string, content: string) => ({
+    const mkEntry = (id: string, agentId: string, content: string): KnowledgeEntry => ({
       id,
       source: {
         type: "session_harvest" as const,

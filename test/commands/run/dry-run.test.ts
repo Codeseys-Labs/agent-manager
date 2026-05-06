@@ -19,6 +19,7 @@ import {
   runCommand,
 } from "../../../src/commands/run";
 import type { UnifiedAgent } from "../../../src/core/agent-registry";
+import type { VariantSource } from "../../../src/core/variant-resolver";
 import { type TestDir, createTestDir } from "../../helpers/tmp";
 
 type RunArgs = Record<string, unknown>;
@@ -344,7 +345,7 @@ describe("buildDryRunPayload (__emitDryRunForTests): shape & redaction", () => {
   test("API_KEY-shaped variant env vars are flagged in env_secrets_redacted", () => {
     const payload = __emitDryRunForTests(entry, baseArgs, "/tmp/cwd", {
       name: "openrouter",
-      source: "first-defined",
+      source: "sole-variant",
       protocol: "acp",
       env: { OPENROUTER_API_KEY: "sk-real-value-that-should-not-leak" },
     });
@@ -358,7 +359,7 @@ describe("buildDryRunPayload (__emitDryRunForTests): shape & redaction", () => {
   test("${VAR}-interpolated env values are flagged in env_secrets_redacted", () => {
     const payload = __emitDryRunForTests(entry, baseArgs, "/tmp/cwd", {
       name: "openrouter",
-      source: "first-defined",
+      source: "sole-variant",
       protocol: "acp",
       // A non-secret-shaped key whose value has ${VAR} — still redacted
       // because the template indicates an unresolved secret.
@@ -468,14 +469,15 @@ describe("buildDryRunPayload: variant_source", () => {
     ["cli-flag" as const],
     ["project-default" as const],
     ["global-default" as const],
-    ["first-defined" as const],
+    ["sole-variant" as const],
   ])("variant_source=%s is echoed in the explanation", (source) => {
+    const variantSource = source as VariantSource;
     const payload = __emitDryRunForTests(
       entry,
       baseArgs,
       "/tmp/cwd",
-      { name: "bedrock", source, protocol: "acp", command: "claude-agent-acp" },
-      source,
+      { name: "bedrock", source: variantSource, protocol: "acp", command: "claude-agent-acp" },
+      variantSource,
     );
     expect(payload.explanation.variant).toBe("bedrock");
     expect(payload.explanation.variant_source).toBe(source);

@@ -17,7 +17,7 @@ function mockFetchResponse(data: unknown, status = 200) {
     new Response(JSON.stringify(data), {
       status,
       headers: { "Content-Type": "application/json" },
-    })) as typeof fetch;
+    })) as unknown as typeof fetch;
 }
 
 describe("am update", () => {
@@ -237,7 +237,7 @@ describe("am update", () => {
       new Response("Internal Server Error", {
         status: 500,
         statusText: "Internal Server Error",
-      })) as typeof fetch;
+      })) as unknown as typeof fetch;
 
     const { updateCommand } = await import("../../src/commands/update");
     await updateCommand.run!({

@@ -189,7 +189,9 @@ describe("am profile delete", () => {
 
     // Simulate deletion
     const loaded = await readConfig(configPath);
-    loaded.profiles!.staging = undefined;
+    loaded.profiles = Object.fromEntries(
+      Object.entries(loaded.profiles!).filter(([name]) => name !== "staging"),
+    );
     await writeConfig(configPath, loaded);
     await commitAll(configDir, "delete profile: staging");
 

@@ -6,7 +6,7 @@ import { commitAll, log as gitLog, initRepo } from "../../src/core/git";
 import { type TestDir, createTestDir } from "../helpers/tmp";
 
 describe("am log", () => {
-  let dir: TestDir;
+  let dir: TestDir | undefined;
 
   afterEach(async () => {
     if (dir) await dir.cleanup();

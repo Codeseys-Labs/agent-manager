@@ -121,7 +121,7 @@ describe("MarketplaceProvenanceSchema", () => {
         version: "1.0.0",
         imported_at: "2026-04-15",
       });
-      expect(result.source).toBe(source);
+      expect(result.source).toBe(source as typeof result.source);
     }
   });
 

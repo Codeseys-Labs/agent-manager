@@ -281,7 +281,7 @@ describe("loadSession()", () => {
     expect(session).not.toBeNull();
     expect(session?.messages).toHaveLength(2);
 
-    const assistantMsg = session?.messages[1];
+    const assistantMsg = session!.messages[1]!;
     expect(assistantMsg.role).toBe("assistant");
     expect(assistantMsg.toolCalls).toHaveLength(1);
     expect(assistantMsg.toolCalls?.[0].name).toBe("Read");
@@ -501,7 +501,7 @@ describe("loadSession()", () => {
     const reader = createClaudeCodeSessionReader(dir.path);
     const session = await reader.loadSession("mixed");
     expect(session).not.toBeNull();
-    const msg = session?.messages[1];
+    const msg = session!.messages[1]!;
     expect(msg.content).toBe("Let me help you.");
     expect(msg.toolCalls).toHaveLength(1);
     expect(msg.toolCalls?.[0].name).toBe("Edit");

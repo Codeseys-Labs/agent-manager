@@ -15,13 +15,13 @@ function mockFetchResponse(data: unknown, status = 200) {
     new Response(JSON.stringify(data), {
       status,
       headers: { "Content-Type": "application/json" },
-    })) as typeof fetch;
+    })) as unknown as typeof fetch;
 }
 
 function mockFetchError(message: string) {
   globalThis.fetch = (async () => {
     throw new Error(message);
-  }) as typeof fetch;
+  }) as unknown as typeof fetch;
 }
 
 describe("am search", () => {
@@ -190,7 +190,7 @@ describe("am search", () => {
       new Response("Internal Server Error", {
         status: 500,
         statusText: "Internal Server Error",
-      })) as typeof fetch;
+      })) as unknown as typeof fetch;
 
     const { searchCommand } = await import("../../src/commands/search");
     await searchCommand.run!({
@@ -212,7 +212,7 @@ describe("am search", () => {
         status: 200,
         headers: { "Content-Type": "application/json" },
       });
-    }) as typeof fetch;
+    }) as unknown as typeof fetch;
 
     const { searchCommand } = await import("../../src/commands/search");
     await searchCommand.run!({

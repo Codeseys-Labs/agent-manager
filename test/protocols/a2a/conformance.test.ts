@@ -35,8 +35,8 @@ describe("A2A conformance: Agent Card discovery URL", () => {
   test("both paths return the same payload", async () => {
     const app = makeApp();
     const [a, b] = await Promise.all([
-      app.request("/.well-known/agent-card.json").then((r) => r.json()),
-      app.request("/.well-known/agent.json").then((r) => r.json()),
+      Promise.resolve(app.request("/.well-known/agent-card.json")).then((r) => r.json()),
+      Promise.resolve(app.request("/.well-known/agent.json")).then((r) => r.json()),
     ]);
     expect(a).toEqual(b);
   });

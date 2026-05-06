@@ -41,7 +41,7 @@ describe("am adapter list", () => {
   test("detect returns structured result", async () => {
     const adapter = await getAdapter("claude-code");
     expect(adapter).toBeDefined();
-    const result = adapter?.detect();
+    const result = await adapter!.detect();
     expect(typeof result.installed).toBe("boolean");
   });
 

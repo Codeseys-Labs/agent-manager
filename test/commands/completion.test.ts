@@ -41,7 +41,8 @@ describe("am completion", () => {
       "flow",
       "marketplace",
       "completion",
-    ];
+      "init-project",
+    ] as const;
 
     for (const cmd of expected) {
       it(`includes ${cmd}`, () => {

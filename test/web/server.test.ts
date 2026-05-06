@@ -180,7 +180,7 @@ describe("Web API", () => {
 
   // /api/status loops through all detected adapters calling diff() — can
   // be slow on a populated dev machine. Bump the default 5s timeout.
-  it("GET /api/status returns status object", { timeout: 15000 }, async () => {
+  it("GET /api/status returns status object", async () => {
     const res = await request(app, "/api/status");
     expect(res.status).toBe(200);
     const data = await res.json();
@@ -188,7 +188,7 @@ describe("Web API", () => {
     expect(typeof data.servers).toBe("number");
     expect(data.git).toBeDefined();
     expect(Array.isArray(data.tools)).toBe(true);
-  });
+  }, 15000);
 
   it("GET /api/events returns SSE stream", async () => {
     const res = await request(app, "/api/events");

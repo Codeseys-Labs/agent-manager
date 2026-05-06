@@ -88,10 +88,11 @@ describe("AesGcmLegacyBackend contract", () => {
   test("optional recipient-management methods are undefined (single-key)", () => {
     // AES-GCM is a single-recipient backend; the optional interface
     // members MUST be absent so callers can branch on `if (b.addRecipient)`.
-    expect(backend.rewrap).toBeUndefined();
-    expect(backend.addRecipient).toBeUndefined();
-    expect(backend.removeRecipient).toBeUndefined();
-    expect(backend.listRecipients).toBeUndefined();
+    const optionalBackend = backend as SecretsBackend;
+    expect(optionalBackend.rewrap).toBeUndefined();
+    expect(optionalBackend.addRecipient).toBeUndefined();
+    expect(optionalBackend.removeRecipient).toBeUndefined();
+    expect(optionalBackend.listRecipients).toBeUndefined();
   });
 
   test("encrypt throws a descriptive error when no key is installed", async () => {

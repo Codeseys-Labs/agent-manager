@@ -373,17 +373,24 @@ describe("createBridgeTaskHandler — HIGH-2 policy defaults", () => {
     const origPolicy = AmAcpClient.prototype.setPermissionPolicy;
     const origPaths = AmAcpClient.prototype.setAllowedPaths;
     const origConnect = AmAcpClient.prototype.connect;
-    AmAcpClient.prototype.setPermissionPolicy = function (p: unknown) {
+    AmAcpClient.prototype.setPermissionPolicy = function (
+      this: InstanceType<typeof AmAcpClient>,
+      p: unknown,
+    ) {
       policyCalls.push(p);
       orderTrace.push("setPermissionPolicy");
       return (origPolicy as (this: unknown, p: unknown) => void).call(this, p);
     } as typeof AmAcpClient.prototype.setPermissionPolicy;
-    AmAcpClient.prototype.setAllowedPaths = function (p: unknown) {
+    AmAcpClient.prototype.setAllowedPaths = function (
+      this: InstanceType<typeof AmAcpClient>,
+      p: unknown,
+    ) {
       pathsCalls.push(p);
       orderTrace.push("setAllowedPaths");
       return (origPaths as (this: unknown, p: unknown) => void).call(this, p);
     } as typeof AmAcpClient.prototype.setAllowedPaths;
     AmAcpClient.prototype.connect = async function (
+      this: InstanceType<typeof AmAcpClient>,
       ...args: Parameters<typeof AmAcpClient.prototype.connect>
     ) {
       orderTrace.push("connect");
