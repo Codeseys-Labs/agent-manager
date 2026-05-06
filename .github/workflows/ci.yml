@@ -32,7 +32,7 @@ jobs:
       - name: Test with coverage
         run: |
           set +e
-          OUTPUT=$(bun test --coverage 2>&1)
+          OUTPUT=$(bun test --coverage --coverage-reporter=text --coverage-reporter=lcov --config=/dev/null 2>&1)
           echo "$OUTPUT"
           # CODEX-13 (2026-05-02): hardening parity with build-verify job
           # (ci.yml:65-88). Even though this job runs on Linux-only and
@@ -52,6 +52,18 @@ jobs:
             echo "::error::$FAIL_COUNT test(s) failed"
             exit 1
           fi
+      - name: Coverage summary
+        if: always()
+        uses: livewing/lcov-job-summary@v1.2.0
+        with:
+          lcov: coverage/lcov.info
+      - name: Coverage artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-lcov
+          path: coverage/lcov.info
+          if-no-files-found: warn
       - name: Build all targets (smoke test)
         run: bun run build -- --all
 

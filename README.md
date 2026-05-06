@@ -8,6 +8,7 @@ terminal, local web, or cloud.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Tests: 2286 pass](https://img.shields.io/badge/tests-2286%20pass-green.svg)](#testing)
+[![Coverage](https://img.shields.io/badge/coverage-see%20CI%20summary-blue.svg)](https://github.com/Codeseys-Labs/agent-manager/actions/workflows/ci.yml)
 [![Adapters: 13](https://img.shields.io/badge/adapters-13-purple.svg)](#adapter-support-matrix)
 [![MCP Tools: 33](https://img.shields.io/badge/MCP%20tools-33-orange.svg)](#mcp-server-mode)
 [![Bun](https://img.shields.io/badge/runtime-Bun-f9f1e1.svg)](https://bun.sh)
@@ -828,6 +829,8 @@ Design decisions documented in [30 ADRs](ADRs/README.md).
 ```bash
 bun install                       # install dependencies
 bun test                          # run all tests (1864)
+bun test --coverage --coverage-reporter=text --coverage-reporter=lcov --config=/dev/null
+                                  # run coverage locally; writes coverage/lcov.info
 bun test --watch                  # watch mode
 bun run dev -- <command> [args]   # run CLI from source
 bun run lint                      # Biome check
@@ -853,7 +856,8 @@ cache for faster downloads.
 **CI pipeline** (`.github/workflows/ci.yml` — triggers on push to main + PRs):
 1. Type check — `tsc --noEmit` filtered to `src/` errors only
 2. Lint — `biome check`
-3. Test with coverage — `bun test --coverage` (1864 tests)
+3. Test with coverage — `bun test --coverage --coverage-reporter=text --coverage-reporter=lcov --config=/dev/null` (1864 tests)
+   and publish `coverage/lcov.info` to the GitHub Actions job summary/artifact
 4. Build smoke test — all 5 platform targets
 5. Cross-platform build verify — Ubuntu + macOS + Windows
 

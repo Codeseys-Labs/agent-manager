@@ -113,6 +113,9 @@ structure:
 # Run all tests
 bun test
 
+# Run all tests with coverage (text summary + coverage/lcov.info)
+bun test --coverage --coverage-reporter=text --coverage-reporter=lcov --config=/dev/null
+
 # Run a specific test file
 bun test test/adapters/claude-code/detect.test.ts
 
@@ -128,6 +131,8 @@ Keep changes focused. One feature or fix per PR.
 
 ```bash
 bun test            # All tests pass (1864)
+bun test --coverage --coverage-reporter=text --coverage-reporter=lcov --config=/dev/null
+                    # Coverage summary + coverage/lcov.info
 bun run lint        # Biome linting + formatting
 bun run typecheck   # TypeScript type checking
 ```
