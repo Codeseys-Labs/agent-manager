@@ -65,4 +65,27 @@ describe("resolveWikiDir", () => {
       join(configHome.path, "wiki", "global"),
     );
   });
+
+  // Reviewer-flagged hardening (grok-4.3 MED): a regular file at .am-wiki/
+  // should NOT be returned — that path is ambiguous and resolveWikiDir
+  // must treat it as "not present" so the legacy / global fallbacks fire.
+  test("regular file at `.am-wiki/` path falls through to next candidate", () => {
+    // Touch a regular file at the new-layout path.
+    writeFileSync(join(projectDir.path, WIKI_PROJECT_DIRNAME), "not a directory", "utf-8");
+    // Seed a legacy directory so we can verify the fallback engaged.
+    const legacyPath = join(projectDir.path, LEGACY_WIKI_PROJECT_DIRNAME);
+    mkdirSync(legacyPath, { recursive: true });
+
+    expect(resolveWikiDir({ projectDir: projectDir.path })).toBe(legacyPath);
+  });
+
+  test("regular file at legacy `.agent-manager/wiki` path falls through to global", () => {
+    // Create the .agent-manager parent dir, then touch a regular file at the wiki path.
+    mkdirSync(join(projectDir.path, ".agent-manager"), { recursive: true });
+    writeFileSync(join(projectDir.path, LEGACY_WIKI_PROJECT_DIRNAME), "not a directory", "utf-8");
+
+    expect(resolveWikiDir({ projectDir: projectDir.path })).toBe(
+      join(configHome.path, "wiki", "global"),
+    );
+  });
 });

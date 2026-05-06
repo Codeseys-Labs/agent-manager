@@ -62,6 +62,7 @@ import {
   getProjectWikiDir,
   listPages,
   materialiseProject,
+  parseFrontmatter,
   pushToGlobal,
   readPage,
   rebuildSearchIndex,
@@ -1757,9 +1758,7 @@ const publishSubcommand = defineCommand({
 
 /**
  * Walk `.am-wiki/` subdirectories and return slugs of `.md` files whose
- * frontmatter contains `promote: true`. Parsing is intentionally simple:
- * read the leading `---\n ... \n---` block and look for a line matching
- * `promote: true` (case-insensitive, tolerant of whitespace).
+ * parsed frontmatter contains a truthy `promote` flag.
  */
 function discoverPromoteSlugs(amWikiDir: string): string[] {
   const out: string[] = [];
@@ -1787,8 +1786,8 @@ function discoverPromoteSlugs(amWikiDir: string): string[] {
       } catch {
         continue;
       }
-      const fm = extractFrontmatter(raw);
-      if (fm && /^\s*promote\s*:\s*true\s*$/im.test(fm)) {
+      const { metadata } = parseFrontmatter(raw);
+      if (isTruthyPromoteValue(metadata.promote)) {
         out.push(file.slice(0, -3));
       }
     }
@@ -1797,11 +1796,30 @@ function discoverPromoteSlugs(amWikiDir: string): string[] {
   return out;
 }
 
-function extractFrontmatter(raw: string): string | null {
-  if (!raw.startsWith("---")) return null;
-  const end = raw.indexOf("\n---", 3);
-  if (end < 0) return null;
-  return raw.slice(3, end);
+function isTruthyPromoteValue(value: unknown): boolean {
+  if (value === true) return true;
+  if (typeof value !== "string") return false;
+  const normalized = stripYamlInlineComment(value).trim().toLowerCase();
+  return normalized === "true" || normalized === "yes";
+}
+
+function stripYamlInlineComment(value: string): string {
+  let quote: '"' | "'" | null = null;
+  for (let i = 0; i < value.length; i++) {
+    const ch = value[i];
+    if (quote) {
+      if (ch === quote) quote = null;
+      continue;
+    }
+    if (ch === '"' || ch === "'") {
+      quote = ch;
+      continue;
+    }
+    if (ch === "#" && (i === 0 || /\s/.test(value[i - 1]))) {
+      return value.slice(0, i);
+    }
+  }
+  return value;
 }
 
 /**

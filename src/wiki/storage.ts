@@ -17,7 +17,15 @@
  *   ~/code/my-app/.agent-manager/wiki -> ~/.../wiki/projects/my-app  (symlink)
  */
 
-import { existsSync, lstatSync, readFileSync, readlinkSync, rmSync, symlinkSync } from "node:fs";
+import {
+  existsSync,
+  lstatSync,
+  readFileSync,
+  readlinkSync,
+  rmSync,
+  statSync,
+  symlinkSync,
+} from "node:fs";
 import { copyFile, mkdir, readFile, readdir, rename, rm, writeFile } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import MiniSearch from "minisearch";
@@ -45,6 +53,23 @@ const PAGE_SUBDIRS: Record<WikiPageType, string> = {
 };
 
 /** Resolve the wiki directory based on context (project vs global). (ADR-0022/ADR-0044) */
+/**
+ * Returns true iff `path` exists AND points at a real directory.
+ *
+ * - Symlinks are followed (statSync, not lstatSync) so a symlinked wiki dir
+ *   under the legacy ADR-0022 layout still resolves correctly.
+ * - Regular files at the wiki path are rejected (defence against accidental
+ *   `touch .am-wiki` or `mkdir -p` on the wrong inode).
+ * - ENOENT, EACCES, and any other stat failure -> false (treated as absent).
+ */
+function isExistingDirectory(path: string): boolean {
+  try {
+    return statSync(path).isDirectory();
+  } catch {
+    return false;
+  }
+}
+
 export function resolveWikiDir(opts?: { global?: boolean; projectDir?: string }): string {
   const configDir = resolveConfigDir();
 
@@ -54,14 +79,17 @@ export function resolveWikiDir(opts?: { global?: boolean; projectDir?: string })
 
   // Check if we're in a project with a local wiki. ADR-0044's `.am-wiki/`
   // takes precedence over ADR-0022's legacy `.agent-manager/wiki` symlink.
+  // Both candidates must be directories — a regular file at that path is
+  // treated as "not present" (defence against `mkdir -p` on the wrong inode).
   const projectFile = resolveProjectConfig(opts?.projectDir ?? process.cwd());
   if (projectFile) {
     const projectDir = dirname(projectFile);
     const wikiDir = join(projectDir, WIKI_PROJECT_DIRNAME);
-    if (existsSync(wikiDir)) return wikiDir;
+    if (isExistingDirectory(wikiDir)) return wikiDir;
 
     const wikiLink = join(projectDir, LEGACY_WIKI_PROJECT_DIRNAME);
-    if (existsSync(wikiLink)) return wikiLink; // follows symlink transparently
+    // statSync follows the symlink — directories accepted, files rejected.
+    if (isExistingDirectory(wikiLink)) return wikiLink;
   }
 
   // Fall back to global wiki

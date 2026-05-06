@@ -410,6 +410,156 @@ describe("ADR-0044 Wave B — wiki init/migrate/publish/pull", () => {
     expect(existsSync(join(getProjectWikiDir(projectName), "entities", "frank.md"))).toBe(false);
   });
 
+  test("publish: --auto accepts promote: True", async () => {
+    seedLocalEntry(
+      projectDir.path,
+      "entities",
+      "promote-capital",
+      PAGE_MD("promote-capital", "Promote Capital", "promote: True"),
+    );
+
+    await runSub("publish", {
+      slug: undefined,
+      auto: true,
+      force: false,
+      json: true,
+      quiet: false,
+      verbose: false,
+    });
+
+    const parsed = JSON.parse(stdoutLines.join("\n"));
+    expect(parsed.published).toEqual(["promote-capital"]);
+    expect(parsed.conflicts).toEqual([]);
+    expect(existsSync(join(getProjectWikiDir(projectName), "entities", "promote-capital.md"))).toBe(
+      true,
+    );
+  });
+
+  test("publish: --auto accepts YAML 1.1 promote: yes", async () => {
+    seedLocalEntry(
+      projectDir.path,
+      "entities",
+      "promote-yes",
+      PAGE_MD("promote-yes", "Promote Yes", "promote: yes"),
+    );
+
+    await runSub("publish", {
+      slug: undefined,
+      auto: true,
+      force: false,
+      json: true,
+      quiet: false,
+      verbose: false,
+    });
+
+    const parsed = JSON.parse(stdoutLines.join("\n"));
+    expect(parsed.published).toEqual(["promote-yes"]);
+    expect(parsed.conflicts).toEqual([]);
+    expect(existsSync(join(getProjectWikiDir(projectName), "entities", "promote-yes.md"))).toBe(
+      true,
+    );
+  });
+
+  test('publish: --auto accepts quoted promote: "true"', async () => {
+    seedLocalEntry(
+      projectDir.path,
+      "entities",
+      "promote-quoted",
+      PAGE_MD("promote-quoted", "Promote Quoted", 'promote: "true"'),
+    );
+
+    await runSub("publish", {
+      slug: undefined,
+      auto: true,
+      force: false,
+      json: true,
+      quiet: false,
+      verbose: false,
+    });
+
+    const parsed = JSON.parse(stdoutLines.join("\n"));
+    expect(parsed.published).toEqual(["promote-quoted"]);
+    expect(parsed.conflicts).toEqual([]);
+    expect(existsSync(join(getProjectWikiDir(projectName), "entities", "promote-quoted.md"))).toBe(
+      true,
+    );
+  });
+
+  test("publish: --auto accepts promote: true with inline comment", async () => {
+    seedLocalEntry(
+      projectDir.path,
+      "entities",
+      "promote-comment",
+      PAGE_MD("promote-comment", "Promote Comment", "promote: true  # publish this one"),
+    );
+
+    await runSub("publish", {
+      slug: undefined,
+      auto: true,
+      force: false,
+      json: true,
+      quiet: false,
+      verbose: false,
+    });
+
+    const parsed = JSON.parse(stdoutLines.join("\n"));
+    expect(parsed.published).toEqual(["promote-comment"]);
+    expect(parsed.conflicts).toEqual([]);
+    expect(existsSync(join(getProjectWikiDir(projectName), "entities", "promote-comment.md"))).toBe(
+      true,
+    );
+  });
+
+  test("publish: --auto ignores missing promote flag", async () => {
+    seedLocalEntry(
+      projectDir.path,
+      "entities",
+      "promote-missing",
+      PAGE_MD("promote-missing", "Promote Missing"),
+    );
+
+    await runSub("publish", {
+      slug: undefined,
+      auto: true,
+      force: false,
+      json: true,
+      quiet: false,
+      verbose: false,
+    });
+
+    const parsed = JSON.parse(stdoutLines.join("\n"));
+    expect(parsed.published).toEqual([]);
+    expect(parsed.conflicts).toEqual([]);
+    expect(existsSync(join(getProjectWikiDir(projectName), "entities", "promote-missing.md"))).toBe(
+      false,
+    );
+  });
+
+  test("publish: --auto ignores explicit promote: false", async () => {
+    seedLocalEntry(
+      projectDir.path,
+      "entities",
+      "promote-false",
+      PAGE_MD("promote-false", "Promote False", "promote: false"),
+    );
+
+    await runSub("publish", {
+      slug: undefined,
+      auto: true,
+      force: false,
+      json: true,
+      quiet: false,
+      verbose: false,
+    });
+
+    const parsed = JSON.parse(stdoutLines.join("\n"));
+    expect(parsed.published).toEqual([]);
+    expect(parsed.conflicts).toEqual([]);
+    expect(existsSync(join(getProjectWikiDir(projectName), "entities", "promote-false.md"))).toBe(
+      false,
+    );
+  });
+
   test("publish: both --auto and <slug> → error exit 1", async () => {
     mkdirSync(join(projectDir.path, ".am-wiki"), { recursive: true });
     await runSub("publish", {
@@ -508,5 +658,28 @@ describe("ADR-0044 Wave B — wiki init/migrate/publish/pull", () => {
     expect(existsSync(join(projectDir.path, ".am-wiki", "AGENTS.md"))).toBe(true);
     const gitignore = readFileSync(join(projectDir.path, ".gitignore"), "utf-8");
     expect(gitignore).toContain(".am-wiki/");
+  });
+
+  test("publish: --auto with zero promote-true entries reports 0 published, exits 0", async () => {
+    // Seed .am-wiki/ with entries that DO NOT have promote: true.
+    seedLocalEntry(projectDir.path, "entities", "ghost", PAGE_MD("ghost", "Ghost", ""));
+    seedLocalEntry(projectDir.path, "concepts", "void", PAGE_MD("void", "Void", "promote: false"));
+
+    await runSub("publish", {
+      slug: undefined,
+      auto: true,
+      force: false,
+      json: true,
+      quiet: false,
+      verbose: false,
+    });
+
+    expect(process.exitCode !== 1).toBe(true);
+    const parsed = JSON.parse(stdoutLines.join("\n"));
+    expect(parsed.published).toEqual([]);
+    expect(parsed.conflicts).toEqual([]);
+    // No files were copied to the global store path.
+    expect(existsSync(join(getProjectWikiDir(projectName), "entities", "ghost.md"))).toBe(false);
+    expect(existsSync(join(getProjectWikiDir(projectName), "concepts", "void.md"))).toBe(false);
   });
 });
