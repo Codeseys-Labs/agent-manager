@@ -34,13 +34,11 @@ export async function resolveMeta(cmd: unknown): Promise<any> {
 }
 
 /** Resolve citty's Resolvable<SubCommandsDef> wrapper. */
-// biome-ignore lint/suspicious/noExplicitAny: see resolveMeta above.
 export async function resolveSubCommands(cmd: unknown): Promise<any> {
   return (await resolveValue((cmd as CommandLike).subCommands))!;
 }
 
 /** Resolve citty's Resolvable<ArgsDef> wrapper. */
-// biome-ignore lint/suspicious/noExplicitAny: see resolveMeta above.
 export async function resolveArgs(cmd: unknown): Promise<any> {
   return (await resolveValue((cmd as CommandLike).args))!;
 }
