@@ -1241,3 +1241,117 @@ work).
 3. The 5 backlog items from this wave's review (atomic writes,
    non-null assertion cleanup, perm-error tests, mtime fast-path,
    etc.).
+
+
+## Run 2026-05-05-G — ADR-0044 Wave B: CLI commands
+
+**HEAD baseline:** `da6426c` (Run F)
+**HEAD after this run:** `3026d5f`
+**Files changed:** 3 (+1067 / -12)
+**Wall-time:** ~25 min
+**Cost:** ~$2 OpenRouter
+
+**Scope:** Plan tasks 5-8 from
+`docs/plans/2026-05-05-wiki-two-tier-implementation.md` — the user-
+facing CLI surface for ADR-0044's two-tier wiki layout. Refactor
+`am wiki init` to use `.am-wiki/` (copy-based) instead of the
+ADR-0022 symlink layout; add three new subcommands `migrate`,
+`publish`, `pull`.
+
+**Implementation strategy:** single Opus 4.7 subagent (file-
+ownership rule — all four commands live in `src/commands/wiki.ts`).
+Wave A primitives (`detectLegacyWikiLayout`, `materialiseProject`,
+`pushToGlobal`, `WIKI_AGENTS_MD_TEMPLATE`) consumed without
+modification.
+
+**Subagent timed out at 600s/33 calls** (post-impl summary stalled —
+same pattern as Wave A planner). Verified empirically that the work
+DID land: +539 LOC, 19 tests, 19/19 pass, 145/145 wiki suite green.
+Recovered without retry; subagent-timeout-recovery pattern: check
+artifacts before assuming failure.
+
+**Cross-family review (3 reviewers, all completed):**
+- gpt-5.5 (57s, $low): 1 HIGH (later resolved as by-design), 3 MED,
+  3 LOW.
+- grok-4.3 (172s): 1 MED docstring drift, 2 LOW.
+- deepseek-v4-pro (440s, 22 tool calls — most thorough): 3 MED, 4
+  LOW with line-precise file:line citations and a complete spec-
+  compliance audit. Highest-value reviewer this round.
+
+**Convergence:** 5 fixes warranted immediate inline patching:
+1. `todayStamp()` now emits `YYYYMMDD-HHMMSS` (was `YYYYMMDD`) to
+   prevent same-day backup-path collisions in `am wiki migrate`.
+   First fix attempt with regex chaining produced wrong format
+   (`YYYY-MM-DD-HHMM` truncated); rewrote with explicit slice ops.
+2. `materialiseProject(projectDir, slugs, opts?)` now accepts
+   optional `{projectName}` override. Threading from
+   `am wiki init --project <name>` resolves the inconsistency where
+   init created store dir A but materialised from store dir B.
+3. `am wiki pull` into a fresh project (no prior `init`) now seeds
+   `.am-wiki/AGENTS.md` and `.am-wiki/` gitignore entry, matching
+   init's invariants. New regression test added.
+4. `am wiki publish` conflict messages emit via `error()` not
+   `info()` since exit code is 1 (consistency with the rest of the
+   CLI's output discipline).
+5. Dropped unused imports `createProjectWikiLink` and
+   `ensureWikiGitignore` from `wiki.ts` (still exported from
+   `storage.ts` for ADR-0022 backward compat with legacy projects).
+
+**Deferred to backlog (Wave C+):**
+- `pushToGlobal` return shape `{pushed: slug, conflict: true}` is
+  ambiguous (deepseek MED). Caller currently handles correctly; not
+  a behavior bug.
+- `resolveWikiDir` doesn't recognise `.am-wiki/` for `am wiki path`
+  (deepseek LOW). Layered fix; affects only one read-only command.
+- `discoverPromoteSlugs` regex doesn't handle `True`, `"true"`,
+  inline comments (deepseek LOW). MVP adequate.
+- `ensureWikiGitignore` (legacy `.agent-manager/wiki` form) is dead
+  for new flows but kept callable (deepseek LOW).
+- Test gap: same-day backup collision (covered by impl now), `am
+  wiki path` post-migration coverage, publish-with-zero-promote
+  case (grok LOW).
+
+**Verification:**
+- Wave B test suite: 20/20 pass (19 from subagent + 1 added post-
+  review).
+- Full wiki suite: 165/165 (was 145).
+- Full commands+wiki+core: 1072/1072 across 86 files (~90s).
+- Pre-existing TS5097/TS2802 lint noise unchanged; no new errors
+  introduced by my edits.
+
+**ADR-0044 status:** still `proposed`. Plan tasks 5-8 closed; tasks
+9-12 (gitignore default, CLI wiring, ADR promotion, ADR-0022 final
+cleanup) are Wave C (~30-45 min, mostly mechanical).
+
+**Cost split:**
+- Wave B subagent (Opus 4.7, ~600s, 33 calls): ~$1.20
+- 3 cross-family reviewers (~660s combined): ~$0.80
+
+**Process notes:**
+- Subagent timeout pattern continues: long-research-then-large-
+  write triggers stream stall at the post-impl summary. The work
+  itself completes; only the recap fails. Recovery: verify
+  artifacts via `git status` + targeted test run, never retry blind.
+- Cross-family review value: deepseek-v4-pro produced the most
+  precise findings this round (3 MED + 4 LOW with file:line cites).
+  Worth the 7-minute wall-time on a 539-LOC change.
+- Test fix iteration: my first `todayStamp` rewrite produced the
+  wrong format and broke the test that used a regex matching the
+  expected `YYYYMMDD-HHMMSS`. Caught immediately by the test, fixed
+  in 30s. This is the value of writing a regression test BEFORE the
+  fix in the test file (even though here it was incidental).
+
+**Next-run candidates:**
+1. **Wave C (mechanical):** plan tasks 9-12. Default gitignore
+   (~5 min), CLI wiring sanity (~5 min), ADR promotion to accepted
+   (~5 min), ADR-0022 cleanup (~5 min). Total ~30 min.
+2. **Doctor scan extension** (ADR-0046 LOW backlog): regex coverage
+   for quoted/dotted/inline TOML team_passphrase forms.
+3. **ADR-0042 remaining gates (1, 4, 5):** browser integration,
+   SECURITY.md threat model, `am pair` command. Any one of them is
+   1-2 hours.
+4. **Hosted UI bundle pipeline** (blocks ADR-0045 implementation).
+   Substantial — probably a multi-run effort.
+5. **Codebase-wide lint cleanup** (15 pre-existing errors, mostly
+   `delete process.env.X`). Mechanical; could be one cron-style
+   sweep.
