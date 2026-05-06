@@ -181,11 +181,21 @@ export const SettingsSchema = z
     // ADR-0042: per-repo selection of the SecretsBackend used when NEW
     // envelopes are produced. Existing `enc:v1:` envelopes continue to
     // decrypt via `aes-gcm-legacy` regardless of this setting.
+    // ADR-0046: reject `team_passphrase` field in the schema.
     secrets: z
       .object({
         backend: z.enum(["age", "aes-gcm-legacy"]).optional(),
       })
       .passthrough()
+      .refine((s) => !("team_passphrase" in s), {
+        message:
+          "settings.secrets.team_passphrase is rejected by design (ADR-0046). " +
+          "Single-passphrase team sharing has no revocation, no audit trail, " +
+          "and single-point-of-compromise risk. Use per-recipient X25519 " +
+          "identities instead: see `am secrets add-recipient <pubkey>` and " +
+          "ADR-0042.",
+        path: ["team_passphrase"],
+      })
       .optional(),
     env: z.record(z.string(), z.string()).optional(),
   })

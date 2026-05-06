@@ -50,10 +50,11 @@ formalises it.
 
 The am config schema (`src/core/schema.ts`) **rejects** any
 `[settings.secrets].team_passphrase` field with a Zod-level validator
-error:
+error. The actual emitted message (subject to Zod's standard wrapping
+into the host application's error format) is:
 
 ```
-ConfigError: settings.secrets.team_passphrase is rejected by design.
+settings.secrets.team_passphrase is rejected by design (ADR-0046).
 Single-passphrase team sharing has no revocation, no audit trail, and
 single-point-of-compromise risk. Use per-recipient X25519 identities
 instead: see `am secrets add-recipient <pubkey>` and ADR-0042.
