@@ -1075,3 +1075,78 @@ Phase 9 — committed in 3 logical chunks:
 - ~$7 OpenRouter total
 - ~30 min wall-time end-to-end
 - Router fix held across all 12 calls; no model masquerade detected
+
+
+---
+
+## Run 2026-05-05-E — close ADR-0046 + plan ADR-0044 wiki implementation
+
+**Baseline:** `c258e63` (post-Run-D 6-way fan-out + 3 ADRs)
+**HEAD:** `75d347c` — pushed to origin/main (2 commits)
+
+**Trigger:** "Continue as you deem fit" — chose smallest-gate-close work
+(ADR-0046 gate 3) + planning the largest unanimous-backed item
+(ADR-0044 wiki two-tier).
+
+**Mini-wave A — ADR-0046 doctor scan:**
+- `src/commands/doctor.ts` gained "check 8b" — scans config files +
+  env vars for `team_passphrase` anti-pattern. Three result states
+  (ok/warn/fail) with ADR-0046 reference + actionable migration
+  commands in the fail message.
+- 14 new tests in `test/commands/doctor-team-passphrase.test.ts` —
+  regex matching (8), env-var detection (4), file-presence (2). All
+  pass.
+- Concurrent cross-family review: gpt-5.5, x-ai/grok-4.3,
+  deepseek-v4-pro — all CONFIRMED no HIGH/MEDIUM blockers. Three LOW
+  notes captured in plan follow-up backlog (regex doesn't cover quoted/
+  dotted/inline TOML forms — gates 1+2 catch those at load; no
+  end-to-end doctor test; env var literals not extracted to constant).
+- Apply: managed/enterprise configs added to scan scope per gpt-5.5
+  finding.
+- ADR-0046 status: proposed → accepted. All 5 verification gates
+  closed.
+
+**Wave 2 plan — ADR-0044 wiki two-tier:**
+- A planner subagent (Opus 4.7) did 35 tool calls of discovery
+  (~$3 OpenRouter) but stalled mid-write_file on the plan output.
+  Recovery: orchestrator wrote the plan inline using the
+  context already loaded.
+- 12-task TDD plan at `docs/plans/2026-05-05-wiki-two-tier-implementation.md`:
+  Tasks 1-4 (storage helpers, AGENTS.md template) parallelisable;
+  Tasks 5-8 (commands: init refactor, migrate, publish, pull) sequential;
+  Tasks 9-12 (gitignore default, command wiring, ADR promotion, ADR-0022
+  cross-ref). Each task has failing-test-first discipline, exact file
+  paths, complete code examples, exact bash commands with expected
+  output. Estimated 3-4 hours of subagent-driven implementation time.
+- Plan includes risk areas (Windows path semantics, mid-migration
+  harvester writes) and parallelisation notes (Tasks 1-4 = 4-subagent
+  wave; rest serial within `wiki.ts`).
+
+**Test count:** 484 → 498 (this run). All pre-existing typecheck noise
+(TS5097 import-extension errors codebase-wide) unchanged; new doctor
+code doesn't introduce any new TS errors.
+
+**Cost:** ~$5 OpenRouter (3 reviewers + 1 stalled planner).
+~25 min wall-time end-to-end.
+
+**Open follow-ups:**
+1. Implement the 12-task wiki plan (next run; 3-4h budget).
+2. ADR-0045 (CodeMirror 6) — defer until hosted UI bundle pipeline
+   exists.
+3. Three LOW backlog items from the doctor-scan review (regex
+   extension, end-to-end doctor test, env-var constant extraction).
+4. Codebase-wide pre-existing lint cleanup (15 errors, mostly
+   `delete process.env.X` patterns).
+
+**Process notes from this run:**
+- Stalled planner is a recurring pattern; counter-pattern is "load
+  context with subagent then write the artifact in the orchestrator
+  when the subagent fails to land it." Worked here because plan-writing
+  is coordinator work, not code.
+- Cross-family review on a 270-line code change is the right size:
+  3 reviewers, ~100s each, ~$1 total, found 3 real LOW issues that
+  improved the implementation without blocking.
+- ADR promotion (proposed → accepted) is now happening at a healthy
+  cadence — ADR-0046 was proposed on 2026-05-05 morning and accepted
+  by evening, all verification gates met. This is the whole point of
+  having gates with concrete implementation requirements.
