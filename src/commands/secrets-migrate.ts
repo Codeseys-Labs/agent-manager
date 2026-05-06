@@ -160,9 +160,7 @@ export const secretsMigrateCommand = defineCommand({
 function parseBackendOverride(to: string | undefined): SelectableBackendName | undefined {
   if (to === undefined) return undefined;
   if (to === "age" || to === "aes-gcm-legacy") return to;
-  throw new Error(
-    `--to: expected "age" or "aes-gcm-legacy", got ${JSON.stringify(to)}.`,
-  );
+  throw new Error(`--to: expected "age" or "aes-gcm-legacy", got ${JSON.stringify(to)}.`);
 }
 
 /**

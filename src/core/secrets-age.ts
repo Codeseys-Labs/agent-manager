@@ -255,7 +255,8 @@ export class AgeSecretsBackend implements SecretsBackend {
 
   constructor(opts: AgeSecretsBackendOptions) {
     this.#identityPath = opts.identityPath ?? resolveIdentityPath();
-    this.#recipientsDir = opts.recipientsDir ?? join(dirname(this.#identityPath), RECIPIENTS_DIRNAME);
+    this.#recipientsDir =
+      opts.recipientsDir ?? join(dirname(this.#identityPath), RECIPIENTS_DIRNAME);
     this.#passphraseProvider = opts.passphraseProvider;
     this.#keychain = opts.keychain ?? defaultKeychain();
     this.#keychainService = opts.keychainService ?? KEYCHAIN_SERVICE;
@@ -311,9 +312,7 @@ export class AgeSecretsBackend implements SecretsBackend {
     await this.initialize();
 
     const targets =
-      recipients !== undefined
-        ? [...recipients]
-        : await this.#defaultEncryptRecipients();
+      recipients !== undefined ? [...recipients] : await this.#defaultEncryptRecipients();
 
     if (targets.length === 0) {
       throw new Error("AgeSecretsBackend: encrypt called with no recipients.");
@@ -522,10 +521,7 @@ export class AgeSecretsBackend implements SecretsBackend {
  * the unwrapped identity string or `null` if the passphrase is wrong.
  * Any other error (corrupt file, unsupported format) is rethrown.
  */
-async function tryDecryptIdentity(
-  wrapped: Uint8Array,
-  passphrase: string,
-): Promise<string | null> {
+async function tryDecryptIdentity(wrapped: Uint8Array, passphrase: string): Promise<string | null> {
   const decrypter = new Decrypter();
   decrypter.addPassphrase(passphrase);
   try {
