@@ -67,6 +67,87 @@ const RECIPIENT_FILE_SUFFIX = ".pub";
 /** Recipient lines in a `.pub` file MUST start with `age1`. */
 const RECIPIENT_PREFIX = "age1";
 
+// --- Argon2id parameters (ADR-0042 §KDF, Lens-C L-C1) ------------------
+
+/**
+ * Argon2id work-factor parameters used when wrapping the per-machine
+ * identity passphrase.
+ *
+ * Today the on-disk `identity.age` file is produced by
+ * `age-encryption`'s `Encrypter.setPassphrase()` which internally uses
+ * scrypt per the age spec, so these params are not yet consumed by the
+ * wrap path. They ARE exposed so that:
+ *
+ *   1. The config schema can carry the intended Argon2id work factor
+ *      (tracking OWASP 2025 / RFC 9106 guidance) ahead of the
+ *      Argon2id-WASM integration called for in ADR-0042 Phase 2 and
+ *      the lens-age-sota research doc.
+ *   2. The browser decrypt path (hosted UI, argon2-browser) can read
+ *      the same values from committed config so CLI and web agree on
+ *      the KDF cost for any passphrase-derived KEK.
+ *   3. Tests have a stable surface to assert the default floor
+ *      against without hitting real KDF work.
+ *
+ * Unit of `memoryKiB` is KiB (Argon2 convention): 131072 KiB = 128 MiB.
+ */
+export interface Argon2idParams {
+  /** Memory cost in KiB. OWASP 2025 floor for credential stores: 131072 (128 MiB). */
+  memoryKiB: number;
+  /** Iteration count (`t`). RFC 9106 interactive recommendation: 3. */
+  time: number;
+  /** Lanes / parallelism (`p`). Capped at 16 to match argon2-browser. */
+  parallelism: number;
+}
+
+/**
+ * Default Argon2id parameters, aligned with OWASP 2025 / RFC 9106 for
+ * credential-wrapping on a 2026-era dev laptop.
+ *
+ * Historical note: the initial ADR-0042 research doc (May 2026) cited
+ * `m=64 MiB, t=3, p=4`. L-C1 raised the default memory floor to 128 MiB
+ * per the updated OWASP guidance (Password Storage Cheat Sheet 2025).
+ * Users may override via `settings.secrets.argon2` in `config.toml`.
+ */
+export const DEFAULT_ARGON2ID_PARAMS: Readonly<Argon2idParams> = Object.freeze({
+  memoryKiB: 131072, // 128 MiB — raised from 64 MiB floor (L-C1)
+  time: 3,
+  parallelism: 4,
+});
+
+/** Validation lower bound: schema enforces this; keep the two in sync. */
+export const ARGON2ID_MIN_MEMORY_KIB = 8192; // 8 MiB
+
+/**
+ * Clamp / validate a partial Argon2id override against the invariants
+ * enforced by the config schema. Returns a fully-populated params
+ * object with defaults filled in.
+ *
+ * Throws a descriptive error on violations rather than silently
+ * clamping — callers should surface these to the user so a typo'd
+ * `memoryKiB = 1` fails loudly instead of degrading security.
+ */
+export function resolveArgon2idParams(override?: Partial<Argon2idParams>): Argon2idParams {
+  const params: Argon2idParams = {
+    memoryKiB: override?.memoryKiB ?? DEFAULT_ARGON2ID_PARAMS.memoryKiB,
+    time: override?.time ?? DEFAULT_ARGON2ID_PARAMS.time,
+    parallelism: override?.parallelism ?? DEFAULT_ARGON2ID_PARAMS.parallelism,
+  };
+  if (!Number.isInteger(params.memoryKiB) || params.memoryKiB < ARGON2ID_MIN_MEMORY_KIB) {
+    throw new Error(
+      `AgeSecretsBackend: argon2.memoryKiB must be an integer >= ${ARGON2ID_MIN_MEMORY_KIB} (got ${params.memoryKiB}).`,
+    );
+  }
+  if (!Number.isInteger(params.time) || params.time < 1) {
+    throw new Error(`AgeSecretsBackend: argon2.time must be an integer >= 1 (got ${params.time}).`);
+  }
+  if (!Number.isInteger(params.parallelism) || params.parallelism < 1 || params.parallelism > 16) {
+    throw new Error(
+      `AgeSecretsBackend: argon2.parallelism must be an integer in [1, 16] (got ${params.parallelism}).`,
+    );
+  }
+  return params;
+}
+
 // --- Paths -------------------------------------------------------------
 
 /**
@@ -226,6 +307,19 @@ export interface AgeSecretsBackendOptions {
    * Keychain account name. Defaults to `"identity-passphrase"`.
    */
   keychainAccount?: string;
+  /**
+   * Argon2id work-factor parameters used when wrapping the identity
+   * passphrase. See `DEFAULT_ARGON2ID_PARAMS` for the 2026 defaults
+   * (128 MiB / t=3 / p=4). Partial overrides are merged with the
+   * defaults; invalid values throw at construction time.
+   *
+   * These are not yet consumed by the on-disk wrap path — age's
+   * `setPassphrase()` uses scrypt per the age spec — but the backend
+   * carries them so future Argon2id-WASM integration, the browser
+   * decrypt path (argon2-browser), and `am secrets` tooling can read a
+   * single source of truth.
+   */
+  argon2?: Partial<Argon2idParams>;
 }
 
 // --- Backend -----------------------------------------------------------
@@ -247,6 +341,7 @@ export class AgeSecretsBackend implements SecretsBackend {
   readonly #keychain: KeychainAdapter | Promise<KeychainAdapter>;
   readonly #keychainService: string;
   readonly #keychainAccount: string;
+  readonly #argon2: Argon2idParams;
 
   /** Plaintext `AGE-SECRET-KEY-1...` string, once unlocked. */
   #identity: string | null = null;
@@ -261,6 +356,18 @@ export class AgeSecretsBackend implements SecretsBackend {
     this.#keychain = opts.keychain ?? defaultKeychain();
     this.#keychainService = opts.keychainService ?? KEYCHAIN_SERVICE;
     this.#keychainAccount = opts.keychainAccount ?? KEYCHAIN_ACCOUNT;
+    // Resolve + validate Argon2id params now so a bad config fails at
+    // construction time rather than on the first encrypt.
+    this.#argon2 = resolveArgon2idParams(opts.argon2);
+  }
+
+  /**
+   * Return the effective Argon2id parameters for this backend. Useful
+   * for tests, `am secrets status`, and the hosted-UI bundle which
+   * must use identical params when deriving the browser-side KEK.
+   */
+  getArgon2idParams(): Readonly<Argon2idParams> {
+    return { ...this.#argon2 };
   }
 
   /**
@@ -660,6 +767,12 @@ export interface AgeSecretsBackendConfig extends Partial<AgeSecretsBackendOption
    * that want a prompt-based flow must supply their own provider.
    */
   passphraseProvider?: PassphraseProvider;
+  /**
+   * Argon2id override, typically threaded through from
+   * `settings.secrets.argon2` in `config.toml`. Validated at
+   * construction time; omit for the 128 MiB / t=3 / p=4 defaults.
+   */
+  argon2?: Partial<Argon2idParams>;
 }
 
 /**
@@ -680,6 +793,7 @@ registerBackend({
       ...(cfg.keychain !== undefined && { keychain: cfg.keychain }),
       ...(cfg.keychainService !== undefined && { keychainService: cfg.keychainService }),
       ...(cfg.keychainAccount !== undefined && { keychainAccount: cfg.keychainAccount }),
+      ...(cfg.argon2 !== undefined && { argon2: cfg.argon2 }),
     };
     return new AgeSecretsBackend(opts);
   },

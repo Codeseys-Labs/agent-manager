@@ -182,9 +182,40 @@ export const SettingsSchema = z
     // envelopes are produced. Existing `enc:v1:` envelopes continue to
     // decrypt via `aes-gcm-legacy` regardless of this setting.
     // ADR-0046: reject `team_passphrase` field in the schema.
+    //
+    // Optional `argon2` subtable tunes the Argon2id parameters used by
+    // the age backend when wrapping / unwrapping the per-machine
+    // identity passphrase. Defaults follow OWASP 2025 / RFC 9106
+    // guidance for a 2026-era dev laptop:
+    //
+    //   memoryKiB   = 131072 (128 MiB, raised from the 64 MiB of the
+    //                 initial ADR-0042 research doc)
+    //   time        = 3       (iterations)
+    //   parallelism = 4       (lanes)
+    //
+    // Raising `memoryKiB` past 131072 is a safe upgrade: old
+    // identity.age files carry their own KDF work factor in the age
+    // header and decrypt unchanged. New wraps use the configured
+    // params; run `am secrets rewrap` if you want to re-wrap an old
+    // identity at higher cost.
     secrets: z
       .object({
         backend: z.enum(["age", "aes-gcm-legacy"]).optional(),
+        argon2: z
+          .object({
+            // 8 MiB floor protects against "typo set it to 1" DoS on
+            // the paranoid side; 128 MiB default is the OWASP-2025
+            // floor for sensitive credential stores. RFC 9106 §4
+            // suggests >= 65536 KiB for interactive use; we exceed
+            // that by 2x for 2026 hardware headroom.
+            memoryKiB: z.number().int().min(8192).default(131072),
+            time: z.number().int().min(1).default(3),
+            // Cap parallelism at 16 to match argon2-browser / the
+            // RFC-recommended safe upper bound; higher values bring
+            // diminishing returns and crash WASM runtimes.
+            parallelism: z.number().int().min(1).max(16).default(4),
+          })
+          .optional(),
       })
       .passthrough()
       .refine((s) => !("team_passphrase" in s), {

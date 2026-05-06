@@ -483,8 +483,17 @@ export async function getDefaultBackend(
         "getDefaultBackend: `age` backend selected but its factory is not registered — check that `src/core/secrets-age.ts` is importable.",
       );
     }
+    // Thread Argon2id overrides from `settings.secrets.argon2` into
+    // the factory. Validation happens inside the AgeSecretsBackend
+    // constructor — a bad override fails loudly here.
+    const argon2Override = (
+      config?.settings as
+        | { secrets?: { argon2?: Partial<import("./secrets-age").Argon2idParams> } }
+        | undefined
+    )?.secrets?.argon2;
     return factory.load({
       passphraseProvider: options.passphraseProvider ?? ageModule.envPassphraseProvider(),
+      ...(argon2Override !== undefined && { argon2: argon2Override }),
     });
   }
 
