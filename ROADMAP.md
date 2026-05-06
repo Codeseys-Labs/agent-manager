@@ -119,7 +119,8 @@ Search, install, uninstall, update with provenance tracking. ADR-0024.
 | BM25 search (MiniSearch) | Done | Fuzzy, prefix, field boosting |
 | Rule-based NER | Done | File paths, packages, functions, 38+ tool names |
 | Knowledge graph | Done | JSON adjacency list, orphan detection |
-| Dual location (global + project symlinks) | Done | ADR-0022 |
+| Dual location (global + project symlinks) | Done | ADR-0022 (symlink helpers retained for legacy projects) |
+| Two-tier copy materialisation (`.am-wiki/`) | Done | ADR-0044 — copy over symlink; `am wiki init/migrate/publish/pull`; gitignored by default |
 | Session harvesting | Done | Jaccard dedup, pattern extraction |
 | Wiki CLI (13 subcommands) | Done | init, search, add, show, delete, harvest, ingest, lint, graph, synthesize, briefing, export, import |
 
@@ -144,6 +145,7 @@ Search, install, uninstall, update with provenance tracking. ADR-0024.
 | ACP client | Done | Spawn, stream, cancel agents headlessly |
 | ACP registry | Done | Agent resolution from config + auto-detection |
 | CLI (am run) | Done | `am run <agent> "<prompt>"` + session subcommands |
+| Per-agent variants (multi-provider routing) | Done | ADR-0036 — `src/core/variant-resolver.ts`, `--variant` flag, gated by `AM_VARIANTS=1` |
 | MCP tools (4) | Done | run_agent, list_agents, session_list, session_cancel |
 
 ### Distribution — Complete
@@ -267,7 +269,9 @@ am-cli as a runtime MCP proxy — accept tool calls, route to configured servers
 
 ## ADR Index
 
-30 architectural decisions.
+47 architectural decisions (full set in `ADRs/`; table below highlights
+foundational + recently-accepted entries — ADRs 0031–0035, 0037–0043,
+0045–0046 are present in the repo and not yet mirrored here).
 
 | ADR | Title | Date |
 |-----|-------|------|
@@ -292,7 +296,7 @@ am-cli as a runtime MCP proxy — accept tool calls, route to configured servers
 | 0019 | Security Hardening | 2026-04-08 |
 | 0020 | Session Knowledge Synthesis | 2026-04-08 |
 | 0021 | MCP Tool Grouping + Gateway | 2026-04-10 |
-| 0022 | Wiki Location Strategy | 2026-04-10 |
+| 0022 | Wiki Location Strategy (superseded-in-part by 0044) | 2026-04-10 |
 | 0023 | Tiered Secret Detection | 2026-04-10 |
 | 0024 | MCP Registry Integration | 2026-04-10 |
 | 0025 | Worker Multi-Backend Git Auth | 2026-04-13 |
@@ -301,6 +305,8 @@ am-cli as a runtime MCP proxy — accept tool calls, route to configured servers
 | 0028 | Brownfield Import Merge | 2026-04-15 |
 | 0029 | Command Grouping | 2026-04-15 |
 | 0030 | Unified Agent Registry | 2026-04-16 |
+| 0036 | Per-Agent Variants (Multi-Provider Routing) | 2026-05-02 |
+| 0044 | Wiki Two-Tier Copy Materialisation (amends 0022) | 2026-05-05 |
 
 ---
 
@@ -316,6 +322,6 @@ am-cli as a runtime MCP proxy — accept tool calls, route to configured servers
 | Platform adapters | 3 |
 | CLI commands | 31 |
 | MCP tools | 33 |
-| ADRs | 30 |
+| ADRs | 47 |
 | `as any` in src/ | 0 |
 | `err: any` in src/ | 0 |

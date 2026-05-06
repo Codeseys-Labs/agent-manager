@@ -1,6 +1,7 @@
 ---
-status: proposed
+status: accepted
 date: 2026-05-02
+accepted: 2026-05-05
 ---
 
 # ADR-0036: Per-Agent Variants for Multi-Provider / Multi-Account Routing
@@ -222,6 +223,39 @@ at all), or tier-3 catalog-only agents. Variant is the wider abstraction.
   Once accepted, would add a `variant` parameter to `am_agent_invoke`.
 - `src/core/schema.ts:88-107`, `src/core/agent-registry.ts:91-185`,
   `src/commands/run.ts:83-172`, `src/protocols/acp/env-sandbox.ts:63-71`
+
+## Implementation (shipped — MVP accepted 2026-05-05)
+
+The MVP per the "minimum viable implementation" list above has landed:
+
+- `src/core/variant-resolver.ts` — 209 LOC. Implements the resolution
+  order (CLI flag → project `default_variant` → global `default_variant`
+  → single-variant implicit default → error on ambiguity) per "Resolution
+  order" above. Deep-merges `agents.<name>.variants` + `default_variant`
+  across layers (Option B from "Project vs global merge semantics").
+- `src/core/schema.ts` — `AgentProfileSchema` extended with `variants`
+  map + `default_variant`; backward compatible (existing configs without
+  variants continue to load).
+- `src/commands/run.ts` — threads the resolver into the ACP spawn path
+  before `createAcpClient()`; `variant_used` is emitted in the run
+  payload (dry-run and live).
+- Test coverage: `test/core/variant-resolver.test.ts` (resolution order,
+  ambiguity errors, layer merging) + `test/commands/run/variant.test.ts`
+  (end-to-end `am run --variant` wiring). 23 tests passing at promotion
+  time.
+
+**Rollout gate: `AM_VARIANTS=1`.** Per the original plan, the feature
+ships behind an env-var gate for the first release after acceptance.
+The gate is checked in `src/commands/run.ts` before the resolver is
+consulted; absent the flag, the pre-variants code path runs unchanged.
+The gate is removed in the release-after-next once real-world usage
+confirms stability.
+
+**Explicitly still out-of-scope (unchanged from the original ADR):**
+A2A variants, `am_agent_invoke` MCP `variant` parameter, per-variant
+`permission_policy` enforcement (schema accepts + echoes but does not
+enforce), and the `am agent variants` CLI subcommand. These remain
+follow-ups.
 
 ## Implementation notes (for the MVP PR)
 

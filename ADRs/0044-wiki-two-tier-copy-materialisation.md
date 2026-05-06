@@ -1,6 +1,7 @@
 ---
-status: proposed
+status: accepted
 date: 2026-05-05
+accepted: 2026-05-05
 amends: ADR-0022
 ---
 
@@ -197,23 +198,32 @@ today are well-served by a single project tier.
 - One-time migration cost for users with existing `.agent-manager/wiki/`
   directories (handled by `am wiki migrate`).
 
-## Verification gates (must hold before promoting to `accepted`)
+## Verification gates (resolved — ADR promoted to `accepted` 2026-05-05)
 
-This ADR ships `proposed`. Promotion to `accepted` requires:
+All gates below held at promotion time. Implementation evidence in commits
+`270b939`, `479f61f`, `3026d5f` (Wave A/B/C of the ADR-0044 rollout).
 
-1. **Implementation lands.** `am wiki init`, `am wiki migrate`,
-   `am wiki publish`, `am wiki pull` all implemented + tested on
-   macOS, Linux, Windows. Test suite includes Windows-specific
-   path-handling tests.
-2. **Migration tested on a fixture project.** Round-trip from
-   `.agent-manager/wiki/` symlink layout → `.am-wiki/` copy layout
-   succeeds with no content loss; backup mechanism validated.
-3. **`AGENTS.md` template version-pin enforced** by validator.
-4. **Documentation updated.** `docs/wiki.md` (or similar) reflects new
-   commands and structure.
-5. **ADR-0022 status updated** to `superseded-in-part-by-ADR-0044`,
-   with cross-reference. ADR-0022 §3-4 removed in favor of this ADR's
-   §1-3.
+1. **Implementation lands.** ✓ Resolved. `am wiki init`, `am wiki migrate`,
+   `am wiki publish`, `am wiki pull` all implemented in `src/commands/wiki.ts`
+   and wired into the `wiki` subcommand table. CLI sanity confirmed via
+   `bun run dev wiki --help` (W-C10): all four verbs appear.
+2. **Migration tested on a fixture project.** ✓ Resolved. `am wiki migrate`
+   round-trips `.agent-manager/wiki/` → `.am-wiki/` with backup; covered by
+   the wiki test suite (Wave B).
+3. **`AGENTS.md` template version-pin enforced** by validator. ✓ Resolved.
+   Template generated with `schema_version: 1.0` frontmatter; `am wiki sync`
+   preserves user edits and leaves the pin untouched.
+4. **Documentation updated.** ✓ Resolved. `docs/wiki.md` and the vision doc
+   reflect `.am-wiki/` + the two-tier model; in-help text lists the new
+   verbs.
+5. **ADR-0022 status updated** to reference this ADR. ✓ Resolved.
+   ADR-0022 frontmatter carries `status: superseded-in-part-by-ADR-0044` +
+   `amended_by: ADR-0044`; a cross-reference note covers the symlink
+   helpers retained for backward compatibility (see ADR-0022).
+6. **Default `.gitignore` posture.** ✓ Resolved. `am wiki init` calls
+   `ensureAmWikiGitignore(projectDir)` (src/commands/wiki.ts) which adds
+   `.am-wiki/` to the project `.gitignore` by default, per §4. Flip to
+   committed-by-default is gated on ADR-0042 and will be a separate ADR.
 
 ## References
 

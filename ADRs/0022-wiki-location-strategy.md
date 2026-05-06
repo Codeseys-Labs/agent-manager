@@ -6,6 +6,24 @@ amended_by: ADR-0044
 
 # ADR-0022: Wiki Location Strategy — Global Store with Project Symlinks
 
+> **Status note (updated 2026-05-05).** ADR-0044 was promoted to
+> `accepted` on 2026-05-05 and supersedes §3–§4 of this ADR. New
+> projects materialise the wiki by **copying** into `.am-wiki/` (not
+> symlinking into `.agent-manager/wiki/`) and default to a gitignored
+> posture until ADR-0042 enforcement lands. §1–§2 (the wiki concept
+> and single-source-of-truth rationale) and §5 (search semantics)
+> remain in force as described.
+>
+> **Backward compatibility.** The symlink helpers originally specified
+> here — `createProjectWikiLink(...)` and `ensureWikiGitignore(...)` —
+> are **retained in the codebase** so that users with pre-existing
+> `.agent-manager/wiki/` symlink layouts continue to function and can
+> migrate on their schedule. They are **no longer the default path for
+> new projects**: `am wiki init` now calls the copy-based materialiser
+> + `ensureAmWikiGitignore(...)`, and `am wiki migrate` is the one-way
+> upgrade from the legacy layout to the ADR-0044 layout. Removing the
+> legacy helpers is a future cleanup ADR, gated on migration uptake.
+
 ## Context
 
 The LLM Wiki (ADR-0020) needs a clear storage location model. Three questions:
