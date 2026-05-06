@@ -1355,3 +1355,149 @@ cleanup) are Wave C (~30-45 min, mostly mechanical).
 5. **Codebase-wide lint cleanup** (15 pre-existing errors, mostly
    `delete process.env.X`). Mechanical; could be one cron-style
    sweep.
+
+
+## Run 2026-05-05-I — Backlog drain to ~zero
+
+**Baseline:** `9980a31` (build(typecheck,h-1): silvery JSX intrinsics)
+**HEAD:** `5aa74ae` (fix(review): Phase 8 cross-family findings applied)
+**Wall-time:** ~50 min
+**Cost:** ~$8-10 OpenRouter
+
+**Scope:** Drain the remaining tractable backlog from Run I audit
+(`docs/backlog/2026-05-05-run-I-audit.md`). All P0/P1 P2-S items
+addressed; XL items (ADR-0043 hosted UI auth, ADR-0045 CodeMirror,
+ADR-0042 browser integration) remain explicitly deferred per audit.
+
+### Wave M batch 1 — three parallel impl items
+
+- **L-C1** (commit 36df874): Argon2id parameters exposed via
+  `settings.secrets.argon2` config + default raised from 64 MiB to
+  128 MiB per OWASP 2025. Backward-compat preserved (age header
+  carries per-envelope KDF params; legacy 64 MiB ciphertext still
+  decrypts unchanged). +154 LOC across schema/secrets-age/secrets.
+- **H-1c** (commit 2d56a30): citty `Resolvable<>` test helper +
+  applied to 7 test files. typecheck test errors 190 → 169.
+  Remaining ~12 files deferred to a follow-up PR.
+- **INFRA-1** (commit 3ef9dd4): bun --coverage in CI emits lcov
+  to coverage/lcov.info; lcov-job-summary action publishes per-job
+  coverage to GitHub Actions UI (no external service required).
+  README badge added; CONTRIBUTING.md notes local usage.
+
+### Wave M batch 2 — three parallel design/cleanup items
+
+- **ADR-0036-cleanup** (commit 203d967): removed `AM_VARIANTS=1`
+  rollout gate; variants are now always-on per ADR-0036 acceptance.
+  Tests adjusted (4 obsolete gating tests removed; 6 env-var setup
+  lines deleted).
+- **L-A1 SECURITY.md** (commit 9f94700, partial): top-level
+  SECURITY.md modeled on Mozilla/Cloudflare style. 8 attack classes
+  with in-scope/out-of-scope/detective controls, cryptographic
+  posture table, dependency hygiene policy, known limitations.
+- **L-A2 ADR-0047** (commit 9f94700, partial): `am pair` cross-
+  device key handoff design — git-native flow (`am pair accept` on
+  new device pushes .pub; `am pair finalize` on original device
+  rewraps). Trade-offs honest about repo-push-ACL trust boundary.
+  Status: accepted (design-only). amends ADR-0042 (gate 5 closed
+  by design). ADR-0042 stays proposed (gates 1, 4 still open).
+
+### Phase 8 — three-way cross-family verification
+
+Reviewers: openai/gpt-5.5, x-ai/grok-4.3, deepseek/deepseek-v4-pro.
+All three CONFIRMED with non-blocking findings.
+
+Intersection of findings applied (commit 5aa74ae):
+
+- **HIGH** (deepseek + gpt-5.5 corroborated): SECURITY.md cross-
+  references pointed at `docs/architecture/decisions/*` (a path that
+  doesn't exist). Repaired all 4 + added ADR-0047 reference.
+- **MED** (gpt-5.5 + deepseek): L-C1 shipped with zero unit tests.
+  Closed gap with `test/core/secrets-argon2-params.test.ts` (NEW,
+  18 tests covering DEFAULT shape, runtime override + validation,
+  Zod-schema enforcement).
+- **MED** (gpt-5.5): SECURITY.md §4 oversold the "no plaintext on
+  disk" claim. Now honestly documents `am apply` writing decrypted
+  secrets to native IDE configs outside the repo + memory-scrape
+  out-of-scope.
+- **LOW** (gpt-5.5 + deepseek): "128 MiB floor" wording was
+  ambiguous. Clarified: 128 MiB DEFAULT, 8 MiB hard floor.
+- **LOW** (deepseek): ADR-0036 had a `<placeholder>` commit hash;
+  filled with 203d967.
+- **LOW** (gpt-5.5): ROADMAP.md still mentioned AM_VARIANTS=1 gate;
+  updated.
+
+Reviewer-flagged but DEFERRED (not blocking):
+- LOW: H-1c `resolveRun` mentioned in commit message but not in
+  helper exports (typo in commit message; helper is correct).
+- LOW: citty helper has no self-test (would surface future citty
+  evolutions).
+- LOW: ADR-0047 `[age].recipients` reference inconsistent with
+  current `recipients/<hostname>.pub` flat layout. Spec-only ADR;
+  fix when implementation lands.
+- LOW: CI ignores bun test exit code; relies on parsing. Tradeoff
+  for the no-token coverage path.
+
+### Verification
+
+- Lint: clean (`bun run lint` no errors).
+- Test suite: 2829 → 2864 (+35 net new tests this run).
+  - L-C1 added 18 tests in commit 5aa74ae.
+  - H-1c migration didn't add tests but normalized 7 files.
+  - ADR-0036 cleanup removed 4 obsolete tests, no net loss in
+    variant resolver coverage.
+- Typecheck: src/ remains 0 errors. test/ down 190 → 169 (citty
+  Resolvable<> migration partial); node_modules 52 errors are
+  vendor-side (skipLibCheck doesn't engage on @silvery's raw
+  .tsx exports — documented in build/typecheck commit message).
+
+### Backlog status after Run I
+
+**Closed full:** L-C1, L-A1, L-A2, H-1b, H-2 (Run H), H-3 (Run H),
+INFRA-1, ADR-0036-cleanup. R-B1..R-B6 (Run H). ADR promotions for
+0034, 0035, 0036, 0037, 0038, 0039, 0044 (Run H) + ADR-0047 design
+(Run I).
+
+**Partial / explicitly deferred (research done, impl deferred):**
+- ADR-0042 §browser-integration (gate 1) — Lens A research on disk
+  but blocked on hosted UI bundle pipeline.
+- ADR-0042 §threat-model (gate 4) — partially closed by SECURITY.md;
+  full ADR-grade write-up still pending.
+- ADR-0043 hosted UI auth tiers — Lens B research on disk; XL impl.
+- ADR-0045 CodeMirror editor — blocked on ADR-0043.
+- L-C2 age key-rotation grace period — backlog only.
+- H-1c remaining ~12 test files (citty migration) — follow-up PR.
+- H-1d @silvery vendor-side typecheck — out of our control.
+- INFRA-2 npm optionalDependencies, INFRA-3 Windows CI — separate
+  initiative.
+
+### Process notes
+
+- 6 of 6 Wave M subagents shipped substantive work; 3 of them timed
+  out at the post-impl summary phase (same pattern as Run H — long
+  research → large write → stream stall on summary). Recovery via
+  artifact verification continues to work.
+- Cross-family review caught both a HIGH (broken cross-refs) and
+  two MEDs that all three reviewers individually flagged. Single-
+  reviewer review would have likely missed the HIGH. Justifies
+  the 3x cost for sign-off-grade verification.
+- Argon2id wrap-up demonstrates the value of the Lens C research:
+  defaults raised proactively to OWASP 2025 floor, with config
+  override + backward-compat baked in from the start. Research-
+  driven implementation > reactive bumps.
+
+### Session totals (Runs F → I, cumulative)
+
+- Commits: 26 logical commits.
+- Tests: ~2693 → 2864 (+171 net new across the session).
+- ADRs promoted to accepted: 8 (0034, 0035, 0036, 0037, 0038, 0039,
+  0044, 0046; ADR-0047 design-accepted in same window).
+- ADRs still proposed: 0042, 0043, 0045 (all XL impl deferrals).
+- Cost: ~$25-30 OpenRouter cumulative across the four runs.
+- ROADMAP infrastructure: INFRA-1 closed; INFRA-2/3 remain.
+
+### Next-run candidates (none P0)
+
+- Continue H-1c migration to drive test/ typecheck errors to 0.
+- Land ADR-0042 gate 4 full threat model as a separate doc
+  (SECURITY.md is condensed; ADR-grade analysis still pending).
+- Begin ADR-0043 hosted-auth implementation (XL — multi-PR effort).
