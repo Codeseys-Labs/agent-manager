@@ -38,3 +38,4 @@ report.[0-9]_.[0-9]_.[0-9]_.[0-9]_.json
 
 # Codex CLI session artifacts (not part of the project)
 .codex
+.playwright-mcp/

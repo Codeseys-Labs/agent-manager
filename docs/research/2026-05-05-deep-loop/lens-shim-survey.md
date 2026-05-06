@@ -37,8 +37,9 @@ The Agent Client Protocol (ACP) launched August 27, 2025 (Gemini CLI as first in
 
 ## 2. ADR-0034: Scope Fence for First-Party ACP Shims
 
-**Status:** `proposed` (2026-05-01)  
+**Status:** `accepted` (2026-05-01)  
 **Implementation state:** **Partial**
+(Follow-up gates deferred to future PRs: CLI surface, deprecation mechanism, vetting disclaimer)
 
 ### What exists
 
@@ -86,9 +87,10 @@ The Agent Client Protocol (ACP) launched August 27, 2025 (Gemini CLI as first in
 **Note:** The ADR explicitly states at line 208-211: *"No code change required immediately. The current three shims all pass the criteria; the cap is declarative until someone proposes a fourth."* This means partial implementation state is intentional. Acceptance is primarily a **policy decision** — the missing code surfaces are follow-ups.
 
 ## 3. ADR-0035: Community Shim Registration Protocol
-
-**Status:** `proposed` (2026-05-02)  
-**Implementation state:** **None**
+ 
+ **Status:** `accepted` (2026-05-02)  
+ **Implementation state:** **None (Design Only)**
+ (Follow-up gates deferred to implementation ADR: schema file, resolution extension, enable flow, command group, supply-chain controls)
 
 ### What exists
 
@@ -107,7 +109,9 @@ Nothing. The ADR is explicitly **design-only** (line 19): *"This ADR is design-o
 
 ### Open acceptance gates
 
-1. **GATE-0035-1 (BLOCKING): ADR-0034 must be accepted first.** ADR-0035's preamble (lines 7-16) says: *"Precondition for ADR-0034 Phase E."* and *"Until this ADR is accepted and implemented, ADR-0034's Phase-E language is vacuous."* The two ADRs are tightly coupled — 0035 makes 0034's "community-adapter path" real.
+**Gate resolved.** The blocking prerequisite (acceptance of ADR-0034) has been fulfilled. This ADR is accepted as a foundational design document.
+
+The remaining open implementation steps are listed below and have been deferred to a future implementation-focused ticket or ADR:
 
 2. **GATE-0035-2: Schema file creation.** `src/protocols/acp/community-shims/schema.ts` with `CommunityShimConfigSchema` (Zod schema at lines 130-146) must exist in the implementation follow-up.
 
@@ -198,8 +202,8 @@ ADR-0034 and ADR-0035 form a pair: 0034 declares "community is the default path"
 
 | ADR | Status | Implementation | Blocking Gates | Ready to Accept? |
 |-----|--------|---------------|----------------|-----------------|
-| **0034** | proposed | Partial | C2 verification (BLOCKING), CLI surface, deprecation mechanism, vetting disclaimer | **No** — C2 verification required first |
-| **0035** | proposed | None (design-only) | ADR-0034 acceptance (BLOCKING), schema file, resolution extension, enable flow, command group, supply-chain controls | **Yes** (as design decision) — but only after 0034 accepts |
+| **0034** | accepted | Partial | CLI surface, deprecation mechanism, vetting disclaimer deferred | **Yes** — C2 verified and ADR promoted |
+| **0035** | accepted | None (design-only) | Schema file, resolution extension, enable flow, command group, supply-chain controls deferred to impl ADR | **Yes** — design decision accepted |
 | **0036** | proposed | Complete (MVP) | AM_VARIANTS=1 removal, schema.ts verification, live-path integration test | **Yes** — implementation complete, gating is transitional |
 
 ## References

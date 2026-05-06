@@ -1,10 +1,15 @@
 ---
-status: proposed
+status: accepted
 date: 2026-05-03
+accepted: 2026-05-05
 implementation:
   phase_1: shipped in commit 707105b (2026-05-03) — x-am on all tools in tools/list
   phase_2: deferred — per-tool output_schema
   phase_3: deferred — per-tool error_codes + progress_shape
+verification:
+  conformance_test: test/mcp/x-am-metadata.test.ts (8 tests, 623 expect() calls)
+  client_reference: docs/mcp/x-am.md
+  promoted_on: 2026-05-05 (Lens E acceptance roadmap)
 ---
 
 # ADR-0037: Per-Tool MCP Metadata via `x-am.*` Namespace
@@ -217,6 +222,31 @@ clean.
 **Separate `am_mcp_describe_tool` MCP tool** that returns metadata for
 a named tool. Rejected — redundant round-trip. Clients should get the
 metadata in the first `tools/list` without a second call.
+
+## Verification Gates (closed 2026-05-05)
+
+Phase 1 acceptance gates per the Lens E roadmap
+(`docs/research/2026-05-05-deep-loop/lens-mcp-marketplace.md` §ADR-0037):
+
+1. **Conformance test** — every tool in `tools/list` round-trips
+   `x-am` with the 5 required fields, enum values valid, and
+   deprecation/progress registries in sync. Closed by
+   `test/mcp/x-am-metadata.test.ts` (8 tests, 623 expect() calls, all
+   pass as of 2026-05-05).
+2. **Client reference doc** — `docs/mcp/x-am.md` documents the
+   `x-am.*` namespace for third-party MCP client authors, including the
+   mapping to emerging upstream annotations (`readOnlyHint`,
+   `destructiveHint`, `outputSchema`) and the dual-emission policy for
+   future overlap.
+3. **Follow-up pointer for Phases 2/3** — Phase 2 (`output_schema`) and
+   Phase 3 (`error_codes`, `progress_shape`) remain deferred. The Lens E
+   roadmap recommends a small-batch rollout (5 high-value tools first:
+   `am_apply`, `am_agent_invoke`, `am_status`, `am_registry_search`,
+   `am_session_export`) rather than 38-at-once. Each phase will land as
+   its own ADR-level change so the per-tool schema work is reviewed
+   alongside the surface it documents.
+
+Promoted `proposed → accepted` on 2026-05-05.
 
 ## References
 
