@@ -1832,3 +1832,122 @@ completed cleanly. Phase-8 review batch all completed.
 
 **Out-of-scope (vendor):**
 - @silvery/ag-react typecheck noise (52 errors, vendor side).
+
+
+## Run L — 2026-05-05 (Phases 1-9 complete, 4 commits, HEAD `79dae7d`)
+
+**Goal.** Continue draining the backlog after Run K closed Run J's
+deferred items. Run L scope: 4 quick wins (cosmetic + safety
+follow-ups) + a writing-plans plan for Wave Q (so the next
+continuation run can execute ADR-0048 Phase-1 without re-doing
+research).
+
+### Commit chain (Run K `0c524fe` → Run L `79dae7d`)
+
+```
+7944670 fix(secrets,adr-0051): grace=0 commit msg + restoreOldRecipient recovery hint
+afdf546 refactor(test,h-1c): citty migration Run L batch (33 files, 136 → 44 typecheck errors)
+484a6d3 docs(plans): Wave Q plan — ADR-0048 Phase-1 GitHub App OAuth scaffold
+79dae7d fix(test,lint): drop redundant biome-ignore comments
+```
+
+### Items closed
+
+1. **grace=0 commit-message accuracy** (Run K Phase-8 union from
+   anthropic + deepseek, cosmetic). When `gracePeriodDays === 0`, the
+   commit message now says `secrets(rotate): generate new identity
+   (immediate cutover, grace_period_days=0)` and the staged-paths list
+   excludes `_rotation-old.pub` and `identity.age.old` (neither exists
+   on the immediate-cutover path).
+
+2. **restoreOldRecipient recovery hint** (Run K Phase-8 deepseek
+   must-fix #2). Wrapped the `backend.restoreOldRecipient(prepared)`
+   call in try/catch in `runFinalize`. On failure emits:
+   `WARN: failed to restore OLD recipient sidecar (<reason>). Manual
+   recovery: run 'age-keygen -y identity.age.old > recipients/_rotation-old.pub'
+   to reconstruct it.` Outer error still propagates after the warning.
+
+3. **H-1c citty-migration continuation.** **33 test files migrated**
+   in one parallel subagent batch. Test typecheck errors **136 → 44**
+   (92 errors closed). Files migrated: all of `test/adapters/**` for
+   amazon-q / claude-code / cline / codex-cli / community / copilot /
+   cursor / forgecode / gemini-cli / kilo-code / kiro / roo-code /
+   windsurf, plus `test/adapters/registry.test.ts` and
+   `test/commands/serve.test.ts`. **745/0 tests pass across 81 files**
+   (`bun test test/adapters/ test/commands/secrets-rotate.test.ts
+   test/commands/secrets-commit-contract.test.ts test/commands/serve.test.ts`).
+
+4. **Wave Q plan written** (`docs/plans/wave-Q-adr-0048-github-app-oauth.md`,
+   201 lines). 5 sub-tasks (Q1-Q5) with file ownership, 14 acceptance
+   tests named, risk register, sequencing (Q1 sequential then
+   Q2-Q5 parallel), budget estimate (~2800 LOC, ~$10-12 OpenRouter,
+   ~2-3 hours wall-clock at 3-way parallel). Ready to execute in
+   Run M (or whenever the user requests "Wave Q" or "ADR-0048
+   Phase-1").
+
+### Phase-8 review (single reviewer, low-risk batch)
+
+Single reviewer was sufficient since Run L is mostly cosmetic (item 1)
++ mechanical (item 3) + plan-only (item 4):
+
+- nvidia/nemotron-3-super-120b-a12b: ACCEPT/ACCEPT/ACCEPT, no blocking
+  issues. Notes 2 lint warnings on biome-ignore comments in
+  `test/helpers/citty.ts` (closed in commit `79dae7d`).
+
+### Test trajectory
+
+Run K: 54+/0 fail across 4 secrets test files; 136 typecheck errors.
+Run L: **745/0 fail across 81 test files**; **44 typecheck errors**
+(closing 92 more from Run K). The full test suite hasn't been timed
+in Run L; targeted runs all green.
+
+### Cost & throughput
+
+~$8-10 OpenRouter spend across Run L. Two subagent timeouts (item 4
+Wave Q plan author stalled mid-write_file at 600s; item 1+2 deepseek
+completed cleanly) — Wave Q plan was written inline by orchestrator
+after subagent had already loaded all the context successfully.
+Item 3 over-delivered: ~25 was minimum; subagent shipped 33.
+
+### Key decisions in Run L
+
+31. **Plan-only Wave Q over execution-now.** ADR-0048 Phase-1 is
+    ~2800 LOC across 5 sub-tasks. Executing it inside Run L would
+    have blown the wall-clock and the orchestrator's context. Plan
+    document is the right deliverable: encodes file-ownership +
+    acceptance tests so a fresh Run M can execute Q1 → Q2-Q5 with
+    minimal context overhead.
+32. **Single-reviewer Phase 8 for low-risk batches.** Run L was
+    mostly mechanical / cosmetic / plan-only. A 3-way scatter would
+    have produced 3 ACCEPT verdicts at 3× cost. Single reviewer with
+    a different family (nvidia, distinct from Run K's anthropic +
+    minimax + deepseek) was sufficient. Discipline: scale review
+    fan-out to commit risk.
+33. **`Promise<any>` retained with documented rationale.**
+    The reviewer accepted the tradeoff documented in Run K commit
+    `d067617`. Removing the redundant biome-ignore comments cleaned
+    up the lint output without re-introducing the type narrowing
+    burden.
+
+### Remaining work (Run M+ candidates)
+
+**Tractable (S/M):**
+- 44 remaining test typecheck errors (~5-7 files; mostly test/adapters/claude-code/session.test.ts edge cases per Run L subagent notes). Mechanical follow-up.
+- ADR-0051 §finalize-restore-recovery section amendment (one-line
+  doc, ~10 LOC).
+- Documentation polish: `docs/auth-setup.md` placeholder for Wave Q
+  prerequisites.
+
+**XL (need their own runs):**
+- **Wave Q execution** (ADR-0048 Phase-1 GitHub App OAuth) — plan
+  ready, awaits user trigger. ~$10-12 cost, 2-3 hours wall-clock.
+- Wave R: ADR-0049 Phase-1 — `GET /edit/:path*` mount + skeleton +
+  CM6 bundle (~800 LOC). **Needs its own writing-plans plan** before
+  execution.
+- Wave S: ADR-0050 Phase-1 — age-encryption browser bundle (~400
+  LOC, blocked on Wave R bundle pipeline). Needs plan.
+- Wave T: ADR-0047 — `am pair accept/finalize` CLI implementation
+  (deferred from Run I). Needs plan.
+
+**Out-of-scope (vendor):**
+- @silvery/ag-react typecheck noise (52 errors, vendor side).
