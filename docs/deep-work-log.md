@@ -855,3 +855,100 @@ finalize) completed. 4 commits ahead of baseline 14ed1dc. All pushed.
    for identity wrap; cross-keychain vs Bun-FFI; pair-token format).
 
 **HEAD:** 3ec50b5 — pushed to origin/main.
+
+
+---
+
+## Run 2026-05-05-C — hosted-UX 5-question deep-dive via parallel-critique
+
+**Baseline:** `110b1d2` (post-Run-B commits + Age backend + cross-keychain audit)
+**HEAD:** `509ba0b` — pushed to origin/main
+
+**Trigger:** Maintainer asked five concrete user-journey questions that ADR-0042
+and ADR-0043 had architecturally answered but not at decision-tree level. Plus
+explicitly asked for parallel-critique on the cross-keychain audit.
+
+**Verified live:** Hermes router fix (`delegate_tool.py` per-task `model`/`provider`
+overrides) is now functional. 3-task scatter routed to GPT-5.5, Gemini 3.1 Pro,
+DeepSeek V4 Pro respectively, with metadata + self-reference probe both confirming.
+This unblocks real cross-family scatter for the first time.
+
+**Method:** parallel-critique skill, three phases:
+
+Phase 1 — research scatter (3 cross-family lenses, ~14 min wall-time):
+- Lens A (gpt-5.5): universal secrets at rest. 296-line note. Hit all 6 sub-Qs.
+- Lens B (gemini-3.1-pro-preview): web-edit-a-repo UX. 118-line note (short but
+  high-density). Recommended CodeMirror 6 over Monaco — divergence from the
+  implicit Monaco assumption.
+- Lens C (deepseek-v4-pro): per-server secret indirection. 546-line note (longest).
+  `op://` precedence chain + `supportsEnvRefResolution` adapter capability.
+
+Phase 2 — synthesis memo (~8 min, in-context, no delegation):
+- 552 lines, answers all 5 questions concretely.
+- Cross-question implications surfaced: hosted UI is a thin git client + Worker,
+  IDE adapter capability surface needs +1 bool, git backend is content-addressed
+  ciphertext storage with no per-platform code paths.
+- 8 open decisions for maintainer flagged at end.
+
+Phase 3 — parallel-critique on synthesis (3 different cross-family reviewers,
+~10 min):
+- kimi-k2.6, minimax-m2.7, z-ai/glm-5.1 — none overlap with phase 1.
+- Router-trap probe: PASSED (all 3 reviewers correctly self-identified;
+  `delegate_task` metadata confirmed each on requested model).
+- One reviewer (kimi) timed out at 600s after writing its file; the file
+  landed cleanly so its critique counts.
+- 5 P0 + 2 P1 issues by intersection (>=2 reviewers flagged same class).
+
+Phase 4 — fixes applied inline:
+- P0-1: keychain timeout numbers reconciled (15-min idle, 12-hr hard, with
+  implementation note that neither cross-keychain nor any OS keychain provides
+  native TTL — am must enforce via timestamp metadata on the entry itself).
+- P0-2: PAT storage clarified to session-memory-only (struck IndexedDB clause).
+- P0-3: `config_template` cleanup spec'd with SIGTERM handler + stale-file
+  sweeper at startup + tmpfs path discipline + FDE recommendation.
+- P0-4: URI schemes table extended with execution-context columns; CLI-only
+  schemes (`op://`, `env://`, `keychain://`) must surface a clear "🔒 CLI-only"
+  fence in the browser, not silent failure.
+- P0-5: Tier-1 browser key-provisioning options A (passphrase-only) + B
+  (CLI-pairing) defined. Browser-as-TEE assumption explicitly acknowledged
+  with mandatory mitigations: strict CSP, SRI, reproducible builds, no
+  third-party CDN scripts on unlock origin, separate origin for unlock page.
+- P1-1: ~50% claim reworded to "most-deployed adapters" with audit deferred.
+- P1-2: capability=false KEK-unavailable failure path defined: prompt
+  interactive, fail non-zero non-interactive, atomic temp-file rename, no
+  partial writes.
+
+10 P2/P3 backlog items captured in `docs/reviews/.../synthesis.md` for future
+attention (DPAPI Windows limitation, KDF mix scrypt/Argon2id/n-a, mobile
+Argon2id OOM, OPFS browser availability, AM_AGE_PASSPHRASE security
+classification, CM6 TOML language pack provenance, env:// no-op indirection,
+Tree API base_tree vs if-match correction, multi-recipient rewrap operational
+runbook, Worker stateless-relay terminology vs reality).
+
+**Cost:** ~$3 OpenRouter (3 research lenses × medium-tier + 3 reviewers ×
+medium-tier + aggregator in-context). 6 subagent calls, 2 timeouts (1 in phase 1
+none affected output; 1 in phase 3 file landed before timeout). 4 successful
+critiques.
+
+**What this run unlocked:**
+- Concrete user-journey answers to all 5 maintainer questions, not just
+  architectural sketches.
+- First production-grade use of router fix → real cross-family signal.
+- Identified ADR-0043 needs amendment for CodeMirror 6 (vs implicit Monaco)
+  for hosted UI bundle-size constraints.
+- Identified ADR-0044 placeholder for browser key-provisioning detail
+  (currently in synthesis but warrants formal ADR).
+- Identified ADR-0045 placeholder for WebAuthn PRF / passkey unlock (Tier 3).
+
+**Open follow-ups:**
+1. ADR-0044 draft: browser key provisioning (Option A passphrase-only is MVP).
+2. ADR-0045 placeholder: WebAuthn PRF / Tier-3 passkey unlock.
+3. ADR-0043 amendment: switch hosted-UI editor from Monaco to CodeMirror 6.
+4. Implement `supportsEnvRefResolution` capability on AdapterMeta + plumb
+   through `apply` → estimated 2-3 days.
+5. Implement URI-scheme dispatcher with execution-context fence (browser must
+   error cleanly on `op://`, `env://`, `keychain://`) → 1-2 days.
+6. Implement `config_template` SIGTERM + stale-file sweeper → 1 day.
+7. Audit all 13 IDE adapters for actual envFile/env-ref-resolution support;
+   replace "~50% claim" with verified data.
+8. Address P2 backlog — most are documentation deltas, low total effort.
