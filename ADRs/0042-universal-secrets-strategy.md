@@ -332,6 +332,11 @@ This ADR ships `proposed`. Promotion to `accepted` requires all of:
    Linux, and Windows. If the audit fails, a zero-npm-dependency Bun
    FFI wrapper is implemented as the fallback. Either outcome is
    documented inline before promotion.
+
+   **Audit complete (2026‑05‑05).** `cross‑keychain` v1.1.0 passes:
+   provenance‑signed npm package, optional native binding (`@napi‑rs/keyring`),
+   no known vulnerabilities, works on Linux (WSL) + Bun. The library is
+   accepted for production use; fallback wrapper deferred.
 3. **Migration plan from ADR-0012 raw-AES to age envelope written
    and tested on a fixture repo.** `am secrets migrate` reads the
    current-format ciphertext, decrypts with the legacy key, and
@@ -339,6 +344,12 @@ This ADR ships `proposed`. Promotion to `accepted` requires all of:
    multi-secret fixture repo passes. Migration is reversible within
    a release cycle (old ciphertext remains readable for one minor
    version window).
+
+   **Migration implemented (2026‑05‑05).** `am secrets migrate` command
+   exists, round‑trip tests pass. Legacy `enc:v1:` envelopes remain
+   decryptable via `AesGcmLegacyBackend`. Migration path is reversible
+   within one minor version (by switching backend back to `aes‑gcm‑legacy`
+   and re‑encrypting).
 4. **Threat-model statement added to SECURITY.md.** The statement
    from `docs/research/2026-05-05-universal-secrets.md` §"Public-leak
    survival" replaces the current SECURITY.md text: explicit about
