@@ -247,16 +247,28 @@ async function runRotate(
     await backend.finalizeRotation();
   }
 
+  const isImmediateCutover = ctx.gracePeriodDays === 0;
+  const stagedPaths = isImmediateCutover
+    ? [
+        ...targets,
+        backend.getIdentityPath(),
+        // identity.age.old already deleted by finalizeRotation() above
+        // _rotation-old.pub was never written for grace=0
+        backend.getRotationStatePath(),
+      ]
+    : [
+        ...targets,
+        backend.getIdentityPath(),
+        `${backend.getIdentityPath()}.old`,
+        join(backend.getRecipientsDir(), "_rotation-old.pub"),
+        backend.getRotationStatePath(),
+      ];
   await bestEffortCommitSecretsChanges(
     ctx.configDir,
-    [
-      ...targets,
-      backend.getIdentityPath(),
-      `${backend.getIdentityPath()}.old`,
-      join(backend.getRecipientsDir(), "_rotation-old.pub"),
-      backend.getRotationStatePath(),
-    ],
-    `secrets(rotate): generate new identity + dual-encrypt for grace_period_days=${ctx.gracePeriodDays}`,
+    stagedPaths,
+    isImmediateCutover
+      ? "secrets(rotate): generate new identity (immediate cutover, grace_period_days=0)"
+      : `secrets(rotate): generate new identity + dual-encrypt for grace_period_days=${ctx.gracePeriodDays}`,
     ctx.opts,
   );
 
@@ -410,7 +422,17 @@ async function runFinalize(
   // The archived identity + state file are untouched, so the rotation
   // is left in the same dual-encrypt state it was in before finalize.
   if (totalSkipped > 0 || totalRewrapped < totalFound) {
-    await backend.restoreOldRecipient(prepared);
+    try {
+      await backend.restoreOldRecipient(prepared);
+    } catch (restoreErr) {
+      const reason = restoreErr instanceof Error ? restoreErr.message : String(restoreErr);
+      const hint = `WARN: failed to restore OLD recipient sidecar (${reason}). Manual recovery: run 'age-keygen -y identity.age.old > recipients/_rotation-old.pub' to reconstruct it.`;
+      if (ctx.json) {
+        output({ action: "rotate-finalize", error: hint, state: prepared }, ctx.opts);
+      } else {
+        info(hint, ctx.opts);
+      }
+    }
     const msg = `Finalize aborted: rewrap reported ${totalSkipped} skipped and ${totalFound - totalRewrapped} unrewrapped envelope(s) across ${stats.length} file(s). Old recipient restored; rotation remains in dual-encrypt grace state. Inspect the offending envelopes and retry.`;
     if (ctx.json) {
       output(
