@@ -680,6 +680,7 @@ export class AgeSecretsBackend implements SecretsBackend {
 
     // 2. Generate the NEW identity + prompt for a NEW passphrase.
     const newIdentity = await generateIdentity();
+    const newRecipient = await identityToRecipient(newIdentity);
     const newPassphrase = await this.#passphraseProvider("create");
     if (newPassphrase.length === 0) {
       throw new Error("AgeSecretsBackend.rotateIdentity: new passphrase must be non-empty.");
@@ -688,33 +689,12 @@ export class AgeSecretsBackend implements SecretsBackend {
     encrypter.setPassphrase(newPassphrase);
     const newWrapped = await encrypter.encrypt(newIdentity);
 
-    // 3. Atomically replace the active identity file with the new one.
-    await atomicWriteFile(this.#identityPath, Buffer.from(newWrapped), { mode: 0o600 });
-
-    // 4. Refresh in-memory state so subsequent calls use the new identity.
-    //    Push the OLD identity onto the legacy-decrypt list so envelopes
-    //    encrypted to the old recipient remain decryptable until rewrap
-    //    completes (ADR-0051 grace window).
-    this.#identity = newIdentity;
-    this.#recipient = await identityToRecipient(newIdentity);
-    this.#legacyIdentities.push(oldIdentity);
-
-    // 5. Refresh keychain cache to the new passphrase (best-effort).
-    const kc = await this.#resolveKeychain();
-    await keychainSetSafe(kc, this.#keychainService, this.#keychainAccount, newPassphrase);
-
-    // 6. Register the OLD recipient as a sidecar so the standard
-    // rewrap/encrypt flow targets both. Skipped when grace is 0
-    // (immediate cutover).
-    if (opts.gracePeriodDays > 0) {
-      await mkdir(this.#recipientsDir, { recursive: true });
-      const body = renderRecipientFile(oldRecipient, new Date().toISOString(), "_rotation-old");
-      await atomicWriteFile(join(this.#recipientsDir, OLD_RECIPIENT_FILENAME), body, {
-        mode: 0o644,
-      });
-    }
-
-    // 7. Persist the rotation-state sidecar.
+    // 3. Persist the rotation-state sidecar BEFORE swapping the active
+    //    identity. Crash-recovery invariant: if .am-rotation-state.json
+    //    exists on disk, the on-disk identity may be either old or new
+    //    (we don't yet know which) — the state file tells subsequent
+    //    runs that a rotation is in flight and which recipients to
+    //    target. ADR-0051 §crash-recovery (cross-family review fix).
     const startedAt = new Date();
     const graceUntil =
       opts.gracePeriodDays > 0
@@ -722,7 +702,7 @@ export class AgeSecretsBackend implements SecretsBackend {
         : startedAt.toISOString();
     const state: RotationState = {
       old_recipient: oldRecipient,
-      new_recipient: this.#recipient,
+      new_recipient: newRecipient,
       started_at: startedAt.toISOString(),
       grace_until: graceUntil,
       grace_period_days: opts.gracePeriodDays,
@@ -730,6 +710,35 @@ export class AgeSecretsBackend implements SecretsBackend {
     await atomicWriteFile(this.getRotationStatePath(), `${JSON.stringify(state, null, 2)}\n`, {
       mode: 0o600,
     });
+
+    // 4. Register the OLD recipient as a sidecar so the standard
+    // rewrap/encrypt flow targets both. Skipped when grace is 0
+    // (immediate cutover).
+    if (opts.gracePeriodDays > 0) {
+      await mkdir(this.#recipientsDir, { recursive: true });
+      const body = renderRecipientFile(oldRecipient, startedAt.toISOString(), "_rotation-old");
+      await atomicWriteFile(join(this.#recipientsDir, OLD_RECIPIENT_FILENAME), body, {
+        mode: 0o644,
+      });
+    }
+
+    // 5. Atomically replace the active identity file with the new one.
+    //    From this point on, fresh CLI processes will load the NEW key.
+    //    The state file written at step 3 ensures #hydrateLegacyIdentities
+    //    will read identity.age.old + dual-decrypt during the window.
+    await atomicWriteFile(this.#identityPath, Buffer.from(newWrapped), { mode: 0o600 });
+
+    // 6. Refresh in-memory state so subsequent calls use the new identity.
+    //    Push the OLD identity onto the legacy-decrypt list so envelopes
+    //    encrypted to the old recipient remain decryptable until rewrap
+    //    completes (ADR-0051 grace window).
+    this.#identity = newIdentity;
+    this.#recipient = newRecipient;
+    this.#legacyIdentities.push(oldIdentity);
+
+    // 7. Refresh keychain cache to the new passphrase (best-effort).
+    const kc = await this.#resolveKeychain();
+    await keychainSetSafe(kc, this.#keychainService, this.#keychainAccount, newPassphrase);
 
     return state;
   }
@@ -855,6 +864,56 @@ export class AgeSecretsBackend implements SecretsBackend {
 
     // Refresh the keychain cache with the now-known-good passphrase.
     await keychainSetSafe(kc, this.#keychainService, this.#keychainAccount, passphrase);
+
+    // ADR-0051 grace window: if a rotation is in progress on disk
+    // (state file exists AND identity.age.old exists), hydrate the
+    // legacy-decrypt list so envelopes encrypted to the OLD recipient
+    // remain decryptable across CLI process boundaries. Without this,
+    // every fresh `am secrets <verb>` process starts with an empty
+    // legacy list and old-recipient envelopes fail to decrypt during
+    // the grace window.
+    await this.#hydrateLegacyIdentities();
+  }
+
+  /**
+   * Read .am-rotation-state.json (if present) + identity.age.old (if
+   * present) and populate #legacyIdentities so the decrypter can
+   * decrypt envelopes still encrypted to the OLD recipient. Best-effort:
+   * silently no-ops when no rotation is in progress, when the archived
+   * identity is missing, or when the new passphrase fails to unlock the
+   * archive (in which case the user's already had to enter the new
+   * passphrase to reach this point — the OLD passphrase is unknown to
+   * us). ADR-0051 cross-process grace-window fix.
+   */
+  async #hydrateLegacyIdentities(): Promise<void> {
+    const state = await this.readRotationState();
+    if (!state) return;
+
+    const oldIdentityPath = join(dirname(this.#identityPath), IDENTITY_OLD_FILENAME);
+    if (!(await pathExists(oldIdentityPath))) return;
+
+    // Try the keychain-cached NEW passphrase first (works when user
+    // kept the same passphrase across rotation). Then try the OLD
+    // passphrase env var. Without one of those we silently give up;
+    // decrypt of old envelopes will fail with the standard error.
+    const oldWrapped = await readFile(oldIdentityPath);
+    const kc = await this.#resolveKeychain();
+    const candidates: string[] = [];
+    const cachedNew = await keychainGetSafe(kc, this.#keychainService, this.#keychainAccount);
+    if (cachedNew) candidates.push(cachedNew);
+    if (process.env.AM_AGE_OLD_PASSPHRASE) candidates.push(process.env.AM_AGE_OLD_PASSPHRASE);
+    if (process.env.AM_AGE_PASSPHRASE) candidates.push(process.env.AM_AGE_PASSPHRASE);
+
+    for (const pass of candidates) {
+      const oldId = await tryDecryptIdentity(oldWrapped, pass);
+      if (oldId) {
+        this.#legacyIdentities.push(oldId);
+        return;
+      }
+    }
+    // Couldn't unlock the old identity with available passphrases.
+    // Decrypt of old-recipient envelopes will fail noisily — that's the
+    // correct fail-mode (rather than silently corrupting state).
   }
 
   async #resolveKeychain(): Promise<KeychainAdapter> {

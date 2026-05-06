@@ -108,11 +108,13 @@ interface Fixture {
  * identity. The caller can then run rotate/revoke/rewrap commands and
  * verify on-disk + decrypt behavior.
  */
-async function makeFixture(opts: { passphrase?: string; configToml?: string } = {}): Promise<Fixture> {
+async function makeFixture(
+  opts: { passphrase?: string; configToml?: string } = {},
+): Promise<Fixture> {
   const dir = await createTestDir("am-secrets-rotate-");
   const identityDir = join(dir.path, "identities");
   const tomlPath = join(dir.path, "fixture.toml");
-  const oldPassphrase = opts.passphrase ?? "old-pw-" + Math.random().toString(36).slice(2, 10);
+  const oldPassphrase = opts.passphrase ?? `old-pw-${Math.random().toString(36).slice(2, 10)}`;
 
   // Build a setup backend via the public constructor (not getDefaultBackend)
   // so we can inject an in-memory keychain and avoid touching the OS one.
@@ -223,7 +225,9 @@ async function invokeRotate(args: Record<string, unknown>): Promise<void> {
     ...args,
   };
   await (
-    secretsRotateCommand as unknown as { run: (ctx: { args: Record<string, unknown> }) => Promise<void> }
+    secretsRotateCommand as unknown as {
+      run: (ctx: { args: Record<string, unknown> }) => Promise<void>;
+    }
   ).run({ args: full });
 }
 
@@ -250,7 +254,7 @@ describe("ADR-0051 `am secrets rotate` — Phase 1 verification gates", () => {
     process.env.AM_AGE_IDENTITY_DIR = fx.identityDir;
     process.env.AM_AGE_PASSPHRASE = fx.oldPassphrase;
     process.env.AM_SECRETS_BACKEND = "age";
-    delete process.env.AM_AGE_NEW_PASSPHRASE;
+    process.env.AM_AGE_NEW_PASSPHRASE = undefined;
     captureConsole();
     process.exitCode = 0;
   });
@@ -378,9 +382,7 @@ describe("ADR-0051 `am secrets rotate` — Phase 1 verification gates", () => {
     expect(String(payload.error)).toMatch(/grace period not elapsed/i);
 
     // Sidecar and state are still intact — the command refused to finalize.
-    await expect(
-      readFile(join(fx.identityDir, ".am-rotation-state.json")),
-    ).resolves.toBeDefined();
+    await expect(readFile(join(fx.identityDir, ".am-rotation-state.json"))).resolves.toBeDefined();
   });
 
   test("gate-5 corollary: --force overrides the grace-window check", async () => {
@@ -401,9 +403,7 @@ describe("ADR-0051 `am secrets rotate` — Phase 1 verification gates", () => {
     expect(process.exitCode ?? 0).toBe(0);
 
     // State cleared → rotation considered complete.
-    await expect(
-      readFile(join(fx.identityDir, ".am-rotation-state.json")),
-    ).rejects.toThrow();
+    await expect(readFile(join(fx.identityDir, ".am-rotation-state.json"))).rejects.toThrow();
   });
 
   // Gate 7: dry-run reports without writing.
@@ -435,9 +435,7 @@ describe("ADR-0051 `am secrets rotate` — Phase 1 verification gates", () => {
     expect(after.toml).toBe(before.toml);
     expect(Buffer.compare(after.identity, before.identity)).toBe(0);
     expect(await oldExists(join(fx.identityDir, "identity.age.old"))).toBe(false);
-    expect(
-      await oldExists(join(fx.identityDir, "recipients", "_rotation-old.pub")),
-    ).toBe(false);
+    expect(await oldExists(join(fx.identityDir, "recipients", "_rotation-old.pub"))).toBe(false);
     expect(await oldExists(join(fx.identityDir, ".am-rotation-state.json"))).toBe(false);
   });
 
@@ -510,9 +508,7 @@ grace_period_days = 0
       }
     };
     expect(await noFile(join(fx.identityDir, "identity.age.old"))).toBe(true);
-    expect(
-      await noFile(join(fx.identityDir, "recipients", "_rotation-old.pub")),
-    ).toBe(true);
+    expect(await noFile(join(fx.identityDir, "recipients", "_rotation-old.pub"))).toBe(true);
     expect(await noFile(join(fx.identityDir, ".am-rotation-state.json"))).toBe(true);
 
     // Old identity cannot decrypt the rewrapped envelope.
