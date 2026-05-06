@@ -22,16 +22,25 @@ async function resolveValue<T>(value: Resolvable<T> | undefined): Promise<T | un
  * eagerly so `.meta.name` works, but TypeScript rejects the property access.
  * Use this helper to resolve the type at the test boundary.
  */
+// NB: Promise<any> is intentional. callers use property access on the
+// result (e.g. `meta.name`, `subCommands.add`); switching to
+// Promise<unknown> requires type narrowing at every call site (~12
+// places) which would regress the typecheck-error reduction this helper
+// is designed to deliver. Reviewer (claude-opus-4.7) flagged the `any`
+// as a nit; the tradeoff is documented here. Revisit when migrating
+// the helper to a typed wrapper API.
 export async function resolveMeta(cmd: unknown): Promise<any> {
   return (await resolveValue((cmd as CommandLike).meta))!;
 }
 
 /** Resolve citty's Resolvable<SubCommandsDef> wrapper. */
+// biome-ignore lint/suspicious/noExplicitAny: see resolveMeta above.
 export async function resolveSubCommands(cmd: unknown): Promise<any> {
   return (await resolveValue((cmd as CommandLike).subCommands))!;
 }
 
 /** Resolve citty's Resolvable<ArgsDef> wrapper. */
+// biome-ignore lint/suspicious/noExplicitAny: see resolveMeta above.
 export async function resolveArgs(cmd: unknown): Promise<any> {
   return (await resolveValue((cmd as CommandLike).args))!;
 }

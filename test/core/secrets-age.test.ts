@@ -605,4 +605,25 @@ describe("AgeSecretsBackend — readRotationState fail-closed", () => {
     );
     await rm(tmpDir, { recursive: true, force: true });
   });
+
+  test("rotation-state with malformed recipient (not age1...) throws actionable error", async () => {
+    const { backend, tmpDir } = await makeBackend();
+    const statePath = backend.getRotationStatePath();
+    // Write JSON with non-age recipients.
+    await writeFile(
+      statePath,
+      JSON.stringify({
+        old_recipient: "not-an-age-key",
+        new_recipient: "age1abc",
+        started_at: new Date().toISOString(),
+        grace_until: new Date().toISOString(),
+        grace_period_days: 14,
+      }),
+    );
+    await expect(backend.readRotationState()).rejects.toThrow(/age1|recipient/i);
+    await expect(backend.readRotationState()).rejects.toThrow(
+      new RegExp(statePath.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")),
+    );
+    await rm(tmpDir, { recursive: true, force: true });
+  });
 });
