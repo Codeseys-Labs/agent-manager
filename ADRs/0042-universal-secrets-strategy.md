@@ -1,6 +1,7 @@
 ---
 status: proposed
 date: 2026-05-05
+amended_by: ADR-0047
 ---
 
 # ADR-0042: Universal Secrets Strategy — age envelope + Argon2id-passphrase + OS keychain cache
@@ -355,11 +356,21 @@ This ADR ships `proposed`. Promotion to `accepted` requires all of:
    survival" replaces the current SECURITY.md text: explicit about
    what is and is not hidden (values hidden; names, file paths,
    commit history not hidden).
-5. **`am pair` command surface designed and documented.** The four
+5. **`am pair` command surface designed and documented.** ~~The four
    verbs (`pair add`, `pair accept`, `secrets rewrap`, `secrets
    rotate`) have usage docs in `docs/` with worked examples for the
    two-machine and three-machine cases. The one-time pair token
-   format is specified (payload, encoding, expiry).
+   format is specified (payload, encoding, expiry).~~
+
+   **Design closed by [ADR-0047](0047-am-pair-cross-device-key-handoff.md)
+   (accepted 2026-05-05).** ADR-0047 replaces the sketched
+   `pair add` / token flow with a git-native rendezvous: `am pair
+   accept <name>` on the new device publishes `recipients/<name>.pub`
+   via the config repo, and `am pair finalize` on an existing device
+   pulls, rewraps, and pushes. No pairing token is emitted. See
+   ADR-0047 for the full flow, trade-offs, and deferred items.
+   Implementation of the two verbs is tracked under this ADR's
+   broader acceptance criteria.
 
 If any of (1)–(5) is unmet at promotion time, this ADR stays
 `proposed` and the maintainer must address the gap or fold it into a

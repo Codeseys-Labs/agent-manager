@@ -1,137 +1,95 @@
-# Security
+# Security Policy
 
-agent-manager is a local, single-user tool that stores AI tool configuration
-(including encrypted secrets) in a git-backed directory. This document explains
-the secrets storage model and its trust boundaries.
+## Reporting a Vulnerability
 
-## Reporting a vulnerability
+Please report any security vulnerabilities to security@agent-manager.dev. We also accept reports via GitHub Private Vulnerability Reporting on this repository.
 
-Please open a private security advisory on the GitHub repository or email the
-maintainers directly rather than filing a public issue.
+We aim to triage reports within 48 hours and typically operate under a 90-day disclosure window before making vulnerability details public. Please do not open public issues for security vulnerabilities.
 
-## Secrets: encryption at rest
+## Supported Versions
 
-Every value written via `am secret set` (and auto-encrypted values from
-`am secret scan --fix` / `am add` / `am import`) is encrypted with **AES-256-GCM**
-and stored as `enc:v1:<nonce_b64>:<ciphertext_b64>` in `config.toml`.
+We provide security updates for the current major version (1.x).
+Security fixes will be backported to minor releases within the current major version as needed. Legacy major versions will not receive backported security fixes unless specifically announced.
 
-- Algorithm: AES-GCM, 256-bit key
-- Nonce: 12 bytes, `crypto.getRandomValues` per encrypt
-- Key format: raw 256-bit key, base64-encoded, stored in a single file
-- Passphrase/KDF: not yet (tracked as a future hardening)
+## Threat Model
 
-## Master key location
+The `agent-manager` security architecture is designed to protect your secrets and AI agent configurations, treating your Git repository as the source of truth. We use a structured approach to understand and mitigate threats to this model.
 
-The AES master key is stored **outside** the agent-manager config directory
-specifically because `config.toml`, `.gitignore`, and every other file in the
-config dir is version-controlled and may be pushed to a user-owned git remote
-(`am sync push`). Storing the key inside the config dir risked committing it
-alongside the ciphertext it protects.
+### 1. Secret-at-Rest Compromise (Public Repo Leak)
+**Defended Against:** Accidental or malicious exposure of your Git repository (e.g., making a private repo public, or a git host compromise).
+**Not Defended Against:** Weak master passphrases. The confidentiality of your secrets relies entirely on the strength of your passphrase.
+**Mechanisms:**
+- Secrets are encrypted using an `age` envelope (X25519 + ChaCha20-Poly1305).
+- The Key Encryption Key (KEK) is derived from your master passphrase using Argon2id (m=128 MiB, t=3, p=4 minimums).
+- **Out of Scope:** Filenames, variable names, and Git commit history are NOT encrypted. These are considered metadata and are visible in a compromised or public repository.
+**Detective Controls:** Keep an eye on your GitHub/GitLab "Public" repository lists and audit access logs if available.
+**User Responsibilities:** Choose a strong master passphrase (14+ characters) and avoid reusing it.
 
-The key path is resolved by `resolveKeyPath()` in `src/core/secrets.ts`:
+### 2. Secret-in-Transit Interception
+**Defended Against:** Network interception of secrets while syncing with remote Git repositories or fetching configurations.
+**Not Defended Against:** Compromise of the TLS termination endpoints (e.g., malicious proxies if you ignore certificate warnings). TLS pinning is explicitly out of scope.
+**Mechanisms:**
+- All remote communication (git push/pull, fetch) mandates HTTPS.
 
-| Platform | Path |
-| --- | --- |
-| macOS | `~/Library/Application Support/agent-manager/key` |
-| Linux | `$XDG_DATA_HOME/agent-manager/key` (default `~/.local/share/agent-manager/key`) |
-| Windows | `%APPDATA%/agent-manager/key` |
-| Override | `AM_KEY_PATH=/absolute/path` (takes precedence on every platform) |
+### 3. Key-Leak via Repository Clone
+**Defended Against:** An attacker obtaining your encrypted configuration repository without your master passphrase.
+**Mechanisms:**
+- The private age identity (`identity.age`) is stored in the repository but remains encrypted at rest, wrapped by the KEK derived from your passphrase.
+- Public keys (`recipients/<hostname>.pub`) are stored in plaintext to allow other paired devices to encrypt secrets for you, but they cannot be used for decryption.
 
-The file is always written with mode `0600`. `saveKey` creates parent
-directories as needed.
+### 4. Key-Leak via Environment Variable Snapshot
+**Defended Against:** Accidental inclusion of plaintext secrets in standard Git tracked files or process dumps.
+**Mechanisms:**
+- Secrets are injected into the agent environment at runtime and are never written to disk in plaintext within the repository workspace.
 
-### Loading priority
+### 5. Browser Side-Channel / XSS (Hosted UI)
+**Defended Against:** N/A (Deferred).
+**Mechanisms:**
+- Per ADR-0042 §3, browser-side decryption for the Web UI is currently deferred. If implemented in the future, it aims to rely on `age-wasm` and `argon2-browser` with IndexedDB/Passkeys to prevent KEK exfiltration to LocalStorage.
+**Out of Scope:** Currently, the Web UI does not handle decrypted secrets directly. Full mitigation of browser side-channels is pending architectural implementation.
 
-`loadKey(configDir)` tries, in order:
+### 6. Supply-Chain Attack on Dependencies
+**Defended Against:** Malicious updates to critical cryptographic dependencies (e.g., the Bitwarden "Shai-Hulud 2.0" incident).
+**Mechanisms:**
+- We audit transitive dependencies using `bun pm audit`.
+- Git-installed packages are pinned by exact SHA hash.
+- All new dependencies require a mandatory security review note during the PR process (see ADR-0042).
+- We utilize audited packages like `cross-keychain` and plan for `argon2-browser` based on rigorous internal review.
 
-1. `AM_ENCRYPTION_KEY` environment variable (base64).
-2. Auto-migration of any legacy `configDir/.agent-manager/key.txt` into the
-   OS data-dir path.
-3. The OS data-dir path returned by `resolveKeyPath()`.
+### 7. MCP Server Impersonation
+**Defended Against:** N/A in v1.
+**Mechanisms:**
+- Signed manifests for MCP servers are not supported in version 1.
+- You must trust the MCP server URL or local path you configure.
 
-If none of those yield a key, `loadKey` returns `null` and `am secret`
-operations tell the user to run `am secret generate-key`.
+### 8. Misconfigured Permissions on Shared Config
+**Defended Against:** N/A.
+**User Responsibilities:** `agent-manager` relies on the host OS file permissions and Git access controls. Ensure your repository permissions on your Git host and your local file system permissions are correctly configured.
 
-### Migration
+## Cryptographic Posture
 
-On first `loadKey` call after upgrading:
+| State | Algorithms & Standards | Notes |
+| :--- | :--- | :--- |
+| **At-Rest** | `age` + Argon2id | Argon2id params: m=128 MiB, t=3, p=4 (floor, configurable). |
+| **In-Transit** | HTTPS | TLS required for git/fetch operations. TLS pinning out of scope. |
+| **Browser** | `age-wasm` + `argon2-browser` | Planned implementation per ADR-0042 §3. Currently deferred. |
 
-- If `configDir/.agent-manager/key.txt` exists and the new path does not,
-  the legacy file is moved to the new path (mode `0600`) and deleted.
-  A one-line info message is printed to stderr.
-- If **both** exist, the new path is used and the user is warned about the
-  legacy file. This situation is only possible via manual copy or a
-  downgraded install; the tool will never re-create the legacy file.
+## Dependency Hygiene
 
-### Safety nets
+Securing the supply chain is critical, especially after incidents like the Bitwarden CLI "Shai-Hulud 2.0" attack in early 2026.
+- We rely on `bun pm audit` to continuously monitor for known vulnerabilities in our dependency tree.
+- Any package installed directly from a Git repository MUST be pinned to a specific commit SHA, not a branch or tag.
+- Introducing a new dependency requires explicit justification and a security review note in the Pull Request. See ADR-0042 for our complete supply-chain strategy.
 
-- `src/core/git.ts` initializes every config dir with a `.gitignore` that
-  excludes legacy key paths (`.agent-manager/key.txt`, `.agent-manager/key*`,
-  `**/key.txt`). This protects users who restore an older setup or receive
-  a config dir from another machine.
-- `am doctor` reports the resolved key path, whether the key is present, and
-  prints a high-visibility warning if a legacy key file is found inside the
-  git-tracked config dir (indicating the user should delete it and rotate).
-- `am mcp-serve` reports the same checks via the `am_doctor` MCP tool.
+## Known Limitations
 
-## Things this does NOT protect against
+- **Git-Backed Marketplaces (Retired):** In v1, git-backed marketplaces (which have since been retired per ADR-0039) lacked signature verification mechanisms.
+- **MCP Server Manifests:** Version 1 does not enforce or verify cryptographic signatures on MCP server manifests.
+- **Metadata Visibility:** Important context (filenames, variable names, network connection destinations) remains plaintext in the repository.
 
-- An attacker with read access to the user account on the machine can read
-  the key and decrypt all secrets. The key is unwrapped and not passphrase-
-  protected.
-- A hostile adapter or marketplace package registered by the user runs under
-  the user's full privileges (see `docs/reviews/2026-04-16-multi-agent-deep-analysis/07-security.md`
-  for the broader threat model).
-- `am mcp-serve` write-tier tools require a bearer token (`AM_MCP_TOKEN`) or
-  explicit `AM_MCP_ALLOW_UNSAFE_LOCAL=1`, but read-only tools remain open.
+## Cross-References
 
-## Plaintext in downstream config files
-
-`am`'s value-prop is generating native config files for ~13 IDEs from one
-encrypted source of truth. At `am apply` time, secrets are necessarily
-**decrypted** — `src/core/secrets.ts::interpolateEnvAsync` resolves
-`${VAR}` and `enc:v1:` ciphertext into plaintext, then
-`src/core/controller.ts::applyResolved` writes the result to native
-files: `~/.claude.json`, `~/.codex/*`, `~/.config/Continue/*`, etc.
-Those files are **plaintext on disk**. This is unavoidable; the IDE
-itself reads them.
-
-The encryption boundary is `config.toml` (the canonical store), NOT the
-downstream files. Treat the downstream files as you would any plaintext
-secret material:
-
-- Do not commit them to git. Most IDE configs are already in your global
-  `.gitignore`; verify before adding new tools.
-- Do not sync them to a non-encrypted backup.
-- Be aware that `git status` outside the `am` config repo may show them
-  as untracked changes if they live inside a project.
-
-The only `am`-side guard against accidental leakage is
-`scanServersForUrlCredentials` in `src/core/url-credentials.ts`, which
-refuses to write servers whose URL fields embed credentials (e.g.
-`https://user:pass@host`). Other plaintext leak paths — env vars,
-header secrets, command-line tokens — are written as-is, by design.
-
-## Rotating the key
-
-There is no in-place rotation command yet. The safe procedure is:
-
-1. `am secret get` each secret and note the plaintext values.
-2. Delete the key file at the path reported by `am doctor`.
-3. `am secret generate-key` to create a fresh key.
-4. `am secret set` each secret with the plaintext values from step 1.
-
-Any committed ciphertext encrypted with the old key becomes undecryptable
-after step 2, so step 1 must happen first.
-
-## What to do if a key was committed
-
-If you find that an older key file was committed to a remote:
-
-1. **Assume every encrypted value in the history is compromised.** Rotate
-   every upstream credential (API keys, tokens, etc.) at the source.
-2. Delete the key file from the working tree and commit the removal.
-3. Purge the file from git history (BFG Repo-Cleaner or `git filter-repo`)
-   and force-push. Notify anyone with a clone that they need to re-clone.
-4. Run `am secret generate-key` to create a fresh key and re-encrypt your
-   secrets with the rotated credentials.
+- [ADR-0042: Universal Secrets Strategy](docs/architecture/decisions/0042-universal-secrets.md) (Context on encryption at rest, in transit, and supply chain).
+- [ADR-0046: Rejection of Team Passphrases](docs/architecture/decisions/0046-team-passphrase-rejection.md) (Rationale for explicit pairing vs shared keys).
+- [ADR-0019: Security Hardening](docs/architecture/decisions/0019-security-hardening.md) (Broader security context and foundational decisions).
+- [ADR-0039: Retirement of Git-Backed Marketplaces](docs/architecture/decisions/0039-retire-git-marketplaces.md) (Context on legacy marketplace limitations).
