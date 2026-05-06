@@ -246,16 +246,19 @@ describe("am session", () => {
   describe("command structure", () => {
     test("sessionCommand has list, export, and search subcommands", async () => {
       const { sessionCommand } = await import("../../src/commands/session");
-      expect(sessionCommand.meta?.name).toBe("session");
-      expect(sessionCommand.subCommands).toBeDefined();
-      expect(sessionCommand.subCommands?.list).toBeDefined();
-      expect(sessionCommand.subCommands?.export).toBeDefined();
-      expect(sessionCommand.subCommands?.search).toBeDefined();
+      const { resolveMeta, resolveSubCommands } = await import("../helpers/citty");
+      expect((await resolveMeta(sessionCommand))?.name).toBe("session");
+      const subs = await resolveSubCommands(sessionCommand);
+      expect(subs).toBeDefined();
+      expect(subs?.list).toBeDefined();
+      expect(subs?.export).toBeDefined();
+      expect(subs?.search).toBeDefined();
     });
 
     test("description disambiguates transcript harvest from live ACP sessions (ADR-0031 M2)", async () => {
       const { sessionCommand } = await import("../../src/commands/session");
-      const desc = sessionCommand.meta?.description ?? "";
+      const { resolveMeta } = await import("../helpers/citty");
+      const desc = (await resolveMeta(sessionCommand))?.description ?? "";
       // Transcript-centric phrasing + pointer to the live ACP surface.
       expect(desc.toLowerCase()).toContain("transcript");
       expect(desc).toContain("am run session");

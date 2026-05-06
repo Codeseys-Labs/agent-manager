@@ -32,8 +32,9 @@ describe("TUI", () => {
 
   test("tui command can be imported", async () => {
     const { tuiCommand } = await import("../../src/commands/tui.ts");
+    const { resolveMeta } = await import("../helpers/citty");
     expect(tuiCommand).toBeDefined();
-    expect(tuiCommand.meta?.name).toBe("tui");
+    expect((await resolveMeta(tuiCommand))?.name).toBe("tui");
   });
 
   test("launchTui function is exported", async () => {

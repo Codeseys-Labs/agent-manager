@@ -1,19 +1,21 @@
 import { afterEach, beforeEach, describe, expect, mock, spyOn, test } from "bun:test";
 import { mintSessionToken, serveCommand } from "../../src/commands/serve";
+import { resolveArgs, resolveMeta } from "../helpers/citty";
 
 describe("serve command", () => {
-  test("meta name is 'serve'", () => {
-    expect(serveCommand.meta?.name).toBe("serve");
+  test("meta name is 'serve'", async () => {
+    expect((await resolveMeta(serveCommand))?.name).toBe("serve");
   });
 
-  test("meta has description", () => {
-    expect(serveCommand.meta?.description).toBeTruthy();
-    expect(typeof serveCommand.meta?.description).toBe("string");
+  test("meta has description", async () => {
+    expect((await resolveMeta(serveCommand))?.description).toBeTruthy();
+    expect(typeof (await resolveMeta(serveCommand))?.description).toBe("string");
   });
 
-  test("port arg exists with default '3456'", () => {
-    expect(serveCommand.args?.port).toBeDefined();
-    expect(serveCommand.args?.port?.default).toBe("3456");
+  test("port arg exists with default '3456'", async () => {
+    const args = await resolveArgs(serveCommand);
+    expect(args?.port).toBeDefined();
+    expect(args?.port?.default).toBe("3456");
   });
 
   describe("mintSessionToken (B1 bootstrap)", () => {

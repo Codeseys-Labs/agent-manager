@@ -27,14 +27,16 @@ afterEach(async () => {
 describe("am flow: CLI registration", () => {
   test("flow command exports correctly", async () => {
     const mod = await import("../../src/commands/flow");
+    const { resolveMeta } = await import("../helpers/citty");
     expect(mod.flowCommand).toBeDefined();
-    expect(mod.flowCommand.meta?.name).toBe("flow");
-    expect(mod.flowCommand.meta?.description).toContain("workflow");
+    expect((await resolveMeta(mod.flowCommand))?.name).toBe("flow");
+    expect((await resolveMeta(mod.flowCommand))?.description).toContain("workflow");
   });
 
   test("flow command has expected subcommands", async () => {
     const mod = await import("../../src/commands/flow");
-    const subCommands = mod.flowCommand.subCommands;
+    const { resolveSubCommands } = await import("../helpers/citty");
+    const subCommands = await resolveSubCommands(mod.flowCommand);
     expect(subCommands).toBeDefined();
     expect(subCommands!.run).toBeDefined();
     expect(subCommands!.list).toBeDefined();
@@ -52,7 +54,9 @@ describe("am flow: CLI registration", () => {
 describe("am flow run: argument structure", () => {
   test("run subcommand has expected args", async () => {
     const mod = await import("../../src/commands/flow");
-    const runSub = mod.flowCommand.subCommands!.run;
+    const { resolveSubCommands } = await import("../helpers/citty");
+    const subs = await resolveSubCommands(mod.flowCommand);
+    const runSub = subs!.run;
     const resolved = await (runSub as () => Promise<any>)();
     expect(resolved.args).toBeDefined();
     expect(resolved.args.name).toBeDefined();
@@ -66,7 +70,9 @@ describe("am flow run: argument structure", () => {
 
   test("run subcommand meta is correct", async () => {
     const mod = await import("../../src/commands/flow");
-    const runSub = mod.flowCommand.subCommands!.run;
+    const { resolveSubCommands } = await import("../helpers/citty");
+    const subs = await resolveSubCommands(mod.flowCommand);
+    const runSub = subs!.run;
     const resolved = await (runSub as () => Promise<any>)();
     expect(resolved.meta.name).toBe("run");
     expect(resolved.meta.description).toContain("Run");
@@ -78,7 +84,9 @@ describe("am flow run: argument structure", () => {
 describe("am flow list: argument structure", () => {
   test("list subcommand has expected args", async () => {
     const mod = await import("../../src/commands/flow");
-    const listSub = mod.flowCommand.subCommands!.list;
+    const { resolveSubCommands } = await import("../helpers/citty");
+    const subs = await resolveSubCommands(mod.flowCommand);
+    const listSub = subs!.list;
     const resolved = await (listSub as () => Promise<any>)();
     expect(resolved.args).toBeDefined();
     expect(resolved.args.runsDir).toBeDefined();

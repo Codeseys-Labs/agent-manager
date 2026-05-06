@@ -63,7 +63,8 @@ describe("am list servers", () => {
     // The canonical full-roster view lives at `am agent list`. The help
     // text must disambiguate so users never get surprised.
     const mod = await import("../../src/commands/list");
-    const desc = mod.listCommand.meta?.description ?? "";
+    const { resolveMeta } = await import("../helpers/citty");
+    const desc = (await resolveMeta(mod.listCommand))?.description ?? "";
     expect(desc).toContain("am agent list");
   });
 
