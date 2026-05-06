@@ -1150,3 +1150,94 @@ code doesn't introduce any new TS errors.
   cadence — ADR-0046 was proposed on 2026-05-05 morning and accepted
   by evening, all verification gates met. This is the whole point of
   having gates with concrete implementation requirements.
+
+
+---
+
+## Run 2026-05-05-F — ADR-0044 wiki Wave A (tasks 1-4)
+
+**Baseline:** `3a9b5c8` (post-Run-E doctor scan + wiki plan)
+**HEAD:** `479f61f` — pushed to origin/main (2 commits)
+
+**Trigger:** "Continue as you deem fit" — chose to begin executing the
+12-task wiki plan from Run E. Wave A scope: tasks 1-4 (foundational,
+parallelisable).
+
+**Implementation:**
+
+Task 1 (orchestrator, in-context):
+- Added `WIKI_PROJECT_DIRNAME = ".am-wiki"`,
+  `LEGACY_WIKI_PROJECT_DIRNAME`, `detectLegacyWikiLayout()` to
+  `src/wiki/storage.ts`. Pure detection helper, no filesystem
+  mutations.
+- 7 tests: constants, clean project, only-legacy, only-new, both
+  layouts, symlink-counts (Windows-skip-safe), absolute paths.
+- Committed solo at `270b939`.
+
+Tasks 2-3 (Opus 4.7 subagent, 217s, ~$0.80):
+- Added `materialiseProject(projectDir, slugs)` and
+  `pushToGlobal(projectDir, slug, opts?)` to
+  `src/wiki/storage.ts`. +162 LOC.
+- Idempotent (byte-identical → skipped), overwrite on diff (global
+  wins), conflict semantics with force-override.
+- 14 tests covering happy paths, idempotence, conflict, missing-slug,
+  destination correctness.
+
+Task 4 (DeepSeek V4 Pro subagent, 220s, ~$0.40):
+- Created `src/wiki/agents-md-template.ts` with
+  `WIKI_AGENTS_MD_TEMPLATE` (~2 KB) and
+  `WIKI_AGENTS_MD_SCHEMA_VERSION = "1.0"`.
+- 5 sections (what, read, add, schema, reference); frontmatter pin;
+  cross-refs to ADR-0020 + ADR-0044.
+- 11 tests covering structure, sections, size budget.
+
+Tasks 2/3/4 dispatched as a 2-subagent parallel batch (file-disjoint;
+2+3 share `storage.ts` so they ran in one subagent; 4 in another).
+
+**Cross-family review** (gpt-5.5, grok-4.3, gemini-3.1-pro,
+all on the same diff):
+
+All three CONFIRMED. Findings addressed inline:
+- gpt-5.5 MED: semantic ambiguity on `globalDir` variable name —
+  resolved by renaming to `projectStoreDir` + adding a clarifying
+  comment about ADR-0022's two-tier store layout.
+- gpt-5.5 LOW: AGENTS.md mentioned `sessions` subdir which doesn't
+  exist — replaced with actual subdir list.
+- gemini LOW: non-null assertion `wantedSet!` — left in place
+  (logically safe), backlog item.
+- gemini LOW: atomic write pattern not adopted — backlog.
+- gpt-5.5 LOW: test gaps (perm errors, duplicate slugs across
+  subdirs) — backlog.
+- gemini LOW: `filesAreIdentical` reads full files, no mtime
+  fast-path — backlog (acceptable at wiki sizes).
+- grok LOW: minor (mkdir-in-loop, test string literals) — declined.
+
+**Test count:** Run E 498 → Run F 530 (+32 new wiki tests across 3
+files). 145 wiki suite still green.
+
+**ADR-0044 status:** still `proposed`. Wave A closes plan tasks 1-4
+(of 12). Wave B (commands: init refactor, migrate, publish, pull) =
+plan tasks 5-8; that's the next run's scope (~2-3 hours of subagent
+work).
+
+**Cost:** ~$2 OpenRouter (1 + 1 + 3 reviewers). ~20 min wall-time.
+
+**Process notes:**
+- Splitting tasks 2+3 into one subagent (instead of two) was the
+  right call — they share file ownership. Deep-work-loop hard rule
+  #11 (one file, one owner) was respected.
+- Cross-family review on a 200-LOC additive change with new exports
+  again surfaced one MED finding (semantic ambiguity) that none of
+  the implementer subagents caught. The pattern continues to pay
+  off: review-during, not review-after.
+- The orchestrator-doing-task-1 trade-off worked: small foundational
+  exports + test setup is fine for the orchestrator; tasks 2-4 are
+  bigger and were correctly delegated.
+
+**Open follow-ups (next-run):**
+1. Wave B: tasks 5-8 (init refactor, migrate, publish, pull).
+2. Wave C: tasks 9-12 (gitignore default, command wiring, ADR
+   promotion, ADR-0022 cleanup).
+3. The 5 backlog items from this wave's review (atomic writes,
+   non-null assertion cleanup, perm-error tests, mtime fast-path,
+   etc.).
