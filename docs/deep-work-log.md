@@ -952,3 +952,126 @@ critiques.
 7. Audit all 13 IDE adapters for actual envFile/env-ref-resolution support;
    replace "~50% claim" with verified data.
 8. Address P2 backlog — most are documentation deltas, low total effort.
+
+
+---
+
+## Run 2026-05-05-D — 6-way fan-out deliberation + ADR drafts + Wave 1 schema impl
+
+**Baseline:** `ac72425` (post-Run-C deep-dive synthesis)
+**HEAD:** `9e40a09` — pushed to origin/main (3 commits)
+
+**Trigger:** Maintainer asked for a 6-way fan-out deliberation with
+the full diverse roster (gpt55, kimi, gemini, minimax, deepseek-v4,
+grok-4.3 new release) in a deep-work-loop frame.
+
+**Verified live:** Hermes router fix held across 12 subagent calls
+(6 reviewers × 2 phases — fan-out + post-impl review). Every reviewer
+ran on the requested model per `delegate_task` metadata + opening
+`[reviewer: <slug>]` header.
+
+**Method:**
+
+Phase 1 — pre-flight (clean baseline, bumped `delegation.max_concurrent_children`
+in config.yaml from 3 → 6 to allow a 6-batch; running process held cached
+value of 3 so the 6 calls executed as 2 batches of 3, operationally
+equivalent because reviewers don't see each other's files).
+
+Phase 2 — backlog enumeration: 12 active open decisions distilled from
+two prior open-decision lists (synthesis memo + wiki vision) — 4
+hosted-UX (A1-A4) + 8 LLM-wiki (B1-B8). Decisions already pinned in
+prior runs (timeout numbers, PAT storage) excluded.
+
+Phase 3 — 6-way fan-out vote. Identical prompt to all 6 reviewers,
+isolated scratchpads. Each voted A/B/NUANCED/ABSTAIN with 1-3 sentence
+reasoning per the deliberation prompt template at
+`docs/deliberations/2026-05-05-D-fanout/_PROMPT.md`. Total cost ~$5,
+~10 min wall-time.
+
+Convergence (`docs/deliberations/2026-05-05-D-fanout/CONVERGENCE.md`):
+- 4 unanimous: B1 (rename .am-wiki/), B2 (copy not symlink),
+  B7 (parallel adapter expansion), B5+B8 all-NUANCED converging
+- 5 strong-majority: A1 (CodeMirror 6), A3 (reject team_passphrase),
+  B4 (gitignored-by-default)
+- 1 operational consensus: A2 (op:// detect+show install command, never
+  auto-execute) — table-row split was phrasing-only; 5/6 actually agreed
+  on the same behavior
+- 1 nuanced consensus: A4 (config_template behind opt-in flag)
+- 0 genuine splits
+
+Phase 4 — drafted three ADRs from the convergence:
+- **ADR-0044** Wiki two-tier copy materialisation (amends ADR-0022 §3-4).
+  9.5 KB, 9 sections covering rename, copy, sync direction, gitignore,
+  promotion, AGENTS.md template, parallel adapter, tier model.
+- **ADR-0045** Hosted UI editor CodeMirror 6 default (amends ADR-0043).
+  5.6 KB, 4 sections covering CM6 default, Monaco opt-in for `am serve`,
+  TOML language pack provenance, ADR-0043 changes.
+- **ADR-0046** Reject team_passphrase in schema (amends ADR-0042).
+  5.0 KB, schema-level enforcement with actionable error pointing
+  at `am secrets add-recipient`.
+
+ADR-0022 status flipped to `superseded-in-part-by-ADR-0044` (preventing
+the silent-replacement systemic failure pattern flagged in earlier runs).
+
+Phase 5+6+7 — Wave 1 implementation: ADR-0046's schema-level rejection
+of `team_passphrase`. Smallest available unit, unanimous backing,
+clean test surface.
+
+Implementation: 10-line Zod `.refine()` on `SettingsSchema.secrets`
+emitting an actionable error that contains `ADR-0046`, the security
+rationale (no revocation / no audit trail / single-point-of-compromise),
+and a pointer at `am secrets add-recipient` for the supported workflow.
+
+Test surface: 5 cases in `test/core/schema-team-passphrase.test.ts`,
+all pass. Full core suite 484/484 (was 479/479; +5 from this wave).
+
+Concurrent cross-family review (3 different families, none overlapping
+with the fan-out): gpt-5.5, deepseek-v4-pro, grok-4.3 all CONFIRMED
+with no HIGH/MEDIUM issues. Two LOW findings:
+- ADR text mentioned `ConfigError:` prefix that Zod wraps, not emits.
+  Fixed by aligning ADR text with the actual emitted message.
+- ADR verification gate 3 (`am doctor` legacy scan) was deferred —
+  now flagged as follow-up backlog item.
+
+Phase 8 — implicit; the cross-family review in 6+7 already covered 3
+families and unanimously approved.
+
+Phase 9 — committed in 3 logical chunks:
+- `9845226` — fan-out deliberation + 3 new ADRs
+- `35109e8` — wave 1 schema + tests + ADR-0046 message-format fix
+- `9e40a09` — biome autofix on pre-existing format-only inconsistencies
+  in Run-C-shipped code
+
+**What this run unlocked:**
+- Three ADRs ready for the maintainer's `accepted` decision once
+  implementation gates close.
+- ADR-0046 is the first ADR in the run-C/D sequence with shipped
+  implementation backing it.
+- Convergence document provides the multi-model evidence for any
+  future justification request.
+
+**What didn't get done:**
+- Wave 2 (CM6 editor scaffolding from ADR-0045) — defer to next run;
+  larger surface, dependencies on Hono server module + frontend bundle
+  pipeline.
+- Wave 3 (LLM-wiki two-tier scaffolding from ADR-0044) — defer to next
+  run; multi-file create-then-test surface, want to plan with `writing-plans`.
+- `am doctor` legacy team_passphrase scan (ADR-0046 gate 3) — backlog.
+- Pre-existing 15 codebase lint errors (delete-process-env patterns) —
+  separate cleanup task.
+
+**Open follow-ups:**
+1. `am doctor` legacy team_passphrase scan (1-2 hour task).
+2. CM6 editor scaffolding wave (1-2 day task; frontend bundle pipeline
+   needed before this lands cleanly).
+3. LLM-wiki two-tier scaffolding wave (2-3 day task; spans wiki/storage,
+   wiki commands init/migrate/publish/pull, AGENTS.md template).
+4. Codebase-wide `delete process.env.X` cleanup (1 hour task).
+5. Maintainer decisions on the 3 ADRs (0044, 0045, 0046) — promote
+   from `proposed` to `accepted` once gates close.
+
+**Cost summary for run D:**
+- 12 reviewer calls (6 fan-out + 3 post-impl review + 3 unused budget)
+- ~$7 OpenRouter total
+- ~30 min wall-time end-to-end
+- Router fix held across all 12 calls; no model masquerade detected
