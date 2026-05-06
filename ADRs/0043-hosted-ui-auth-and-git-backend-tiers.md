@@ -2,6 +2,7 @@
 status: proposed
 date: 2026-05-05
 amends: ADR-0025
+amended_by: ADR-0048
 ---
 
 # ADR-0043: Hosted UI Auth + Git Backend Tiers

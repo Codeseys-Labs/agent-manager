@@ -74,6 +74,7 @@ The `agent-manager` security architecture is designed to protect your secrets an
 | :--- | :--- | :--- |
 | **At-Rest** | `age` + Argon2id | Argon2id defaults: m=128 MiB, t=3, p=4. Hard floor: m=8 MiB. Configurable via `settings.secrets.argon2`. |
 | **In-Transit** | HTTPS | TLS required for git/fetch operations. TLS pinning out of scope. |
+| **Forward Secrecy** | NOT provided | Static X25519 recipients mean past ciphertext is compromised if a future identity leaks. Rotation protects future confidentiality only. See ADR-0051. |
 | **Browser** | `age-wasm` + `argon2-browser` | Planned implementation per ADR-0042 §3. Currently deferred. |
 
 ## Dependency Hygiene
