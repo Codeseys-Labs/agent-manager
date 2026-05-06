@@ -400,3 +400,36 @@ partial one and compounding damage.
   rotation is in progress")
 
 3 new tests in `test/core/secrets-age.test.ts` cover all three cases.
+
+
+## Amendment: 2026-05-05 — Finalize-restore recovery hint
+
+**Issue.** The Run K finalize-ordering safety patch (commit `aaefa09`)
+made `runFinalize()` call `restoreOldRecipient(state)` on rewrap
+failure. But `restoreOldRecipient()` itself can fail (disk full,
+permission errors, pre-existing file collision). Without an inner
+guard, the operator sees only the outer rewrap-failure error and
+has no signpost to manual recovery.
+
+**Fix.** Run L commit `7944670` wraps the `restoreOldRecipient()`
+call in try/catch. On failure, an additional WARN is emitted before
+the original error propagates:
+
+```
+WARN: failed to restore OLD recipient sidecar (<reason>).
+Manual recovery: run 'age-keygen -y identity.age.old > recipients/_rotation-old.pub'
+to reconstruct it.
+```
+
+The outer rewrap-failure error still propagates after the warning,
+so exit code is non-zero and the operator's CI / scripts get the
+correct signal.
+
+This closes deepseek's Phase-8 must-fix #2 from Run J review.
+
+**No test added.** The failure mode is hard to inject deterministically
+in a unit test (would need filesystem permission manipulation that
+behaves differently across CI runners). The pattern is conservative:
+log + propagate. If the hint proves useful in production, a future
+amendment can revisit and add an integration test that injects a
+read-only `recipients/` directory.
