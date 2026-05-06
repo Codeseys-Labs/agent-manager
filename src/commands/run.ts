@@ -40,7 +40,6 @@ import {
   type ResolvedVariant,
   VariantResolverError,
   type VariantSource,
-  isVariantsEnabled,
   resolveVariant,
 } from "../core/variant-resolver";
 import type { DryRunEnvelope } from "../lib/dry-run-envelope";
@@ -116,8 +115,7 @@ interface RunAgentArgs {
   timeout?: string;
   noAutoApprove: boolean;
   dryRun: boolean;
-  /** ADR-0036: explicit variant name from `--variant <name>`. Ignored when
-   *  `AM_VARIANTS=1` is not set (see isVariantsEnabled). */
+  /** ADR-0036: explicit variant name from `--variant <name>`. */
   variant?: string;
   json: boolean;
   quiet: boolean;
@@ -299,8 +297,8 @@ export function checkNativeAgentPreflight(command: string, agentName: string): S
  * explains, doesn't assert runnability); a warning is appended instead.
  *
  * A `resolvedVariant` (from ADR-0036) may override the agent's top-level
- * command/args/env. When absent (AM_VARIANTS not set, or the agent declares
- * no variants) the dry-run falls back to the entry's `acp.command`.
+ * command/args/env. When the agent declares no variants the dry-run falls
+ * back to the entry's `acp.command`.
  *
  * `variantSource` explains WHERE the variant was chosen. Null when no
  * variant was selected.
@@ -475,32 +473,22 @@ async function runAgent(args: RunAgentArgs): Promise<void> {
   }
 
   // ADR-0036: resolve variant BEFORE dry-run / tier checks so the preview
-  // and the live path agree on what would be spawned.
-  //
-  // Gating: variants are opt-in via `AM_VARIANTS=1` during the first release
-  // after ADR-0036 accepts. When the flag is off we skip the resolver AND
-  // we refuse an explicit `--variant` flag with an informative error (the
-  // alternative — silently ignoring `--variant` — would surprise the user).
+  // and the live path agree on what would be spawned. Variants are always-on
+  // since the AM_VARIANTS=1 rollout gate was removed (ADR-0036-cleanup).
   let resolvedVariant: ResolvedVariant | null = null;
   let variantSource: VariantSource = null;
-  if (isVariantsEnabled()) {
-    try {
-      resolvedVariant = resolveVariant(agentName, args.variant, globalConfig, projectConfig);
-      // variantSource comes straight from the resolver (ADR-0036) — single
-      // source of truth for where the chosen variant came from.
-      variantSource = resolvedVariant.source;
-    } catch (err: unknown) {
-      if (err instanceof VariantResolverError) {
-        error(err.message, opts);
-        process.exitCode = 1;
-        return;
-      }
-      throw err;
+  try {
+    resolvedVariant = resolveVariant(agentName, args.variant, globalConfig, projectConfig);
+    // variantSource comes straight from the resolver (ADR-0036) — single
+    // source of truth for where the chosen variant came from.
+    variantSource = resolvedVariant.source;
+  } catch (err: unknown) {
+    if (err instanceof VariantResolverError) {
+      error(err.message, opts);
+      process.exitCode = 1;
+      return;
     }
-  } else if (args.variant !== undefined) {
-    error("--variant requires AM_VARIANTS=1 (ADR-0036 is opt-in for this release).", opts);
-    process.exitCode = 1;
-    return;
+    throw err;
   }
 
   // ADR-0033: tier-2 shims that haven't been enabled get a different hint —
@@ -906,7 +894,7 @@ export const runCommand = defineCommand({
     variant: {
       type: "string",
       description:
-        "Variant name to launch this agent with (ADR-0036). Requires AM_VARIANTS=1. Falls back to default_variant or first-defined variant.",
+        "Variant name to launch this agent with (ADR-0036). Falls back to default_variant or sole-variant.",
     },
     json: { type: "boolean", description: "JSON output", default: false },
     quiet: { type: "boolean", alias: "q", description: "Suppress progress output", default: false },

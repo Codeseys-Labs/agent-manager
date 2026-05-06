@@ -14,11 +14,7 @@
 
 import { describe, expect, test } from "bun:test";
 import type { Config, ProjectConfig } from "../../src/core/schema";
-import {
-  VariantResolverError,
-  isVariantsEnabled,
-  resolveVariant,
-} from "../../src/core/variant-resolver";
+import { VariantResolverError, resolveVariant } from "../../src/core/variant-resolver";
 
 // ── Helpers ────────────────────────────────────────────────────
 
@@ -300,21 +296,7 @@ describe("resolveVariant: source attribution", () => {
   });
 });
 
-// ── AM_VARIANTS gating ─────────────────────────────────────────
-
-describe("isVariantsEnabled", () => {
-  test("returns true when AM_VARIANTS=1", () => {
-    expect(isVariantsEnabled({ AM_VARIANTS: "1" } as NodeJS.ProcessEnv)).toBe(true);
-  });
-
-  test("returns false when AM_VARIANTS unset or empty", () => {
-    expect(isVariantsEnabled({} as NodeJS.ProcessEnv)).toBe(false);
-    expect(isVariantsEnabled({ AM_VARIANTS: "" } as NodeJS.ProcessEnv)).toBe(false);
-  });
-
-  test("returns false for non-1 values (strict match)", () => {
-    expect(isVariantsEnabled({ AM_VARIANTS: "true" } as NodeJS.ProcessEnv)).toBe(false);
-    expect(isVariantsEnabled({ AM_VARIANTS: "yes" } as NodeJS.ProcessEnv)).toBe(false);
-    expect(isVariantsEnabled({ AM_VARIANTS: "0" } as NodeJS.ProcessEnv)).toBe(false);
-  });
-});
+// ── isVariantsEnabled (removed) ────────────────────────────────
+//
+// The isVariantsEnabled() function and the AM_VARIANTS=1 rollout gate
+// were removed in ADR-0036-cleanup. Variants are now always-on.

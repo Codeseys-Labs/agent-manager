@@ -244,12 +244,13 @@ The MVP per the "minimum viable implementation" list above has landed:
   (end-to-end `am run --variant` wiring). 23 tests passing at promotion
   time.
 
-**Rollout gate: `AM_VARIANTS=1`.** Per the original plan, the feature
-ships behind an env-var gate for the first release after acceptance.
-The gate is checked in `src/commands/run.ts` before the resolver is
-consulted; absent the flag, the pre-variants code path runs unchanged.
-The gate is removed in the release-after-next once real-world usage
-confirms stability.
+**Rollout gate: `AM_VARIANTS=1` — REMOVED.** Per the original plan, the feature
+shipped behind an env-var gate for the first release after acceptance.
+The gate was checked in `src/commands/run.ts` before the resolver was
+consulted; absent the flag, the pre-variants code path ran unchanged.
+**The gate was removed in commit <placeholder> (ADR-0036-cleanup).**
+Variants are now always-on — the resolver runs unconditionally whenever
+`am run` is invoked.
 
 **Explicitly still out-of-scope (unchanged from the original ADR):**
 A2A variants, `am_agent_invoke` MCP `variant` parameter, per-variant

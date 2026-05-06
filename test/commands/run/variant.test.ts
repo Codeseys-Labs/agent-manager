@@ -4,8 +4,7 @@
  * parser), focusing on:
  *
  *   - `--variant` flag is declared on runCommand
- *   - AM_VARIANTS=1 gating: `--variant` without the flag set errors out
- *   - When AM_VARIANTS=1 is set and variants exist, dry-run surfaces the
+ *   - Variants are always-on since the AM_VARIANTS=1 rollout gate was removed.
  *     resolved variant's command/args/env in the explanation
  *   - Unknown variant name yields the "available: …" error message
  *
@@ -93,7 +92,6 @@ AWS_REGION = "us-east-1"
 describe("am run --variant (ADR-0036)", () => {
   let dir: TestDir;
   const originalConfigDir = process.env.AM_CONFIG_DIR;
-  const originalAmVariants = process.env.AM_VARIANTS;
 
   beforeEach(async () => {
     dir = await createTestDir("am-run-variant-");
@@ -110,9 +108,6 @@ describe("am run --variant (ADR-0036)", () => {
     if (originalConfigDir !== undefined) process.env.AM_CONFIG_DIR = originalConfigDir;
     // biome-ignore lint/performance/noDelete: env var cleanup
     else delete process.env.AM_CONFIG_DIR;
-    if (originalAmVariants !== undefined) process.env.AM_VARIANTS = originalAmVariants;
-    // biome-ignore lint/performance/noDelete: env var cleanup
-    else delete process.env.AM_VARIANTS;
     if (dir) await dir.cleanup();
   });
 
@@ -125,33 +120,9 @@ describe("am run --variant (ADR-0036)", () => {
     expect(args.variant.description?.toLowerCase()).toContain("variant");
   });
 
-  // ── AM_VARIANTS=1 gating ────────────────────────────────────
-
-  test("--variant without AM_VARIANTS=1 exits 1 with a clear hint", async () => {
-    // biome-ignore lint/performance/noDelete: actually unset, not stringify
-    delete process.env.AM_VARIANTS;
-    await writeFile(join(dir.path, "config.toml"), CLAUDE_WITH_VARIANTS);
-
-    await invokeRun({
-      agent: "claude-test",
-      prompt: "hello",
-      variant: "bedrock",
-      "dry-run": true,
-      json: false, // plain-text error for a direct string assertion
-      quiet: false,
-      verbose: false,
-    });
-
-    expect(process.exitCode).toBe(1);
-    const err = stderrLines.join("\n");
-    expect(err.toLowerCase()).toContain("am_variants");
-    expect(err).toContain("ADR-0036");
-  });
-
   // ── Happy-path resolution via dry-run ───────────────────────
 
-  test("AM_VARIANTS=1 + --variant bedrock surfaces resolved command/args/env", async () => {
-    process.env.AM_VARIANTS = "1";
+  test("--variant bedrock surfaces resolved command/args/env", async () => {
     await writeFile(join(dir.path, "config.toml"), CLAUDE_WITH_VARIANTS);
 
     await invokeRun({
@@ -175,7 +146,6 @@ describe("am run --variant (ADR-0036)", () => {
   });
 
   test("ADR-0036 Correction 1: >1 variants + no default + no --variant → ambiguous error", async () => {
-    process.env.AM_VARIANTS = "1";
     await writeFile(join(dir.path, "config.toml"), CLAUDE_WITH_VARIANTS);
 
     await invokeRun({
@@ -194,8 +164,7 @@ describe("am run --variant (ADR-0036)", () => {
     expect(err).toContain("--variant");
   });
 
-  test("AM_VARIANTS=1 with exactly one variant declared picks it implicitly", async () => {
-    process.env.AM_VARIANTS = "1";
+  test("exactly one variant declared picks it implicitly", async () => {
     const soleVariantConfig = `
 [agents.claude-sole]
 name = "claude-sole"
@@ -228,7 +197,6 @@ command = "/nonexistent/path/am-sole-variant-binary"
   // ── Error path ─────────────────────────────────────────────
 
   test("unknown variant name produces a clear error listing available variants", async () => {
-    process.env.AM_VARIANTS = "1";
     await writeFile(join(dir.path, "config.toml"), CLAUDE_WITH_VARIANTS);
 
     await invokeRun({
@@ -251,7 +219,6 @@ command = "/nonexistent/path/am-sole-variant-binary"
   // ── Correction 3: variant.permission_policy schema-only, not enforced ──
 
   test("variant.permission_policy differing from effective policy emits a warning", async () => {
-    process.env.AM_VARIANTS = "1";
     const configWithPolicyOverride = `
 [agents.claude-policy]
 name = "claude-policy"
@@ -294,8 +261,7 @@ permission_policy = "deny"
 
   // ── Back-compat (no variants) ──────────────────────────────
 
-  test("AM_VARIANTS=1 on an agent without variants is a no-op (null variant in dry-run)", async () => {
-    process.env.AM_VARIANTS = "1";
+  test("agent without variants is a no-op (null variant in dry-run)", async () => {
     // No config.toml → claude comes from the built-in tier-1 registry, which
     // has no variants. Resolver returns name=null and the dry-run falls back
     // to the top-level acp.command path.

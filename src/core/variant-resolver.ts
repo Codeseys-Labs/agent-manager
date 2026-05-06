@@ -200,10 +200,6 @@ function toResolved(name: string, v: AgentVariant, source: VariantSource): Resol
 }
 
 /**
- * True if ADR-0036 variants are enabled via the `AM_VARIANTS=1` env var.
- * Per the ADR, variants are gated behind an opt-in flag for the first
- * release post-acceptance. Remove the gate in the release-after-next.
+ * isVariantsEnabled() has been removed. ADR-0036 variants are now always-on.
+ * The AM_VARIANTS=1 rollout gate was removed when ADR-0036-cleanup landed.
  */
-export function isVariantsEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
-  return env.AM_VARIANTS === "1";
-}
