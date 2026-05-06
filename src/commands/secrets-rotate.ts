@@ -1,52 +1,90 @@
 /**
- * `am secrets rotate` — rewrap all age envelopes in TOML config files
- * for the current recipient set (ADR-0042).
+ * `am secrets rotate` — generate a NEW per-machine age identity and
+ * dual-encrypt every envelope to BOTH the old and new recipient
+ * (ADR-0051 §"`am secrets rotate`"). The grace window starts now;
+ * follow up with `am secrets rotate --finalize` after the configured
+ * `settings.secrets.rotation.grace_period_days` (default 14) to drop
+ * the old identity.
  *
- * Only meaningful when the active backend is `age` — the legacy
- * AES-GCM backend is single-key, so "rotation" there means generating
- * a new master key and re-encrypting, which is out of scope for this
- * command. For aes-gcm-legacy the command exits with a descriptive
- * error and suggests the appropriate workflow.
+ * Distinct from `am secrets rewrap` (no-identity-change re-encryption)
+ * and `am secrets revoke <fp>` (drop a peer recipient). See ADR-0051
+ * §"Four-verb CLI surface" for the full taxonomy.
  *
- * For each `enc:v2:age:...` envelope found, we call
- * `AgeSecretsBackend.rewrap(envelope)` with no explicit recipient
- * list — that re-derives the recipient set from the local identity
- * plus the `recipients/` sidecar directory, which is exactly what
- * `am secret recipient add/remove` mutates. Net effect: after the
- * admin edits the recipient list, `am secrets rotate` brings every
- * envelope on disk into sync with that new set.
+ * Flags:
+ *   --finalize  Drop the old identity (must come AFTER `rotate`).
+ *               Refuses to run before grace expiry unless `--force`
+ *               is passed.
+ *   --force     Override the grace-window check on `--finalize`.
+ *   --dry-run   Report planned changes; do not modify any files.
+ *   --json      Machine-readable output (DryRunEnvelope on dry-run).
  *
- * Supports `--dry-run` (no writes), `--file <path>` (single file),
- * and `--no-backup` (suppress `.bak` copy).
+ * Passphrase input: ADR-0051 prompts for a NEW passphrase at rotate
+ * time. In CLI/CI mode this command reads `AM_AGE_NEW_PASSPHRASE` for
+ * the new one (falling back to `AM_AGE_PASSPHRASE` on unlock).
  */
 
-import { readFile } from "node:fs/promises";
-import { join, resolve as resolvePath } from "node:path";
-import * as TOML from "@iarna/toml";
+import { join } from "node:path";
 import { defineCommand } from "citty";
-import { atomicWriteFile } from "../core/atomic-write";
-import { resolveConfigDir, resolveProjectConfig } from "../core/config";
+import { resolveConfigDir, tryReadConfig } from "../core/config";
 import { getDefaultBackend } from "../core/secrets";
-import type { AgeSecretsBackend } from "../core/secrets-age";
-import type { SecretsBackend } from "../core/secrets-backend";
+import type { AgeSecretsBackend, RotationState } from "../core/secrets-age";
 import { amError, info, output } from "../lib/output";
+import {
+  discoverTomlFiles,
+  readGracePeriodDays,
+  resolveSingleFile,
+  rewrapMany,
+} from "./secrets-rewrap-helpers";
 
-const AGE_ENVELOPE_PREFIX = "enc:v2:age:";
-
-interface RotateStat {
-  file: string;
-  found: number;
-  rotated: number;
-  skipped: number;
-  backupPath?: string;
+/**
+ * Combined passphrase provider: returns AM_AGE_NEW_PASSPHRASE for
+ * "create" calls (new identity) and AM_AGE_PASSPHRASE for "unlock"
+ * calls (old identity), so a single rotate invocation can carry two
+ * distinct passphrases via env vars in CI mode. Tests inject custom
+ * providers directly via the backend.
+ */
+function rotatePassphraseProvider(): (kind: "create" | "unlock") => Promise<string> {
+  return async (kind) => {
+    if (kind === "create") {
+      const v = process.env.AM_AGE_NEW_PASSPHRASE;
+      if (!v || v.length === 0) {
+        // Fall back to the regular passphrase if no NEW one was set —
+        // operator wants to keep the same passphrase across rotation.
+        const fallback = process.env.AM_AGE_PASSPHRASE;
+        if (!fallback || fallback.length === 0) {
+          throw new Error(
+            "am secrets rotate: AM_AGE_NEW_PASSPHRASE is unset — provide a new passphrase for the rotated identity (or set AM_AGE_PASSPHRASE to keep the same one).",
+          );
+        }
+        return fallback;
+      }
+      return v;
+    }
+    const v = process.env.AM_AGE_PASSPHRASE;
+    if (!v || v.length === 0) {
+      throw new Error("am secrets rotate: AM_AGE_PASSPHRASE is unset for identity unlock.");
+    }
+    return v;
+  };
 }
 
 export const secretsRotateCommand = defineCommand({
   meta: {
     name: "rotate",
-    description: "Rewrap age envelopes in TOML configs for the current recipient set.",
+    description:
+      "Rotate the local age identity (ADR-0051): generate a new key, dual-encrypt during the grace window, then `--finalize` to drop the old.",
   },
   args: {
+    finalize: {
+      type: "boolean",
+      description: "Drop the old identity after grace expiry. Use with --force to override.",
+      default: false,
+    },
+    force: {
+      type: "boolean",
+      description: "With --finalize, override the grace-window check.",
+      default: false,
+    },
     "dry-run": {
       type: "boolean",
       description: "Report planned changes; do not modify any files.",
@@ -68,74 +106,51 @@ export const secretsRotateCommand = defineCommand({
   async run({ args }) {
     const opts = { json: args.json, quiet: args.quiet, verbose: args.verbose };
     try {
+      const finalize = args.finalize;
+      const force = args.force;
       const dryRun = args["dry-run"];
       const noBackup = args["no-backup"];
 
       const configDir = resolveConfigDir();
-      const backend = await getDefaultBackend(configDir);
+      const config = await tryReadConfig(join(configDir, "config.toml"));
+      const gracePeriodDays = readGracePeriodDays(config);
+
+      const backend = await getDefaultBackend(configDir, {
+        passphraseProvider: rotatePassphraseProvider(),
+      });
 
       if (backend.name !== "age") {
-        const msg = `am secrets rotate requires the \`age\` backend; current backend is \`${backend.name}\`. Set settings.secrets.backend = "age" in config.toml (and run \`am secrets migrate\` to forward-port existing envelopes) before rotating.`;
-        if (args.json) {
-          output({ action: "rotate", error: msg, backend: backend.name }, opts);
-        } else {
-          info(msg, opts);
-        }
+        const msg = `am secrets rotate requires the \`age\` backend; current backend is \`${backend.name}\`.`;
+        if (args.json) output({ action: "rotate", error: msg }, opts);
+        else info(msg, opts);
         process.exitCode = 1;
         return;
       }
 
-      // Narrow via duck-type rather than importing the concrete class
-      // to avoid an unused-import warning when the backend isn't age.
-      if (typeof (backend as AgeSecretsBackend).rewrap !== "function") {
-        throw new Error(
-          "Active age backend does not expose rewrap() — upgrade core/secrets-age.ts.",
-        );
-      }
+      const ageBackend = backend as AgeSecretsBackend;
 
-      const targets = args.file
-        ? [resolvePath(args.file)]
-        : await discoverTomlFiles(configDir, process.cwd());
-
-      const stats: RotateStat[] = [];
-      for (const file of targets) {
-        const stat = await rotateFile(file, backend, { dryRun, noBackup });
-        if (stat) stats.push(stat);
-      }
-
-      const totalFound = stats.reduce((n, s) => n + s.found, 0);
-      const totalRotated = stats.reduce((n, s) => n + s.rotated, 0);
-
-      if (args.json) {
-        output(
-          {
-            action: "rotate",
-            dryRun,
-            backend: backend.name,
-            files: stats,
-            totals: { found: totalFound, rotated: totalRotated },
-          },
+      if (finalize) {
+        await runFinalize(ageBackend, {
+          dryRun,
+          force,
+          noBackup,
+          configDir,
+          file: args.file,
           opts,
-        );
+          json: args.json,
+        });
         return;
       }
 
-      if (stats.length === 0) {
-        info("No TOML config files found to scan.", opts);
-        return;
-      }
-
-      for (const s of stats) {
-        if (s.found === 0) continue;
-        const action = dryRun ? "would rotate" : "rotated";
-        info(`${s.file}: ${action} ${s.rotated}/${s.found} envelope(s).`, opts);
-        if (s.backupPath) info(`  backup: ${s.backupPath}`, opts);
-      }
-      info("", opts);
-      info(
-        `Total: ${totalRotated}/${totalFound} envelope(s) ${dryRun ? "would be " : ""}rotated.`,
+      await runRotate(ageBackend, {
+        dryRun,
+        noBackup,
+        configDir,
+        file: args.file,
+        gracePeriodDays,
         opts,
-      );
+        json: args.json,
+      });
     } catch (err) {
       amError(err, opts);
       process.exitCode = 1;
@@ -143,95 +158,239 @@ export const secretsRotateCommand = defineCommand({
   },
 });
 
-async function discoverTomlFiles(configDir: string, cwd: string): Promise<string[]> {
-  const out = new Set<string>();
-  const { stat } = await import("node:fs/promises");
-  async function exists(p: string): Promise<boolean> {
-    try {
-      await stat(p);
-      return true;
-    } catch {
-      return false;
-    }
-  }
-  const globalConfig = join(configDir, "config.toml");
-  if (await exists(globalConfig)) out.add(globalConfig);
-  const localConfig = join(configDir, "config.local.toml");
-  if (await exists(localConfig)) out.add(localConfig);
-  const projectConfig = resolveProjectConfig(cwd);
-  if (projectConfig) out.add(projectConfig);
-  return Array.from(out);
+interface CommonRunOpts {
+  dryRun: boolean;
+  noBackup: boolean;
+  configDir: string;
+  file: string | undefined;
+  opts: { json: boolean; quiet: boolean; verbose: boolean };
+  json: boolean;
 }
 
-async function rotateFile(
-  file: string,
-  backend: SecretsBackend,
-  opts: { dryRun: boolean; noBackup: boolean },
-): Promise<RotateStat | null> {
-  let raw: string;
-  try {
-    raw = await readFile(file, "utf-8");
-  } catch {
-    return null;
-  }
-  let parsed: unknown;
-  try {
-    parsed = TOML.parse(raw);
-  } catch {
-    return { file, found: 0, rotated: 0, skipped: 0 };
+async function runRotate(
+  backend: AgeSecretsBackend,
+  ctx: CommonRunOpts & { gracePeriodDays: number },
+): Promise<void> {
+  // Already-in-progress rotation: refuse to start a second one.
+  const existing = await backend.readRotationState();
+  if (existing) {
+    const msg = `Rotation already in progress (started ${existing.started_at}, grace until ${existing.grace_until}). Run \`am secrets rotate --finalize\` first.`;
+    if (ctx.json) output({ action: "rotate", error: msg, state: existing }, ctx.opts);
+    else info(msg, ctx.opts);
+    process.exitCode = 1;
+    return;
   }
 
-  let found = 0;
-  let rotated = 0;
-  let skipped = 0;
+  // Pre-rotate envelope discovery for accurate dry-run + final report.
+  const targets = ctx.file
+    ? [resolveSingleFile(ctx.file)]
+    : await discoverTomlFiles(ctx.configDir, process.cwd());
 
-  const ageBackend = backend as AgeSecretsBackend;
-
-  async function walk(value: unknown): Promise<unknown> {
-    if (typeof value === "string") {
-      if (!value.startsWith(AGE_ENVELOPE_PREFIX)) return value;
-      found++;
-      try {
-        const next = await ageBackend.rewrap(value);
-        if (next !== value) rotated++;
-        return next;
-      } catch {
-        skipped++;
-        return value;
-      }
+  if (ctx.dryRun) {
+    // Count envelopes without doing anything.
+    const stats = await rewrapMany(targets, backend, { dryRun: true, noBackup: ctx.noBackup });
+    const totalFound = stats.reduce((n, s) => n + s.found, 0);
+    const oldRecipient = await backend.getRecipient();
+    if (ctx.json) {
+      output(
+        {
+          action: "rotate",
+          reads_only: true,
+          would_do: [
+            "generate a new age identity",
+            "archive the current identity to identities/identity.age.old",
+            ctx.gracePeriodDays > 0
+              ? `register OLD recipient as sidecar for ${ctx.gracePeriodDays}-day grace window`
+              : "skip dual-encryption (immediate cutover, grace_period_days=0)",
+            `dual-encrypt ${totalFound} envelope(s) across ${stats.length} file(s)`,
+          ],
+          mutations_prevented: [
+            "identity file write",
+            "recipient sidecar write",
+            "TOML config rewrites",
+          ],
+          warnings: [],
+          explanation: {
+            old_recipient: oldRecipient,
+            grace_period_days: ctx.gracePeriodDays,
+            files: stats,
+            totals: { found: totalFound },
+          },
+        },
+        ctx.opts,
+      );
+    } else {
+      info(`Would generate a new age identity (current: ${oldRecipient.slice(0, 16)}…).`, ctx.opts);
+      info(
+        ctx.gracePeriodDays > 0
+          ? `Would dual-encrypt ${totalFound} envelope(s) for a ${ctx.gracePeriodDays}-day grace window.`
+          : "grace_period_days=0 → would do immediate cutover, dropping old recipient.",
+        ctx.opts,
+      );
     }
-    if (Array.isArray(value)) {
-      const out: unknown[] = [];
-      for (const v of value) out.push(await walk(v));
-      return out;
-    }
-    if (value !== null && typeof value === "object") {
-      const obj = value as Record<string, unknown>;
-      const out: Record<string, unknown> = {};
-      for (const [k, v] of Object.entries(obj)) out[k] = await walk(v);
-      return out;
-    }
-    return value;
+    return;
   }
 
-  const rewritten = (await walk(parsed)) as Record<string, unknown>;
+  // Live rotation: generate new identity + sidecar.
+  const state = await backend.rotateIdentity({ gracePeriodDays: ctx.gracePeriodDays });
 
-  if (found === 0) {
-    return { file, found: 0, rotated: 0, skipped: 0 };
+  // Now rewrap every envelope to the new (potentially dual) recipient set.
+  const stats = await rewrapMany(targets, backend, { dryRun: false, noBackup: ctx.noBackup });
+  const totalRewrapped = stats.reduce((n, s) => n + s.rewrapped, 0);
+  const totalFound = stats.reduce((n, s) => n + s.found, 0);
+
+  if (ctx.gracePeriodDays === 0) {
+    // Immediate cutover: drop the old identity + state file. The
+    // sidecar `_rotation-old.pub` was never written for grace=0, so
+    // finalizeRotation only cleans up `identity.age.old` + state.
+    await backend.finalizeRotation();
   }
 
-  if (opts.dryRun || rotated === 0) {
-    return { file, found, rotated, skipped };
+  if (ctx.json) {
+    output(
+      {
+        action: "rotate",
+        phase: ctx.gracePeriodDays === 0 ? "finalized" : "dual-encrypt",
+        old_recipient: state.old_recipient,
+        new_recipient: state.new_recipient,
+        grace_period_until: state.grace_until,
+        grace_period_days: ctx.gracePeriodDays,
+        files: stats.length,
+        envelopes: totalFound,
+        rewrapped: totalRewrapped,
+      },
+      ctx.opts,
+    );
+    return;
   }
 
-  const serialized = TOML.stringify(rewritten as TOML.JsonMap);
-
-  let backupPath: string | undefined;
-  if (!opts.noBackup) {
-    backupPath = `${file}.bak`;
-    await atomicWriteFile(backupPath, raw);
+  info(`Rotated identity. New recipient: ${state.new_recipient}`, ctx.opts);
+  info(`Old recipient: ${state.old_recipient}`, ctx.opts);
+  if (ctx.gracePeriodDays > 0) {
+    info(
+      `Grace period: ${ctx.gracePeriodDays} day(s) — both identities can decrypt until ${state.grace_until}.`,
+      ctx.opts,
+    );
+    info(
+      "Run `am secrets rotate --finalize` after the grace window to drop the old identity.",
+      ctx.opts,
+    );
+  } else {
+    info("grace_period_days=0 → immediate cutover. Old identity dropped.", ctx.opts);
   }
-  await atomicWriteFile(file, serialized);
-
-  return { file, found, rotated, skipped, backupPath };
+  info(
+    `Rewrapped ${totalRewrapped}/${totalFound} envelope(s) across ${stats.length} file(s).`,
+    ctx.opts,
+  );
 }
+
+async function runFinalize(
+  backend: AgeSecretsBackend,
+  ctx: CommonRunOpts & { force: boolean },
+): Promise<void> {
+  const state = await backend.readRotationState();
+  if (!state) {
+    const msg = "No rotation in progress — nothing to finalize.";
+    if (ctx.json) output({ action: "rotate-finalize", error: msg }, ctx.opts);
+    else info(msg, ctx.opts);
+    process.exitCode = 1;
+    return;
+  }
+
+  // Grace-window check.
+  const now = Date.now();
+  const expiry = Date.parse(state.grace_until);
+  const inGrace = Number.isFinite(expiry) && now < expiry;
+  if (inGrace && !ctx.force) {
+    const remainingMs = expiry - now;
+    const remainingDays = Math.ceil(remainingMs / 86_400_000);
+    const msg = `Grace period not elapsed: ${remainingDays} day(s) remain (until ${state.grace_until}). Use --force to override.`;
+    if (ctx.json) {
+      output({ action: "rotate-finalize", error: msg, state }, ctx.opts);
+    } else {
+      info(msg, ctx.opts);
+    }
+    process.exitCode = 1;
+    return;
+  }
+
+  const targets = ctx.file
+    ? [resolveSingleFile(ctx.file)]
+    : await discoverTomlFiles(ctx.configDir, process.cwd());
+
+  if (ctx.dryRun) {
+    const stats = await rewrapMany(targets, backend, { dryRun: true, noBackup: ctx.noBackup });
+    const totalFound = stats.reduce((n, s) => n + s.found, 0);
+    if (ctx.json) {
+      output(
+        {
+          action: "rotate-finalize",
+          reads_only: true,
+          would_do: [
+            "remove old recipient sidecar (_rotation-old.pub)",
+            "delete identities/identity.age.old",
+            "clear .am-rotation-state.json",
+            `re-encrypt ${totalFound} envelope(s) to new-only recipient`,
+          ],
+          mutations_prevented: [
+            "old recipient deletion",
+            "old identity deletion",
+            "TOML config rewrites",
+          ],
+          warnings: inGrace
+            ? [
+                `grace period still active until ${state.grace_until} (would be overridden by --force)`,
+              ]
+            : [],
+          explanation: {
+            state,
+            files: stats,
+            totals: { found: totalFound },
+          },
+        },
+        ctx.opts,
+      );
+    } else {
+      info(
+        `Would finalize rotation: drop old recipient ${state.old_recipient.slice(0, 16)}… and re-encrypt ${totalFound} envelope(s).`,
+        ctx.opts,
+      );
+    }
+    return;
+  }
+
+  // 1. Drop old sidecar + identity.age.old + state file.
+  const finalized = await backend.finalizeRotation();
+
+  // 2. Rewrap every envelope to the now-only-new recipient set.
+  const stats = await rewrapMany(targets, backend, { dryRun: false, noBackup: ctx.noBackup });
+  const totalRewrapped = stats.reduce((n, s) => n + s.rewrapped, 0);
+  const totalFound = stats.reduce((n, s) => n + s.found, 0);
+
+  if (ctx.json) {
+    output(
+      {
+        action: "rotate-finalize",
+        phase: "finalized",
+        old_recipient: finalized?.old_recipient ?? state.old_recipient,
+        new_recipient: finalized?.new_recipient ?? state.new_recipient,
+        files: stats.length,
+        envelopes: totalFound,
+        rewrapped: totalRewrapped,
+      },
+      ctx.opts,
+    );
+    return;
+  }
+
+  info(`Finalized rotation. Old recipient ${state.old_recipient.slice(0, 16)}… dropped.`, ctx.opts);
+  info(
+    `Rewrapped ${totalRewrapped}/${totalFound} envelope(s) across ${stats.length} file(s).`,
+    ctx.opts,
+  );
+}
+
+// Re-export RotationState for downstream callers that import this
+// module (mirrors the previous shape where rotate-related types lived
+// alongside the command).
+export type { RotationState };

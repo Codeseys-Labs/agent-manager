@@ -216,6 +216,20 @@ export const SettingsSchema = z
             parallelism: z.number().int().min(1).max(16).default(4),
           })
           .optional(),
+        // ADR-0051 Phase 1 — grace-period mechanics for `am secrets
+        // rotate`. During `grace_period_days` both the old and new
+        // identity are valid (dual-encrypt); after that window the
+        // operator runs `am secrets rotate --finalize` to drop the
+        // old identity. Default 14 days balances team sync latency
+        // (timezones, offline devices) against the dual-compromise
+        // window. Set to 0 for immediate cutover (agenix `--rekey`
+        // semantics); upper bound 365 days protects against typos
+        // that would disable rotation in practice.
+        rotation: z
+          .object({
+            grace_period_days: z.number().int().min(0).max(365).default(14),
+          })
+          .optional(),
       })
       .passthrough()
       .refine((s) => !("team_passphrase" in s), {

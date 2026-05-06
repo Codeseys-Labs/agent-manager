@@ -67,6 +67,31 @@ const RECIPIENT_FILE_SUFFIX = ".pub";
 /** Recipient lines in a `.pub` file MUST start with `age1`. */
 const RECIPIENT_PREFIX = "age1";
 
+/**
+ * Filename used to back up the previous identity file during a
+ * grace-period rotation (ADR-0051 §Decision). The old file is kept
+ * on-disk so the old identity can still decrypt historical ciphertext
+ * until `--finalize` drops it.
+ */
+const IDENTITY_OLD_FILENAME = "identity.age.old";
+
+/**
+ * Filename of the sidecar recipient `.pub` emitted for the OLD
+ * identity during a rotation. Kept inside `recipientsDir/` so the
+ * normal recipient-discovery flow picks it up for dual-encryption,
+ * and dropped at `--finalize`.
+ */
+const OLD_RECIPIENT_FILENAME = "_rotation-old.pub";
+
+/**
+ * Sidecar metadata file recording an in-progress rotation. Stored in
+ * the identities directory (sibling to `identity.age`) because the
+ * rotation is per-machine state, not config-repo state. ADR-0051
+ * Phase 1 keeps this minimal; Phase 2 may migrate into a signed
+ * structure.
+ */
+const ROTATION_STATE_FILENAME = ".am-rotation-state.json";
+
 // --- Argon2id parameters (ADR-0042 §KDF, Lens-C L-C1) ------------------
 
 /**
@@ -325,6 +350,29 @@ export interface AgeSecretsBackendOptions {
 // --- Backend -----------------------------------------------------------
 
 /**
+ * Persistent state recorded during an in-progress identity rotation
+ * (ADR-0051 Phase 1). Written to `identities/.am-rotation-state.json`
+ * at `rotateIdentity()` time and consumed by `finalizeRotation()` /
+ * `am secrets rotate --finalize` to know what to drop.
+ *
+ * All timestamps are ISO 8601 UTC. `grace_until` equals
+ * `started_at + grace_period_days` and is stored explicitly so a clock
+ * change between rotate and finalize doesn't shift the deadline.
+ */
+export interface RotationState {
+  /** Old `age1...` recipient — still encrypted-to until finalize. */
+  old_recipient: string;
+  /** New `age1...` recipient — installed by rotateIdentity(). */
+  new_recipient: string;
+  /** ISO 8601 timestamp when rotation started. */
+  started_at: string;
+  /** ISO 8601 timestamp at which the grace window closes. */
+  grace_until: string;
+  /** Grace period in days, copied from settings.secrets.rotation. */
+  grace_period_days: number;
+}
+
+/**
  * Age-based secrets backend. Supports multi-recipient encryption via
  * a sidecar `recipients/` directory of `.pub` files. By default,
  * `encrypt` targets the union of the local identity's recipient and
@@ -347,6 +395,14 @@ export class AgeSecretsBackend implements SecretsBackend {
   #identity: string | null = null;
   /** Derived `age1...` public recipient, cached after first use. */
   #recipient: string | null = null;
+
+  /**
+   * Additional identities the decrypter should consult — populated by
+   * `rotateIdentity()` with the OLD identity so envelopes encrypted to
+   * the previous recipient can still be decrypted during the rotation
+   * grace window. Cleared by `finalizeRotation()`. ADR-0051 §Phase-1.
+   */
+  #legacyIdentities: string[] = [];
 
   constructor(opts: AgeSecretsBackendOptions) {
     this.#identityPath = opts.identityPath ?? resolveIdentityPath();
@@ -448,6 +504,12 @@ export class AgeSecretsBackend implements SecretsBackend {
 
     const decrypter = new Decrypter();
     decrypter.addIdentity(this.#identity!);
+    // ADR-0051 grace window: legacy identities (added by rotateIdentity)
+    // remain decrypt-only so envelopes encrypted to the OLD recipient
+    // continue to decrypt until rewrap completes / finalize fires.
+    for (const legacy of this.#legacyIdentities) {
+      decrypter.addIdentity(legacy);
+    }
     return decrypter.decrypt(ciphertext, "text");
   }
 
@@ -530,6 +592,185 @@ export class AgeSecretsBackend implements SecretsBackend {
   ): Promise<SecretEnvelope> {
     const plaintext = await this.decrypt(envelope);
     return this.encrypt(plaintext, newRecipients);
+  }
+
+  // --- Rotation (ADR-0051) --------------------------------------------
+
+  /** Absolute path to the active identity file. Useful for tests + tooling. */
+  getIdentityPath(): string {
+    return this.#identityPath;
+  }
+
+  /** Absolute path to the recipients directory. */
+  getRecipientsDir(): string {
+    return this.#recipientsDir;
+  }
+
+  /** Absolute path to the rotation-state sidecar (may not exist). */
+  getRotationStatePath(): string {
+    return join(dirname(this.#identityPath), ROTATION_STATE_FILENAME);
+  }
+
+  /**
+   * Read the rotation-state sidecar, or `null` if no rotation is in
+   * progress / the file is missing or malformed. ADR-0051 Phase 1 keeps
+   * the schema lenient — tooling reads what it can and treats missing
+   * fields as "unknown".
+   */
+  async readRotationState(): Promise<RotationState | null> {
+    const path = this.getRotationStatePath();
+    if (!(await pathExists(path))) return null;
+    try {
+      const raw = await readFile(path, "utf8");
+      const parsed = JSON.parse(raw) as Partial<RotationState>;
+      if (
+        typeof parsed.old_recipient !== "string" ||
+        typeof parsed.new_recipient !== "string" ||
+        typeof parsed.started_at !== "string"
+      ) {
+        return null;
+      }
+      return {
+        old_recipient: parsed.old_recipient,
+        new_recipient: parsed.new_recipient,
+        started_at: parsed.started_at,
+        grace_until: typeof parsed.grace_until === "string" ? parsed.grace_until : "",
+        grace_period_days:
+          typeof parsed.grace_period_days === "number" ? parsed.grace_period_days : 14,
+      };
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * ADR-0051 Phase 1 — generate a NEW age identity, archive the old
+   * one to `identities/identity.age.old`, register the new identity
+   * as the active one, AND keep the old recipient registered (sidecar
+   * `_rotation-old.pub`) so subsequent encrypts/rewraps target both
+   * recipients during the grace window.
+   *
+   * Writes the rotation-state sidecar (`.am-rotation-state.json`) so
+   * `--finalize` later knows what to drop.
+   *
+   * Calls a passphrase provider with `kind: "create"` for the NEW
+   * passphrase (ADR-0051 §"New passphrase is a load-bearing user
+   * artifact"). The OLD identity must already be unlocked.
+   *
+   * Returns the rotation state for the caller to surface.
+   */
+  async rotateIdentity(opts: { gracePeriodDays: number }): Promise<RotationState> {
+    if (!Number.isInteger(opts.gracePeriodDays) || opts.gracePeriodDays < 0) {
+      throw new Error(
+        `AgeSecretsBackend.rotateIdentity: gracePeriodDays must be a non-negative integer (got ${opts.gracePeriodDays}).`,
+      );
+    }
+
+    // Unlock the existing identity first — we need it for archiving
+    // (the on-disk file) and for proving we can decrypt-then-rewrap.
+    await this.initialize();
+    const oldIdentity = this.#identity!;
+    const oldRecipient = await this.getRecipient();
+    const oldWrapped = await readFile(this.#identityPath);
+
+    // 1. Archive the OLD identity file. Atomic write so a crash
+    // mid-rotation can't corrupt the .old copy.
+    const oldPath = join(dirname(this.#identityPath), IDENTITY_OLD_FILENAME);
+    await atomicWriteFile(oldPath, Buffer.from(oldWrapped), { mode: 0o600 });
+
+    // 2. Generate the NEW identity + prompt for a NEW passphrase.
+    const newIdentity = await generateIdentity();
+    const newPassphrase = await this.#passphraseProvider("create");
+    if (newPassphrase.length === 0) {
+      throw new Error("AgeSecretsBackend.rotateIdentity: new passphrase must be non-empty.");
+    }
+    const encrypter = new Encrypter();
+    encrypter.setPassphrase(newPassphrase);
+    const newWrapped = await encrypter.encrypt(newIdentity);
+
+    // 3. Atomically replace the active identity file with the new one.
+    await atomicWriteFile(this.#identityPath, Buffer.from(newWrapped), { mode: 0o600 });
+
+    // 4. Refresh in-memory state so subsequent calls use the new identity.
+    //    Push the OLD identity onto the legacy-decrypt list so envelopes
+    //    encrypted to the old recipient remain decryptable until rewrap
+    //    completes (ADR-0051 grace window).
+    this.#identity = newIdentity;
+    this.#recipient = await identityToRecipient(newIdentity);
+    this.#legacyIdentities.push(oldIdentity);
+
+    // 5. Refresh keychain cache to the new passphrase (best-effort).
+    const kc = await this.#resolveKeychain();
+    await keychainSetSafe(kc, this.#keychainService, this.#keychainAccount, newPassphrase);
+
+    // 6. Register the OLD recipient as a sidecar so the standard
+    // rewrap/encrypt flow targets both. Skipped when grace is 0
+    // (immediate cutover).
+    if (opts.gracePeriodDays > 0) {
+      await mkdir(this.#recipientsDir, { recursive: true });
+      const body = renderRecipientFile(oldRecipient, new Date().toISOString(), "_rotation-old");
+      await atomicWriteFile(join(this.#recipientsDir, OLD_RECIPIENT_FILENAME), body, {
+        mode: 0o644,
+      });
+    }
+
+    // 7. Persist the rotation-state sidecar.
+    const startedAt = new Date();
+    const graceUntil =
+      opts.gracePeriodDays > 0
+        ? new Date(startedAt.getTime() + opts.gracePeriodDays * 86_400_000).toISOString()
+        : startedAt.toISOString();
+    const state: RotationState = {
+      old_recipient: oldRecipient,
+      new_recipient: this.#recipient,
+      started_at: startedAt.toISOString(),
+      grace_until: graceUntil,
+      grace_period_days: opts.gracePeriodDays,
+    };
+    await atomicWriteFile(this.getRotationStatePath(), `${JSON.stringify(state, null, 2)}\n`, {
+      mode: 0o600,
+    });
+
+    return state;
+  }
+
+  /**
+   * ADR-0051 Phase 1 — finalize a previously-started rotation: drop
+   * the OLD recipient sidecar, delete `identities/identity.age.old`,
+   * and clear the rotation-state file. Caller is responsible for
+   * rewrapping all envelopes AFTER this call so they no longer
+   * target the old recipient.
+   *
+   * Returns the rotation state that was finalized so callers can
+   * report it. No-op-returns-`null` if no rotation is in progress.
+   */
+  async finalizeRotation(): Promise<RotationState | null> {
+    const state = await this.readRotationState();
+    if (!state) return null;
+
+    // Drop the OLD recipient sidecar (idempotent).
+    const oldRecipientFile = join(this.#recipientsDir, OLD_RECIPIENT_FILENAME);
+    if (await pathExists(oldRecipientFile)) {
+      await unlink(oldRecipientFile);
+    }
+
+    // Drop the archived OLD identity file (idempotent).
+    const oldIdentity = join(dirname(this.#identityPath), IDENTITY_OLD_FILENAME);
+    if (await pathExists(oldIdentity)) {
+      await unlink(oldIdentity);
+    }
+
+    // Drop the rotation-state sidecar.
+    if (await pathExists(this.getRotationStatePath())) {
+      await unlink(this.getRotationStatePath());
+    }
+
+    // Clear the in-memory legacy-decrypt list. After finalize, envelopes
+    // encrypted to the OLD recipient should NO LONGER decrypt — that's
+    // the whole point of finalize. ADR-0051 §Phase-1.
+    this.#legacyIdentities = [];
+
+    return state;
   }
 
   // --- internals -------------------------------------------------------
