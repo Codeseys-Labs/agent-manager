@@ -25,6 +25,7 @@ import { resolveConfigDir, tryReadConfig } from "../core/config";
 import { getDefaultBackend } from "../core/secrets";
 import type { AgeSecretsBackend } from "../core/secrets-age";
 import { amError, info, output, warn } from "../lib/output";
+import { validatePairName } from "./pair-name-validator";
 import { bestEffortCommitSecretsChanges } from "./secrets-commit-helper";
 import { discoverTomlFiles, resolveSingleFile, rewrapMany } from "./secrets-rewrap-helpers";
 
@@ -119,18 +120,23 @@ export const pairFinalizeCommand = defineCommand({
   async run({ args }) {
     const opts = { json: args.json, quiet: args.quiet, verbose: args.verbose };
     try {
-      const name = args.name;
-      const dryRun = args["dry-run"];
-      const noRewrap = args["no-rewrap"];
-      const force = args.force;
-
-      if (!name || name.length === 0) {
-        const msg = "am pair finalize: <name> argument is required.";
+      // Validate the name BEFORE using it in any path construction
+      // (Run-K Phase-8 review: 3 reviewers flagged path traversal —
+      // `am pair finalize ../../etc/passwd` would otherwise read
+      // outside recipientsDir).
+      let name: string;
+      try {
+        name = validatePairName(args.name, "finalize");
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
         if (args.json) output({ action: "pair-finalize", error: msg }, opts);
         else info(msg, opts);
         process.exitCode = 1;
         return;
       }
+      const dryRun = args["dry-run"];
+      const noRewrap = args["no-rewrap"];
+      const force = args.force;
 
       // If --identity-dir was passed, override the env var so the backend
       // resolves from the custom directory.

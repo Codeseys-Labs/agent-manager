@@ -35,6 +35,7 @@ import { getDefaultBackend } from "../core/secrets";
 import { type AgeSecretsBackend, resolveIdentityPath } from "../core/secrets-age";
 import { AmError } from "../lib/errors";
 import { amError, info, output } from "../lib/output";
+import { validatePairName } from "./pair-name-validator";
 
 /** Accept only filesystem-safe recipient names (no slashes, no ".."). */
 const VALID_NAME_RE = /^[A-Za-z0-9._-]+$/;
@@ -48,29 +49,11 @@ async function pathExists(p: string): Promise<boolean> {
   }
 }
 
+// validateName moved to ./pair-name-validator (Run-K Phase-8 review:
+// shared by pair-accept + pair-finalize). The local re-export
+// preserves the original call-site shape used elsewhere in this file.
 function validateName(raw: unknown): string {
-  if (typeof raw !== "string" || raw.length === 0) {
-    throw new AmError(
-      "am pair accept: <name> argument is required.",
-      "Example: am pair accept laptop-2",
-      "PAIR_ACCEPT_MISSING_NAME",
-    );
-  }
-  if (raw.includes("/") || raw.includes("\\") || raw.includes("..")) {
-    throw new AmError(
-      `am pair accept: invalid name '${raw}' (path separators and '..' are not allowed).`,
-      "Use a plain device label like 'laptop-2' or 'desktop-alice'.",
-      "PAIR_ACCEPT_INVALID_NAME",
-    );
-  }
-  if (!VALID_NAME_RE.test(raw)) {
-    throw new AmError(
-      `am pair accept: invalid name '${raw}' (only A-Z, a-z, 0-9, '.', '_', '-' are allowed).`,
-      "Use a plain device label like 'laptop-2' or 'desktop-alice'.",
-      "PAIR_ACCEPT_INVALID_NAME",
-    );
-  }
-  return raw;
+  return validatePairName(raw, "accept");
 }
 
 function renderPubFile(name: string, recipient: string, createdAt: string): string {
