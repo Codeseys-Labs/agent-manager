@@ -20,7 +20,7 @@ The `agent-manager` security architecture is designed to protect your secrets an
 **Not Defended Against:** Weak master passphrases. The confidentiality of your secrets relies entirely on the strength of your passphrase.
 **Mechanisms:**
 - Secrets are encrypted using an `age` envelope (X25519 + ChaCha20-Poly1305).
-- The Key Encryption Key (KEK) is derived from your master passphrase using Argon2id (m=128 MiB, t=3, p=4 minimums).
+- The Key Encryption Key (KEK) is derived from your master passphrase using Argon2id (m=128 MiB, t=3, p=4 defaults; m=8 MiB hard floor for low-end devices).
 - **Out of Scope:** Filenames, variable names, and Git commit history are NOT encrypted. These are considered metadata and are visible in a compromised or public repository.
 **Detective Controls:** Keep an eye on your GitHub/GitLab "Public" repository lists and audit access logs if available.
 **User Responsibilities:** Choose a strong master passphrase (14+ characters) and avoid reusing it.
@@ -40,7 +40,9 @@ The `agent-manager` security architecture is designed to protect your secrets an
 ### 4. Key-Leak via Environment Variable Snapshot
 **Defended Against:** Accidental inclusion of plaintext secrets in standard Git tracked files or process dumps.
 **Mechanisms:**
-- Secrets are injected into the agent environment at runtime and are never written to disk in plaintext within the repository workspace.
+- Secrets are not written to disk in plaintext within the repository workspace itself.
+- However, `am apply` DOES write resolved (plaintext) values into native IDE config files at the user's request (e.g. `~/.claude/mcp.json`, `~/.codex/config.toml`). These files live OUTSIDE the repo and are the user's responsibility to protect with filesystem permissions. This is documented behaviour, not a leak — agents need plaintext credentials at runtime — but it means a user reading `am apply`'s output should not be surprised that decrypted material appears under their home directory.
+- Process dumps (core files, ps -e env) of running CLI tools may contain plaintext credentials. Out of scope: hardening against memory-scraping attackers with host-level read access.
 
 ### 5. Browser Side-Channel / XSS (Hosted UI)
 **Defended Against:** N/A (Deferred).
@@ -70,7 +72,7 @@ The `agent-manager` security architecture is designed to protect your secrets an
 
 | State | Algorithms & Standards | Notes |
 | :--- | :--- | :--- |
-| **At-Rest** | `age` + Argon2id | Argon2id params: m=128 MiB, t=3, p=4 (floor, configurable). |
+| **At-Rest** | `age` + Argon2id | Argon2id defaults: m=128 MiB, t=3, p=4. Hard floor: m=8 MiB. Configurable via `settings.secrets.argon2`. |
 | **In-Transit** | HTTPS | TLS required for git/fetch operations. TLS pinning out of scope. |
 | **Browser** | `age-wasm` + `argon2-browser` | Planned implementation per ADR-0042 §3. Currently deferred. |
 
@@ -89,7 +91,8 @@ Securing the supply chain is critical, especially after incidents like the Bitwa
 
 ## Cross-References
 
-- [ADR-0042: Universal Secrets Strategy](docs/architecture/decisions/0042-universal-secrets.md) (Context on encryption at rest, in transit, and supply chain).
-- [ADR-0046: Rejection of Team Passphrases](docs/architecture/decisions/0046-team-passphrase-rejection.md) (Rationale for explicit pairing vs shared keys).
-- [ADR-0019: Security Hardening](docs/architecture/decisions/0019-security-hardening.md) (Broader security context and foundational decisions).
-- [ADR-0039: Retirement of Git-Backed Marketplaces](docs/architecture/decisions/0039-retire-git-marketplaces.md) (Context on legacy marketplace limitations).
+- [ADR-0042: Universal Secrets Strategy](ADRs/0042-universal-secrets-strategy.md) (Context on encryption at rest, in transit, and supply chain).
+- [ADR-0046: Rejection of Team Passphrases](ADRs/0046-reject-team-passphrase-schema.md) (Rationale for explicit pairing vs shared keys).
+- [ADR-0019: Security Hardening](ADRs/0019-security-hardening.md) (Broader security context and foundational decisions).
+- [ADR-0039: Retirement of Git-Backed Marketplaces](ADRs/0039-marketplace-v1-scope-decision.md) (Context on legacy marketplace limitations).
+- [ADR-0047: am pair Cross-Device Key Handoff](ADRs/0047-am-pair-cross-device-key-handoff.md) (Trust boundary + finalize hardening for adding new devices).

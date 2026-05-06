@@ -145,7 +145,7 @@ Search, install, uninstall, update with provenance tracking. ADR-0024.
 | ACP client | Done | Spawn, stream, cancel agents headlessly |
 | ACP registry | Done | Agent resolution from config + auto-detection |
 | CLI (am run) | Done | `am run <agent> "<prompt>"` + session subcommands |
-| Per-agent variants (multi-provider routing) | Done | ADR-0036 — `src/core/variant-resolver.ts`, `--variant` flag, gated by `AM_VARIANTS=1` |
+| Per-agent variants (multi-provider routing) | Done | ADR-0036 — `src/core/variant-resolver.ts`, `--variant` flag (rollout gate `AM_VARIANTS=1` removed in commit 203d967) |
 | MCP tools (4) | Done | run_agent, list_agents, session_list, session_cancel |
 
 ### Distribution — Complete

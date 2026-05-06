@@ -248,7 +248,7 @@ The MVP per the "minimum viable implementation" list above has landed:
 shipped behind an env-var gate for the first release after acceptance.
 The gate was checked in `src/commands/run.ts` before the resolver was
 consulted; absent the flag, the pre-variants code path ran unchanged.
-**The gate was removed in commit <placeholder> (ADR-0036-cleanup).**
+**The gate was removed in commit 203d967 (ADR-0036-cleanup).**
 Variants are now always-on — the resolver runs unconditionally whenever
 `am run` is invoked.
 
@@ -274,6 +274,6 @@ When promoted to `accepted`, the implementation should:
 6. Tests in `test/core/schema.test.ts` (schema), `test/commands/run/*`
    (resolution), `test/protocols/acp/variants.test.ts` (env flows through).
 
-Opt-in flag for rollout: `AM_VARIANTS=1` env var gates the feature during
-the first release after this ADR accepts. Remove the flag in the
-release-after-next once adopted.
+Opt-in flag for rollout: `AM_VARIANTS=1` env var (REMOVED in commit
+203d967). The feature is now always-on; this section is retained for
+historical context only.
