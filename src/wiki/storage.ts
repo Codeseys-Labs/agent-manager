@@ -141,6 +141,52 @@ export function ensureWikiGitignore(projectDir: string): void {
   }
 }
 
+// ── ADR-0044: Two-tier wiki layout ─────────────────────────────────
+//
+// ADR-0022 placed the project wiki at `.agent-manager/wiki/` as a
+// symlink to the global store. ADR-0044 amends §3-4 of ADR-0022:
+// project wiki moves to `.am-wiki/` and is a copy, not a symlink.
+// The symlink helpers above remain for backward compatibility.
+// `detectLegacyWikiLayout()` is the discovery primitive for the
+// `am wiki migrate` command and for `am wiki init`'s deprecation
+// warning.
+
+/** Project-level wiki directory (ADR-0044). */
+export const WIKI_PROJECT_DIRNAME = ".am-wiki";
+
+/** Legacy project wiki path used by ADR-0022 — ADR-0044 supersedes this. */
+export const LEGACY_WIKI_PROJECT_DIRNAME = join(".agent-manager", "wiki");
+
+export interface WikiLayoutDetection {
+  /** True if the project has a legacy `.agent-manager/wiki/` directory or symlink. */
+  hasLegacy: boolean;
+  /** True if the project has a current-form `.am-wiki/` directory. */
+  hasNew: boolean;
+  /** Absolute path to the legacy location (whether or not it exists). */
+  legacyPath: string;
+  /** Absolute path to the current-form location (whether or not it exists). */
+  newPath: string;
+}
+
+/**
+ * Inspect a project directory and report which wiki layout(s) are
+ * present. Used by `am wiki init` (to print a deprecation warning) and
+ * `am wiki migrate` (to decide what to do).
+ *
+ * Pure: never mutates the filesystem. Symlinks count as "present" for
+ * the legacy path because that's the original ADR-0022 mechanism.
+ */
+export function detectLegacyWikiLayout(projectDir: string): WikiLayoutDetection {
+  const legacyPath = join(projectDir, LEGACY_WIKI_PROJECT_DIRNAME);
+  const newPath = join(projectDir, WIKI_PROJECT_DIRNAME);
+  return {
+    hasLegacy: existsSync(legacyPath),
+    hasNew: existsSync(newPath),
+    legacyPath,
+    newPath,
+  };
+}
+
 function searchIndexPath(baseDir?: string): string {
   return join(baseDir ?? getWikiDir(), "index.json");
 }
