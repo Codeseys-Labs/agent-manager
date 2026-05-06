@@ -135,9 +135,11 @@ describe("am run: JSON output structure", () => {
 describe("am run: CLI registration", () => {
   test("run command exports correctly", async () => {
     const mod = await import("../../src/commands/run");
+    const { resolveMeta } = await import("../helpers/citty");
+    const meta = await resolveMeta(mod.runCommand);
     expect(mod.runCommand).toBeDefined();
-    expect(mod.runCommand.meta?.name).toBe("run");
-    expect(mod.runCommand.meta?.description).toContain("ACP");
+    expect(meta?.name).toBe("run");
+    expect(meta?.description).toContain("ACP");
   });
 
   test("run command has NO subcommands (iter4 Wave A: moved to avoid collision)", async () => {
@@ -145,21 +147,24 @@ describe("am run: CLI registration", () => {
     // because citty routed the first positional through subCommand lookup.
     // `session` moved to `am acp session`; `agents` deprecation completed.
     const mod = await import("../../src/commands/run");
-    expect(mod.runCommand.subCommands).toBeUndefined();
+    const { resolveSubCommands } = await import("../helpers/citty");
+    expect(await resolveSubCommands(mod.runCommand)).toBeUndefined();
   });
 
   test("acp command exposes session subcommand (new top-level namespace)", async () => {
     const mod = await import("../../src/commands/run");
+    const { resolveMeta, resolveSubCommands } = await import("../helpers/citty");
     expect(mod.acpCommand).toBeDefined();
-    expect(mod.acpCommand.meta?.name).toBe("acp");
-    const subs = mod.acpCommand.subCommands;
+    expect((await resolveMeta(mod.acpCommand))?.name).toBe("acp");
+    const subs = await resolveSubCommands(mod.acpCommand);
     expect(subs).toBeDefined();
     expect(subs!.session).toBeDefined();
   });
 
   test("run command has expected args", async () => {
     const mod = await import("../../src/commands/run");
-    const args = mod.runCommand.args;
+    const { resolveArgs } = await import("../helpers/citty");
+    const args = await resolveArgs(mod.runCommand);
     expect(args).toBeDefined();
     expect(args!.agent).toBeDefined();
     expect(args!.prompt).toBeDefined();
@@ -183,7 +188,9 @@ describe("am run: CLI registration", () => {
 describe("am acp session: subcommand structure (iter4 Wave A relocation)", () => {
   test("session subcommand has list and cancel", async () => {
     const mod = await import("../../src/commands/run");
-    const sessionSub = mod.acpCommand.subCommands!.session;
+    const { resolveSubCommands } = await import("../helpers/citty");
+    const subs = await resolveSubCommands(mod.acpCommand);
+    const sessionSub = subs!.session;
     const resolved = await (sessionSub as () => Promise<any>)();
     expect(resolved.subCommands).toBeDefined();
     expect(resolved.subCommands.list).toBeDefined();
@@ -192,7 +199,9 @@ describe("am acp session: subcommand structure (iter4 Wave A relocation)", () =>
 
   test("session subcommand description clarifies LIVE vs transcript", async () => {
     const mod = await import("../../src/commands/run");
-    const sessionSub = mod.acpCommand.subCommands!.session;
+    const { resolveSubCommands } = await import("../helpers/citty");
+    const subs = await resolveSubCommands(mod.acpCommand);
+    const sessionSub = subs!.session;
     const resolved = await (sessionSub as () => Promise<any>)();
     const desc = resolved.meta?.description ?? "";
     expect(desc.toLowerCase()).toContain("live");
@@ -220,7 +229,8 @@ describe("am run agents (removed in iter4 Wave A)", () => {
     // `<AGENT>` arg. The main `run` handler recognizes it isn't a known agent
     // name and the usage-error hint names `am agent list` as the canonical.
     const mod = await import("../../src/commands/run");
-    const desc = mod.runCommand.meta?.description ?? "";
+    const { resolveMeta } = await import("../helpers/citty");
+    const desc = (await resolveMeta(mod.runCommand))?.description ?? "";
     // Avoid drift if someone re-adds a subCommand namespace to `run`.
     expect(desc.toLowerCase()).toContain("agent");
   });

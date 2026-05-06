@@ -97,7 +97,9 @@ describe("am flow list: argument structure", () => {
 
   test("list subcommand meta is correct", async () => {
     const mod = await import("../../src/commands/flow");
-    const listSub = mod.flowCommand.subCommands!.list;
+    const { resolveSubCommands } = await import("../helpers/citty");
+    const subs = await resolveSubCommands(mod.flowCommand);
+    const listSub = subs!.list;
     const resolved = await (listSub as () => Promise<any>)();
     expect(resolved.meta.name).toBe("list");
     expect(resolved.meta.description).toContain("List");
@@ -109,7 +111,9 @@ describe("am flow list: argument structure", () => {
 describe("am flow status: argument structure", () => {
   test("status subcommand has expected args", async () => {
     const mod = await import("../../src/commands/flow");
-    const statusSub = mod.flowCommand.subCommands!.status;
+    const { resolveSubCommands } = await import("../helpers/citty");
+    const subs = await resolveSubCommands(mod.flowCommand);
+    const statusSub = subs!.status;
     const resolved = await (statusSub as () => Promise<any>)();
     expect(resolved.args).toBeDefined();
     expect(resolved.args.runId).toBeDefined();
@@ -121,7 +125,9 @@ describe("am flow status: argument structure", () => {
 
   test("status subcommand meta is correct", async () => {
     const mod = await import("../../src/commands/flow");
-    const statusSub = mod.flowCommand.subCommands!.status;
+    const { resolveSubCommands } = await import("../helpers/citty");
+    const subs = await resolveSubCommands(mod.flowCommand);
+    const statusSub = subs!.status;
     const resolved = await (statusSub as () => Promise<any>)();
     expect(resolved.meta.name).toBe("status");
     expect(resolved.meta.description).toContain("status");
