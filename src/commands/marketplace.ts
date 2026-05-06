@@ -1,7 +1,12 @@
+/**
+ * @deprecated Marketplace v1 is retired per ADR-0039. This command surface is
+ * frozen for compatibility and scheduled for removal; use the MCP Registry for
+ * servers and git-subtree/git-submodule bundles for skills/instructions/agents.
+ * See ADRs/0039-marketplace-v1-scope-decision.md.
+ */
 import { defineCommand } from "citty";
 import { amError, debug, error, info, output } from "../lib/output";
 import {
-  MarketplaceError,
   addMarketplace,
   deriveMarketplaceName,
   listMarketplaces,
@@ -11,6 +16,17 @@ import {
 import { installPlugin, listInstalled, uninstallPlugin } from "../marketplace/installer";
 import { scanAllMarketplaces, searchPlugins } from "../marketplace/scanner";
 import { formatValidateSummary, validateMarketplace } from "../marketplace/validate";
+
+const MARKETPLACE_DEPRECATION_WARNING =
+  "WARNING: am marketplace is deprecated per ADR-0039 and will be removed. See ADRs/0039 for migration path.";
+
+let marketplaceDeprecationWarned = false;
+
+function warnMarketplaceDeprecated(): void {
+  if (marketplaceDeprecationWarned) return;
+  marketplaceDeprecationWarned = true;
+  console.error(MARKETPLACE_DEPRECATION_WARNING);
+}
 
 // ── Subcommands ──────────────────────────────────────────────────
 
@@ -53,6 +69,7 @@ const addCommand = defineCommand({
     verbose: { type: "boolean", alias: "v", default: false },
   },
   async run({ args }) {
+    warnMarketplaceDeprecated();
     const opts = { json: args.json, quiet: args.quiet, verbose: args.verbose };
     try {
       debug(`Adding marketplace from ${args.url}`, opts);
@@ -95,6 +112,7 @@ const listCommand = defineCommand({
     verbose: { type: "boolean", alias: "v", default: false },
   },
   async run({ args }) {
+    warnMarketplaceDeprecated();
     const opts = { json: args.json, quiet: args.quiet, verbose: args.verbose };
     try {
       if (args.installed) {
@@ -180,6 +198,7 @@ const installCommand = defineCommand({
     verbose: { type: "boolean", alias: "v", default: false },
   },
   async run({ args }) {
+    warnMarketplaceDeprecated();
     const opts = { json: args.json, quiet: args.quiet, verbose: args.verbose };
     try {
       const result = await installPlugin(args.plugin, { yes: args.yes });
@@ -216,6 +235,7 @@ const updateCommand = defineCommand({
     verbose: { type: "boolean", alias: "v", default: false },
   },
   async run({ args }) {
+    warnMarketplaceDeprecated();
     const opts = { json: args.json, quiet: args.quiet, verbose: args.verbose };
     try {
       const updated = await updateMarketplace(args.name as string | undefined, { yes: args.yes });
@@ -242,6 +262,7 @@ const removeCommand = defineCommand({
     verbose: { type: "boolean", alias: "v", default: false },
   },
   async run({ args }) {
+    warnMarketplaceDeprecated();
     const opts = { json: args.json, quiet: args.quiet, verbose: args.verbose };
     try {
       await removeMarketplace(args.name);
@@ -263,6 +284,7 @@ const searchCommand = defineCommand({
     verbose: { type: "boolean", alias: "v", default: false },
   },
   async run({ args }) {
+    warnMarketplaceDeprecated();
     const opts = { json: args.json, quiet: args.quiet, verbose: args.verbose };
     try {
       const results = await searchPlugins(args.query);
@@ -311,6 +333,7 @@ const uninstallCommand = defineCommand({
     verbose: { type: "boolean", alias: "v", default: false },
   },
   async run({ args }) {
+    warnMarketplaceDeprecated();
     const opts = { json: args.json, quiet: args.quiet, verbose: args.verbose };
     try {
       const result = await uninstallPlugin(args.plugin);
@@ -344,6 +367,7 @@ const validateCommand = defineCommand({
     verbose: { type: "boolean", alias: "v", default: false },
   },
   async run({ args }) {
+    warnMarketplaceDeprecated();
     const opts = { json: args.json, quiet: args.quiet, verbose: args.verbose };
     try {
       const result = await validateMarketplace(args.path);

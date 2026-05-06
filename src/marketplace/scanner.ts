@@ -1,6 +1,11 @@
 /**
  * Marketplace scanner: find all plugins within marketplace repos.
  *
+ * @deprecated Marketplace v1 is retired per ADR-0039. This module is frozen for
+ * compatibility and scheduled for removal; use the MCP Registry for servers and
+ * git-subtree/git-submodule bundles for skills/instructions/agents. See
+ * ADRs/0039-marketplace-v1-scope-decision.md.
+ *
  * Scans for directories containing .am-plugin/plugin.json (am native) or
  * .claude-plugin/plugin.json (Claude Code compatible) within each
  * marketplace's plugins/ directory (or root-level plugin dirs).

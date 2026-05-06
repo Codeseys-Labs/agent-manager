@@ -2,8 +2,9 @@
 
 **The control plane for your AI agents.** Define your catalog once (TOML,
 git-backed). Route any agent through a unified MCP gateway. Delegate locally
-via ACP or remotely via A2A. Subscribe to marketplaces. Remember sessions in
-an LLM-wiki. Edit from terminal, local web, or cloud.
+via ACP or remotely via A2A. Install MCP servers from the registry and vendor
+skills/instructions/agents via git. Remember sessions in an LLM-wiki. Edit from
+terminal, local web, or cloud.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Tests: 2286 pass](https://img.shields.io/badge/tests-2286%20pass-green.svg)](#testing)
@@ -44,10 +45,10 @@ a control plane for AI agents, built on six composing pillars:
    Gemini, Cursor, Kiro, Copilot…). A2A for remote. Bridge routes remote
    delegations into local ACP. **Agent auto-detection** now shows which
    agents are actually installed. Unified `am agent list` + `am_agent_invoke`.
-4. **Marketplace.** Subscribe to git-backed catalogs of MCPs + skills +
-   plugins + agents. Supply-chain hardened (commit SHA pinning,
-   trust-on-first-use, path traversal scrub, `--ignore-scripts`). Distinct
-   from Registry — see [ADR-0032](ADRs/0032-terminology-glossary.md).
+4. **MCP Registry + git-vendored bundles.** Marketplace v1 is retired per
+   [ADR-0039](ADRs/0039-marketplace-v1-scope-decision.md). Use the MCP Package
+   Registry for servers and git subtree/submodule vendoring for skills,
+   instructions, and agent-profile bundles.
 5. **LLM-wiki.** Karpathy-style session context. **Session harvest**
    (`am session` + `am wiki ingest`) is the cross-tool read pipeline that
    feeds the wiki — without it, this pillar is an empty shelf. Globally
@@ -164,19 +165,13 @@ am update                               # check for newer versions
 am uninstall tavily                     # remove a package
 ```
 
-### Marketplace
+### Bundles from git
 
-Browse and install plugins from git-based marketplaces (community-maintained
-registries of skills, hooks, and MCP server bundles).
-
-```bash
-am marketplace add https://github.com/org/am-plugins  # add a marketplace repo
-am marketplace list                                     # list available plugins
-am marketplace search "code review"                     # search across marketplaces
-am marketplace install org/my-plugin                    # install a plugin
-am marketplace remove my-plugin                         # uninstall
-am marketplace update                                   # update marketplace repos
-```
+Marketplace v1 is deprecated and frozen per
+[ADR-0039](ADRs/0039-marketplace-v1-scope-decision.md). Use the MCP Registry
+commands above for MCP servers. For skills, instructions, and agent profiles,
+vendor a trusted git repository into your config repo with `git subtree add` or
+`git submodule add`, then run `am import`/`am apply` as appropriate.
 
 ### LLM-Wiki (pillar 5)
 
@@ -205,7 +200,7 @@ conflict resolution:
 am import claude-code                           # interactive import (default)
 am import claude-code --auto                    # auto-resolve conflicts
 am import claude-code --report                  # show conflict report only
-am import claude-code --marketplace             # include plugins/extensions
+am import claude-code --marketplace             # include tool-native plugins/extensions
 ```
 
 **Direction matters.** `am import` merges tool-side config INTO your catalog
@@ -711,17 +706,22 @@ case without the injection surface.
 | `am flow list` | List recent flow runs |
 | `am flow status <id>` | Show status of a flow run |
 
-### Marketplace
+### Marketplace (deprecated)
+
+Marketplace v1 commands are retained only for compatibility and print a
+deprecation warning. They are frozen per
+[ADR-0039](ADRs/0039-marketplace-v1-scope-decision.md) and scheduled for future
+removal; prefer MCP Registry commands and git-vendored bundles.
 
 | Command | Description |
 |---------|-------------|
-| `am marketplace add <url>` | Add a git-based marketplace repo |
-| `am marketplace remove <name>` | Remove a marketplace |
-| `am marketplace list` | List marketplaces and available plugins (`--installed`) |
-| `am marketplace search <query>` | Search across all marketplaces |
-| `am marketplace install <id>` | Install a plugin from a marketplace |
-| `am marketplace uninstall <name>` | Remove an installed plugin |
-| `am marketplace update` | Update marketplace repos |
+| `am marketplace add <url>` | Deprecated: add a git-based marketplace repo |
+| `am marketplace remove <name>` | Deprecated: remove a marketplace |
+| `am marketplace list` | Deprecated: list marketplaces and available plugins (`--installed`) |
+| `am marketplace search <query>` | Deprecated: search across marketplaces |
+| `am marketplace install <id>` | Deprecated: install a plugin from a marketplace |
+| `am marketplace uninstall <name>` | Deprecated: remove an installed plugin |
+| `am marketplace update` | Deprecated: update marketplace repos |
 
 ### Community Adapters
 
@@ -737,7 +737,7 @@ case without the injection surface.
 
 | Command | Description |
 |---------|-------------|
-| `am import <adapter>` | Import native config (`--auto`, `--report`, `--marketplace`) |
+| `am import <adapter>` | Import native config (`--auto`, `--report`, `--marketplace` for tool-native plugins/extensions) |
 | `am doctor` | Health check -- config, adapters, git, secret audit |
 | `am secret init` | Generate encryption key |
 | `am secret set\|get <key>` | Encrypt/decrypt secrets |

@@ -1,6 +1,11 @@
 /**
  * Zod schemas for marketplace plugin manifests.
  *
+ * @deprecated Marketplace v1 is retired per ADR-0039. This module is frozen for
+ * compatibility and scheduled for removal; use the MCP Registry for servers and
+ * git-subtree/git-submodule bundles for skills/instructions/agents. See
+ * ADRs/0039-marketplace-v1-scope-decision.md.
+ *
  * Mirrors the TypeScript interfaces in `./types.ts`. Both sources must stay
  * in sync; when you edit one, update the other. The schema is what
  * `am marketplace validate` checks against — the TS interface is what code

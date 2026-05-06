@@ -3,9 +3,9 @@
 agent-manager (`am`) is **the control plane for AI agents**. Define your catalog
 once in TOML (MCP servers, skills, instructions, agents, profiles), sync via git,
 and generate native config files for every AI coding tool. Route any agent through
-a unified MCP gateway. Delegate locally via ACP or remotely via A2A. Subscribe to
-marketplaces. Remember sessions in an LLM-wiki. Edit from terminal, local web, or
-cloud.
+a unified MCP gateway. Delegate locally via ACP or remotely via A2A. Install MCP
+servers from the registry and vendor skills/instructions/agents via git. Remember
+sessions in an LLM-wiki. Edit from terminal, local web, or cloud.
 
 ## Core tenets (per [ADR-0031](ADRs/0031-product-scope-and-pillars.md))
 
@@ -22,9 +22,10 @@ this serve?** Features orthogonal to all six are flagged for reconsideration.
 3. **Protocol router** — ACP local, A2A remote, A2A-ACP bridge, unified agent
    registry (ADR-0030), **auto-detection of installed agents** (iter4 Wave C),
    flows (ADR-0026) scoped to pillar 3 composition.
-4. **Marketplace** — subscribe to git-backed catalogs of MCPs/skills/plugins/
-   agents. Supply-chain hardened: SHA pinning, TOFU, `--ignore-scripts`,
-   path-traversal scrub. Distinct from Registry (see [ADR-0032](ADRs/0032-terminology-glossary.md)).
+4. **MCP Registry + git-vendored bundles** — Marketplace v1 is retired per
+   [ADR-0039](ADRs/0039-marketplace-v1-scope-decision.md). Use the MCP Package
+   Registry for servers and git subtree/submodule vendoring for skills,
+   instructions, and agent-profile bundles.
 5. **LLM-wiki** — Karpathy-style session context. Session harvest (ADR-0016)
    is the cross-tool read pipeline — without it, pillar 5 is an empty shelf.
    Global git-backed + per-project local mirror. `am wiki` + MCP `am_wiki_*`.

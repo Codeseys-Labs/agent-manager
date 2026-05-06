@@ -1,7 +1,7 @@
 ---
 status: accepted
 date: 2026-04-16
-amended_by: ADR-0031a
+amended_by: ADR-0031a, ADR-0039
 ---
 
 # ADR-0031: Product Scope and Pillars
@@ -103,16 +103,17 @@ without re-reading the whole repo.
    - **A2A-ACP bridge:** incoming A2A tasks route to local ACP execution so
      remote agents can delegate into the user's local toolbelt.
 
-4. **Marketplace.** Users subscribe to git-backed catalogs of MCPs + skills
-   + plugins + agents. Replicates Claude Code's marketplace model but
-   tool-agnostic.
-   - **Supply-chain hardened** (iter2 Wave 2.C): commit SHA pinning, TOFU
-     prompts, clone-size caps, URL validation, path-traversal scrub on
-     manifest fields, `--ignore-scripts` on npm install for community
-     adapters.
-   - **Multiple sources:** one am, many marketplaces. Each pinned independently.
-   - **Distinct from Registry:** see ADR-0032. Registry = upstream package
-     index. Marketplace = user-chosen curated bundles.
+4. **MCP Registry + git-vendored bundles.** Marketplace v1 is retired per
+   ADR-0039 and is no longer a distinct product pillar. The user-facing
+   distribution path is now split by entity type:
+   - **MCP servers** use the MCP Package Registry (ADR-0024), which browses the
+     upstream package index and seeds catalog entries.
+   - **Skills, instructions, and agent-profile bundles** are vendored from a
+     trusted git source with `git subtree add` or `git submodule add`, then
+     registered through the normal catalog/import/apply path.
+   - **Deprecated compatibility surface:** `am marketplace *` and
+     `src/marketplace/*` remain temporarily frozen for existing private catalogs,
+     but are scheduled for future removal. See ADR-0039.
 
 5. **LLM-wiki** (Karpathy design). Session context capture so agents using
    am have memory of what was done and discussed across sessions.
@@ -179,6 +180,14 @@ can DO with `am` (commands, API routes, config fields) belongs to a
 pillar. The "harder to ship or develop" test is a NECESSARY but not
 SUFFICIENT condition — it must also genuinely NOT expand user-visible
 capability.
+
+## Marketplace v1 retirement (2026-05-05)
+
+ADR-0039 amends this ADR's original pillar 4. Marketplace v1 is retired as a
+standalone pillar; the supported path is MCP Registry for servers and
+user-chosen git vendoring (`git subtree`/`git submodule`) for skills,
+instructions, and agent profiles. The in-tree `am marketplace *` surface remains
+only as deprecated compatibility code until its future removal target.
 
 ## Consequences
 

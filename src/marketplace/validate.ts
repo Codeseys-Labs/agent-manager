@@ -1,6 +1,11 @@
 /**
  * `am marketplace validate <path>` — static validator for marketplace repos.
  *
+ * @deprecated Marketplace v1 is retired per ADR-0039. This module is frozen for
+ * compatibility and scheduled for removal; use the MCP Registry for servers and
+ * git-subtree/git-submodule bundles for skills/instructions/agents. See
+ * ADRs/0039-marketplace-v1-scope-decision.md.
+ *
  * Parses every discoverable `plugin.json` under a local path (file://-style,
  * no cloning) and reports structural issues WITHOUT side effects. Unlike the
  * installer, this runs offline against an uncloned working tree, which is

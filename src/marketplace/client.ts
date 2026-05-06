@@ -1,6 +1,11 @@
 /**
  * Marketplace client: add, update, remove, and list marketplace repos.
  *
+ * @deprecated Marketplace v1 is retired per ADR-0039. This module is frozen for
+ * compatibility and scheduled for removal; use the MCP Registry for servers and
+ * git-subtree/git-submodule bundles for skills/instructions/agents. See
+ * ADRs/0039-marketplace-v1-scope-decision.md.
+ *
  * Marketplaces are git repos cloned into ~/.config/agent-manager/marketplaces/<name>/.
  * A marketplaces.json index tracks added repos.
  *

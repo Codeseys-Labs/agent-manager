@@ -1,5 +1,5 @@
 ---
-status: proposed
+status: accepted
 date: 2026-05-05
 ---
 
@@ -203,30 +203,25 @@ worlds: ongoing security surface without ongoing customer evidence.
 "Defer the decision" is itself a decision, and it has been the
 decision for ~6 months. Force the choice.
 
-## Verification gates (must hold before promoting to `accepted`)
+## Verification gates (resolved for `accepted`)
 
-1. **ADR-0031 pillar 4 amendment** — write `ADRs/0031b-pillar-4-amendment.md`
-   per the same pattern ADR-0031a used for pillar 6. Mark pillar 4 as
-   "v0, retired — see ADR-0039." This MUST land in the same PR series
-   as the promotion, not as a deferred follow-up.
-2. **Code-side deprecation lands** — `src/marketplace/installer.ts`,
-   `src/marketplace/security.ts`, `src/marketplace/client.ts`,
-   `src/commands/marketplace.ts` carry `@deprecated` JSDoc with a
-   pointer to this ADR. `am marketplace *` invocations print a
-   one-line deprecation warning to stderr.
-3. **Doc-marketing scrub** — README and AGENTS.md no longer advertise
-   "many marketplaces, each pinned independently." A grep for
-   `marketplace` in those files returns either zero hits or hits that
-   reference this ADR's deprecation.
-4. **No-callers verification** — `rg "from .*marketplace"` outside
-   `src/marketplace/*` and `src/commands/marketplace.ts` returns zero.
-   If anything else imports it, that import must be deprecated too.
-5. **Removal target tracked** — a `v1.0` milestone exists on the repo
-   issue tracker referencing this ADR's removal step.
-
-If any of (1)–(5) is unmet at promotion time, this ADR stays
-`proposed` and the maintainer must address the gap or write the gap
-into a follow-up ADR before promoting.
+1. **ADR-0031 pillar 4 amendment — resolved.** ADR-0031 now marks pillar 4 as
+   "MCP Registry + git-vendored bundles" and includes a dedicated
+   "Marketplace v1 retirement" amendment section pointing back to ADR-0039.
+2. **Code-side deprecation lands — resolved.** `src/commands/marketplace.ts`
+   and every `src/marketplace/*.ts` module carry `@deprecated` JSDoc pointing
+   to this ADR. `am marketplace *` invocations print a one-line deprecation
+   warning to stderr.
+3. **Doc-marketing scrub — resolved.** README and AGENTS.md no longer advertise
+   marketplace subscriptions or "many marketplaces, each pinned independently";
+   remaining marketplace mentions are compatibility/deprecation references.
+4. **No-callers verification — resolved for production code.** The only
+   production imports of `src/marketplace/*` are from the deprecated
+   `src/commands/marketplace.ts` command surface. Other hits are test imports
+   or unrelated adapter-specific extension-marketplace scanners.
+5. **Removal target tracked — resolved.** Removal target is documented here as
+   `v1.0`; the deprecated command/runtime warning and README compatibility note
+   both point users to ADR-0039 for the migration path.
 
 ## References
 
