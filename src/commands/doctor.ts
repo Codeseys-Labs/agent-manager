@@ -16,6 +16,23 @@ interface Check {
   message: string;
 }
 
+export const LEGACY_PASSPHRASE_ENV_VARS = [
+  "AM_TEAM_PASSPHRASE",
+  "AGENT_MANAGER_TEAM_PASSPHRASE",
+  "AM_SHARED_PASSPHRASE",
+] as const;
+
+export const TEAM_PASSPHRASE_CONFIG_PATTERNS = [
+  /^\s*team_passphrase\s*=/m,
+  /^\s*"team_passphrase"\s*=/m,
+  /\bsecrets\.team_passphrase\s*=/,
+  /\bsecrets\s*=\s*\{[^}]*\bteam_passphrase\b[^}]*\}/,
+] as const;
+
+export function hasLegacyTeamPassphraseConfig(raw: string): boolean {
+  return TEAM_PASSPHRASE_CONFIG_PATTERNS.some((pattern) => pattern.test(raw));
+}
+
 export const doctorCommand = defineCommand({
   meta: { name: "doctor", description: "Health check for agent-manager" },
   args: {
@@ -187,21 +204,19 @@ export const doctorCommand = defineCommand({
       }
     }
 
-    // 8b. ADR-0046: scan for `team_passphrase` anti-pattern in raw config
-    //     and environment. The schema validator (src/core/schema.ts) rejects
-    //     `[settings.secrets].team_passphrase` for newly-loaded configs, but
-    //     a doctor scan also catches: (a) configs that fail Zod validation
-    //     before this field is even reached, (b) project-level `.agent-manager.toml`
-    //     files in the current directory tree, (c) legacy environment
-    //     variables that hint at a shared-passphrase setup.
+    // 8b. ADR-0046: best-effort regex scan for the `team_passphrase`
+    //     anti-pattern in raw config and legacy environment variables. The
+    //     schema validator (src/core/schema.ts) is the canonical defense for
+    //     newly-loaded configs; this scan also catches configs that fail other
+    //     validation first, project-level `.agent-manager.toml` files, and
+    //     managed/enterprise files that may not otherwise be loaded here.
     //
-    //     Known regex limitation: the bare-key form (`team_passphrase = "x"`)
-    //     at any indent level is detected. Quoted keys (`"team_passphrase" = "x"`),
-    //     dotted keys (`settings.secrets.team_passphrase = "x"`), and inline-table
-    //     forms (`{ team_passphrase = "x" }`) are NOT covered — the schema
-    //     validator (gates 1+2) catches these on load. The doctor scan is
-    //     belt-and-suspenders for the bare-key form, which is the only form
-    //     a copy-pasted shared-passphrase config will plausibly use.
+    //     Covered TOML shapes: bare keys (`team_passphrase = "x"`), quoted
+    //     bare keys (`"team_passphrase" = "x"`), dotted secrets keys
+    //     (`settings.secrets.team_passphrase = "x"`), and simple inline
+    //     secrets tables (`secrets = { team_passphrase = "x" }`). This is not
+    //     a TOML parser and may miss exotic/multiline forms; schema validation
+    //     remains the authoritative gate.
     try {
       const configsToScan: string[] = [];
       const globalConfigPath = join(configDir, "config.toml");
@@ -232,11 +247,7 @@ export const doctorCommand = defineCommand({
       for (const filePath of configsToScan) {
         try {
           const raw = fs.readFileSync(filePath, "utf-8");
-          // Match `team_passphrase` as a TOML key at any indent level.
-          // Conservative: only flag a left-of-`=` key, not arbitrary mentions
-          // in comments or string values, to avoid false positives in docs
-          // committed alongside config.
-          if (/^\s*team_passphrase\s*=/m.test(raw)) {
+          if (hasLegacyTeamPassphraseConfig(raw)) {
             teamPassphraseFiles.push(filePath);
           }
         } catch {
@@ -245,11 +256,7 @@ export const doctorCommand = defineCommand({
       }
 
       const envHints: string[] = [];
-      for (const envName of [
-        "AM_TEAM_PASSPHRASE",
-        "AGENT_MANAGER_TEAM_PASSPHRASE",
-        "AM_SHARED_PASSPHRASE",
-      ]) {
+      for (const envName of LEGACY_PASSPHRASE_ENV_VARS) {
         if (process.env[envName]) envHints.push(envName);
       }
 

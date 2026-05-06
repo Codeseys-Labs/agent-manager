@@ -1,15 +1,46 @@
 import { defineCommand } from "citty";
 import { resolveConfigDir } from "../core/config";
-import { applyResolved } from "../core/controller";
+import { type ApplyResolvedResult, applyResolved } from "../core/controller";
+import type { DryRunEnvelope } from "../lib/dry-run-envelope";
 import { AmError } from "../lib/errors";
 import { amError, info, output, warn } from "../lib/output";
+
+/**
+ * ADR-0038 explanation payload emitted by `am apply --dry-run --json`.
+ * The shared envelope wrapper (`DryRunEnvelope<ApplyExplanation>`) lives
+ * in `src/lib/dry-run-envelope.ts`; this is the action-specific body.
+ */
+interface ApplyExplanation {
+  profile: string;
+  results: Array<{
+    adapter: string;
+    status: "ok" | "failed" | "skipped";
+    files: Array<{ path: string; written: boolean }>;
+    warnings: string[];
+    error?: string;
+    diff?: { status: "in-sync" | "drifted" | "unmanaged"; changes: number };
+  }>;
+  succeeded: number;
+  failed: ApplyResolvedResult["failed"];
+  skipped: string[];
+}
 
 export const applyCommand = defineCommand({
   meta: { name: "apply", description: "Generate native configs for detected tools" },
   args: {
     "dry-run": { type: "boolean", description: "Preview changes without writing", default: false },
-    diff: { type: "boolean", description: "Show diff before applying", default: false },
-    force: { type: "boolean", description: "Overwrite even if drifted", default: false },
+    diff: {
+      type: "boolean",
+      description:
+        "Include drift summary per adapter (run adapter.diff before export). In live mode without --force, refuses to overwrite drifted adapters.",
+      default: false,
+    },
+    force: {
+      type: "boolean",
+      description:
+        "Overwrite even if drifted (only meaningful with --diff in live mode; no-op in --dry-run).",
+      default: false,
+    },
     target: { type: "string", description: "Apply to specific adapter only" },
     profile: { type: "string", description: "Override active profile" },
     json: { type: "boolean", description: "JSON output", default: false },
@@ -21,10 +52,12 @@ export const applyCommand = defineCommand({
     try {
       const configDir = resolveConfigDir();
 
-      let applyResult;
+      let applyResult: ApplyResolvedResult;
       try {
         applyResult = await applyResolved(configDir, {
           dryRun: args["dry-run"],
+          diff: args.diff,
+          force: args.force,
           target: args.target,
           profile: args.profile,
         });
@@ -61,6 +94,11 @@ export const applyCommand = defineCommand({
           warn(`${res.adapter}: ${res.error}`, opts);
           continue;
         }
+        // Adapter was skipped due to drift gate (diff + no force in live mode).
+        if (applyResult.skipped.includes(res.adapter)) {
+          for (const w of res.warnings) warn(`${res.adapter}: ${w}`, opts);
+          continue;
+        }
         if (!args["dry-run"]) {
           info(`${res.adapter}: wrote ${written} file(s)`, opts);
         } else {
@@ -68,6 +106,11 @@ export const applyCommand = defineCommand({
           for (const f of res.files) {
             info(`  ${f.path}`, opts);
           }
+        }
+        // ADR-0038 (`--diff`): surface drift summary inline next to file
+        // counts so operators see in-sync / drifted at a glance.
+        if (res.diff) {
+          info(`${res.adapter}: drift=${res.diff.status} (${res.diff.changes} change(s))`, opts);
         }
         for (const w of res.warnings) {
           warn(`${res.adapter}: ${w}`, opts);
@@ -81,32 +124,87 @@ export const applyCommand = defineCommand({
           opts,
         );
         process.exitCode = 1;
+      } else if (applyResult.skipped.length > 0 && !args["dry-run"]) {
+        // Drift-gated skip (diff && !force) is also a non-zero exit so CI
+        // catches the refusal — the operator must rerun with --force.
+        info(
+          `Applied to ${applyResult.succeeded.length} of ${total} adapters. ${applyResult.skipped.length} skipped (drift detected; rerun with --force).`,
+          opts,
+        );
+        process.exitCode = 1;
       } else {
         info(`Applied to ${applyResult.succeeded.length} of ${total} adapters.`, opts);
       }
 
       if (args.json) {
-        output(
-          {
-            action: "apply",
+        // Per-adapter result with a derived `status` so JSON consumers don't
+        // have to infer success from error-presence (C3 Option C, 2026-05-03).
+        const results = applyResult.results.map((r) => ({
+          adapter: r.adapter,
+          status: r.error
+            ? ("failed" as const)
+            : applyResult.skipped.includes(r.adapter)
+              ? ("skipped" as const)
+              : ("ok" as const),
+          files: r.files,
+          warnings: r.warnings,
+          ...(r.error ? { error: r.error } : {}),
+          ...(r.diff ? { diff: r.diff } : {}),
+        }));
+
+        if (args["dry-run"]) {
+          // ADR-0038 canonical envelope. Legacy top-level fields
+          // (action, profile, dryRun, results, succeeded, failed, skipped)
+          // are KEPT additively for back-compat — JSON consumers built
+          // against the pre-envelope shape continue to work.
+          const explanation: ApplyExplanation = {
             profile: applyResult.profile,
-            dryRun: args["dry-run"],
-            // C3 Option C (2026-05-03): explicit `status` per adapter so
-            // JSON consumers don't have to infer success from error-presence.
-            // Plus `files`/`warnings`/`error` retained for detail.
-            results: applyResult.results.map((r) => ({
-              adapter: r.adapter,
-              status: r.error ? "failed" : "ok",
-              files: r.files,
-              warnings: r.warnings,
-              ...(r.error ? { error: r.error } : {}),
-            })),
+            results,
             succeeded: applyResult.succeeded.length,
             failed: applyResult.failed,
             skipped: applyResult.skipped,
-          },
-          opts,
-        );
+          };
+          const envelope: DryRunEnvelope<ApplyExplanation> = {
+            action: "apply",
+            reads_only: true,
+            would_do: applyResult.results.map(
+              (r) => `${r.adapter}: would write ${r.files.length} file(s)`,
+            ),
+            mutations_prevented: ["adapter file writes"],
+            warnings: applyResult.results.flatMap((r) =>
+              r.warnings.map((w) => `${r.adapter}: ${w}`),
+            ),
+            explanation,
+          };
+          output(
+            {
+              ...envelope,
+              // Back-compat: pre-envelope consumers still expect the
+              // top-level `action`, `profile`, `dryRun`, `results`, etc.
+              profile: applyResult.profile,
+              dryRun: true,
+              results,
+              succeeded: applyResult.succeeded.length,
+              failed: applyResult.failed,
+              skipped: applyResult.skipped,
+            },
+            opts,
+          );
+        } else {
+          // Live-mode JSON shape — unchanged from pre-ADR-0038.
+          output(
+            {
+              action: "apply",
+              profile: applyResult.profile,
+              dryRun: false,
+              results,
+              succeeded: applyResult.succeeded.length,
+              failed: applyResult.failed,
+              skipped: applyResult.skipped,
+            },
+            opts,
+          );
+        }
       }
     } catch (err) {
       amError(err, opts);

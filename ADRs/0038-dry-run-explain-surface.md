@@ -1,6 +1,7 @@
 ---
-status: proposed
+status: accepted
 date: 2026-05-02
+accepted: 2026-05-05
 ---
 
 # ADR-0038: Dry-Run / Explain Surface Pattern
@@ -216,3 +217,24 @@ First PR after this ADR accepts ships `am run <agent> --dry-run`:
 Subsequent PRs cover `am apply`, `am marketplace install`, `am import`,
 following the same shape. Each PR updates this ADR's "Coverage plan"
 checklist.
+
+## Verification gates (closed 2026-05-05)
+
+| Gate | Status | Evidence |
+|------|--------|----------|
+| Shared envelope type | ✓ | `src/lib/dry-run-envelope.ts` (122 LOC) — `DryRunEnvelope<T>` interface |
+| Conformance test | ✓ | `test/commands/dry-run-envelope.test.ts` (327 LOC, 31 tests passing) |
+| `am run --dry-run` wired | ✓ | `src/commands/run.ts` emits envelope shape (Lens E confirmed) |
+| `am apply --dry-run` wired | ✓ | `src/commands/apply.ts` emits envelope shape |
+
+### Deferred to future PRs (out of scope for this acceptance)
+
+- `am import`: still uses `--report` flag; switching to `--dry-run` is an
+  API break. Migrate when 2.x major version cuts.
+- `am marketplace install --dry-run`: marketplace v1 retired by ADR-0039;
+  no point adding a feature.
+- `am apply --diff` and `am apply --force` flags: declared in args but
+  intentionally unwired pending design review (Lens E flagged but not
+  scoped to this PR).
+- Dual-emit `readOnlyHint` / `destructiveHint` upstream MCP annotations
+  (overlaps with ADR-0037 Phase 2; tracked there).

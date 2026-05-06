@@ -43,6 +43,7 @@ import {
   isVariantsEnabled,
   resolveVariant,
 } from "../core/variant-resolver";
+import type { DryRunEnvelope } from "../lib/dry-run-envelope";
 import { debug, error, info, output, parsePositiveInt, warn } from "../lib/output";
 import { AcpClientError, AmAcpClient, createAcpClient } from "../protocols/acp/client";
 import { sandboxEnv } from "../protocols/acp/env-sandbox";
@@ -170,14 +171,14 @@ interface DryRunExplanation {
   allowed_paths: string[];
 }
 
-interface DryRunPayload {
-  action: "run-agent";
-  would_do: string[];
-  reads_only: true;
-  mutations_prevented: string[];
-  warnings: string[];
-  explanation: DryRunExplanation;
-}
+/**
+ * `am run --dry-run` envelope. Aliased to the shared `DryRunEnvelope<T>`
+ * (ADR-0038, src/lib/dry-run-envelope.ts) so every dry-run-emitting
+ * command rides the same canonical shape. The `action` literal is
+ * narrowed to `"run-agent"` for this command; the `explanation` payload
+ * carries the ADR-0038 resolved-spawn fields.
+ */
+type DryRunPayload = DryRunEnvelope<DryRunExplanation> & { action: "run-agent" };
 
 /**
  * `Bun.which` shim — defaults to the real thing, tests can stub it to assert

@@ -157,6 +157,19 @@ export interface ApplyResolvedOptions {
    * resolved from `process.cwd()`.
    */
   projectPath?: string;
+  /**
+   * ADR-0038: when true, run `adapter.diff(resolved)` before export and
+   * surface drift on each `ApplyAdapterResult`. Useful in dry-run for
+   * preview, and in live mode to gate writes via `force` (below).
+   */
+  diff?: boolean;
+  /**
+   * ADR-0038: when true, force-overwrite even if the adapter shows
+   * drift between native config and the catalog. Ignored when `diff`
+   * is false (no drift gate exists in that path). Has no effect in
+   * dry-run mode.
+   */
+  force?: boolean;
 }
 
 export interface ApplyAdapterResult {
@@ -164,6 +177,12 @@ export interface ApplyAdapterResult {
   files: Array<{ path: string; written: boolean }>;
   warnings: string[];
   error?: string;
+  /**
+   * ADR-0038 (`--diff`): drift summary surfaced when the caller passed
+   * `diff: true`. Omitted otherwise so legacy consumers don't see a
+   * field they don't expect.
+   */
+  diff?: { status: "in-sync" | "drifted" | "unmanaged"; changes: number };
 }
 
 export interface ApplyResolvedResult {
@@ -242,6 +261,52 @@ export async function applyResolved(
 
     for (const adapter of adapters) {
       try {
+        // ADR-0038 (`--diff` / `--force`): when caller asks for diff, run
+        // adapter.diff() against the resolved config first. The result is
+        // attached to the per-adapter output AND used to gate the live
+        // write: if drift is detected and `force` is not set, we skip the
+        // write and surface a warning instead.
+        let driftSummary:
+          | { status: "in-sync" | "drifted" | "unmanaged"; changes: number }
+          | undefined;
+        let skipDueToDrift = false;
+        if (options.diff) {
+          try {
+            const diff = await adapter.diff(resolved);
+            driftSummary = { status: diff.status, changes: diff.changes.length };
+            if (
+              !options.dryRun &&
+              !options.force &&
+              diff.status === "drifted" &&
+              diff.changes.length > 0
+            ) {
+              skipDueToDrift = true;
+            }
+          } catch {
+            // Adapter diff is best-effort. A failure shouldn't block the
+            // apply pipeline — fall through to export() as before.
+            driftSummary = undefined;
+          }
+        }
+
+        if (skipDueToDrift) {
+          // Drift gate: refuse to overwrite without --force. Emit a
+          // structured result (no files written) and a warning so JSON
+          // consumers and humans both see the gate fired.
+          results.push({
+            adapter: adapter.meta.name,
+            files: [],
+            warnings: [
+              `drift detected (${driftSummary?.changes ?? 0} change${
+                (driftSummary?.changes ?? 0) === 1 ? "" : "s"
+              }); refusing to overwrite — re-run with --force to apply anyway`,
+            ],
+            ...(driftSummary ? { diff: driftSummary } : {}),
+          });
+          skipped.push(adapter.meta.name);
+          continue;
+        }
+
         const result = await adapter.export(resolved, {
           projectPath: projectFile ? join(projectFile, "..") : options.projectPath,
           dryRun: !!options.dryRun,
@@ -250,6 +315,7 @@ export async function applyResolved(
           adapter: adapter.meta.name,
           files: result.files.map((f) => ({ path: f.path, written: f.written })),
           warnings: result.warnings,
+          ...(driftSummary ? { diff: driftSummary } : {}),
         });
         succeeded.push(adapter.meta.name);
       } catch (e: unknown) {

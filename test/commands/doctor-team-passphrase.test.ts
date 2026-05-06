@@ -1,6 +1,10 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import * as fs from "node:fs";
 import { join } from "node:path";
+import {
+  LEGACY_PASSPHRASE_ENV_VARS,
+  hasLegacyTeamPassphraseConfig,
+} from "../../src/commands/doctor";
 import { type TestDir, createTestDir } from "../helpers/tmp";
 
 // ADR-0046 gate 3: `am doctor` proactively scans for `team_passphrase` in
@@ -10,43 +14,49 @@ import { type TestDir, createTestDir } from "../helpers/tmp";
 // here we validate the substrate.
 
 describe("ADR-0046: doctor team_passphrase detection — regex behaviors", () => {
-  // The regex used inside doctor.ts (line 218): /^\s*team_passphrase\s*=/m
-  const teamPassphraseRegex = /^\s*team_passphrase\s*=/m;
-
   test("matches simple TOML key at line start", () => {
-    expect(teamPassphraseRegex.test('team_passphrase = "x"')).toBe(true);
+    expect(hasLegacyTeamPassphraseConfig('team_passphrase = "x"')).toBe(true);
   });
 
   test("matches indented key (inside table)", () => {
-    expect(teamPassphraseRegex.test('[settings.secrets]\n  team_passphrase = "x"')).toBe(true);
+    expect(hasLegacyTeamPassphraseConfig('[settings.secrets]\n  team_passphrase = "x"')).toBe(true);
   });
 
   test("matches with extra spaces around equals", () => {
-    expect(teamPassphraseRegex.test('team_passphrase    =    "x"')).toBe(true);
+    expect(hasLegacyTeamPassphraseConfig('team_passphrase    =    "x"')).toBe(true);
+  });
+
+  test("matches quoted bare key", () => {
+    expect(hasLegacyTeamPassphraseConfig('"team_passphrase" = "x"')).toBe(true);
+  });
+
+  test("matches dotted secrets key", () => {
+    expect(hasLegacyTeamPassphraseConfig('settings.secrets.team_passphrase = "x"')).toBe(true);
+  });
+
+  test("matches inline secrets table", () => {
+    expect(hasLegacyTeamPassphraseConfig('[settings]\nsecrets = { team_passphrase = "x" }')).toBe(
+      true,
+    );
   });
 
   test("does NOT match comment containing the word", () => {
     // Conservative: only flag actual key=value, not commentary.
     const config = '# do not use team_passphrase, see ADR-0046\nbackend = "age"';
-    expect(teamPassphraseRegex.test(config)).toBe(false);
+    expect(hasLegacyTeamPassphraseConfig(config)).toBe(false);
   });
 
   test("does NOT match when team_passphrase is on the right of an equals", () => {
     const config = 'comment = "see team_passphrase docs"';
-    expect(teamPassphraseRegex.test(config)).toBe(false);
+    expect(hasLegacyTeamPassphraseConfig(config)).toBe(false);
   });
 
   test("does NOT match similar-but-different keys", () => {
-    expect(teamPassphraseRegex.test('team_passphrase_hint = "x"')).toBe(false);
-    // The regex is anchored on `team_passphrase\s*=`, so suffixed keys
-    // would only match if they matched `team_passphrase=` literally.
-    // `team_passphrase_hint = "x"` includes `team_passphrase_hint` as
-    // a unit; the regex finds `team_passphrase` followed by `_` not `=`,
-    // so it correctly rejects.
+    expect(hasLegacyTeamPassphraseConfig('team_passphrase_hint = "x"')).toBe(false);
   });
 
   test("matches at file start (no leading newline)", () => {
-    expect(teamPassphraseRegex.test('team_passphrase = "x"\n')).toBe(true);
+    expect(hasLegacyTeamPassphraseConfig('team_passphrase = "x"\n')).toBe(true);
   });
 
   test("matches with surrounding context", () => {
@@ -59,7 +69,7 @@ team_passphrase = "DO_NOT"
 
 [servers.tavily]
 command = "uvx"`;
-    expect(teamPassphraseRegex.test(config)).toBe(true);
+    expect(hasLegacyTeamPassphraseConfig(config)).toBe(true);
   });
 });
 
@@ -86,11 +96,7 @@ describe("ADR-0046: legacy environment variable hints", () => {
 
   function envHints(): string[] {
     const hints: string[] = [];
-    for (const envName of [
-      "AM_TEAM_PASSPHRASE",
-      "AGENT_MANAGER_TEAM_PASSPHRASE",
-      "AM_SHARED_PASSPHRASE",
-    ]) {
+    for (const envName of LEGACY_PASSPHRASE_ENV_VARS) {
       if (process.env[envName]) hints.push(envName);
     }
     return hints;
@@ -138,7 +144,7 @@ team_passphrase = "$ARGON2"
 `,
     );
     const raw = fs.readFileSync(configPath, "utf-8");
-    expect(/^\s*team_passphrase\s*=/m.test(raw)).toBe(true);
+    expect(hasLegacyTeamPassphraseConfig(raw)).toBe(true);
   });
 
   test("clean file with no team_passphrase is NOT detected", async () => {
@@ -151,6 +157,6 @@ backend = "age"
 `,
     );
     const raw = fs.readFileSync(configPath, "utf-8");
-    expect(/^\s*team_passphrase\s*=/m.test(raw)).toBe(false);
+    expect(hasLegacyTeamPassphraseConfig(raw)).toBe(false);
   });
 });
