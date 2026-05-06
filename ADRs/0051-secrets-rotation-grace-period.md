@@ -333,3 +333,70 @@ Phase 1 closes when all of the following hold:
 - age specification v1: <https://age-encryption.org/v1>
 - SOPS rotation: getsops/sops GitHub; OneUptime blog (2026-03-13) on two-phase grace period
 - agenix rekey: <https://github.com/ryantm/agenix>
+
+
+---
+
+## Amendment: 2026-05-05 — Safe finalize ordering
+
+**Issue.** The original Phase-1 spec described `finalizeRotation()` as
+a single atomic operation that drops the OLD recipient sidecar +
+archived identity + state file. The CLI was expected to call rewrap
+AFTER finalize. Phase-8 cross-family review (gpt-5.5 must-fix #1)
+flagged that this ordering loses the OLD identity before rewrap
+completes — if rewrap encounters a corrupt or undecryptable envelope,
+the operator is left with envelopes encrypted to a recipient whose
+identity has already been deleted, with no recovery path.
+
+**Fix.** `finalizeRotation()` is split into two cooperating verbs:
+
+1. `finalizeRotationPrepare()` — reads + validates the rotation-state
+   sidecar, returns it. Does NOT delete anything. Throws if no rotation
+   in progress. Runs the grace-period elapsed check.
+2. `finalizeRotationCommit()` — drops the OLD recipient sidecar +
+   archive + state file + clears the in-memory legacy-identity list.
+   Caller must guarantee rewrap-to-new-only completed successfully
+   FIRST.
+
+**New CLI flow (`runFinalize` in `src/commands/secrets-rotate.ts`):**
+
+```
+1. backend.finalizeRotationPrepare()  → validates + returns state
+2. drop OLD recipient sidecar from recipients/ (so encrypt targets new only)
+3. rewrapMany() to re-encrypt all envelopes to NEW-only
+4. if rewrap reports any failure → RESTORE sidecar from state.old_recipient + exit non-zero
+5. only on full success: backend.finalizeRotationCommit() — delete archive + state
+```
+
+**Backward-compat.** `finalizeRotation()` is preserved as a deprecated
+wrapper that calls `prepare()` then `commit()` directly (without the
+intermediate rewrap). Existing callers and tests continue to work.
+
+**New tests** (in `test/commands/secrets-rotate.test.ts`):
+
+- `safe-ordering: rewrap failure on a corrupted envelope restores the
+  OLD recipient sidecar AND keeps the archive on disk`
+- `safe-ordering: full rewrap success commits — sidecar, archive, and
+  state file are all removed`
+
+Both pass alongside the original 9 Phase-1 verification gate tests
+(11/11 total in this file as of Run K).
+
+## Amendment: 2026-05-05 — readRotationState fail-closed
+
+**Issue.** `readRotationState()` originally returned `null` on JSON
+parse error or missing fields. A corrupt state file silently looked
+like "no rotation in progress", letting a second rotation start over a
+partial one and compounding damage.
+
+**Fix.** Three-case behavior:
+
+- file does not exist → return `null` (no rotation in progress)
+- file exists, valid JSON, all required fields, recipients shaped
+  `age1...` → return `RotationState`
+- file exists, parse error OR missing required field OR malformed
+  recipient → throw `Error` with the path + parse-error detail +
+  remediation hint ("Remove the file manually if you are sure no
+  rotation is in progress")
+
+3 new tests in `test/core/secrets-age.test.ts` cover all three cases.

@@ -516,3 +516,128 @@ grace_period_days = 0
     await expect(decryptWithIdentity(rewrapped, fx.oldIdentityString)).rejects.toThrow();
   });
 });
+
+// ── ADR-0051 / gpt-5.5 Phase-8 must-fix #1 ────────────────────────
+// Crash-safe finalize ordering. The finalize flow MUST rewrap to the
+// NEW-only recipient set BEFORE deleting the archived OLD identity and
+// the rotation-state sidecar, so a rewrap failure leaves the rotation
+// recoverable instead of orphaning envelopes against a deleted recipient.
+
+describe("ADR-0051 `am secrets rotate --finalize` — safe ordering (gpt-5.5 must-fix #1)", () => {
+  let fx: Fixture;
+  let envSnap: Record<string, string | undefined>;
+
+  beforeEach(async () => {
+    envSnap = snapshotEnv();
+    fx = await makeFixture();
+    process.env.AM_CONFIG_DIR = fx.dir.path;
+    process.env.AM_AGE_IDENTITY_DIR = fx.identityDir;
+    process.env.AM_AGE_PASSPHRASE = fx.oldPassphrase;
+    process.env.AM_SECRETS_BACKEND = "age";
+    process.env.AM_AGE_NEW_PASSPHRASE = undefined;
+    captureConsole();
+    process.exitCode = 0;
+  });
+
+  afterEach(async () => {
+    restoreConsole();
+    process.exitCode = 0;
+    restoreEnv(envSnap);
+    if (fx) await fx.dir.cleanup();
+  });
+
+  test("safe-ordering: rewrap failure on a corrupted envelope restores the OLD recipient sidecar AND keeps the archive on disk", async () => {
+    // Step 1: rotate with grace > 0 so we land in dual-encrypt state
+    // and the finalize path does a real rewrap pass (not the grace=0
+    // immediate-cutover shortcut).
+    process.env.AM_AGE_NEW_PASSPHRASE = "new-pw-finalize-corrupt";
+    await invokeRotate({ file: fx.tomlPath, json: true });
+    expect(process.exitCode ?? 0).toBe(0);
+
+    // Sanity: dual-encrypt artifacts present.
+    const oldSidecar = join(fx.identityDir, "recipients", "_rotation-old.pub");
+    const oldArchive = join(fx.identityDir, "identity.age.old");
+    const stateFile = join(fx.identityDir, ".am-rotation-state.json");
+    await expect(readFile(oldSidecar)).resolves.toBeDefined();
+    await expect(readFile(oldArchive)).resolves.toBeDefined();
+    await expect(readFile(stateFile)).resolves.toBeDefined();
+
+    // Inject a corrupted age envelope into the TOML alongside the
+    // legitimate one (same `[servers.test.env]` table). The rewrap
+    // walker will try `backend.rewrap()` on it, fail to decrypt, and
+    // bump the per-file `skipped` count — which the safe-ordering
+    // finalize must treat as "abort + restore". Note: the rotate pass
+    // already round-tripped the TOML through @iarna/toml, which
+    // re-emits sub-tables indented; tolerate either form.
+    const tomlBefore = await readFile(fx.tomlPath, "utf-8");
+    const corrupted = `${AGE_PREFIX}AAAAcorruptedpayloadthatcannotbedecryptedAAAA==`;
+    const tomlWithBadEnv = tomlBefore.replace(
+      /(\s*\[servers\.test\.env\]\s*\n)(\s*SECRET\s*=\s*"[^"]+"\s*\n)/,
+      (_m, header, secLine) =>
+        `${header}${secLine}${secLine.replace(/SECRET/, "BROKEN").replace(/"[^"]+"/, `"${corrupted}"`)}`,
+    );
+    expect(tomlWithBadEnv).not.toBe(tomlBefore);
+    expect(tomlWithBadEnv).toContain(corrupted);
+    await writeFile(fx.tomlPath, tomlWithBadEnv, "utf-8");
+
+    // Step 2: finalize --force → must abort with non-zero exit, restore
+    // the OLD recipient sidecar, and leave the archive + state file in
+    // place so the operator can fix the bad envelope and retry.
+    stdoutLines.length = 0;
+    stderrLines.length = 0;
+    process.exitCode = 0;
+    process.env.AM_AGE_PASSPHRASE = "new-pw-finalize-corrupt";
+    await invokeRotate({ file: fx.tomlPath, json: true, finalize: true, force: true });
+
+    expect(process.exitCode).toBe(1);
+
+    // Sidecar restored — i.e. rotation is back in dual-encrypt grace
+    // state, NOT half-finalized with a deleted recipient.
+    const sidecarBody = await readFile(oldSidecar, "utf-8");
+    expect(sidecarBody).toContain(fx.oldRecipient);
+
+    // Archive + state file still present (commit stage was never reached).
+    await expect(readFile(oldArchive)).resolves.toBeDefined();
+    await expect(readFile(stateFile)).resolves.toBeDefined();
+
+    // JSON output reports the abort so callers/CI can tell.
+    const payload = jsonFromStdout();
+    expect(payload.action).toBe("rotate-finalize");
+    expect(typeof payload.error).toBe("string");
+    expect(String(payload.error)).toMatch(/finalize aborted|skipped|unrewrapped/i);
+  }, 30_000);
+
+  test("safe-ordering: full rewrap success commits — sidecar, archive, and state file are all removed", async () => {
+    // Step 1: rotate (grace=14 default).
+    process.env.AM_AGE_NEW_PASSPHRASE = "new-pw-finalize-clean";
+    await invokeRotate({ file: fx.tomlPath, json: true });
+    expect(process.exitCode ?? 0).toBe(0);
+
+    // Step 2: finalize --force with a healthy TOML — every envelope
+    // rewraps cleanly, so finalize commits and the OLD material is
+    // cleaned up exactly as it was before this safety patch.
+    stdoutLines.length = 0;
+    stderrLines.length = 0;
+    process.exitCode = 0;
+    process.env.AM_AGE_PASSPHRASE = "new-pw-finalize-clean";
+    await invokeRotate({ file: fx.tomlPath, json: true, finalize: true, force: true });
+
+    expect(process.exitCode ?? 0).toBe(0);
+
+    // OLD material gone.
+    await expect(
+      readFile(join(fx.identityDir, "recipients", "_rotation-old.pub")),
+    ).rejects.toThrow();
+    await expect(readFile(join(fx.identityDir, "identity.age.old"))).rejects.toThrow();
+    await expect(readFile(join(fx.identityDir, ".am-rotation-state.json"))).rejects.toThrow();
+
+    // OLD identity can no longer decrypt the now-NEW-only envelope.
+    const finalEnvelope = await readEnvelope(fx.tomlPath);
+    await expect(decryptWithIdentity(finalEnvelope, fx.oldIdentityString)).rejects.toThrow();
+
+    // JSON output reports finalized phase.
+    const payload = jsonFromStdout();
+    expect(payload.action).toBe("rotate-finalize");
+    expect(payload.phase).toBe("finalized");
+  }, 30_000);
+});

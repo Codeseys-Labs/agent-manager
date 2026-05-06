@@ -613,34 +613,60 @@ export class AgeSecretsBackend implements SecretsBackend {
 
   /**
    * Read the rotation-state sidecar, or `null` if no rotation is in
-   * progress / the file is missing or malformed. ADR-0051 Phase 1 keeps
-   * the schema lenient — tooling reads what it can and treats missing
-   * fields as "unknown".
+   * progress (file does not exist).
+   *
+   * Fail-closed: if the file exists but cannot be parsed into a valid
+   * RotationState (malformed JSON, missing required fields, or
+   * recipients that don't look like age keys), this method throws a
+   * descriptive error so callers do not silently start a second
+   * rotation over a partial/corrupt one.
    */
   async readRotationState(): Promise<RotationState | null> {
     const path = this.getRotationStatePath();
     if (!(await pathExists(path))) return null;
+
+    let raw: string;
     try {
-      const raw = await readFile(path, "utf8");
-      const parsed = JSON.parse(raw) as Partial<RotationState>;
-      if (
-        typeof parsed.old_recipient !== "string" ||
-        typeof parsed.new_recipient !== "string" ||
-        typeof parsed.started_at !== "string"
-      ) {
-        return null;
-      }
-      return {
-        old_recipient: parsed.old_recipient,
-        new_recipient: parsed.new_recipient,
-        started_at: parsed.started_at,
-        grace_until: typeof parsed.grace_until === "string" ? parsed.grace_until : "",
-        grace_period_days:
-          typeof parsed.grace_period_days === "number" ? parsed.grace_period_days : 14,
-      };
-    } catch {
-      return null;
+      raw = await readFile(path, "utf8");
+    } catch (err) {
+      throw new Error(
+        `Failed to read rotation-state file (${path}): ${String(err)}. Remove the file manually if you are sure no rotation is in progress.`,
+      );
     }
+
+    let parsed: Partial<RotationState>;
+    try {
+      parsed = JSON.parse(raw) as Partial<RotationState>;
+    } catch (err) {
+      throw new Error(
+        `Rotation-state file (${path}) contains invalid JSON: ${String(err)}. Remove the file manually if you are sure no rotation is in progress.`,
+      );
+    }
+
+    if (
+      typeof parsed.old_recipient !== "string" ||
+      typeof parsed.new_recipient !== "string" ||
+      typeof parsed.started_at !== "string"
+    ) {
+      throw new Error(
+        `Rotation-state file (${path}) is missing required fields (old_recipient, new_recipient, started_at). Remove the file manually if you are sure no rotation is in progress.`,
+      );
+    }
+
+    if (!parsed.old_recipient.startsWith("age1") || !parsed.new_recipient.startsWith("age1")) {
+      throw new Error(
+        `Rotation-state file (${path}) contains invalid age recipient(s). Remove the file manually if you are sure no rotation is in progress.`,
+      );
+    }
+
+    return {
+      old_recipient: parsed.old_recipient,
+      new_recipient: parsed.new_recipient,
+      started_at: parsed.started_at,
+      grace_until: typeof parsed.grace_until === "string" ? parsed.grace_until : "",
+      grace_period_days:
+        typeof parsed.grace_period_days === "number" ? parsed.grace_period_days : 14,
+    };
   }
 
   /**
@@ -744,25 +770,69 @@ export class AgeSecretsBackend implements SecretsBackend {
   }
 
   /**
-   * ADR-0051 Phase 1 — finalize a previously-started rotation: drop
-   * the OLD recipient sidecar, delete `identities/identity.age.old`,
-   * and clear the rotation-state file. Caller is responsible for
-   * rewrapping all envelopes AFTER this call so they no longer
-   * target the old recipient.
+   * ADR-0051 Phase 1 — Stage 1 of the safe two-stage finalize flow
+   * (gpt-5.5 Phase-8 must-fix #1). Reads + validates rotation state and
+   * removes ONLY the OLD recipient sidecar so the very next
+   * `rewrap`/`encrypt` walk targets the NEW recipient set exclusively.
    *
-   * Returns the rotation state that was finalized so callers can
-   * report it. No-op-returns-`null` if no rotation is in progress.
+   * What this method intentionally does NOT do:
+   *   - delete `identities/identity.age.old`
+   *   - delete the `.am-rotation-state.json` sidecar
+   *   - clear the in-memory legacy-decrypt list
+   *
+   * Keeping those artifacts in place is what makes the operation
+   * recoverable. If the subsequent rewrap pass fails (corrupt envelope,
+   * disk full, kill -9), the caller can call `restoreOldRecipient(state)`
+   * to put the sidecar back, leaving the rotation in the same
+   * dual-encrypt state it was in before finalize was attempted. Only
+   * after rewrap fully succeeds should the caller invoke
+   * `finalizeRotationCommit()` to drop the archive + state file.
+   *
+   * Returns the rotation state, or `null` if no rotation is in
+   * progress (caller should treat that as a no-op error).
    */
-  async finalizeRotation(): Promise<RotationState | null> {
+  async finalizeRotationPrepare(): Promise<RotationState | null> {
     const state = await this.readRotationState();
     if (!state) return null;
 
-    // Drop the OLD recipient sidecar (idempotent).
+    // Drop the OLD recipient sidecar so #defaultEncryptRecipients() no
+    // longer includes the old key. Idempotent: missing file is fine.
     const oldRecipientFile = join(this.#recipientsDir, OLD_RECIPIENT_FILENAME);
     if (await pathExists(oldRecipientFile)) {
       await unlink(oldRecipientFile);
     }
 
+    return state;
+  }
+
+  /**
+   * ADR-0051 Phase 1 — recovery hook for the safe two-stage finalize
+   * flow. If `finalizeRotationPrepare()` succeeded but the subsequent
+   * rewrap pass reported any failure, callers MUST invoke this with the
+   * state returned by prepare to restore the OLD recipient sidecar so
+   * the rotation reverts to the dual-encrypted grace state. The
+   * archived identity + state file are still on disk (prepare did not
+   * touch them), so this restores full pre-finalize behaviour.
+   */
+  async restoreOldRecipient(state: RotationState): Promise<void> {
+    await mkdir(this.#recipientsDir, { recursive: true });
+    const body = renderRecipientFile(state.old_recipient, state.started_at, "_rotation-old");
+    await atomicWriteFile(join(this.#recipientsDir, OLD_RECIPIENT_FILENAME), body, {
+      mode: 0o644,
+    });
+  }
+
+  /**
+   * ADR-0051 Phase 1 — Stage 2 of the safe two-stage finalize flow.
+   * Deletes the archived OLD identity (`identity.age.old`), the
+   * rotation-state sidecar, and clears the in-memory legacy-decrypt
+   * list. MUST be called only after `finalizeRotationPrepare()` AND a
+   * fully-successful rewrap pass that re-encrypted every envelope to
+   * the NEW recipient set. After this call, envelopes encrypted to the
+   * OLD recipient are no longer decryptable — that's the whole point
+   * of finalize.
+   */
+  async finalizeRotationCommit(): Promise<void> {
     // Drop the archived OLD identity file (idempotent).
     const oldIdentity = join(dirname(this.#identityPath), IDENTITY_OLD_FILENAME);
     if (await pathExists(oldIdentity)) {
@@ -775,10 +845,27 @@ export class AgeSecretsBackend implements SecretsBackend {
     }
 
     // Clear the in-memory legacy-decrypt list. After finalize, envelopes
-    // encrypted to the OLD recipient should NO LONGER decrypt — that's
-    // the whole point of finalize. ADR-0051 §Phase-1.
+    // encrypted to the OLD recipient should NO LONGER decrypt.
     this.#legacyIdentities = [];
+  }
 
+  /**
+   * ADR-0051 Phase 1 — legacy single-shot finalize. Equivalent to
+   * `finalizeRotationPrepare()` followed by `finalizeRotationCommit()`
+   * with NO recovery in between. Unsafe for callers that follow up
+   * with a rewrap pass: a rewrap failure leaves envelopes orphaned
+   * with no path back. Retained for the grace=0 immediate-cutover
+   * path inside `runRotate()` (where rewrap has already completed
+   * before this is called) and for backward compatibility with
+   * existing tests.
+   *
+   * @deprecated Prefer the explicit prepare/commit pair when the caller
+   *   does a rewrap pass between the two stages.
+   */
+  async finalizeRotation(): Promise<RotationState | null> {
+    const state = await this.finalizeRotationPrepare();
+    if (!state) return null;
+    await this.finalizeRotationCommit();
     return state;
   }
 

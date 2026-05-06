@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, test } from "bun:test";
-import { mkdtemp, readFile, readdir, rm, stat } from "node:fs/promises";
+import { mkdtemp, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { generateIdentity, identityToRecipient } from "age-encryption";
@@ -565,6 +565,44 @@ describe("AgeSecretsBackend — rewrap", () => {
     const { backend, tmpDir } = await makeBackend();
     await backend.initialize();
     await expect(backend.rewrap("enc:v1:nope")).rejects.toThrow(/does not start with/);
+    await rm(tmpDir, { recursive: true, force: true });
+  });
+});
+
+describe("AgeSecretsBackend — readRotationState fail-closed", () => {
+  test("missing rotation-state file returns null (no rotation in progress)", async () => {
+    const { backend, tmpDir } = await makeBackend();
+    // No rotation-state file written — should return null.
+    expect(await backend.readRotationState()).toBeNull();
+    await rm(tmpDir, { recursive: true, force: true });
+  });
+
+  test("malformed JSON rotation-state file throws actionable error with path", async () => {
+    const { backend, tmpDir } = await makeBackend();
+    const statePath = backend.getRotationStatePath();
+    await writeFile(statePath, "this is not json {{{", "utf8");
+
+    await expect(backend.readRotationState()).rejects.toThrow(/invalid JSON/);
+    await expect(backend.readRotationState()).rejects.toThrow(
+      new RegExp(statePath.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")),
+    );
+    await rm(tmpDir, { recursive: true, force: true });
+  });
+
+  test("missing required field in rotation-state throws actionable error", async () => {
+    const { backend, tmpDir } = await makeBackend();
+    const statePath = backend.getRotationStatePath();
+    // Write JSON with started_at missing.
+    const incomplete = JSON.stringify({
+      old_recipient: "age1test",
+      new_recipient: "age1test2",
+    });
+    await writeFile(statePath, incomplete, "utf8");
+
+    await expect(backend.readRotationState()).rejects.toThrow(/missing required fields/);
+    await expect(backend.readRotationState()).rejects.toThrow(
+      new RegExp(statePath.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")),
+    );
     await rm(tmpDir, { recursive: true, force: true });
   });
 });

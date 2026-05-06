@@ -29,6 +29,7 @@ import { resolveConfigDir, tryReadConfig } from "../core/config";
 import { getDefaultBackend } from "../core/secrets";
 import type { AgeSecretsBackend, RotationState } from "../core/secrets-age";
 import { amError, info, output } from "../lib/output";
+import { bestEffortCommitSecretsChanges } from "./secrets-commit-helper";
 import {
   discoverTomlFiles,
   readGracePeriodDays,
@@ -246,6 +247,19 @@ async function runRotate(
     await backend.finalizeRotation();
   }
 
+  await bestEffortCommitSecretsChanges(
+    ctx.configDir,
+    [
+      ...targets,
+      backend.getIdentityPath(),
+      `${backend.getIdentityPath()}.old`,
+      join(backend.getRecipientsDir(), "_rotation-old.pub"),
+      backend.getRotationStatePath(),
+    ],
+    `secrets(rotate): generate new identity + dual-encrypt for grace_period_days=${ctx.gracePeriodDays}`,
+    ctx.opts,
+  );
+
   if (ctx.json) {
     output(
       {
@@ -359,21 +373,90 @@ async function runFinalize(
     return;
   }
 
-  // 1. Drop old sidecar + identity.age.old + state file.
-  const finalized = await backend.finalizeRotation();
+  // ADR-0051 §Phase-1 / gpt-5.5 Phase-8 must-fix #1 — safe finalize
+  // ordering. The OLD ordering ("delete sidecar+archive+state, THEN
+  // rewrap") could orphan envelopes if rewrap failed: dual-encrypted
+  // ciphertext targeting a now-deleted recipient with no archived
+  // identity to fall back on. The fix is a 3-stage commit:
+  //
+  //   1. Prepare    — drop ONLY the OLD recipient sidecar.
+  //   2. Rewrap     — re-encrypt every envelope to the NEW-only set.
+  //   3. Commit     — delete archive + state file ONLY if step 2
+  //                   succeeded for every envelope.
+  //
+  // If step 2 reports any failure, we restore the sidecar (revert to
+  // dual-encrypt grace state) and exit non-zero. The archived identity
+  // and state file are still on disk, so the operator can retry once
+  // the underlying issue (corrupt envelope, disk full, …) is resolved.
+
+  // 1. Stage 1 of finalize — drop only the OLD recipient sidecar.
+  const prepared = await backend.finalizeRotationPrepare();
+  if (!prepared) {
+    // Should not happen: we already verified state above. Defensive.
+    const msg = "Internal error: rotation state vanished between read and prepare.";
+    if (ctx.json) output({ action: "rotate-finalize", error: msg }, ctx.opts);
+    else info(msg, ctx.opts);
+    process.exitCode = 1;
+    return;
+  }
 
   // 2. Rewrap every envelope to the now-only-new recipient set.
   const stats = await rewrapMany(targets, backend, { dryRun: false, noBackup: ctx.noBackup });
   const totalRewrapped = stats.reduce((n, s) => n + s.rewrapped, 0);
   const totalFound = stats.reduce((n, s) => n + s.found, 0);
+  const totalSkipped = stats.reduce((n, s) => n + s.skipped, 0);
+
+  // Any rewrap failure → restore the OLD recipient sidecar and abort.
+  // The archived identity + state file are untouched, so the rotation
+  // is left in the same dual-encrypt state it was in before finalize.
+  if (totalSkipped > 0 || totalRewrapped < totalFound) {
+    await backend.restoreOldRecipient(prepared);
+    const msg = `Finalize aborted: rewrap reported ${totalSkipped} skipped and ${totalFound - totalRewrapped} unrewrapped envelope(s) across ${stats.length} file(s). Old recipient restored; rotation remains in dual-encrypt grace state. Inspect the offending envelopes and retry.`;
+    if (ctx.json) {
+      output(
+        {
+          action: "rotate-finalize",
+          error: msg,
+          state: prepared,
+          files: stats,
+          envelopes: totalFound,
+          rewrapped: totalRewrapped,
+          skipped: totalSkipped,
+        },
+        ctx.opts,
+      );
+    } else {
+      info(msg, ctx.opts);
+    }
+    process.exitCode = 1;
+    return;
+  }
+
+  // 3. Stage 2 of finalize — drop the archive + state file. Only
+  //    runs once we're certain every envelope is NEW-only.
+  await backend.finalizeRotationCommit();
+  const finalized = prepared;
+
+  await bestEffortCommitSecretsChanges(
+    ctx.configDir,
+    [
+      ...targets,
+      backend.getIdentityPath(),
+      `${backend.getIdentityPath()}.old`,
+      join(backend.getRecipientsDir(), "_rotation-old.pub"),
+      backend.getRotationStatePath(),
+    ],
+    `secrets(rotate --finalize): drop old recipient + identity, ${totalFound} envelope(s) to new-only`,
+    ctx.opts,
+  );
 
   if (ctx.json) {
     output(
       {
         action: "rotate-finalize",
         phase: "finalized",
-        old_recipient: finalized?.old_recipient ?? state.old_recipient,
-        new_recipient: finalized?.new_recipient ?? state.new_recipient,
+        old_recipient: finalized.old_recipient,
+        new_recipient: finalized.new_recipient,
         files: stats.length,
         envelopes: totalFound,
         rewrapped: totalRewrapped,
