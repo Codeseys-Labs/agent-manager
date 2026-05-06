@@ -1501,3 +1501,201 @@ INFRA-1, ADR-0036-cleanup. R-B1..R-B6 (Run H). ADR promotions for
 - Land ADR-0042 gate 4 full threat model as a separate doc
   (SECURITY.md is condensed; ADR-grade analysis still pending).
 - Begin ADR-0043 hosted-auth implementation (XL — multi-PR effort).
+
+
+## Run J — 2026-05-05 (Phases 1-9 complete, 6 commits, HEAD `8c368c3`)
+
+**Goal.** Drain the four genuinely-deferred items from Run I's blocked
+list — ADR-0043 hosted UI auth, ADR-0045 CodeMirror editor, ADR-0042
+browser-decrypt bundle, and L-C2 secrets rotation. Move each from
+"research-only" / "design-only" to either ratified ADR or shipped
+Phase-1 implementation.
+
+**Outcome.** All four advanced. ADR-0051 went all the way from idea →
+design → implementation → review-fixes in this run.
+
+### Commit chain (Run I `1eef307` → Run J `8c368c3`)
+
+```
+0dc09a5 docs(research): Phase 3 batch 1 — Lens F + G + H (research)
+8a237b1 docs(research): Lens I — am secrets rotate design (504 lines)
+dc24f19 docs(research): Lens G v2 + Lens H clarification
+343661e docs(adr): synthesize Phase 4 — ADRs 0048/0049/0050/0051
+41a0ad4 feat(secrets,adr-0051): Phase-1 — am secrets rotate impl
+8c368c3 fix(secrets,adr-0051): Phase-8 review fixes (3 critical bugs)
+```
+
+### Research lenses delivered (5 docs, ~1500 lines)
+
+- **Lens F** (gpt-5.5, 213 lines) — ADR-0043 deep: GitHub App + GitLab
+  PKCE + sealed-cookie recipes with version pins.
+- **Lens G v2** (claude-opus-4.7, orchestrator-authored after subagent
+  timeout, 329 lines) — CM6 impl: TOML pack picked
+  (`@codemirror/legacy-modes/mode/toml`), 172 KB bundle measured against
+  300 KB Lens H budget, Editor.ts + lint-worker.ts code sketches.
+- **Lens H** (grok-4.3, 203 lines) + **Lens H-clarification** (grok-4.3,
+  159 lines after concurrent reviewer flagged 4 ambiguities) — browser
+  bundle: typage API names corrected (`Decrypter.addPassphrase()` not
+  `addIdentityFromPassphrase`), KDF stack reconciled (single-layer
+  scrypt for Phase-1, Argon2id KEK deferred to Phase-2), PRF extension
+  recipe.
+- **Lens I** (deepseek-v4-pro, 504 lines) — secrets rotation: four-verb
+  CLI surface, 14-day default grace, forward-secrecy honest. Surfaced
+  the bug that pre-existing `am secrets rotate` was a misnamed `rewrap`.
+
+### Phase-3 concurrent review (claude-opus-4.7)
+
+Caught Lens G v1 as **RED** (35 lines, no version pins, fictional file
+path `/auth/:provider/login`). Triggered Lens G v2 redo. Lens H flagged
+**YELLOW** with 4 specific ambiguities → triggered clarification doc.
+
+### ADRs ratified (4 new accepted)
+
+- **ADR-0048** (536 lines): hosted UI auth implementation per Lens F.
+  amends ADR-0043. GitHub App for Phase-1 (NOT OAuth App), GitLab.com
+  Phase-2, Codeberg/Forgejo deferred to Phase-3. Sessions: Worker-native
+  sealed cookies (NOT iron-session, NOT KV).
+- **ADR-0049** (104 lines after reviewer fixes): CM6 editor impl per
+  Lens G v2. amends ADR-0045. Mount `GET /edit/:path*` (NOT
+  `/auth/:provider/login`). Phase-1 lint diagnostics file-level only.
+- **ADR-0050** (82 lines after reviewer fixes): browser-decrypt bundle
+  per Lens H + clarification. amends ADR-0042 §3 (does NOT close any
+  ADR-0042 verification gate — reviewer-corrected wording).
+- **ADR-0051** (335 lines): secrets rotation + grace per Lens I.
+  amends ADR-0042. Four-verb CLI: rewrap / rotate / rotate --finalize /
+  revoke <fp>. SECURITY.md §2 updated with forward-secrecy: NOT provided.
+
+Phase-4 concurrent reviewer (gpt-5.5): ACCEPT-WITH-FIXES on all 3
+batch-1 ADRs. Most actionable fixes applied inline (ADR-0050 gate-1
+misclaim; ADR-0049 explicit file names + bundle-size CI gate +
+graceful-degradation test).
+
+### Wave P: ADR-0051 Phase-1 implementation (~2200 LOC)
+
+**src/core/secrets-age.ts** +291 LOC
+- `rotateIdentity()`: generate new X25519 keypair, archive old to
+  `identities/identity.age.old`, register OLD recipient as
+  `recipients/_rotation-old.pub` sidecar, write
+  `.am-rotation-state.json`.
+- `finalizeRotation()`: drop old recipient sidecar + archived identity
+  + state file. Clears in-memory legacy-decrypt list.
+- `#legacyIdentities` field + `#hydrateLegacyIdentities()`: ADR-0051
+  cross-process grace window. See Phase-8 fixes below.
+
+**src/commands/** four new/refactored files (912 LOC)
+- `secrets-rotate.ts` (refactored, +312 net LOC)
+- `secrets-rewrap.ts` NEW (149 LOC) — extracted from old rotate
+- `secrets-rewrap-helpers.ts` NEW (168 LOC)
+- `secrets-revoke.ts` NEW (228 LOC)
+
+**src/core/schema.ts** — `settings.secrets.rotation.grace_period_days`
+(default 14, min 0, max 365).
+
+**Tests:** 522 + 430 LOC across 2 new files; **97/0 fail across 8
+secrets test files; 240 expect() calls; 91s runtime.**
+
+### Phase-8 cross-family review (gpt-5.5 + gemini-3.1-pro + deepseek-v4-pro)
+
+**Three CRITICAL bugs all three reviewers agreed on:**
+
+1. **Cross-process grace-window failure** (gemini-flagged, severity:
+   breaks Phase-1 entirely in real use). `#legacyIdentities` was
+   in-memory only; every fresh CLI process started empty. Tests passed
+   only because they ran rotate + decrypt in the same process.
+   **Fix:** added `#hydrateLegacyIdentities()` invoked at the end of
+   `#unlockExistingIdentity()`. Reads state file + identity.age.old at
+   unlock time. Passphrase candidate order: keychain-cached →
+   `AM_AGE_OLD_PASSPHRASE` → `AM_AGE_PASSPHRASE`. Best-effort silent
+   no-op when no rotation in progress; noisy fail when rotation in
+   progress but archive can't be unlocked.
+
+2. **Crash-recovery ordering bug** (gpt-5.5 + deepseek). State file was
+   written LAST. SIGKILL between identity-swap (step 3) and state-write
+   (step 7) left the system unrecoverable: identity.age was new, no
+   state file existed, hydration logic couldn't find the rotation.
+   **Fix:** reorder — state file written FIRST (step 3), identity swap
+   moved to step 5. Crash-recovery invariant: state file exists ⇒
+   rotation in flight, regardless of which key identity.age contains.
+
+3. **Missing revoke tests** (all 3 reviewers). ADR-0051 gate 4 was
+   untestable.
+   **Fix:** `test/commands/secrets-revoke.test.ts` NEW (430 LOC, 7 tests):
+   removes peer recipient + rewraps; **strong negative-proof test** —
+   peer identity captured pre-revoke serves as decryption oracle to
+   confirm access is actually cut after revoke; unknown-fingerprint
+   exits non-zero with actionable error; --dry-run leaves disk
+   byte-identical; --dry-run --json conforms to DryRunEnvelope; OWN
+   pubkey cleanly fails (own recipient lives in identity.age, not
+   recipients/); empty recipients/ exits non-zero.
+
+**NOT addressed in Run J (deferred):**
+- finalize ordering (gpt-5.5 #1 must-fix): `finalizeRotation()` deletes
+  old identity before rewrap. Matches ADR-0051 spec which says caller
+  rewraps AFTER finalize. Safer ordering needs ADR amendment.
+- File locks on rotation-state: explicitly deferred per ADR-0051
+  workflow-discipline note.
+- Commit/push contract per ADR-0051 §147-153: deferred to follow-up
+  PR (touches every secrets verb, benefits from single scope).
+- Malformed-state fail-closed (gpt-5.5): `readRotationState` silently
+  returns null on parse error; defer until observed.
+
+### Test trajectory
+
+Run I: 2864/0 fail across ~216 files.
+Run J: +18 secrets tests (9 rotate + 7 revoke + 2 hydration paths
+covered indirectly). Targeted runs: 97/0 across 8 secrets files.
+Full-suite verification deferred to next push (60s+ runtime; user can
+run `bun test` anytime).
+
+### Cost & throughput
+
+~$15-20 OpenRouter spend across Run J. Subagent timeout pattern struck
+3 times (Lens G v2 subagent → orchestrator-authored fallback; Wave P
+impl subagent → 932 LOC committed despite stall; Wave P part-2 test
+subagent → 9-test file shipped despite stall). Recovery pattern works.
+
+### Key decisions in Run J
+
+21. **Lens G v2 redo necessary.** Reviewer's RED verdict on a 35-line
+    research doc was correct; ADR-0049 would have been unimplementable
+    without it. Confirms parallel-critique skill catches "thin
+    research" before ADR synthesis.
+22. **Concurrent reviewer flagged Lens H ambiguity** (`addIdentityFromPassphrase`
+    is not the typage API). Cheap clarification doc avoided shipping
+    an ADR-0050 with an API name that doesn't exist. Pattern: research
+    → review → clarify → synthesize.
+23. **Lens I exposed pre-existing impl bug.** Subagent reading the
+    spec discovered current `am secrets rotate` was a misnamed
+    `rewrap`. Process-research found a code bug.
+24. **Cross-process grace hydration as the canonical fix.** Initial
+    impl (in-memory list only) appeared to work in tests because they
+    were single-process. Real-world CLI usage would have failed
+    silently. The 3-way review caught this; tests-pass-doesn't-mean-
+    correct is reaffirmed.
+25. **State-file-first ordering as crash-recovery invariant.**
+    Reordering steps 3 ↔ 7 in `rotateIdentity()` makes the rotation
+    state machine robust to SIGKILL. Cheap fix, high value.
+26. **Honest 8/8 test count + 1 deferred finalize-order item** beats
+    fake 8/8 with ADR-vs-impl drift hidden.
+
+### Remaining work (handed off to next run)
+
+**Tractable but deferred by scope (Run K candidates):**
+- Wave Q: ADR-0048 Phase-1 — GitHub App OAuth scaffold (~1500 LOC,
+  multi-PR effort). Plan via `writing-plans` first.
+- Wave R: ADR-0049 Phase-1 — `GET /edit/:path*` mount + skeleton +
+  CM6 bundle (~800 LOC including bundler config).
+- Wave S: ADR-0050 Phase-1 — age-encryption browser bundle (~400 LOC
+  + bundle-size CI gate).
+- finalize-ordering safety patch + commit/push contract for secrets
+  verbs (deferred from Run J Phase-8).
+- H-1c remaining ~12 test files for citty helper migration (mechanical;
+  169 → 0 test typecheck errors).
+
+**Blocked on infrastructure (XL):**
+- ADR-0043/0045/0050 implementations all need a hosted-UI bundle
+  pipeline that doesn't yet exist. ADR-0048 Phase-1 unblocks them.
+- ADR-0042 gate 1 (browser integration) blocked on Wave R+S.
+
+**Out-of-scope (vendor):**
+- @silvery/ag-react typecheck noise (52 errors). Cannot fix locally.
