@@ -24,6 +24,7 @@ import { resolveConfigDir } from "../core/config";
 import { getDefaultBackend } from "../core/secrets";
 import type { AgeSecretsBackend } from "../core/secrets-age";
 import { amError, info, output } from "../lib/output";
+import { bestEffortCommitSecretsChanges } from "./secrets-commit-helper";
 import { discoverTomlFiles, resolveSingleFile, rewrapMany } from "./secrets-rewrap-helpers";
 
 export const secretsRewrapCommand = defineCommand({
@@ -85,6 +86,15 @@ export const secretsRewrapCommand = defineCommand({
 
       const totalFound = stats.reduce((n, s) => n + s.found, 0);
       const totalRewrapped = stats.reduce((n, s) => n + s.rewrapped, 0);
+
+      if (!dryRun) {
+        await bestEffortCommitSecretsChanges(
+          configDir,
+          targets,
+          `secrets(rewrap): re-encrypt ${stats.filter((s) => s.rewrapped > 0).length} file(s) to current recipients`,
+          opts,
+        );
+      }
 
       if (args.json) {
         if (dryRun) {

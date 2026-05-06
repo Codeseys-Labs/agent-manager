@@ -26,6 +26,7 @@ import { resolveConfigDir } from "../core/config";
 import { getDefaultBackend } from "../core/secrets";
 import type { AgeSecretsBackend } from "../core/secrets-age";
 import { amError, info, output } from "../lib/output";
+import { bestEffortCommitSecretsChanges } from "./secrets-commit-helper";
 import { discoverTomlFiles, resolveSingleFile, rewrapMany } from "./secrets-rewrap-helpers";
 
 interface RecipientMatch {
@@ -196,6 +197,13 @@ export const secretsRevokeCommand = defineCommand({
       const stats = await rewrapMany(targets, ageBackend, { dryRun: false, noBackup });
       const totalRewrapped = stats.reduce((n, s) => n + s.rewrapped, 0);
       const totalFound = stats.reduce((n, s) => n + s.found, 0);
+
+      await bestEffortCommitSecretsChanges(
+        configDir,
+        [...targets, match.filePath],
+        `secrets(revoke): remove recipient ${match.fingerprint}, rewrap ${stats.filter((s) => s.rewrapped > 0).length} file(s)`,
+        opts,
+      );
 
       if (args.json) {
         output(
