@@ -1699,3 +1699,136 @@ subagent → 9-test file shipped despite stall). Recovery pattern works.
 
 **Out-of-scope (vendor):**
 - @silvery/ag-react typecheck noise (52 errors). Cannot fix locally.
+
+
+## Run K — 2026-05-05 (Phases 1-9 complete, 4 commits, HEAD `d067617`)
+
+**Goal.** Continue the deep-work loop after Run J: drain the Phase-8
+deferred items (gpt-5.5 must-fix #1 + #2, ADR-0051 §147-153 commit
+contract) AND close the H-1c citty-migration test typecheck debt.
+
+### Commit chain (Run J `89f77a2` → Run K `d067617`)
+
+```
+aaefa09 fix(secrets,adr-0051): safe finalize ordering + fail-closed state read
+e872934 feat(secrets,adr-0051): commit contract for secrets verbs
+bb2ad68 refactor(test,h-1c): citty migration batch (169→136 typecheck errors)
+d067617 fix(secrets,test): Run K Phase-8 review fixes — age1-prefix test + citty any-type rationale
+```
+
+### Items closed
+
+1. **gpt-5.5 must-fix #1: safe finalize ordering** (Run J Phase-8
+   deferred). `finalizeRotation()` split into `finalizeRotationPrepare()`
+   + `finalizeRotationCommit()`. New CLI flow: prepare → drop sidecar →
+   rewrap → if any failure RESTORE sidecar from state.old_recipient →
+   else commit (delete archive + state). Backward-compat wrapper kept.
+   2 new tests including a strong "rewrap failure restores sidecar AND
+   keeps archive" gate.
+
+2. **gpt-5.5 must-fix #2: fail-closed readRotationState** (Run J
+   Phase-8 deferred). Three-case behavior: missing → null; valid →
+   state with `age1...` recipient validation; corrupt/missing-field →
+   throws Error with path + remediation hint. 4 new tests including
+   the age1-prefix-rejection path (added in Phase-8 follow-up after
+   deepseek flagged it as a security-sensitive uncovered branch).
+
+3. **ADR-0051 §147-153: commit contract** (Run J handoff). New helper
+   `src/commands/secrets-commit-helper.ts` with verb-scoped Conventional-
+   Commits message shapes (`secrets(rewrap):`, `secrets(rotate):`,
+   `secrets(rotate --finalize):`, `secrets(revoke):`). Best-effort
+   semantics: catches all errors, warns, never re-throws. 4 new tests
+   pair live + dry-run for each verb. Push deliberately NOT auto —
+   user invokes `am push` separately.
+
+4. **H-1c citty-migration test debt** (deferred from Run I+J).
+   `test/helpers/citty.ts` extended from `CommandDef`-generic to
+   `unknown`-typed `CommandLike` shape. `flow.test.ts` + `run.test.ts`
+   migrated. Test typecheck errors **169 → 136** (33 closed, more
+   files left for Run L).
+
+### Phase-8 cross-family review (anthropic/opus-4.7 + minimax/m2.7 + deepseek/v4-pro)
+
+**Verdicts:**
+- Anthropic: ACCEPT/ACCEPT-WITH-FIXES/ACCEPT (3 minor must-fixes —
+  grace_period_days NaN tolerance, commit-style reconciliation, citty
+  Promise<unknown>)
+- MiniMax: **ACCEPT/ACCEPT/ACCEPT — no must-fix.** Notes the grace=0
+  commit-message wording is technically inaccurate but pre-existing.
+- DeepSeek: ACCEPT-WITH-FIXES/ACCEPT/ACCEPT (3 must-fixes — age1-prefix
+  test missing, restoreOldRecipient itself can fail without recovery
+  hint, grace=0 commit paths shouldn't include non-existent files)
+
+**Intersection (must-fix consensus):** none — no item flagged by all 3.
+
+**Union (worth-fixing):** 4 items, of which 2 applied in `d067617`:
+- ✅ age1-prefix rejection test added (deepseek #1, security branch)
+- ✅ citty `any` documented as deliberate (anthropic #3, with rationale)
+- DEFERRED: restoreOldRecipient recovery hint (deepseek #2, low-prob)
+- DEFERRED: grace=0 commit-message accuracy (anthropic + deepseek
+  cosmetic)
+
+The two deferred items are documented in the dwl as a Run L candidate
+follow-up (not blocking; user-experience polish, not correctness).
+
+### Test trajectory
+
+Run J: 97/0 fail across 8 secrets test files.
+Run K: +13 secrets tests (2 safe-ordering + 4 fail-closed/age1 +
+1 age1-prefix follow-up + 4 commit-contract + ENOENT/dry-run pairs)
++33 typecheck errors closed in test/.
+
+After Run K targeted runs:
+- bun test test/core/secrets-age.test.ts test/commands/secrets-rotate.test.ts test/commands/secrets-revoke.test.ts test/commands/secrets-commit-contract.test.ts: **54+/0 fail.**
+- Test typecheck errors: **136** (was 169 at start of Run K).
+
+### Cost & throughput
+
+~$10-15 OpenRouter spend across Run K. Three subagent timeouts at 600s
+(items 1, 3, 4) — all three shipped working artifacts despite stalls
+per the `subagent-timeout-recovery` pattern. Item 2 (deepseek)
+completed cleanly. Phase-8 review batch all completed.
+
+### Key decisions in Run K
+
+27. **Prepare/commit split for finalizeRotation.** Atomic pre-rewrap
+    drop of the OLD sidecar enables encrypt-to-new-only during the
+    rewrap pass; on rewrap failure, restore-from-state allows retry
+    without data loss. This is a meaningful safety improvement over
+    Run J's spec-as-written.
+28. **Commit contract is best-effort, NOT blocking.** Failures to
+    commit (no git, dirty unrelated files, permission errors) log a
+    warning and continue. Secrets ops are filesystem-first; git is
+    bookkeeping. Push remains explicit user action.
+29. **Citty `Promise<any>` retained with rationale comment.** Reverting
+    to `Promise<unknown>` regressed test typecheck count from 136 to
+    190 because callers rely on property access. Documented the
+    tradeoff inline + biome-ignore comments. Revisit when adopting a
+    typed wrapper API.
+30. **Phase-8 review intersection-vs-union triage works.** Three
+    reviewers, three perspectives. No item flagged by all 3 → no
+    must-fix-or-block. Union-flagged items split into "apply now if
+    cheap" vs "defer to next run." Saved an hour of churn.
+
+### Remaining work (handed off to Run L)
+
+**Tractable (S/M):**
+- Run L item: restoreOldRecipient recovery-hint message
+  (deepseek Phase-8 #2, ~15 LOC).
+- Run L item: grace=0 commit-message accuracy (cosmetic, ~10 LOC).
+- H-1c remaining ~136 typecheck errors across ~10 test files (mechanical).
+- ADR-0051 amendment: add §finalize-restore-recovery section if
+  restoreOldRecipient itself fails.
+
+**XL (multi-PR runs):**
+- Wave Q: ADR-0048 Phase-1 — GitHub App OAuth scaffold (~1500 LOC).
+  **Should be its own Run L or Run M.**
+- Wave R: ADR-0049 Phase-1 — `GET /edit/:path*` mount + skeleton +
+  CM6 bundle (~800 LOC).
+- Wave S: ADR-0050 Phase-1 — age-encryption browser bundle (~400 LOC,
+  blocked on Wave R bundle pipeline).
+- Wave T: ADR-0047 — `am pair accept/finalize` CLI implementation
+  (deferred from Run I).
+
+**Out-of-scope (vendor):**
+- @silvery/ag-react typecheck noise (52 errors, vendor side).
