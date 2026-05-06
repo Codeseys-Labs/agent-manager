@@ -2072,3 +2072,30 @@ or similar to trigger the next run.
     typecheck + 30-line ADR amendment. Risk profile is low; one
     cross-family reviewer (minimax, distinct from prior runs)
     sufficed. Cost discipline: scale review fan-out to commit risk.
+
+### Post-Run-M full-suite verification
+
+After Run M closed, the full test suite was run end-to-end:
+
+```
+bun test test/   →   2881 / 0 fail across 218 files, 8986 expect() calls, 365s
+```
+
+This is the first full-suite green confirmation across Runs J-M
+(prior runs ran targeted subsets only). Confirms the cumulative
+work — 22 commits, ~5500 LOC across src + tests + ADRs + plans —
+introduced zero regressions to the existing 2864-test baseline at
+Run I close, and the +17 net new tests (Wave P + Phase-8 follow-ups
++ commit-contract + age1-prefix + safe-ordering + finalize-restore)
+all pass alongside everything else.
+
+Test trajectory across the whole loop:
+- Run I close: 2864 tests
+- Run J close (untimed full): +30 (97 secrets across 8 files in
+  targeted subset; full delta inferred)
+- Run K close (untimed full): +13
+- Run L close (untimed full subset): 745 in adapter+secrets subset
+- Run M close: subset 1538/0
+- **Post-Run-M full**: **2881 / 0 fail**, 218 files, 8986 expect()
+
+Net delta: +17 tests across Runs J-M; zero regressions.
