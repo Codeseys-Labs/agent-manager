@@ -20,6 +20,17 @@
  *   am wiki graph                    — export knowledge graph as JSON
  */
 
+import {
+  appendFileSync,
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  renameSync,
+  unlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { readFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { defineCommand } from "citty";
@@ -28,6 +39,7 @@ import { resolveProjectConfig } from "../core/config";
 import { getStatus } from "../core/git";
 import { errorCode, errorMessage } from "../lib/errors";
 import { error, info, output, parsePositiveInt, warn } from "../lib/output";
+import { WIKI_AGENTS_MD_TEMPLATE } from "../wiki/agents-md-template";
 import { exportGraphForViz, findOrphans, loadGraph } from "../wiki/graph";
 import { harvestSession, harvestSessionAsPages } from "../wiki/harvester";
 import {
@@ -37,17 +49,20 @@ import {
   resolveConflicts,
 } from "../wiki/resolve";
 import {
+  LEGACY_WIKI_PROJECT_DIRNAME,
+  WIKI_PROJECT_DIRNAME,
   addEntry,
-  createProjectWikiLink,
   deleteEntry,
   deletePage,
+  detectLegacyWikiLayout,
   ensureWikiDirs,
-  ensureWikiGitignore,
   getAllEntries,
   getEntry,
   getIndex,
   getProjectWikiDir,
   listPages,
+  materialiseProject,
+  pushToGlobal,
   readPage,
   rebuildSearchIndex,
   resolveProjectName,
@@ -1270,8 +1285,98 @@ const resolveSubcommand = defineCommand({
   },
 });
 
-// ── Init Subcommand (ADR-0022) ──────────────────────────────────
+// ── ADR-0044: two-tier copy materialisation ────────────────────────
+//
+// `am wiki init`, `migrate`, `publish`, `pull` are the four subcommands
+// that implement the ADR-0044 two-tier model. Per ADR-0044 §1-§3:
+//   - Project wiki lives at `<projectDir>/.am-wiki/` (a COPY of the
+//     global project store, not a symlink).
+//   - `init` creates `.am-wiki/` and materialises the current global
+//     store into it. Legacy `.agent-manager/wiki/` layouts get a
+//     deprecation warning pointing at `am wiki migrate`.
+//   - `migrate` rewrites a legacy project to the new `.am-wiki/` layout
+//     (backing up any real directory contents to
+//     `.agent-manager/wiki.backup-YYYYMMDD/`).
+//   - `publish <slug>` promotes a local entry up to the global store
+//     via `pushToGlobal` (inverse of materialisation).
+//   - `pull` is OPT-IN: it overwrites local `.am-wiki/` entries with
+//     the current global content. Never invoked by default.
 
+/**
+ * Append `.am-wiki/` to the project's `.gitignore` if not already
+ * present (ADR-0044 §4). Best-effort; silent on IO errors so init
+ * never fails just because .gitignore is unusual. If `.gitignore`
+ * already has the legacy `.agent-manager/wiki` entry, it's preserved
+ * (migrate is the command that cleans that up).
+ */
+function ensureAmWikiGitignore(projectDir: string): void {
+  const gitignorePath = join(projectDir, ".gitignore");
+  const entry = ".am-wiki/";
+  try {
+    if (existsSync(gitignorePath)) {
+      const content = readFileSync(gitignorePath, "utf-8");
+      if (
+        content.split(/\r?\n/).some((line) => line.trim() === entry || line.trim() === ".am-wiki")
+      ) {
+        return;
+      }
+      const separator = content.endsWith("\n") ? "" : "\n";
+      appendFileSync(gitignorePath, `${separator}${entry}\n`);
+    } else {
+      writeFileSync(gitignorePath, `${entry}\n`);
+    }
+  } catch {
+    /* best effort */
+  }
+}
+
+/**
+ * Remove a line matching `.agent-manager/wiki` (legacy ADR-0022 ignore)
+ * and add `.am-wiki/` if missing. Used by `am wiki migrate`.
+ */
+function rewriteGitignoreForMigration(projectDir: string): void {
+  const gitignorePath = join(projectDir, ".gitignore");
+  const newEntry = ".am-wiki/";
+  const legacyEntries = new Set([".agent-manager/wiki", ".agent-manager/wiki/"]);
+  try {
+    if (!existsSync(gitignorePath)) {
+      writeFileSync(gitignorePath, `${newEntry}\n`);
+      return;
+    }
+    const original = readFileSync(gitignorePath, "utf-8");
+    const lines = original.split(/\r?\n/);
+    const filtered = lines.filter((line) => !legacyEntries.has(line.trim()));
+    const hasNew = filtered.some((line) => line.trim() === newEntry || line.trim() === ".am-wiki");
+    if (!hasNew) {
+      // Drop trailing empty line(s) if any, then append cleanly.
+      while (filtered.length > 0 && filtered[filtered.length - 1] === "") {
+        filtered.pop();
+      }
+      filtered.push(newEntry);
+    }
+    writeFileSync(gitignorePath, `${filtered.join("\n")}\n`);
+  } catch {
+    /* best effort */
+  }
+}
+
+/** ISO date stamp (YYYYMMDD) for migrate's backup dir name. */
+function todayStamp(): string {
+  // Full ISO timestamp YYYYMMDD-HHMMSS to avoid same-day backup collisions
+  // when a user re-runs `am wiki migrate` after recreating a legacy layout.
+  // Example: 20260505-143022
+  const iso = new Date().toISOString(); // "2026-05-06T02:33:14.123Z"
+  const date = iso.slice(0, 10).replace(/-/g, ""); // "20260506"
+  const time = iso.slice(11, 19).replace(/:/g, ""); // "023314"
+  return `${date}-${time}`;
+}
+
+/**
+ * ADR-0044 task 5 — fresh-init `.am-wiki/` for the current project.
+ * Replaces the ADR-0022 symlink-init behaviour. Legacy layouts are
+ * detected and a deprecation warning is emitted pointing at the
+ * `am wiki migrate` command (no silent rewrite).
+ */
 const initSubcommand = defineCommand({
   meta: { name: "init", description: "Initialize wiki for current project" },
   args: {
@@ -1307,12 +1412,61 @@ const initSubcommand = defineCommand({
     }
 
     const projectDir = dirname(projectFile);
-    const projectName = args.project ?? resolveProjectName(projectDir);
-    const projectWikiDir = getProjectWikiDir(projectName);
+    const layout = detectLegacyWikiLayout(projectDir);
 
-    await ensureWikiDirs(projectWikiDir);
-    createProjectWikiLink(projectDir, projectName);
-    ensureWikiGitignore(projectDir);
+    // Legacy-only: deprecation warning, no rewrite.
+    if (layout.hasLegacy && !layout.hasNew) {
+      const msg =
+        "Legacy wiki layout detected at .agent-manager/wiki/. Run `am wiki migrate` to upgrade to the ADR-0044 `.am-wiki/` layout.";
+      warn(msg, opts);
+      if (args.json) {
+        output(
+          {
+            action: "init",
+            scope: "project",
+            status: "legacy-detected",
+            legacyPath: layout.legacyPath,
+            newPath: layout.newPath,
+          },
+          opts,
+        );
+      }
+      return;
+    }
+
+    // New layout already present: idempotent no-op.
+    if (layout.hasNew) {
+      if (args.json) {
+        output(
+          {
+            action: "init",
+            scope: "project",
+            status: "already-initialized",
+            projectWikiDir: layout.newPath,
+          },
+          opts,
+        );
+      } else {
+        info(`Project wiki already initialized at ${layout.newPath}`, opts);
+      }
+      return;
+    }
+
+    // Fresh init.
+    const projectName = args.project ?? resolveProjectName(projectDir);
+    const projectStoreDir = getProjectWikiDir(projectName);
+    await ensureWikiDirs(projectStoreDir);
+
+    mkdirSync(layout.newPath, { recursive: true });
+
+    const result = await materialiseProject(projectDir, "all", { projectName });
+
+    const agentsMdPath = join(layout.newPath, "AGENTS.md");
+    if (!existsSync(agentsMdPath)) {
+      writeFileSync(agentsMdPath, WIKI_AGENTS_MD_TEMPLATE, "utf-8");
+    }
+
+    ensureAmWikiGitignore(projectDir);
 
     if (args.json) {
       output(
@@ -1320,15 +1474,400 @@ const initSubcommand = defineCommand({
           action: "init",
           scope: "project",
           project: projectName,
-          central: projectWikiDir,
-          symlink: join(projectDir, ".agent-manager", "wiki"),
+          projectStoreDir,
+          projectWikiDir: layout.newPath,
+          materialised: result.copied.length,
         },
         opts,
       );
     } else {
       info(`Project wiki "${projectName}" initialized`, opts);
-      info(`  Central: ${projectWikiDir}`, opts);
-      info(`  Symlink: ${join(projectDir, ".agent-manager", "wiki")}`, opts);
+      info(`  Local:   ${layout.newPath}`, opts);
+      info(`  Store:   ${projectStoreDir}`, opts);
+      info(`  Materialised ${result.copied.length} entries`, opts);
+    }
+  },
+});
+
+/**
+ * ADR-0044 task 6 — rewrite a legacy `.agent-manager/wiki/` project to
+ * the new `.am-wiki/` layout. Backs up any real legacy directory to
+ * `.agent-manager/wiki.backup-YYYYMMDD/`; symlinks are unlinked (the
+ * target is the global store, which stays put).
+ */
+const migrateSubcommand = defineCommand({
+  meta: {
+    name: "migrate",
+    description: "Migrate a legacy .agent-manager/wiki/ project to .am-wiki/ (ADR-0044)",
+  },
+  args: {
+    "dry-run": { type: "boolean", description: "Plan only, no filesystem changes", default: false },
+    json: { type: "boolean", default: false },
+    quiet: { type: "boolean", alias: "q", default: false },
+    verbose: { type: "boolean", alias: "v", default: false },
+  },
+  async run({ args }) {
+    const opts = { json: args.json, quiet: args.quiet, verbose: args.verbose };
+    const dryRun = args["dry-run"] as boolean;
+
+    const projectFile = resolveProjectConfig(process.cwd());
+    if (!projectFile) {
+      error("Not in a project directory (no .agent-manager.toml found).", opts);
+      process.exitCode = 1;
+      return;
+    }
+
+    const projectDir = dirname(projectFile);
+    const layout = detectLegacyWikiLayout(projectDir);
+
+    // Neither layout present.
+    if (!layout.hasLegacy && !layout.hasNew) {
+      if (args.json) {
+        output({ action: "migrate", status: "nothing-to-migrate", projectDir }, opts);
+      } else {
+        info("Nothing to migrate; run `am wiki init` to start.", opts);
+      }
+      return;
+    }
+
+    // Both layouts present — ambiguous.
+    if (layout.hasLegacy && layout.hasNew) {
+      error(
+        "Both `.agent-manager/wiki/` and `.am-wiki/` exist; resolve manually before re-running migrate.",
+        opts,
+      );
+      process.exitCode = 1;
+      return;
+    }
+
+    // New-only: already migrated.
+    if (!layout.hasLegacy && layout.hasNew) {
+      if (args.json) {
+        output({ action: "migrate", status: "already-migrated", newPath: layout.newPath }, opts);
+      } else {
+        info("Already migrated.", opts);
+      }
+      return;
+    }
+
+    // Only legacy present — real migration.
+    const stamp = todayStamp();
+    const backupPath = join(projectDir, ".agent-manager", `wiki.backup-${stamp}`);
+
+    // Detect symlink vs real directory.
+    let isSymlink = false;
+    try {
+      isSymlink = lstatSync(layout.legacyPath).isSymbolicLink();
+    } catch {
+      /* ignore */
+    }
+
+    if (dryRun) {
+      const plan = isSymlink
+        ? `Would unlink symlink ${layout.legacyPath} and materialise global store into ${layout.newPath}.`
+        : `Would rename ${layout.legacyPath} -> ${backupPath} and materialise global store into ${layout.newPath}.`;
+      if (args.json) {
+        output(
+          {
+            action: "migrate",
+            status: "dry-run",
+            projectDir,
+            legacyPath: layout.legacyPath,
+            backupPath: isSymlink ? null : backupPath,
+            newPath: layout.newPath,
+            isSymlink,
+            dryRun: true,
+          },
+          opts,
+        );
+      } else {
+        info(plan, opts);
+      }
+      return;
+    }
+
+    // Execute.
+    let effectiveBackup: string | null = null;
+    if (isSymlink) {
+      try {
+        unlinkSync(layout.legacyPath);
+      } catch (err) {
+        error(`Failed to unlink legacy symlink: ${errorMessage(err) ?? String(err)}`, opts);
+        process.exitCode = 1;
+        return;
+      }
+    } else {
+      try {
+        mkdirSync(dirname(backupPath), { recursive: true });
+        renameSync(layout.legacyPath, backupPath);
+        effectiveBackup = backupPath;
+      } catch (err) {
+        error(`Failed to back up legacy wiki dir: ${errorMessage(err) ?? String(err)}`, opts);
+        process.exitCode = 1;
+        return;
+      }
+    }
+
+    // Ensure global project store exists, then materialise.
+    const projectName = resolveProjectName(projectDir);
+    const projectStoreDir = getProjectWikiDir(projectName);
+    await ensureWikiDirs(projectStoreDir);
+
+    mkdirSync(layout.newPath, { recursive: true });
+    const result = await materialiseProject(projectDir, "all");
+
+    const agentsMdPath = join(layout.newPath, "AGENTS.md");
+    if (!existsSync(agentsMdPath)) {
+      writeFileSync(agentsMdPath, WIKI_AGENTS_MD_TEMPLATE, "utf-8");
+    }
+
+    rewriteGitignoreForMigration(projectDir);
+
+    if (args.json) {
+      output(
+        {
+          action: "migrate",
+          status: "migrated",
+          projectDir,
+          legacyPath: layout.legacyPath,
+          backupPath: effectiveBackup,
+          newPath: layout.newPath,
+          materialised: result.copied.length,
+          dryRun: false,
+        },
+        opts,
+      );
+    } else {
+      if (isSymlink) {
+        info(`Removed legacy symlink ${layout.legacyPath}`, opts);
+      } else {
+        info(`Backed up legacy dir -> ${backupPath}`, opts);
+      }
+      info(`Materialised ${result.copied.length} entries into ${layout.newPath}`, opts);
+    }
+  },
+});
+
+/**
+ * ADR-0044 task 7 — promote a project-local `.am-wiki/` entry to the
+ * global project store. Thin wrapper around `pushToGlobal`, with
+ * `--auto` discovery (scans frontmatter for `promote: true`) and
+ * `--force` passthrough for conflict resolution.
+ */
+const publishSubcommand = defineCommand({
+  meta: { name: "publish", description: "Publish a local .am-wiki/ entry to the global store" },
+  args: {
+    slug: { type: "positional", description: "Slug to publish", required: false },
+    auto: {
+      type: "boolean",
+      description: "Scan .am-wiki/ for entries with `promote: true` in frontmatter",
+      default: false,
+    },
+    force: {
+      type: "boolean",
+      description: "Overwrite a differing global entry",
+      default: false,
+    },
+    json: { type: "boolean", default: false },
+    quiet: { type: "boolean", alias: "q", default: false },
+    verbose: { type: "boolean", alias: "v", default: false },
+  },
+  async run({ args }) {
+    const opts = { json: args.json, quiet: args.quiet, verbose: args.verbose };
+    const slugArg = (args.slug as string | undefined) ?? undefined;
+
+    if (args.auto && slugArg) {
+      error("Use either --auto or <slug>, not both.", opts);
+      process.exitCode = 1;
+      return;
+    }
+    if (!args.auto && !slugArg) {
+      error("Specify either --auto or <slug>.", opts);
+      process.exitCode = 1;
+      return;
+    }
+
+    const projectFile = resolveProjectConfig(process.cwd());
+    if (!projectFile) {
+      error("Not in a project directory (no .agent-manager.toml found).", opts);
+      process.exitCode = 1;
+      return;
+    }
+    const projectDir = dirname(projectFile);
+    const amWikiDir = join(projectDir, WIKI_PROJECT_DIRNAME);
+    if (!existsSync(amWikiDir)) {
+      error("No .am-wiki/ directory; run `am wiki init` first.", opts);
+      process.exitCode = 1;
+      return;
+    }
+
+    // Resolve the target slug list.
+    let targets: string[];
+    if (args.auto) {
+      targets = discoverPromoteSlugs(amWikiDir);
+      if (targets.length === 0) {
+        if (args.json) {
+          output({ action: "publish", published: [], conflicts: [] }, opts);
+        } else {
+          info("No entries with `promote: true` found.", opts);
+        }
+        return;
+      }
+    } else {
+      targets = [slugArg!];
+    }
+
+    const published: string[] = [];
+    const conflicts: string[] = [];
+    for (const slug of targets) {
+      try {
+        const result = await pushToGlobal(projectDir, slug, { force: args.force });
+        if (result.conflict) {
+          conflicts.push(slug);
+        } else {
+          published.push(slug);
+        }
+      } catch (err) {
+        error(`Failed to publish ${slug}: ${errorMessage(err) ?? String(err)}`, opts);
+        process.exitCode = 1;
+        return;
+      }
+    }
+
+    if (args.json) {
+      output({ action: "publish", published, conflicts }, opts);
+    } else {
+      for (const slug of published) {
+        info(`Published: ${slug}`, opts);
+      }
+      for (const slug of conflicts) {
+        error(
+          `Conflict: ${slug} exists in global store with different content. Re-run with --force to overwrite.`,
+          opts,
+        );
+      }
+      info(`Summary: ${published.length} published, ${conflicts.length} conflict(s).`, opts);
+    }
+
+    if (conflicts.length > 0) {
+      process.exitCode = 1;
+    }
+  },
+});
+
+/**
+ * Walk `.am-wiki/` subdirectories and return slugs of `.md` files whose
+ * frontmatter contains `promote: true`. Parsing is intentionally simple:
+ * read the leading `---\n ... \n---` block and look for a line matching
+ * `promote: true` (case-insensitive, tolerant of whitespace).
+ */
+function discoverPromoteSlugs(amWikiDir: string): string[] {
+  const out: string[] = [];
+  let subdirs: string[];
+  try {
+    subdirs = readdirSync(amWikiDir, { withFileTypes: true })
+      .filter((ent) => ent.isDirectory())
+      .map((ent) => ent.name);
+  } catch {
+    return out;
+  }
+  for (const subdir of subdirs) {
+    const subdirPath = join(amWikiDir, subdir);
+    let files: string[];
+    try {
+      files = readdirSync(subdirPath).filter((f) => f.endsWith(".md"));
+    } catch {
+      continue;
+    }
+    for (const file of files) {
+      const fullPath = join(subdirPath, file);
+      let raw: string;
+      try {
+        raw = readFileSync(fullPath, "utf-8");
+      } catch {
+        continue;
+      }
+      const fm = extractFrontmatter(raw);
+      if (fm && /^\s*promote\s*:\s*true\s*$/im.test(fm)) {
+        out.push(file.slice(0, -3));
+      }
+    }
+  }
+  out.sort();
+  return out;
+}
+
+function extractFrontmatter(raw: string): string | null {
+  if (!raw.startsWith("---")) return null;
+  const end = raw.indexOf("\n---", 3);
+  if (end < 0) return null;
+  return raw.slice(3, end);
+}
+
+/**
+ * ADR-0044 task 8 — OPT-IN pull: overwrite local `.am-wiki/` entries
+ * with the current global content. Never invoked automatically.
+ * Default behaviour is destructive ("global wins"); users who want a
+ * conflict UI should build one on top of `materialiseProject`.
+ */
+const pullSubcommand = defineCommand({
+  meta: {
+    name: "pull",
+    description: "Pull global-store entries into local .am-wiki/ (opt-in, global wins)",
+  },
+  args: {
+    slug: { type: "positional", description: "Slug to pull", required: false },
+    all: { type: "boolean", description: "Pull every entry", default: false },
+    json: { type: "boolean", default: false },
+    quiet: { type: "boolean", alias: "q", default: false },
+    verbose: { type: "boolean", alias: "v", default: false },
+  },
+  async run({ args }) {
+    const opts = { json: args.json, quiet: args.quiet, verbose: args.verbose };
+    const slugArg = (args.slug as string | undefined) ?? undefined;
+
+    if (args.all && slugArg) {
+      error("Use either --all or <slug>, not both.", opts);
+      process.exitCode = 1;
+      return;
+    }
+    if (!args.all && !slugArg) {
+      error("Specify either --all or <slug>.", opts);
+      process.exitCode = 1;
+      return;
+    }
+
+    const projectFile = resolveProjectConfig(process.cwd());
+    if (!projectFile) {
+      error("Not in a project directory (no .agent-manager.toml found).", opts);
+      process.exitCode = 1;
+      return;
+    }
+    const projectDir = dirname(projectFile);
+
+    // Detect whether `.am-wiki/` exists pre-pull. If absent and we end up
+    // creating it via materialiseProject, also seed AGENTS.md and gitignore so
+    // the layout matches `am wiki init` (ADR-0044 §6 invariants).
+    const newPath = join(projectDir, WIKI_PROJECT_DIRNAME);
+    const preExists = existsSync(newPath);
+
+    const result = await materialiseProject(projectDir, args.all ? "all" : [slugArg!]);
+
+    if (!preExists && existsSync(newPath)) {
+      const agentsMdPath = join(newPath, "AGENTS.md");
+      if (!existsSync(agentsMdPath)) {
+        writeFileSync(agentsMdPath, WIKI_AGENTS_MD_TEMPLATE, "utf-8");
+      }
+      ensureAmWikiGitignore(projectDir);
+    }
+
+    if (args.json) {
+      output({ action: "pull", copied: result.copied, skipped: result.skipped }, opts);
+    } else {
+      for (const slug of result.copied) {
+        info(`Pulled: ${slug}`, opts);
+      }
+      info(`Summary: ${result.copied.length} copied, ${result.skipped.length} skipped.`, opts);
     }
   },
 });
@@ -1347,6 +1886,9 @@ export const wikiCommand = defineCommand({
     path: () => Promise.resolve(pathSubcommand),
     // Authoring / maintenance
     init: () => Promise.resolve(initSubcommand),
+    migrate: () => Promise.resolve(migrateSubcommand),
+    publish: () => Promise.resolve(publishSubcommand),
+    pull: () => Promise.resolve(pullSubcommand),
     add: () => Promise.resolve(addSubcommand),
     delete: () => Promise.resolve(deleteSubcommand),
     ingest: () => Promise.resolve(ingestSubcommand),

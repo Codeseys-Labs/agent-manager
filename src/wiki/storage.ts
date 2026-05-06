@@ -223,8 +223,9 @@ async function filesAreIdentical(a: string, b: string): Promise<boolean> {
 export async function materialiseProject(
   projectDir: string,
   slugs: string[] | "all",
+  opts?: { projectName?: string },
 ): Promise<{ copied: string[]; skipped: string[] }> {
-  const projectName = resolveProjectName(projectDir);
+  const projectName = opts?.projectName ?? resolveProjectName(projectDir);
   // ADR-0022 layout: per-project mirror at `wiki/projects/<name>/`, distinct
   // from the cross-project store at `wiki/global/`. ADR-0044 only changes
   // how the project-level slot is materialised (copy vs symlink), not the
