@@ -26,6 +26,7 @@ function config(overrides: Partial<ResolvedConfig> = {}): ResolvedConfig {
     skills: {},
     profile: "default",
     adapters: {},
+    agents: {},
     ...overrides,
   };
 }
@@ -61,7 +62,7 @@ describe("gemini-cli exportConfig()", () => {
     const globalFile = result.files.find((f) => f.path.endsWith("settings.json"));
     expect(globalFile).toBeDefined();
 
-    const parsed = JSON.parse(globalFile?.content);
+    const parsed = JSON.parse(globalFile!.content);
     expect(parsed.mcpServers.fetch.command).toBe("uvx");
     expect(parsed.mcpServers.fetch.args).toEqual(["mcp-server-fetch"]);
     expect(parsed.mcpServers.tavily.env.TAVILY_API_KEY).toBe("test-key");
@@ -86,7 +87,7 @@ describe("gemini-cli exportConfig()", () => {
 
     const result = exportConfig(cfg, { dryRun: true }, dir.path);
     const globalFile = result.files.find((f) => f.path.endsWith("settings.json"));
-    const parsed = JSON.parse(globalFile?.content);
+    const parsed = JSON.parse(globalFile!.content);
     expect(parsed.mcpServers.trusted.trust).toBe(true);
     expect(parsed.mcpServers.trusted.timeout).toBe(60000);
   });
@@ -111,9 +112,9 @@ describe("gemini-cli exportConfig()", () => {
     const result = exportConfig(cfg, { projectPath: projectDir, dryRun: true }, dir.path);
     const geminiMdFile = result.files.find((f) => f.path.endsWith("GEMINI.md"));
     expect(geminiMdFile).toBeDefined();
-    expect(geminiMdFile?.content).toContain("<!-- am:begin -->");
-    expect(geminiMdFile?.content).toContain("Use strict TypeScript.");
-    expect(geminiMdFile?.content).toContain("<!-- am:end -->");
+    expect(geminiMdFile!.content).toContain("<!-- am:begin -->");
+    expect(geminiMdFile!.content).toContain("Use strict TypeScript.");
+    expect(geminiMdFile!.content).toContain("<!-- am:end -->");
   });
 
   test("dry run doesn't write files", async () => {
@@ -150,7 +151,7 @@ describe("gemini-cli exportConfig()", () => {
 
     const result = exportConfig(cfg, { dryRun: true }, dir.path);
     const globalFile = result.files.find((f) => f.path.endsWith("settings.json"));
-    const parsed = JSON.parse(globalFile?.content);
+    const parsed = JSON.parse(globalFile!.content);
     expect(parsed.mcpServers.enabled_one).toBeDefined();
     expect(parsed.mcpServers.disabled_one).toBeUndefined();
   });
@@ -179,7 +180,7 @@ describe("gemini-cli exportConfig()", () => {
 
     const result = exportConfig(cfg, {}, dir.path);
     const globalFile = result.files.find((f) => f.path.endsWith("settings.json"));
-    const parsed = JSON.parse(globalFile?.content);
+    const parsed = JSON.parse(globalFile!.content);
     // Non-MCP fields preserved
     expect(parsed.general.vimMode).toBe(true);
     expect(parsed.model.name).toBe("gemini-2.5-pro");
@@ -250,7 +251,7 @@ describe("gemini-cli exportConfig()", () => {
       (f) => f.path.includes("project") && f.path.endsWith("settings.json"),
     );
     expect(projectFile).toBeDefined();
-    const parsed = JSON.parse(projectFile?.content);
+    const parsed = JSON.parse(projectFile!.content);
     expect(parsed.mcpServers["project-mcp"].command).toBe("project-server");
   });
 });

@@ -58,6 +58,7 @@ describe("Gemini CLI adapter roundtrip", () => {
       servers: resolvedServers,
       instructions: {},
       skills: {},
+      agents: {},
       profile: "default",
       adapters: {},
     };
@@ -70,7 +71,7 @@ describe("Gemini CLI adapter roundtrip", () => {
     expect(globalFile?.written).toBe(true);
 
     // 5. Verify output
-    const outputJson = JSON.parse(globalFile?.content);
+    const outputJson = JSON.parse(globalFile!.content);
 
     // Non-MCP fields preserved
     expect(outputJson.general.vimMode).toBe(false);
@@ -163,6 +164,7 @@ describe("Gemini CLI adapter roundtrip", () => {
       servers: resolvedServers,
       instructions: {},
       skills: {},
+      agents: {},
       profile: "default",
       adapters: {},
     };
@@ -170,7 +172,7 @@ describe("Gemini CLI adapter roundtrip", () => {
     // Export
     const exported = exportConfig(resolved, {}, dir.path);
     const globalFile = exported.files.find((f) => f.path.endsWith("settings.json"));
-    const parsed = JSON.parse(globalFile?.content);
+    const parsed = JSON.parse(globalFile!.content);
     expect(parsed.mcpServers.trusted.trust).toBe(true);
     expect(parsed.mcpServers.trusted.timeout).toBe(60000);
     expect(parsed.mcpServers.trusted.includeTools).toEqual(["tool1", "tool2"]);

@@ -55,6 +55,7 @@ function instruction(
 function agent(overrides: Partial<ResolvedAgent> & { name: string }): ResolvedAgent {
   return {
     description: "",
+    subagent_type: "test",
     prompt: "",
     prompt_file: "",
     model: "",
@@ -96,7 +97,7 @@ describe("cursor exportConfig()", () => {
     const globalFile = result.files.find((f) => f.path.includes(".cursor/mcp.json"));
     expect(globalFile).toBeDefined();
 
-    const parsed = JSON.parse(globalFile?.content);
+    const parsed = JSON.parse(globalFile!.content);
     expect(parsed.mcpServers.fetch.command).toBe("uvx");
     expect(parsed.mcpServers.fetch.args).toEqual(["mcp-server-fetch"]);
     expect(parsed.mcpServers.tavily.env.TAVILY_API_KEY).toBe("test-key");
@@ -119,7 +120,7 @@ describe("cursor exportConfig()", () => {
     const result = exportConfig(cfg, { projectPath: projectDir, dryRun: true }, dir.path);
     const projectFile = result.files.find((f) => f.path.includes("project/.cursor/mcp.json"));
     expect(projectFile).toBeDefined();
-    const parsed = JSON.parse(projectFile?.content);
+    const parsed = JSON.parse(projectFile!.content);
     expect(parsed.mcpServers["db-mcp"].command).toBe("npx");
   });
 
@@ -141,9 +142,9 @@ describe("cursor exportConfig()", () => {
     const result = exportConfig(cfg, { projectPath: projectDir, dryRun: true }, dir.path);
     const mdcFile = result.files.find((f) => f.path.endsWith(".mdc"));
     expect(mdcFile).toBeDefined();
-    expect(mdcFile?.content).toContain("alwaysApply: true");
-    expect(mdcFile?.content).toContain('description: "TypeScript conventions"');
-    expect(mdcFile?.content).toContain("Use strict TypeScript.");
+    expect(mdcFile!.content).toContain("alwaysApply: true");
+    expect(mdcFile!.content).toContain('description: "TypeScript conventions"');
+    expect(mdcFile!.content).toContain("Use strict TypeScript.");
   });
 
   test("generates glob-scoped .mdc with globs array", async () => {
@@ -164,8 +165,8 @@ describe("cursor exportConfig()", () => {
 
     const result = exportConfig(cfg, { projectPath: projectDir, dryRun: true }, dir.path);
     const mdcFile = result.files.find((f) => f.path.endsWith(".mdc"));
-    expect(mdcFile?.content).toContain('globs: ["**/*.ts", "**/*.tsx"]');
-    expect(mdcFile?.content).toContain("alwaysApply: false");
+    expect(mdcFile!.content).toContain('globs: ["**/*.ts", "**/*.tsx"]');
+    expect(mdcFile!.content).toContain("alwaysApply: false");
   });
 
   test("skips instructions not targeted at cursor", async () => {
@@ -202,9 +203,9 @@ describe("cursor exportConfig()", () => {
     const result = exportConfig(cfg, { projectPath: projectDir, dryRun: true }, dir.path);
     const agentFile = result.files.find((f) => f.path.includes("agents/researcher.md"));
     expect(agentFile).toBeDefined();
-    expect(agentFile?.content).toContain("# researcher");
-    expect(agentFile?.content).toContain("Research agent");
-    expect(agentFile?.content).toContain("You are a research assistant.");
+    expect(agentFile!.content).toContain("# researcher");
+    expect(agentFile!.content).toContain("Research agent");
+    expect(agentFile!.content).toContain("You are a research assistant.");
   });
 
   test("dry run doesn't write files", async () => {
@@ -236,7 +237,7 @@ describe("cursor exportConfig()", () => {
 
     const result = exportConfig(cfg, { dryRun: true }, dir.path);
     const globalFile = result.files.find((f) => f.path.includes(".cursor/mcp.json"));
-    const parsed = JSON.parse(globalFile?.content);
+    const parsed = JSON.parse(globalFile!.content);
     expect(parsed.mcpServers.enabled_one).toBeDefined();
     expect(parsed.mcpServers.disabled_one).toBeUndefined();
   });

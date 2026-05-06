@@ -26,6 +26,7 @@ function config(overrides: Partial<ResolvedConfig> = {}): ResolvedConfig {
     skills: {},
     profile: "default",
     adapters: {},
+    agents: {},
     ...overrides,
   };
 }

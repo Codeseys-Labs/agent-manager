@@ -59,6 +59,7 @@ describe("Copilot adapter roundtrip", () => {
       servers: resolvedServers,
       instructions: {},
       skills: {},
+      agents: {},
       profile: "default",
       adapters: {},
     };
@@ -71,7 +72,7 @@ describe("Copilot adapter roundtrip", () => {
     expect(mcpFile?.written).toBe(true);
 
     // 5. Verify output uses "servers" key
-    const outputJson = JSON.parse(mcpFile?.content);
+    const outputJson = JSON.parse(mcpFile!.content);
     expect(outputJson.servers).toBeDefined();
     expect(outputJson.mcpServers).toBeUndefined();
     expect(outputJson.servers["local-server"].command).toBe("npx");

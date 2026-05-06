@@ -24,6 +24,7 @@ function config(overrides: Partial<ResolvedConfig> = {}): ResolvedConfig {
     skills: {},
     profile: "default",
     adapters: {},
+    agents: {},
     ...overrides,
   };
 }
@@ -58,7 +59,7 @@ describe("copilot exportConfig()", () => {
     const mcpFile = result.files.find((f) => f.path.endsWith("mcp.json"));
     expect(mcpFile).toBeDefined();
 
-    const parsed = JSON.parse(mcpFile?.content);
+    const parsed = JSON.parse(mcpFile!.content);
     // Must use "servers" key
     expect(parsed.servers).toBeDefined();
     expect(parsed.mcpServers).toBeUndefined();
@@ -87,7 +88,7 @@ describe("copilot exportConfig()", () => {
     const result = exportConfig(cfg, { projectPath: projectDir, dryRun: true }, dir.path);
     const instrFile = result.files.find((f) => f.path.endsWith("copilot-instructions.md"));
     expect(instrFile).toBeDefined();
-    expect(instrFile?.content).toContain("Use strict TypeScript.");
+    expect(instrFile!.content).toContain("Use strict TypeScript.");
   });
 
   test("generates scoped .instructions.md with applyTo frontmatter", async () => {
@@ -110,8 +111,8 @@ describe("copilot exportConfig()", () => {
     const result = exportConfig(cfg, { projectPath: projectDir, dryRun: true }, dir.path);
     const instrFile = result.files.find((f) => f.path.endsWith("testing.instructions.md"));
     expect(instrFile).toBeDefined();
-    expect(instrFile?.content).toContain('applyTo: "**/*.test.ts"');
-    expect(instrFile?.content).toContain("Use describe/test blocks.");
+    expect(instrFile!.content).toContain('applyTo: "**/*.test.ts"');
+    expect(instrFile!.content).toContain("Use describe/test blocks.");
   });
 
   test("skips disabled servers", async () => {
@@ -130,7 +131,7 @@ describe("copilot exportConfig()", () => {
 
     const result = exportConfig(cfg, { projectPath: projectDir, dryRun: true }, dir.path);
     const mcpFile = result.files.find((f) => f.path.endsWith("mcp.json"));
-    const parsed = JSON.parse(mcpFile?.content);
+    const parsed = JSON.parse(mcpFile!.content);
     expect(parsed.servers.enabled_one).toBeDefined();
     expect(parsed.servers.disabled_one).toBeUndefined();
   });
@@ -221,7 +222,7 @@ describe("copilot exportConfig()", () => {
 
     const result = exportConfig(cfg, { projectPath: projectDir }, dir.path);
     const mcpFile = result.files.find((f) => f.path.endsWith("mcp.json"));
-    const parsed = JSON.parse(mcpFile?.content);
+    const parsed = JSON.parse(mcpFile!.content);
     expect(parsed.someOtherSetting).toBe(true);
     expect(parsed.servers.old).toBeUndefined();
     expect(parsed.servers.fetch).toBeDefined();
@@ -248,7 +249,7 @@ describe("copilot exportConfig()", () => {
 
     const result = exportConfig(cfg, { projectPath: projectDir, dryRun: true }, dir.path);
     const mcpFile = result.files.find((f) => f.path.endsWith("mcp.json"));
-    const parsed = JSON.parse(mcpFile?.content);
+    const parsed = JSON.parse(mcpFile!.content);
     expect(parsed.servers.github.type).toBe("http");
     expect(parsed.servers.github.url).toBe("https://api.githubcopilot.com/mcp/");
     expect(parsed.servers.github.command).toBeUndefined();

@@ -60,7 +60,7 @@ describe("amazon-q exportConfig()", () => {
     const mcpFile = result.files.find((f) => f.path.endsWith("mcp.json"));
     expect(mcpFile).toBeDefined();
 
-    const parsed = JSON.parse(mcpFile?.content);
+    const parsed = JSON.parse(mcpFile!.content);
     expect(parsed.mcpServers["aws-docs"].command).toBe("uvx");
     expect(parsed.mcpServers["aws-docs"].env.FASTMCP_LOG_LEVEL).toBe("ERROR");
     expect(parsed.mcpServers.fetch.args).toEqual(["mcp-server-fetch"]);
@@ -86,7 +86,7 @@ describe("amazon-q exportConfig()", () => {
     const result = exportConfig(cfg, { projectPath: projectDir, dryRun: true }, dir.path);
     const ruleFile = result.files.find((f) => f.path.endsWith("ts-rules.md"));
     expect(ruleFile).toBeDefined();
-    expect(ruleFile?.content).toBe("Use strict TypeScript.\n");
+    expect(ruleFile!.content).toBe("Use strict TypeScript.\n");
   });
 
   test("instructions are plain markdown without frontmatter", async () => {
@@ -110,8 +110,8 @@ describe("amazon-q exportConfig()", () => {
     const ruleFile = result.files.find((f) => f.path.endsWith("testing.md"));
     expect(ruleFile).toBeDefined();
     // No frontmatter, just content
-    expect(ruleFile?.content).toBe("Use describe/test blocks.\n");
-    expect(ruleFile?.content).not.toContain("---");
+    expect(ruleFile!.content).toBe("Use describe/test blocks.\n");
+    expect(ruleFile!.content).not.toContain("---");
   });
 
   test("skips disabled servers", async () => {
@@ -129,7 +129,7 @@ describe("amazon-q exportConfig()", () => {
 
     const result = exportConfig(cfg, { dryRun: true }, dir.path);
     const mcpFile = result.files.find((f) => f.path.endsWith("mcp.json"));
-    const parsed = JSON.parse(mcpFile?.content);
+    const parsed = JSON.parse(mcpFile!.content);
     expect(parsed.mcpServers.enabled_one).toBeDefined();
     expect(parsed.mcpServers.disabled_one).toBeUndefined();
   });
@@ -215,7 +215,7 @@ describe("amazon-q exportConfig()", () => {
 
     const result = exportConfig(cfg, {}, dir.path);
     const mcpFile = result.files.find((f) => f.path.endsWith("mcp.json"));
-    const parsed = JSON.parse(mcpFile?.content);
+    const parsed = JSON.parse(mcpFile!.content);
     expect(parsed.useLegacyMcpJson).toBe(true);
     expect(parsed.mcpServers.old).toBeUndefined();
     expect(parsed.mcpServers.fetch).toBeDefined();
@@ -236,7 +236,7 @@ describe("amazon-q exportConfig()", () => {
 
     const result = exportConfig(cfg, { dryRun: true }, dir.path);
     const mcpFile = result.files.find((f) => f.path.endsWith("mcp.json"));
-    const parsed = JSON.parse(mcpFile?.content);
+    const parsed = JSON.parse(mcpFile!.content);
     expect(parsed.mcpServers.slow.timeout).toBe(60);
   });
 });

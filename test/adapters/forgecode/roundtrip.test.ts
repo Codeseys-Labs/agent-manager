@@ -70,7 +70,7 @@ describe("ForgeCode adapter roundtrip", () => {
     expect(mcpFile?.written).toBe(true);
 
     // 5. Verify output
-    const outputJson = JSON.parse(mcpFile?.content);
+    const outputJson = JSON.parse(mcpFile!.content);
     expect(outputJson.mcpServers.fetch.command).toBe("uvx");
     expect(outputJson.mcpServers.fetch.args).toEqual(["mcp-server-fetch"]);
     expect(outputJson.mcpServers.tavily.env.TAVILY_API_KEY).toBe("${TAVILY_API_KEY}");
@@ -128,6 +128,7 @@ describe("ForgeCode adapter roundtrip", () => {
           name: instr.name,
           content: instr.content,
           scope: instr.scope,
+          globs: [],
           description: instr.description ?? "",
           targets: [],
           adapters: {},
@@ -146,8 +147,8 @@ describe("ForgeCode adapter roundtrip", () => {
     });
     const agentsMdFile = exported.files.find((f) => f.path.endsWith("AGENTS.md"));
     expect(agentsMdFile).toBeDefined();
-    expect(agentsMdFile?.content).toContain("Use TypeScript strict mode.");
-    expect(agentsMdFile?.content).toContain("<!-- am:begin -->");
-    expect(agentsMdFile?.content).toContain("<!-- am:end -->");
+    expect(agentsMdFile!.content).toContain("Use TypeScript strict mode.");
+    expect(agentsMdFile!.content).toContain("<!-- am:begin -->");
+    expect(agentsMdFile!.content).toContain("<!-- am:end -->");
   });
 });

@@ -27,6 +27,7 @@ function config(overrides: Partial<ResolvedConfig> = {}): ResolvedConfig {
     skills: {},
     profile: "default",
     adapters: {},
+    agents: {},
     ...overrides,
   };
 }
@@ -57,7 +58,7 @@ describe("codex-cli exportConfig()", () => {
     const globalFile = result.files.find((f) => f.path.endsWith("config.toml"));
     expect(globalFile).toBeDefined();
 
-    const parsed = parseTOML(globalFile?.content) as any;
+    const parsed = parseTOML(globalFile!.content) as any;
     expect(parsed.mcp_servers.context7.command).toBe("npx");
     expect(parsed.mcp_servers.context7.args).toEqual(["-y", "@upstash/context7-mcp"]);
     expect(parsed.mcp_servers.context7.env.API_KEY).toBe("test-key");
@@ -83,7 +84,7 @@ describe("codex-cli exportConfig()", () => {
 
     const result = await exportConfig(cfg, { dryRun: true }, dir.path);
     const globalFile = result.files.find((f) => f.path.endsWith("config.toml"));
-    const parsed = parseTOML(globalFile?.content) as any;
+    const parsed = parseTOML(globalFile!.content) as any;
     expect(parsed.mcp_servers.figma.url).toBe("https://mcp.figma.com/mcp");
     expect(parsed.mcp_servers.figma.command).toBeUndefined();
     expect(parsed.mcp_servers.figma.bearer_token_env_var).toBe("FIGMA_TOKEN");
@@ -111,7 +112,7 @@ describe("codex-cli exportConfig()", () => {
 
     const result = await exportConfig(cfg, { dryRun: true }, dir.path);
     const globalFile = result.files.find((f) => f.path.endsWith("config.toml"));
-    const parsed = parseTOML(globalFile?.content) as any;
+    const parsed = parseTOML(globalFile!.content) as any;
     expect(parsed.mcp_servers.context7.enabled_tools).toEqual(["search", "summarize"]);
     expect(parsed.mcp_servers.context7.startup_timeout_sec).toBe(15);
     expect(parsed.mcp_servers.context7.tool_timeout_sec).toBe(120);
@@ -137,9 +138,9 @@ describe("codex-cli exportConfig()", () => {
     const result = await exportConfig(cfg, { projectPath: projectDir, dryRun: true }, dir.path);
     const agentsMdFile = result.files.find((f) => f.path.endsWith("AGENTS.md"));
     expect(agentsMdFile).toBeDefined();
-    expect(agentsMdFile?.content).toContain("<!-- am:begin -->");
-    expect(agentsMdFile?.content).toContain("Use strict TypeScript.");
-    expect(agentsMdFile?.content).toContain("<!-- am:end -->");
+    expect(agentsMdFile!.content).toContain("<!-- am:begin -->");
+    expect(agentsMdFile!.content).toContain("Use strict TypeScript.");
+    expect(agentsMdFile!.content).toContain("<!-- am:end -->");
   });
 
   test("dry run doesn't write files", async () => {
@@ -172,7 +173,7 @@ describe("codex-cli exportConfig()", () => {
 
     const result = await exportConfig(cfg, { dryRun: true }, dir.path);
     const globalFile = result.files.find((f) => f.path.endsWith("config.toml"));
-    const parsed = parseTOML(globalFile?.content) as any;
+    const parsed = parseTOML(globalFile!.content) as any;
     expect(parsed.mcp_servers.enabled_one).toBeDefined();
     expect(parsed.mcp_servers.disabled_one).toBeUndefined();
   });
@@ -198,7 +199,7 @@ command = "old-mcp"
 
     const result = await exportConfig(cfg, {}, dir.path);
     const globalFile = result.files.find((f) => f.path.endsWith("config.toml"));
-    const parsed = parseTOML(globalFile?.content) as any;
+    const parsed = parseTOML(globalFile!.content) as any;
     // Non-MCP fields preserved
     expect(parsed.model).toBe("gpt-5.4");
     expect(parsed.model_provider).toBe("openai");

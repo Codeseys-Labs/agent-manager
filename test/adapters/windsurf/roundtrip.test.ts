@@ -59,6 +59,7 @@ describe("Windsurf adapter roundtrip", () => {
       servers: resolvedServers,
       instructions: {},
       skills: {},
+      agents: {},
       profile: "default",
       adapters: {},
     };
@@ -71,7 +72,7 @@ describe("Windsurf adapter roundtrip", () => {
     expect(mcpFile?.written).toBe(true);
 
     // 5. Verify output
-    const outputJson = JSON.parse(mcpFile?.content);
+    const outputJson = JSON.parse(mcpFile!.content);
     expect(outputJson.mcpServers.fetch.command).toBe("uvx");
     expect(outputJson.mcpServers.tavily.env.TAVILY_API_KEY).toBe("${env:TAVILY_API_KEY}");
 

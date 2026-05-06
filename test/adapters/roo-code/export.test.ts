@@ -62,7 +62,7 @@ describe("roo-code exportConfig()", () => {
     expect(mcpFile).toBeDefined();
     expect(mcpFile?.written).toBe(true);
 
-    const output = JSON.parse(mcpFile?.content);
+    const output = JSON.parse(mcpFile!.content);
     expect(output.mcpServers.fetch.command).toBe("uvx");
     expect(output.mcpServers.fetch.args).toEqual(["mcp-server-fetch"]);
   });
@@ -84,7 +84,7 @@ describe("roo-code exportConfig()", () => {
     expect(projectFile).toBeDefined();
     expect(projectFile?.written).toBe(true);
 
-    const output = JSON.parse(projectFile?.content);
+    const output = JSON.parse(projectFile!.content);
     expect(output.mcpServers["proj-server"].command).toBe("node");
   });
 
@@ -101,7 +101,7 @@ describe("roo-code exportConfig()", () => {
     const result = exportConfig(resolved, {}, dir.path);
     const mcpFile = result.files.find((f) => f.path.includes("mcp_settings.json"));
     expect(mcpFile).toBeDefined();
-    const output = JSON.parse(mcpFile?.content);
+    const output = JSON.parse(mcpFile!.content);
     expect(Object.keys(output.mcpServers)).toHaveLength(0);
   });
 
@@ -118,7 +118,7 @@ describe("roo-code exportConfig()", () => {
 
     const result = exportConfig(resolved, {}, dir.path);
     const mcpFile = result.files.find((f) => f.path.includes("mcp_settings.json"));
-    const output = JSON.parse(mcpFile?.content);
+    const output = JSON.parse(mcpFile!.content);
     expect(output.mcpServers.fetch.alwaysAllow).toEqual(["fetch_url"]);
   });
 
@@ -132,6 +132,7 @@ describe("roo-code exportConfig()", () => {
           name: "code-style",
           content: "Use TypeScript strict mode.",
           scope: "always",
+          globs: [],
           description: "Code style rules",
           targets: [],
           adapters: {},
@@ -142,7 +143,7 @@ describe("roo-code exportConfig()", () => {
     const result = exportConfig(resolved, { projectPath: projectDir, dryRun: true }, dir.path);
     const ruleFile = result.files.find((f) => f.path.endsWith("code-style.md"));
     expect(ruleFile).toBeDefined();
-    expect(ruleFile?.content).toBe("Use TypeScript strict mode.\n");
+    expect(ruleFile!.content).toBe("Use TypeScript strict mode.\n");
     expect(ruleFile?.path).toContain(".roo/rules/");
   });
 
@@ -156,6 +157,7 @@ describe("roo-code exportConfig()", () => {
           name: "claude-only",
           content: "Only for Claude.",
           scope: "always",
+          globs: [],
           description: "",
           targets: ["claude-code"],
           adapters: {},
@@ -186,7 +188,7 @@ describe("roo-code exportConfig()", () => {
 
     const result = exportConfig(resolved, {}, dir.path);
     const mcpFile = result.files.find((f) => f.path.includes("mcp_settings.json"));
-    const output = JSON.parse(mcpFile?.content);
+    const output = JSON.parse(mcpFile!.content);
     expect(output.customField).toBe("preserved");
     expect(output.mcpServers.fetch.command).toBe("uvx");
   });

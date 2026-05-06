@@ -26,6 +26,7 @@ function config(overrides: Partial<ResolvedConfig> = {}): ResolvedConfig {
     skills: {},
     profile: "default",
     adapters: {},
+    agents: {},
     ...overrides,
   };
 }
@@ -57,7 +58,7 @@ describe("exportConfig()", () => {
     const globalFile = result.files.find((f) => f.path.endsWith(".claude.json"));
     expect(globalFile).toBeDefined();
 
-    const parsed = JSON.parse(globalFile?.content);
+    const parsed = JSON.parse(globalFile!.content);
     expect(parsed.mcpServers.fetch.command).toBe("uvx");
     expect(parsed.mcpServers.fetch.args).toEqual(["mcp-server-fetch"]);
     expect(parsed.mcpServers.tavily.env.TAVILY_API_KEY).toBe("test-key");
@@ -81,7 +82,7 @@ describe("exportConfig()", () => {
 
     const result = await exportConfig(cfg, { dryRun: true }, dir.path);
     const globalFile = result.files.find((f) => f.path.endsWith(".claude.json"));
-    const parsed = JSON.parse(globalFile?.content);
+    const parsed = JSON.parse(globalFile!.content);
     expect(parsed.mcpServers.outlook.always_allow).toEqual(["email_search", "calendar_view"]);
   });
 
@@ -105,9 +106,9 @@ describe("exportConfig()", () => {
     const result = await exportConfig(cfg, { projectPath: projectDir, dryRun: true }, dir.path);
     const claudeMdFile = result.files.find((f) => f.path.endsWith("CLAUDE.md"));
     expect(claudeMdFile).toBeDefined();
-    expect(claudeMdFile?.content).toContain("<!-- am:begin -->");
-    expect(claudeMdFile?.content).toContain("Use strict TypeScript.");
-    expect(claudeMdFile?.content).toContain("<!-- am:end -->");
+    expect(claudeMdFile!.content).toContain("<!-- am:begin -->");
+    expect(claudeMdFile!.content).toContain("Use strict TypeScript.");
+    expect(claudeMdFile!.content).toContain("<!-- am:end -->");
   });
 
   test("dry run doesn't write files", async () => {
@@ -141,7 +142,7 @@ describe("exportConfig()", () => {
 
     const result = await exportConfig(cfg, { dryRun: true }, dir.path);
     const globalFile = result.files.find((f) => f.path.endsWith(".claude.json"));
-    const parsed = JSON.parse(globalFile?.content);
+    const parsed = JSON.parse(globalFile!.content);
     expect(parsed.mcpServers.enabled_one).toBeDefined();
     expect(parsed.mcpServers.disabled_one).toBeUndefined();
   });
@@ -166,7 +167,7 @@ describe("exportConfig()", () => {
 
     const result = await exportConfig(cfg, {}, dir.path);
     const globalFile = result.files.find((f) => f.path.endsWith(".claude.json"));
-    const parsed = JSON.parse(globalFile?.content);
+    const parsed = JSON.parse(globalFile!.content);
     // Non-MCP fields preserved
     expect(parsed.numStartups).toBe(42);
     expect(parsed.selectedModel).toBe("opus");

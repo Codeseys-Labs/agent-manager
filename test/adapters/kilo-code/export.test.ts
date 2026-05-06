@@ -27,6 +27,7 @@ function config(overrides: Partial<ResolvedConfig> = {}): ResolvedConfig {
     skills: {},
     profile: "default",
     adapters: {},
+    agents: {},
     ...overrides,
   };
 }
@@ -62,7 +63,7 @@ describe("exportConfig()", () => {
     const globalFile = result.files.find((f) => f.path.endsWith("kilo.jsonc"));
     expect(globalFile).toBeDefined();
 
-    const parsed = JSON.parse(globalFile?.content) as Record<string, unknown>;
+    const parsed = JSON.parse(globalFile!.content) as Record<string, unknown>;
     const mcp = parsed.mcp as Record<string, Record<string, unknown>>;
     expect(mcp.fetch.command).toEqual(["uvx", "mcp-server-fetch"]);
     expect(mcp.fetch.type).toBe("local");
@@ -84,7 +85,7 @@ describe("exportConfig()", () => {
 
     const result = await exportConfig(cfg, { dryRun: true }, dir.path);
     const globalFile = result.files.find((f) => f.path.endsWith("kilo.jsonc"));
-    const parsed = JSON.parse(globalFile?.content) as Record<string, unknown>;
+    const parsed = JSON.parse(globalFile!.content) as Record<string, unknown>;
     const mcp = parsed.mcp as Record<string, Record<string, unknown>>;
     expect(mcp.api.type).toBe("remote");
     expect(mcp.api.url).toBe("https://example.com/mcp");
@@ -111,9 +112,9 @@ describe("exportConfig()", () => {
     const result = await exportConfig(cfg, { projectPath: projectDir, dryRun: true }, dir.path);
     const agentsFile = result.files.find((f) => f.path.endsWith("AGENTS.md"));
     expect(agentsFile).toBeDefined();
-    expect(agentsFile?.content).toContain("<!-- am:begin -->");
-    expect(agentsFile?.content).toContain("Use strict TypeScript.");
-    expect(agentsFile?.content).toContain("<!-- am:end -->");
+    expect(agentsFile!.content).toContain("<!-- am:begin -->");
+    expect(agentsFile!.content).toContain("Use strict TypeScript.");
+    expect(agentsFile!.content).toContain("<!-- am:end -->");
   });
 
   test("dry run doesn't write files", async () => {
@@ -145,7 +146,7 @@ describe("exportConfig()", () => {
 
     const result = await exportConfig(cfg, { dryRun: true }, dir.path);
     const globalFile = result.files.find((f) => f.path.endsWith("kilo.jsonc"));
-    const parsed = JSON.parse(globalFile?.content) as Record<string, unknown>;
+    const parsed = JSON.parse(globalFile!.content) as Record<string, unknown>;
     const mcp = parsed.mcp as Record<string, unknown>;
     expect(mcp.enabled).toBeDefined();
     expect(mcp.disabled).toBeUndefined();
@@ -169,7 +170,7 @@ describe("exportConfig()", () => {
 
     const result = await exportConfig(cfg, {}, dir.path);
     const globalFile = result.files.find((f) => f.path.endsWith("kilo.jsonc"));
-    const parsed = JSON.parse(globalFile?.content) as Record<string, unknown>;
+    const parsed = JSON.parse(globalFile!.content) as Record<string, unknown>;
     expect(parsed.model).toBe("anthropic/claude-sonnet-4-20250514");
     // Old MCP replaced
     const mcp = parsed.mcp as Record<string, unknown>;
@@ -194,7 +195,7 @@ describe("exportConfig()", () => {
 
     const result = await exportConfig(cfg, {}, dir.path);
     const globalFile = result.files.find((f) => f.path.endsWith("kilo.jsonc"));
-    const parsed = JSON.parse(globalFile?.content) as Record<string, unknown>;
+    const parsed = JSON.parse(globalFile!.content) as Record<string, unknown>;
     expect(parsed.mcpServers).toBeUndefined();
     expect(parsed.mcp).toBeDefined();
   });
@@ -234,7 +235,7 @@ describe("exportConfig()", () => {
       (f) => f.path.endsWith("kilo.jsonc") && f.path.includes("project"),
     );
     expect(projFile).toBeDefined();
-    const parsed = JSON.parse(projFile?.content) as Record<string, unknown>;
+    const parsed = JSON.parse(projFile!.content) as Record<string, unknown>;
     const mcp = parsed.mcp as Record<string, unknown>;
     expect(mcp["proj-server"]).toBeDefined();
   });

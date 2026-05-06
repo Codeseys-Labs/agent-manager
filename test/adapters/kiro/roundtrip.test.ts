@@ -69,7 +69,7 @@ describe("Kiro adapter roundtrip", () => {
     expect(globalFile?.written).toBe(true);
 
     // 5. Verify output
-    const outputJson = JSON.parse(globalFile?.content);
+    const outputJson = JSON.parse(globalFile!.content);
     expect(outputJson.mcpServers.fetch.command).toBe("uvx");
     expect(outputJson.mcpServers.fetch.args).toEqual(["mcp-server-fetch"]);
     expect(outputJson.mcpServers.tavily.env.TAVILY_API_KEY).toBe("${TAVILY_API_KEY}");
@@ -142,6 +142,7 @@ Prefer const over let.`,
           name: instr.name,
           content: instr.content,
           scope: instr.scope,
+          globs: [],
           description: instr.description ?? "",
           targets: ["kiro"],
           adapters: {},
@@ -164,8 +165,8 @@ Prefer const over let.`,
     );
     const steeringFile = exported.files.find((f) => f.path.endsWith(".md"));
     expect(steeringFile).toBeDefined();
-    expect(steeringFile?.content).toContain("Use TypeScript strict mode.");
-    expect(steeringFile?.content).toContain("<!-- am:begin -->");
-    expect(steeringFile?.content).toContain("<!-- am:end -->");
+    expect(steeringFile!.content).toContain("Use TypeScript strict mode.");
+    expect(steeringFile!.content).toContain("<!-- am:begin -->");
+    expect(steeringFile!.content).toContain("<!-- am:end -->");
   });
 });

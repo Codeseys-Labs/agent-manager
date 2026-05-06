@@ -66,6 +66,7 @@ describe("Kilo Code adapter roundtrip", () => {
       servers: resolvedServers,
       instructions: {},
       skills: {},
+      agents: {},
       profile: "default",
       adapters: {},
     };
@@ -78,7 +79,7 @@ describe("Kilo Code adapter roundtrip", () => {
     expect(globalFile?.written).toBe(true);
 
     // 5. Verify output
-    const outputJson = JSON.parse(globalFile?.content) as Record<string, unknown>;
+    const outputJson = JSON.parse(globalFile!.content) as Record<string, unknown>;
 
     // Non-MCP fields preserved
     expect(outputJson.model).toBe("anthropic/claude-sonnet-4-20250514");
@@ -142,6 +143,7 @@ describe("Kilo Code adapter roundtrip", () => {
       servers: resolvedServers,
       instructions: {},
       skills: {},
+      agents: {},
       profile: "default",
       adapters: {},
     };
@@ -149,7 +151,7 @@ describe("Kilo Code adapter roundtrip", () => {
     // Export (writes new format)
     const exported = await exportConfig(resolved, {}, dir.path);
     const globalFile = exported.files.find((f) => f.path.endsWith("kilo.jsonc"));
-    const outputJson = JSON.parse(globalFile?.content) as Record<string, unknown>;
+    const outputJson = JSON.parse(globalFile!.content) as Record<string, unknown>;
 
     // Exported in new format
     const mcp = outputJson.mcp as Record<string, Record<string, unknown>>;

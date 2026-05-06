@@ -54,7 +54,7 @@ describe("kiro exportConfig()", () => {
 
     const globalFile = result.files.find((f) => f.path.includes(".kiro/settings/mcp.json"));
     expect(globalFile).toBeDefined();
-    const parsed = JSON.parse(globalFile?.content);
+    const parsed = JSON.parse(globalFile!.content);
     expect(parsed.mcpServers.fetch.command).toBe("uvx");
     expect(parsed.mcpServers.fetch.args).toEqual(["mcp-server-fetch"]);
   });
@@ -77,7 +77,7 @@ describe("kiro exportConfig()", () => {
       f.path.includes("project/.kiro/settings/mcp.json"),
     );
     expect(projectFile).toBeDefined();
-    const parsed = JSON.parse(projectFile?.content);
+    const parsed = JSON.parse(projectFile!.content);
     expect(parsed.mcpServers.local.command).toBe("my-local-mcp");
   });
 
@@ -143,10 +143,10 @@ describe("kiro exportConfig()", () => {
     const result = exportConfig(config, { projectPath: projectDir, dryRun: true }, dir.path);
     const steeringFile = result.files.find((f) => f.path.includes(".kiro/steering/code-style.md"));
     expect(steeringFile).toBeDefined();
-    expect(steeringFile?.content).toContain("inclusion: always");
-    expect(steeringFile?.content).toContain("<!-- am:begin -->");
-    expect(steeringFile?.content).toContain("Use strict mode");
-    expect(steeringFile?.content).toContain("<!-- am:end -->");
+    expect(steeringFile!.content).toContain("inclusion: always");
+    expect(steeringFile!.content).toContain("<!-- am:begin -->");
+    expect(steeringFile!.content).toContain("Use strict mode");
+    expect(steeringFile!.content).toContain("<!-- am:end -->");
   });
 
   test("filters instructions by target", async () => {

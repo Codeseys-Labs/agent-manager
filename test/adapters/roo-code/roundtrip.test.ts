@@ -78,7 +78,7 @@ describe("Roo Code adapter roundtrip", () => {
     expect(mcpFile?.written).toBe(true);
 
     // 5. Verify output
-    const outputJson = JSON.parse(mcpFile?.content);
+    const outputJson = JSON.parse(mcpFile!.content);
     expect(outputJson.mcpServers.fetch.command).toBe("uvx");
     expect(outputJson.mcpServers.fetch.args).toEqual(["mcp-server-fetch"]);
     expect(outputJson.mcpServers.tavily.env.TAVILY_API_KEY).toBe("${TAVILY_API_KEY}");
@@ -142,7 +142,7 @@ describe("Roo Code adapter roundtrip", () => {
     const exported = exportConfig(resolved, { projectPath: projectDir }, dir.path);
     const projectMcpFile = exported.files.find((f) => f.path.includes(".roo/mcp.json"));
     expect(projectMcpFile).toBeDefined();
-    const output = JSON.parse(projectMcpFile?.content);
+    const output = JSON.parse(projectMcpFile!.content);
     expect(output.mcpServers["local-dev"].command).toBe("node");
   });
 
@@ -172,6 +172,7 @@ describe("Roo Code adapter roundtrip", () => {
           name: instr.name,
           content: instr.content,
           scope: instr.scope,
+          globs: [],
           description: instr.description ?? "",
           targets: ["roo-code"],
           adapters: {},
@@ -189,6 +190,6 @@ describe("Roo Code adapter roundtrip", () => {
       (f) => f.path.endsWith(".md") && f.path.includes(".roo/rules/"),
     );
     expect(ruleFile).toBeDefined();
-    expect(ruleFile?.content).toContain("Use TypeScript strict mode.");
+    expect(ruleFile!.content).toContain("Use TypeScript strict mode.");
   });
 });

@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, mock, spyOn, test } from "bun:test";
 import { mintSessionToken, serveCommand } from "../../src/commands/serve";
-import { resolveArgs, resolveMeta } from "../helpers/citty";
+import { resolveArgs, resolveMeta, resolveRun } from "../helpers/citty";
 
 describe("serve command", () => {
   test("meta name is 'serve'", async () => {
@@ -46,7 +46,7 @@ describe("serve command", () => {
   describe("port validation", () => {
     let errSpy: ReturnType<typeof spyOn>;
     let logSpy: ReturnType<typeof spyOn>;
-    let originalExitCode: number | undefined;
+    let originalExitCode: typeof process.exitCode;
 
     beforeEach(() => {
       errSpy = spyOn(console, "error").mockImplementation(() => {});
@@ -58,27 +58,27 @@ describe("serve command", () => {
     afterEach(() => {
       errSpy.mockRestore();
       logSpy.mockRestore();
-      process.exitCode = originalExitCode;
+      process.exitCode = originalExitCode === 1 ? 0 : originalExitCode;
     });
 
     test("NaN port sets exitCode = 1", async () => {
-      await serveCommand.run?.({ args: { port: "abc" } } as any);
+      await resolveRun(serveCommand, { port: "abc" });
       expect(process.exitCode).toBe(1);
       expect(errSpy).toHaveBeenCalledWith(expect.stringContaining("expected a positive integer"));
     });
 
     test("port 0 sets exitCode = 1", async () => {
-      await serveCommand.run?.({ args: { port: "0" } } as any);
+      await resolveRun(serveCommand, { port: "0" });
       expect(process.exitCode).toBe(1);
     });
 
     test("port 65536 sets exitCode = 1", async () => {
-      await serveCommand.run?.({ args: { port: "65536" } } as any);
+      await resolveRun(serveCommand, { port: "65536" });
       expect(process.exitCode).toBe(1);
     });
 
     test("negative port sets exitCode = 1", async () => {
-      await serveCommand.run?.({ args: { port: "-1" } } as any);
+      await resolveRun(serveCommand, { port: "-1" });
       expect(process.exitCode).toBe(1);
     });
   });

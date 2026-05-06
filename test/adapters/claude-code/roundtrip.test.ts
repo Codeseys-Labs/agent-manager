@@ -57,6 +57,7 @@ describe("Claude Code adapter roundtrip", () => {
       servers: resolvedServers,
       instructions: {},
       skills: {},
+      agents: {},
       profile: "default",
       adapters: {},
     };
@@ -69,7 +70,7 @@ describe("Claude Code adapter roundtrip", () => {
     expect(globalFile?.written).toBe(true);
 
     // 5. Verify output
-    const outputJson = JSON.parse(globalFile?.content);
+    const outputJson = JSON.parse(globalFile!.content);
 
     // Non-MCP fields preserved
     expect(outputJson.numStartups).toBe(42);

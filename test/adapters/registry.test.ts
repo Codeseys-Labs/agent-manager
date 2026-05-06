@@ -183,7 +183,7 @@ describe("getDetectedAdapters()", () => {
   it("only includes adapters where detect() returns installed: true", async () => {
     const detected = await getDetectedAdapters();
     for (const adapter of detected) {
-      const result = adapter.detect();
+      const result = await adapter.detect();
       expect(result.installed).toBe(true);
     }
   }, 30_000);

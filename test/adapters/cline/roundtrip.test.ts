@@ -80,7 +80,7 @@ describe("Cline adapter roundtrip", () => {
     expect(settingsFile?.written).toBe(true);
 
     // 5. Verify output
-    const outputJson = JSON.parse(settingsFile?.content) as Record<string, unknown>;
+    const outputJson = JSON.parse(settingsFile!.content) as Record<string, unknown>;
     const mcpServers = outputJson.mcpServers as Record<string, Record<string, unknown>>;
     expect(mcpServers.fetch.command).toBe("uvx");
     expect(mcpServers.fetch.args).toEqual(["mcp-server-fetch"]);
@@ -153,7 +153,7 @@ describe("Cline adapter roundtrip", () => {
     // Export
     const exported = exportConfig(resolved, { dryRun: true }, dir.path);
     const settingsFile = exported.files.find((f) => f.path.endsWith("cline_mcp_settings.json"));
-    const output = JSON.parse(settingsFile?.content) as Record<string, unknown>;
+    const output = JSON.parse(settingsFile!.content) as Record<string, unknown>;
     const mcpServers = output.mcpServers as Record<string, Record<string, unknown>>;
 
     // server1 should have alwaysAllow preserved
@@ -224,6 +224,6 @@ describe("Cline adapter roundtrip", () => {
 
     const ruleFile = exported.files.find((f) => f.path.includes(".clinerules"));
     expect(ruleFile).toBeDefined();
-    expect(ruleFile?.content).toContain("functional components");
+    expect(ruleFile!.content).toContain("functional components");
   });
 });

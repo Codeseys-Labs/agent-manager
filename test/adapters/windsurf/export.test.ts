@@ -24,6 +24,7 @@ function config(overrides: Partial<ResolvedConfig> = {}): ResolvedConfig {
     skills: {},
     profile: "default",
     adapters: {},
+    agents: {},
     ...overrides,
   };
 }
@@ -59,7 +60,7 @@ describe("windsurf exportConfig()", () => {
     const mcpFile = result.files.find((f) => f.path.endsWith("mcp_config.json"));
     expect(mcpFile).toBeDefined();
 
-    const parsed = JSON.parse(mcpFile?.content);
+    const parsed = JSON.parse(mcpFile!.content);
     expect(parsed.mcpServers.fetch.command).toBe("uvx");
     expect(parsed.mcpServers.fetch.args).toEqual(["mcp-server-fetch"]);
     expect(parsed.mcpServers.tavily.env.TAVILY_API_KEY).toBe("test-key");
@@ -85,8 +86,8 @@ describe("windsurf exportConfig()", () => {
     const result = exportConfig(cfg, { projectPath: projectDir, dryRun: true }, dir.path);
     const ruleFile = result.files.find((f) => f.path.endsWith("ts-rules.md"));
     expect(ruleFile).toBeDefined();
-    expect(ruleFile?.content).toContain("trigger: always_on");
-    expect(ruleFile?.content).toContain("Use strict TypeScript.");
+    expect(ruleFile!.content).toContain("trigger: always_on");
+    expect(ruleFile!.content).toContain("Use strict TypeScript.");
   });
 
   test("generates glob rules with globs frontmatter", async () => {
@@ -109,8 +110,8 @@ describe("windsurf exportConfig()", () => {
     const result = exportConfig(cfg, { projectPath: projectDir, dryRun: true }, dir.path);
     const ruleFile = result.files.find((f) => f.path.endsWith("testing.md"));
     expect(ruleFile).toBeDefined();
-    expect(ruleFile?.content).toContain("trigger: glob");
-    expect(ruleFile?.content).toContain('globs: "**/*.test.ts"');
+    expect(ruleFile!.content).toContain("trigger: glob");
+    expect(ruleFile!.content).toContain('globs: "**/*.test.ts"');
   });
 
   test("skips disabled servers", async () => {
@@ -128,7 +129,7 @@ describe("windsurf exportConfig()", () => {
 
     const result = exportConfig(cfg, { dryRun: true }, dir.path);
     const mcpFile = result.files.find((f) => f.path.endsWith("mcp_config.json"));
-    const parsed = JSON.parse(mcpFile?.content);
+    const parsed = JSON.parse(mcpFile!.content);
     expect(parsed.mcpServers.enabled_one).toBeDefined();
     expect(parsed.mcpServers.disabled_one).toBeUndefined();
   });
@@ -212,9 +213,9 @@ describe("windsurf exportConfig()", () => {
     const result = exportConfig(cfg, { projectPath: projectDir, dryRun: true }, dir.path);
     const agentsMdFile = result.files.find((f) => f.path.endsWith("AGENTS.md"));
     expect(agentsMdFile).toBeDefined();
-    expect(agentsMdFile?.content).toContain("<!-- am:begin -->");
-    expect(agentsMdFile?.content).toContain("Use strict TypeScript.");
-    expect(agentsMdFile?.content).toContain("<!-- am:end -->");
+    expect(agentsMdFile!.content).toContain("<!-- am:begin -->");
+    expect(agentsMdFile!.content).toContain("Use strict TypeScript.");
+    expect(agentsMdFile!.content).toContain("<!-- am:end -->");
   });
 
   test("generates .windsurf/skills/ from resolved skills", async () => {
@@ -237,8 +238,8 @@ describe("windsurf exportConfig()", () => {
       f.path.includes(".windsurf/skills/research/SKILL.md"),
     );
     expect(skillFile).toBeDefined();
-    expect(skillFile?.content).toContain("# research");
-    expect(skillFile?.content).toContain("Multi-agent research skill");
+    expect(skillFile!.content).toContain("# research");
+    expect(skillFile!.content).toContain("Multi-agent research skill");
   });
 
   test("preserves existing non-MCP fields in mcp_config.json", async () => {
@@ -263,7 +264,7 @@ describe("windsurf exportConfig()", () => {
 
     const result = exportConfig(cfg, {}, dir.path);
     const mcpFile = result.files.find((f) => f.path.endsWith("mcp_config.json"));
-    const parsed = JSON.parse(mcpFile?.content);
+    const parsed = JSON.parse(mcpFile!.content);
     expect(parsed.someOtherSetting).toBe(true);
     expect(parsed.mcpServers.old).toBeUndefined();
     expect(parsed.mcpServers.fetch).toBeDefined();

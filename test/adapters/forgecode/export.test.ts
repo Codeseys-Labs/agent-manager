@@ -26,6 +26,7 @@ function config(overrides: Partial<ResolvedConfig> = {}): ResolvedConfig {
     skills: {},
     profile: "default",
     adapters: {},
+    agents: {},
     ...overrides,
   };
 }
@@ -60,7 +61,7 @@ describe("forgecode exportConfig()", () => {
     const mcpFile = result.files.find((f) => f.path.endsWith(".mcp.json"));
     expect(mcpFile).toBeDefined();
 
-    const parsed = JSON.parse(mcpFile?.content);
+    const parsed = JSON.parse(mcpFile!.content);
     expect(parsed.mcpServers.fetch.command).toBe("uvx");
     expect(parsed.mcpServers.fetch.args).toEqual(["mcp-server-fetch"]);
     expect(parsed.mcpServers.tavily.env.TAVILY_API_KEY).toBe("test-key");
@@ -86,9 +87,9 @@ describe("forgecode exportConfig()", () => {
     const result = await exportConfig(cfg, { projectPath: projectDir, dryRun: true });
     const agentsMdFile = result.files.find((f) => f.path.endsWith("AGENTS.md"));
     expect(agentsMdFile).toBeDefined();
-    expect(agentsMdFile?.content).toContain("<!-- am:begin -->");
-    expect(agentsMdFile?.content).toContain("Use strict TypeScript.");
-    expect(agentsMdFile?.content).toContain("<!-- am:end -->");
+    expect(agentsMdFile!.content).toContain("<!-- am:begin -->");
+    expect(agentsMdFile!.content).toContain("Use strict TypeScript.");
+    expect(agentsMdFile!.content).toContain("<!-- am:end -->");
   });
 
   test("dry run doesn't write files", async () => {
@@ -126,7 +127,7 @@ describe("forgecode exportConfig()", () => {
 
     const result = await exportConfig(cfg, { projectPath: projectDir, dryRun: true });
     const mcpFile = result.files.find((f) => f.path.endsWith(".mcp.json"));
-    const parsed = JSON.parse(mcpFile?.content);
+    const parsed = JSON.parse(mcpFile!.content);
     expect(parsed.mcpServers.enabled_one).toBeDefined();
     expect(parsed.mcpServers.disabled_one).toBeUndefined();
   });
@@ -173,9 +174,9 @@ describe("forgecode exportConfig()", () => {
 
     const result = await exportConfig(cfg, { projectPath: projectDir, dryRun: true });
     const agentsMdFile = result.files.find((f) => f.path.endsWith("AGENTS.md"));
-    expect(agentsMdFile?.content).toContain("My Custom Rules");
-    expect(agentsMdFile?.content).toContain("Do not delete this.");
-    expect(agentsMdFile?.content).toContain("Managed content here.");
+    expect(agentsMdFile!.content).toContain("My Custom Rules");
+    expect(agentsMdFile!.content).toContain("Do not delete this.");
+    expect(agentsMdFile!.content).toContain("Managed content here.");
   });
 
   test("skips instructions targeted at other adapters", async () => {

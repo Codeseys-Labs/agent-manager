@@ -68,7 +68,7 @@ describe("cline exportConfig()", () => {
     const settingsFile = result.files.find((f) => f.path.endsWith("cline_mcp_settings.json"));
     expect(settingsFile).toBeDefined();
 
-    const parsed = JSON.parse(settingsFile?.content) as Record<string, unknown>;
+    const parsed = JSON.parse(settingsFile!.content) as Record<string, unknown>;
     const mcpServers = parsed.mcpServers as Record<string, Record<string, unknown>>;
     expect(mcpServers.fetch.command).toBe("uvx");
     expect(mcpServers.fetch.args).toEqual(["mcp-server-fetch"]);
@@ -90,7 +90,7 @@ describe("cline exportConfig()", () => {
 
     const result = exportConfig(cfg, { dryRun: true }, dir.path);
     const settingsFile = result.files.find((f) => f.path.endsWith("cline_mcp_settings.json"));
-    const parsed = JSON.parse(settingsFile?.content) as Record<string, unknown>;
+    const parsed = JSON.parse(settingsFile!.content) as Record<string, unknown>;
     const mcpServers = parsed.mcpServers as Record<string, Record<string, unknown>>;
     expect(mcpServers.svc.alwaysAllow).toEqual(["tool1", "tool2"]);
   });
@@ -110,7 +110,7 @@ describe("cline exportConfig()", () => {
 
     const result = exportConfig(cfg, { dryRun: true }, dir.path);
     const settingsFile = result.files.find((f) => f.path.endsWith("cline_mcp_settings.json"));
-    const parsed = JSON.parse(settingsFile?.content) as Record<string, unknown>;
+    const parsed = JSON.parse(settingsFile!.content) as Record<string, unknown>;
     const mcpServers = parsed.mcpServers as Record<string, unknown>;
     expect(mcpServers.enabled).toBeDefined();
     expect(mcpServers.disabled).toBeUndefined();
@@ -136,7 +136,7 @@ describe("cline exportConfig()", () => {
     const result = exportConfig(cfg, { projectPath: projectDir, dryRun: true }, dir.path);
     const ruleFile = result.files.find((f) => f.path.endsWith("ts-rules.md"));
     expect(ruleFile).toBeDefined();
-    expect(ruleFile?.content).toContain("Use strict TypeScript.");
+    expect(ruleFile!.content).toContain("Use strict TypeScript.");
     expect(ruleFile?.path).toContain(".clinerules");
   });
 
@@ -242,7 +242,7 @@ describe("cline exportConfig()", () => {
 
     const result = exportConfig(cfg, {}, dir.path);
     const settingsFile = result.files.find((f) => f.path.endsWith("cline_mcp_settings.json"));
-    const parsed = JSON.parse(settingsFile?.content) as Record<string, unknown>;
+    const parsed = JSON.parse(settingsFile!.content) as Record<string, unknown>;
     expect(parsed.customField).toBe("preserved");
     // Old MCP replaced
     const mcpServers = parsed.mcpServers as Record<string, unknown>;

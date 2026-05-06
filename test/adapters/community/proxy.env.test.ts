@@ -126,7 +126,7 @@ describe("CommunityAdapterProxy env sandbox (B-03)", () => {
   it("DOES pass PATH, HOME, LANG, TERM (allowlist survivors)", async () => {
     const env = await dumpChildEnv();
     expect(env.PATH).toBeDefined();
-    expect(env.PATH).toBe(process.env.PATH);
+    expect(env.PATH).toBe(process.env.PATH!);
     expect(env.HOME).toBeDefined();
     expect(env.LANG).toBeDefined();
     expect(env.TERM).toBeDefined();

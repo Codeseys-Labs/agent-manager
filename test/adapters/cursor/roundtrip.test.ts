@@ -69,7 +69,7 @@ describe("Cursor adapter roundtrip", () => {
     expect(globalFile?.written).toBe(true);
 
     // 5. Verify output
-    const outputJson = JSON.parse(globalFile?.content);
+    const outputJson = JSON.parse(globalFile!.content);
     expect(outputJson.mcpServers.fetch.command).toBe("uvx");
     expect(outputJson.mcpServers.fetch.args).toEqual(["mcp-server-fetch"]);
     expect(outputJson.mcpServers.tavily.env.TAVILY_API_KEY).toBe("${TAVILY_API_KEY}");
@@ -152,8 +152,8 @@ Use strict TypeScript.`,
     const exported = exportConfig(resolved, { projectPath: projectDir, dryRun: true }, dir.path);
     const mdcFile = exported.files.find((f) => f.path.endsWith(".mdc"));
     expect(mdcFile).toBeDefined();
-    expect(mdcFile?.content).toContain('description: "TypeScript rules"');
-    expect(mdcFile?.content).toContain('globs: ["**/*.ts"]');
-    expect(mdcFile?.content).toContain("Use strict TypeScript.");
+    expect(mdcFile!.content).toContain('description: "TypeScript rules"');
+    expect(mdcFile!.content).toContain('globs: ["**/*.ts"]');
+    expect(mdcFile!.content).toContain("Use strict TypeScript.");
   });
 });

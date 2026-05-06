@@ -72,7 +72,7 @@ describe("Amazon Q adapter roundtrip", () => {
     expect(mcpFile?.written).toBe(true);
 
     // 5. Verify output
-    const outputJson = JSON.parse(mcpFile?.content);
+    const outputJson = JSON.parse(mcpFile!.content);
     expect(outputJson.mcpServers["aws-docs"].command).toBe("uvx");
     expect(outputJson.mcpServers["aws-docs"].env.FASTMCP_LOG_LEVEL).toBe("ERROR");
 
@@ -127,10 +127,10 @@ describe("Amazon Q adapter roundtrip", () => {
     // 5. Verify rule files
     const codingFile = exported.files.find((f) => f.path.endsWith("coding.md"));
     expect(codingFile).toBeDefined();
-    expect(codingFile?.content).toBe("Use TypeScript strict mode.\n");
+    expect(codingFile!.content).toBe("Use TypeScript strict mode.\n");
 
     const testingFile = exported.files.find((f) => f.path.endsWith("testing.md"));
     expect(testingFile).toBeDefined();
-    expect(testingFile?.content).toBe("Write tests for all functions.\n");
+    expect(testingFile!.content).toBe("Write tests for all functions.\n");
   });
 });
