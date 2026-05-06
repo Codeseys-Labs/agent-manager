@@ -57,6 +57,7 @@ const main = defineCommand({
     flow: () => import("./commands/flow").then((m) => m.flowCommand),
     completion: () => import("./commands/completion").then((m) => m.completionCommand),
     marketplace: () => import("./commands/marketplace").then((m) => m.marketplaceCommand),
+    pair: () => import("./commands/pair").then((m) => m.pairCommand),
   },
 });
 
