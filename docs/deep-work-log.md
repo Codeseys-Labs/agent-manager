@@ -2099,3 +2099,133 @@ Test trajectory across the whole loop:
 - **Post-Run-M full**: **2881 / 0 fail**, 218 files, 8986 expect()
 
 Net delta: +17 tests across Runs J-M; zero regressions.
+
+
+## Run N (Wave T) — 2026-05-05 (Phases 1-9 complete, 3 commits, HEAD pending)
+
+**Goal.** Execute Wave T per the plan authored in Run M
+(`docs/plans/wave-T-adr-0047-am-pair.md`). Ship `am pair accept` +
+`am pair finalize` CLI verbs implementing ADR-0047 cross-device key
+handoff via the config repo as rendezvous channel.
+
+### Commit chain (Run M `e161735` + `af1a055` → Run N `457b564`)
+
+```
+9d46f73 feat(pair,adr-0047): Wave T — am pair accept + finalize CLI verbs
+457b564 fix(pair,security): Wave T Phase-8 must-fix — path-traversal in finalize
+```
+
+(Run-N dwl entry to land in a follow-up commit.)
+
+### Items shipped
+
+1. **T1 — `am pair accept <name>`** (245 LOC + 6 tests, claude-opus-4.7).
+   Generates local age identity, writes recipients/<name>.pub, prints
+   absolute path + age1... recipient + next-step instruction. Refuses
+   to overwrite without `--force`. All 6 acceptance gates pass on
+   first dispatch.
+
+2. **T2 — `am pair finalize <name>`** (296 LOC + 7 tests, deepseek-v4-pro;
+   subagent timed out at 600s, work landed on disk).
+   Reads recipients/<name>.pub, validates fingerprint, runs rewrapMany
+   to re-encrypt all envelopes to the now-active recipient set
+   (peer included).
+
+   **Impl-bug recovery (orchestrator-fixed):** subagent shipped an
+   "already registered" guard borrowed from secrets-revoke.ts. By
+   design, the .pub IS already on disk by the time finalize runs (it
+   was written by pair-accept on the new device, then pulled). The
+   guard treated the happy path as an error. Replaced with a
+   fingerprint sanity check (does on-disk .pub match listed
+   recipient?) — semantics now idempotent.
+
+   Also added `--file` flag (test-discovered necessity:
+   `discoverTomlFiles` only scans config.toml/project, not test
+   fixtures).
+
+3. **T3 — `am pair` router** (29 LOC + 4 tests, deepseek-v4-pro).
+   citty umbrella in src/commands/pair.ts; src/cli.ts wired with
+   `pair: () => import("./commands/pair").then(m => m.pairCommand)`.
+   Smoke tests verify subcommand routing.
+
+### Phase-8 cross-family review (gpt-5.5 + gemini-3.1-pro + deepseek-v4-pro)
+
+**Strong intersection across all 3 reviewers:**
+
+- **Path traversal in pair-finalize**: `args.name` flowed directly
+  into `join(recipientsDir, \`\${name}.pub\`)` with only null/empty
+  check. `am pair finalize ../../etc/passwd` would let readPubFile
+  read outside recipientsDir. CRITICAL.
+- **CLI surface drift from ADR-0047**: ADR has `am pair finalize`
+  (no positional, auto-detect new .pubs); impl has `<name>` required.
+  2/3 reviewers flagged.
+- **Test gaps**: wrong-backend rejection, fingerprint-mismatch branch.
+  2/3 reviewers flagged.
+
+**Plus gemini's unique finding**: ADR-0047 says pair-accept should
+update `.am-secrets.toml [age].recipients` array. Impl skips this —
+recipient set source-of-truth is the recipients/ directory. ADR
+amendment needed if TOML should be canonical.
+
+**Applied immediately** (commit `457b564`):
+- ✅ Path-traversal fix: extracted `validatePairName()` to
+  `src/commands/pair-name-validator.ts` (shared by both verbs);
+  pair-finalize now validates BEFORE path construction.
+- ✅ Path-traversal test in pair-finalize.test.ts.
+- ✅ Fingerprint-mismatch branch documented in test (limitations
+  under ADR-0047 trust model).
+- ✅ 64-char length cap on names.
+
+**Deferred** (documented in commit message as follow-up wave):
+- ADR-0047 auto-detect surface (`am pair finalize` without
+  positional + git pull integration).
+- `.am-secrets.toml [age].recipients` source-of-truth update.
+- `am pair add` deprecation alias.
+
+### Test trajectory (Wave T)
+
+- pair-accept.test.ts: 6 / 0
+- pair-finalize.test.ts: 9 / 0 (was 7; +2 from Phase-8 fixes)
+- pair-router.test.ts: 4 / 0
+- Wider secrets stack regression: 68 / 0 across 6 files (run after T2);
+  full suite verification post-fix in this Run N pending.
+
+### Cost & throughput
+
+~$8-10 OpenRouter spend across Run N (Wave T execution + Phase-8
+review). Two subagent timeouts (T2 impl, gpt-5.5 review at 600s);
+both shipped artifacts. Pattern: subagent-timeout-recovery worked
+as designed.
+
+### Key decisions in Run N
+
+37. **Phase-8 intersection-as-must-fix discipline saved Wave T from
+    shipping a security bug.** Single-reviewer batch from Run L/M
+    wouldn't have found the path traversal because pair-accept's
+    validateName looks airtight from the same module's lens. Three
+    reviewers reading independently each spotted the SAME hole
+    in the SISTER file (pair-finalize). High signal:noise.
+38. **Plan-vs-ADR drift is OK at Wave-1 if scoped honestly.** The
+    Wave T plan called for `<name>` positional; ADR-0047 specifies
+    auto-detect. Plan committed to subset. Reviewers flagged it,
+    commit msg documented it, follow-up wave noted. Better than
+    half-implementing auto-detect and shipping bugs.
+39. **Subagent-impl-bug-detection by orchestrator review.** T2's
+    "already registered" guard would have shipped if I hadn't
+    dropped into the test failure to investigate. Pattern: never
+    trust subagent test outcomes blindly when the spec is subtle —
+    read the failing test output before re-dispatching.
+
+### Remaining work (Run O+ candidates)
+
+**XL Wave executions still pending** (each 2-3h wall-clock):
+- Wave Q (ADR-0048 GitHub App OAuth) — plan ready, ~$10-12.
+- Wave R (ADR-0049 CM6 editor) — plan ready, blocks on Q.
+- Wave S (ADR-0050 browser decrypt) — plan ready, blocks on Q+R.
+
+**Wave T follow-up wave** (M-sized):
+- Auto-detect surface for `am pair finalize` (no positional).
+- `.am-secrets.toml [age].recipients` integration.
+- git pull/push integration into pair-finalize.
+
+**Out-of-scope (vendor):** @silvery/ag-react typecheck noise (52 errors).
