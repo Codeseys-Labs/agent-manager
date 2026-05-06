@@ -187,6 +187,107 @@ export const doctorCommand = defineCommand({
       }
     }
 
+    // 8b. ADR-0046: scan for `team_passphrase` anti-pattern in raw config
+    //     and environment. The schema validator (src/core/schema.ts) rejects
+    //     `[settings.secrets].team_passphrase` for newly-loaded configs, but
+    //     a doctor scan also catches: (a) configs that fail Zod validation
+    //     before this field is even reached, (b) project-level `.agent-manager.toml`
+    //     files in the current directory tree, (c) legacy environment
+    //     variables that hint at a shared-passphrase setup.
+    //
+    //     Known regex limitation: the bare-key form (`team_passphrase = "x"`)
+    //     at any indent level is detected. Quoted keys (`"team_passphrase" = "x"`),
+    //     dotted keys (`settings.secrets.team_passphrase = "x"`), and inline-table
+    //     forms (`{ team_passphrase = "x" }`) are NOT covered — the schema
+    //     validator (gates 1+2) catches these on load. The doctor scan is
+    //     belt-and-suspenders for the bare-key form, which is the only form
+    //     a copy-pasted shared-passphrase config will plausibly use.
+    try {
+      const configsToScan: string[] = [];
+      const globalConfigPath = join(configDir, "config.toml");
+      try {
+        fs.accessSync(globalConfigPath);
+        configsToScan.push(globalConfigPath);
+      } catch {
+        // Skip if absent.
+      }
+      const projectConfigPath = resolveProjectConfig(process.cwd());
+      if (projectConfigPath && projectConfigPath !== globalConfigPath) {
+        configsToScan.push(projectConfigPath);
+      }
+      // Managed/enterprise configs may override local settings; scan them too.
+      for (const mp of [
+        join(configDir, "config.managed.toml"),
+        join(configDir, "config.enterprise.toml"),
+      ]) {
+        try {
+          fs.accessSync(mp);
+          if (!configsToScan.includes(mp)) configsToScan.push(mp);
+        } catch {
+          // Not present, skip.
+        }
+      }
+
+      const teamPassphraseFiles: string[] = [];
+      for (const filePath of configsToScan) {
+        try {
+          const raw = fs.readFileSync(filePath, "utf-8");
+          // Match `team_passphrase` as a TOML key at any indent level.
+          // Conservative: only flag a left-of-`=` key, not arbitrary mentions
+          // in comments or string values, to avoid false positives in docs
+          // committed alongside config.
+          if (/^\s*team_passphrase\s*=/m.test(raw)) {
+            teamPassphraseFiles.push(filePath);
+          }
+        } catch {
+          // Read-fail is non-fatal; secret-audit check below catches gross issues.
+        }
+      }
+
+      const envHints: string[] = [];
+      for (const envName of [
+        "AM_TEAM_PASSPHRASE",
+        "AGENT_MANAGER_TEAM_PASSPHRASE",
+        "AM_SHARED_PASSPHRASE",
+      ]) {
+        if (process.env[envName]) envHints.push(envName);
+      }
+
+      if (teamPassphraseFiles.length > 0) {
+        checks.push({
+          name: "Team passphrase (ADR-0046)",
+          status: "fail",
+          message:
+            `team_passphrase field found in: ${teamPassphraseFiles.join(", ")}. ` +
+            "This anti-pattern is rejected by ADR-0046. Migrate to per-recipient X25519 " +
+            "identities: run `am secrets add-recipient <pubkey>` for each team member, " +
+            "then re-encrypt secrets with `am secrets rewrap`.",
+        });
+      } else if (envHints.length > 0) {
+        checks.push({
+          name: "Team passphrase (ADR-0046)",
+          status: "warn",
+          message:
+            `Legacy shared-passphrase env var(s) set: ${envHints.join(", ")}. ` +
+            "These are not used by current am, but their presence suggests a legacy " +
+            "shared-passphrase setup. See ADR-0046; migrate to per-recipient identities.",
+        });
+      } else {
+        checks.push({
+          name: "Team passphrase (ADR-0046)",
+          status: "ok",
+          message: "No shared-passphrase anti-pattern detected",
+        });
+      }
+    } catch {
+      // Defensive: if scan errors, surface a soft warning rather than failing doctor.
+      checks.push({
+        name: "Team passphrase (ADR-0046)",
+        status: "warn",
+        message: "Could not complete team_passphrase scan",
+      });
+    }
+
     // 9. Secret audit — scan servers for unencrypted secrets
     try {
       const configPath = join(configDir, "config.toml");

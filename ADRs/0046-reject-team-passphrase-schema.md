@@ -1,5 +1,5 @@
 ---
-status: proposed
+status: accepted
 date: 2026-05-05
 amends: ADR-0042
 ---
@@ -108,6 +108,12 @@ all four properties listed in §Context.
 2. **Error message contains pointer to `am secrets add-recipient`.**
 3. **`am doctor` proactively checks** for `team_passphrase` in legacy
    config formats (e.g., env-var-based legacy setups) and warns.
+   **(Implemented 2026-05-05.)** `src/commands/doctor.ts` adds an
+   "8b. Team passphrase (ADR-0046)" check that scans the global
+   `config.toml`, the project-level `.agent-manager.toml`, and the
+   environment for legacy `AM_TEAM_PASSPHRASE`,
+   `AGENT_MANAGER_TEAM_PASSPHRASE`, `AM_SHARED_PASSPHRASE` env vars.
+   Tests at `test/commands/doctor-team-passphrase.test.ts`.
 4. **Documentation updated** with the recipient-add workflow and the
    anti-pattern explanation.
 5. **Migration helper:** `am secrets migrate-from-team-passphrase` is
