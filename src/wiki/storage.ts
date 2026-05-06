@@ -18,7 +18,7 @@
  */
 
 import { existsSync, lstatSync, readFileSync, readlinkSync, rmSync, symlinkSync } from "node:fs";
-import { mkdir, readFile, readdir, rename, rm, writeFile } from "node:fs/promises";
+import { copyFile, mkdir, readFile, readdir, rename, rm, writeFile } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import MiniSearch from "minisearch";
 import { resolveConfigDir, resolveProjectConfig } from "../core/config";
@@ -186,6 +186,172 @@ export function detectLegacyWikiLayout(projectDir: string): WikiLayoutDetection 
     newPath,
   };
 }
+
+/**
+ * Byte-identity check for two files. Returns true iff both files exist and
+ * have identical byte contents. A missing destination returns false so the
+ * caller can treat it as "copy required". Any other IO error propagates.
+ */
+async function filesAreIdentical(a: string, b: string): Promise<boolean> {
+  if (!existsSync(a) || !existsSync(b)) return false;
+  const [abuf, bbuf] = await Promise.all([readFile(a), readFile(b)]);
+  return abuf.equals(bbuf);
+}
+
+/**
+ * ADR-0044 §2 task 2 — materialise entries from the global project store
+ * into a project's `.am-wiki/` directory.
+ *
+ * This is the copy-based replacement for ADR-0022's symlink mechanism: a
+ * project works against a local snapshot of the wiki, and changes flow
+ * back to the global store only via an explicit `pushToGlobal` / publish
+ * step. The function is idempotent — byte-identical files are classified
+ * as `skipped` instead of re-copied; files that differ between local and
+ * global are OVERWRITTEN (global wins) and land in `copied`.
+ *
+ * Callers that want to preserve local edits must implement their own
+ * conflict UI on top of this primitive (tracked: ADR-0044 task 8 / pull).
+ *
+ * @param projectDir Absolute path to the project directory.
+ * @param slugs      Either "all" (copy every entry under every PAGE_SUBDIRS
+ *                   subdir of the global store) or an explicit list of slug
+ *                   strings. Missing slugs are returned in `skipped` — never
+ *                   throw.
+ * @returns `{ copied, skipped }` — both arrays sorted alphabetically and
+ *          holding bare slugs (no `.md` extension).
+ */
+export async function materialiseProject(
+  projectDir: string,
+  slugs: string[] | "all",
+): Promise<{ copied: string[]; skipped: string[] }> {
+  const projectName = resolveProjectName(projectDir);
+  // ADR-0022 layout: per-project mirror at `wiki/projects/<name>/`, distinct
+  // from the cross-project store at `wiki/global/`. ADR-0044 only changes
+  // how the project-level slot is materialised (copy vs symlink), not the
+  // global store layout.
+  const projectStoreDir = getProjectWikiDir(projectName);
+  const destRoot = join(projectDir, WIKI_PROJECT_DIRNAME);
+
+  const copied: string[] = [];
+  const skipped: string[] = [];
+  const wantAll = slugs === "all";
+  const wantedSet = wantAll ? null : new Set(slugs as string[]);
+  const foundSlugs = new Set<string>();
+
+  // If the global project store doesn't exist, there's nothing to copy.
+  // For explicit slug lists we still need to report every requested slug
+  // as skipped (below).
+  const globalExists = existsSync(projectStoreDir);
+
+  if (globalExists) {
+    for (const subdir of Object.values(PAGE_SUBDIRS)) {
+      const srcDir = join(projectStoreDir, subdir);
+      if (!existsSync(srcDir)) continue;
+
+      let entries: string[];
+      try {
+        entries = await readdir(srcDir);
+      } catch (err: unknown) {
+        if (isNotFound(err)) continue;
+        throw err;
+      }
+
+      for (const entry of entries) {
+        if (!entry.endsWith(".md")) continue;
+        const slug = entry.slice(0, -3);
+        if (!wantAll && !wantedSet!.has(slug)) continue;
+        foundSlugs.add(slug);
+
+        const srcPath = join(srcDir, entry);
+        const destSubdir = join(destRoot, subdir);
+        const destPath = join(destSubdir, entry);
+
+        await mkdir(destSubdir, { recursive: true });
+
+        if (await filesAreIdentical(srcPath, destPath)) {
+          skipped.push(slug);
+        } else {
+          await copyFile(srcPath, destPath);
+          copied.push(slug);
+        }
+      }
+    }
+  }
+
+  // For explicit slug lists, any requested slug we never found in the
+  // global store is reported as skipped (never throws — see ADR-0044 §2).
+  if (!wantAll) {
+    for (const slug of Array.from(wantedSet!)) {
+      if (!foundSlugs.has(slug)) skipped.push(slug);
+    }
+  }
+
+  copied.sort();
+  skipped.sort();
+  return { copied, skipped };
+}
+
+/**
+ * ADR-0044 §2 task 3 — promote a single project-local entry into the
+ * global project store. Inverse of `materialiseProject` at the one-entry
+ * granularity used by `am wiki publish <slug>`.
+ *
+ * Behavior:
+ *   - Locates `<projectDir>/.am-wiki/<subdir>/<slug>.md` by walking every
+ *     PAGE_SUBDIRS subdir. Throws if no such file exists.
+ *   - If the global slot is empty → copy, return `conflict: false`.
+ *   - If the global slot holds a byte-identical file → no-op, `conflict: false`.
+ *   - If the global slot holds a different file and `opts.force !== true` →
+ *     return `conflict: true` WITHOUT overwriting. Caller is expected to
+ *     surface a diff and retry with `force: true`.
+ *   - If `opts.force === true` → overwrite, return `conflict: false`.
+ *
+ * @param projectDir Absolute path to the project directory.
+ * @param slug       Slug of the `.am-wiki/<subdir>/<slug>.md` entry to push.
+ * @param opts.force Force overwrite even when the global slot differs.
+ */
+export async function pushToGlobal(
+  projectDir: string,
+  slug: string,
+  opts?: { force?: boolean },
+): Promise<{ pushed: string; conflict: boolean }> {
+  const localRoot = join(projectDir, WIKI_PROJECT_DIRNAME);
+
+  // Locate the entry under one of the PAGE_SUBDIRS subdirs.
+  let localPath: string | null = null;
+  let foundSubdir: string | null = null;
+  for (const subdir of Object.values(PAGE_SUBDIRS)) {
+    const candidate = join(localRoot, subdir, `${slug}.md`);
+    if (existsSync(candidate)) {
+      localPath = candidate;
+      foundSubdir = subdir;
+      break;
+    }
+  }
+
+  if (!localPath || !foundSubdir) {
+    throw new Error(`Entry not found: ${slug}`);
+  }
+
+  const projectName = resolveProjectName(projectDir);
+  const globalSubdir = join(getProjectWikiDir(projectName), foundSubdir);
+  const globalPath = join(globalSubdir, `${slug}.md`);
+
+  await mkdir(globalSubdir, { recursive: true });
+
+  if (existsSync(globalPath)) {
+    if (await filesAreIdentical(localPath, globalPath)) {
+      return { pushed: slug, conflict: false };
+    }
+    if (!opts?.force) {
+      return { pushed: slug, conflict: true };
+    }
+  }
+
+  await copyFile(localPath, globalPath);
+  return { pushed: slug, conflict: false };
+}
+
 
 function searchIndexPath(baseDir?: string): string {
   return join(baseDir ?? getWikiDir(), "index.json");
