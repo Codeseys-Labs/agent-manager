@@ -6,7 +6,7 @@
  */
 
 import type { ImportedServer } from "../adapters/types";
-import { extractServerIdentity } from "../commands/import";
+import { extractServerIdentity } from "./identity";
 import type { Server } from "./schema";
 
 // ── Types ────────────────────────────────────────────────────────────
