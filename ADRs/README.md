@@ -44,6 +44,7 @@ This folder contains the architectural decisions for agent-manager.
 | [0036](0036-agent-variants.md) | Per-Agent Variants for Multi-Provider Routing | Proposed | 2026-05-02 |
 | [0037](0037-per-tool-mcp-metadata.md) | Per-Tool MCP Metadata via x-am Namespace | Proposed | 2026-05-03 |
 | [0038](0038-dry-run-explain-surface.md) | Dry-Run / Explain Surface Pattern | Proposed | 2026-05-02 |
+| [0052](0052-marketplace-v1-code-removal-target.md) | Marketplace v1 Code Removal Target | Proposed | 2026-05-16 |
 
 ## Template
 
