@@ -1,11 +1,11 @@
 import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import type { DetectResult } from "../types.ts";
 import {
   findFirstExistingVSCodeExtensionStorage,
   resolveVSCodeExtensionStorage,
-} from "../vscode/paths.ts";
+} from "../shared/vscode-paths.ts";
+import type { DetectResult } from "../types.ts";
 
 /**
  * Cline marketplace extension ID. We try the canonical mixed-case and a

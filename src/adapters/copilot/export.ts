@@ -9,6 +9,7 @@ import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { atomicWriteFileSync } from "../../core/atomic-write.ts";
+import { resolveVSCodeUserMcpJson } from "../shared/vscode-paths.ts";
 import type {
   ExportOptions,
   ExportResult,
@@ -16,7 +17,6 @@ import type {
   ResolvedServer,
   WrittenFile,
 } from "../types.ts";
-import { resolveVSCodeUserMcpJson } from "../vscode/paths.ts";
 
 /**
  * Export resolved config to Copilot native files.
