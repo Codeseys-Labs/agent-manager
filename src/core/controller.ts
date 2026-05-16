@@ -21,7 +21,6 @@
 import { join } from "node:path";
 import { getAdapter, getDetectedAdapters, listAdapters } from "../adapters/registry";
 import type { Adapter } from "../adapters/types";
-import { readActiveProfile } from "../commands/use";
 import {
   buildResolvedConfig,
   loadResolvedConfig,
@@ -34,6 +33,7 @@ import { commitAll, isNothingToCommitError } from "./git";
 import { AsyncMutex } from "./locks";
 import type { Config } from "./schema";
 import { interpolateEnvAsync, loadKey } from "./secrets";
+import { readActiveProfile } from "./state";
 import { formatCredentialHits, scanServersForUrlCredentials } from "./url-credentials";
 
 /**
