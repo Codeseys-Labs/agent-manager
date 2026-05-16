@@ -57,7 +57,7 @@ before enabling one.
 | TUI | Silvery + React (terminal dashboard) |
 | Encryption | Web Crypto API (AES-256-GCM) |
 | Output | @clack/prompts (interactive) |
-| Testing | bun:test (1864 tests across 151 files) |
+| Testing | bun:test (2906 tests across 222 files) |
 | Search | MiniSearch (BM25 for wiki full-text search) |
 | Secret detection | Tiered: key-name patterns (built-in) + BetterLeaks (optional) |
 | Linting | Biome |
@@ -65,7 +65,7 @@ before enabling one.
 ## Directory Layout
 
 ```
-src/                                 # 182 TypeScript files
+src/                                 # 199 TypeScript files
   cli.ts                             # Entry point -- citty command routing with 31 lazy subcommands
   acp-shell-cli.ts                   # Secondary binary entry point for am-acp-shell (ADR-0033 Phase B tier-2 shim wrapper)
   help.ts                            # Grouped help output for root command (ADR-0029)
@@ -165,7 +165,7 @@ src/                                 # 182 TypeScript files
     output.ts                        # JSON/text output helpers (--json, --quiet, --verbose)
     toml.ts                          # TOML parsing/serialization helpers
 
-test/                                # 151 test files, 1864 tests, 5512 assertions
+test/                                # 222 test files, 2906 tests, 9122 assertions
   core/                              # Unit tests for core modules
   adapters/                          # Adapter-specific tests (per-adapter directories)
   commands/                          # CLI command integration tests
@@ -173,7 +173,7 @@ test/                                # 151 test files, 1864 tests, 5512 assertio
   helpers/                           # Test utilities (tmp dirs, config builders)
   integration/                       # End-to-end tests
 
-ADRs/                                # 30 architectural decision records
+ADRs/                                # 52 architectural decision records
 docs/                                # Design specs and guides
 scripts/
   build.ts                           # Cross-platform build (5 targets via Bun.spawn)
@@ -337,7 +337,7 @@ All git operations use **isomorphic-git** (pure JS). No dependency on system `gi
 ## Testing
 
 ```bash
-bun test                          # Run all tests (1864)
+bun test                          # Run all tests (2906)
 bun test:unit                     # Core + adapter unit tests only
 bun test:integration              # Integration tests only
 bun test --watch                  # Watch mode
@@ -403,8 +403,27 @@ bun run deploy:web                # Deploy to Cloudflare Workers
 | [0029](ADRs/0029-command-grouping.md) | Command Grouping -- grouped help output for root command, gh CLI pattern |
 | [0030](ADRs/0030-unified-agent-registry.md) | Unified Agent Registry -- config + ACP + A2A merged resolution, protocol routing |
 | [0031](ADRs/0031-product-scope-and-pillars.md) | Product Scope and Pillars -- the six-pillar model |
+| [0031a](ADRs/0031a-pillar-6-amendment.md) | Pillar 6 Amendment — Local-Write-Path Scope Clarification (amends ADR-0031) |
 | [0032](ADRs/0032-terminology-glossary.md) | Terminology Glossary -- Registry vs Marketplace, catalog vs config |
 | [0033](ADRs/0033-acp-agent-tiers-and-shim-wrapper.md) | ACP Agent Tiers and Shim Wrapper -- tier-1-native / tier-2-shim / tier-3-catalog-only |
+| [0034](ADRs/0034-shim-scope-and-inclusion-criteria.md) | Scope Fence for First-Party ACP Shims |
+| [0035](ADRs/0035-community-shim-registration.md) | Community Shim Registration Protocol |
+| [0036](ADRs/0036-agent-variants.md) | Per-Agent Variants for Multi-Provider / Multi-Account Routing |
+| [0037](ADRs/0037-per-tool-mcp-metadata.md) | Per-Tool MCP Metadata via `x-am.*` Namespace |
+| [0038](ADRs/0038-dry-run-explain-surface.md) | Dry-Run / Explain Surface Pattern |
+| [0039](ADRs/0039-marketplace-v1-scope-decision.md) | Marketplace v1 Scope Decision — retire pillar 4 in favor of MCP Registry + git-subtree bundles |
+| [0040](ADRs/0040-controller-scope-and-concurrency.md) | Controller Scope & Concurrency Model — `withConfig` + AsyncMutex |
+| [0041](ADRs/0041-adr-0007-phase-2-deferred.md) | ADR-0007 Phase 2 Resolution — Delete the Adapter Schema Field |
+| [0042](ADRs/0042-universal-secrets-strategy.md) | Universal Secrets Strategy — age envelope + Argon2id passphrase + OS keychain cache |
+| [0043](ADRs/0043-hosted-ui-auth-and-git-backend-tiers.md) | Hosted UI Auth + Git Backend Tiers |
+| [0044](ADRs/0044-wiki-two-tier-copy-materialisation.md) | Wiki Two-Tier Materialisation — Copy Over Symlink, Project-Level + Global Store |
+| [0045](ADRs/0045-hosted-ui-editor-codemirror.md) | Hosted UI Editor — CodeMirror 6 Default, Monaco Optional for Local |
+| [0046](ADRs/0046-reject-team-passphrase-schema.md) | Reject `team_passphrase` Field in Schema — Force Per-Recipient Identity |
+| [0047](ADRs/0047-am-pair-cross-device-key-handoff.md) | `am pair` cross-device key handoff via git-native rendezvous |
+| [0048](ADRs/0048-hosted-ui-auth-implementation.md) | Hosted UI Auth Implementation Plan |
+| [0049](ADRs/0049-hosted-ui-editor-cm6-implementation.md) | Hosted UI Editor CodeMirror 6 Implementation Plan |
+| [0050](ADRs/0050-browser-secret-decryption-bundle.md) | Browser Secret Decryption Bundle (Synthesizes Lens H + Clarification) |
+| [0051](ADRs/0051-secrets-rotation-grace-period.md) | Secrets Rotation + Grace Period (Synthesizes Lens I) |
 
 ## Git Commit Style
 
