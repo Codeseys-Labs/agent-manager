@@ -1,8 +1,8 @@
 import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { findFirstExistingVSCodeExtensionStorage } from "../shared/vscode-paths.ts";
 import type { DetectResult } from "../types.ts";
-import { findFirstExistingVSCodeExtensionStorage } from "../vscode/paths.ts";
 
 /**
  * Kilo marketplace extension ID casings (mixed case as registered, plus a

@@ -10,8 +10,8 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { extractPackageId } from "../claude-code/identity.ts";
 import { fileExistsSync } from "../shared/utils.ts";
+import { resolveVSCodeUserMcpJson } from "../shared/vscode-paths.ts";
 import type { ImportOptions, ImportResult, ImportedInstruction, ImportedServer } from "../types.ts";
-import { resolveVSCodeUserMcpJson } from "../vscode/paths.ts";
 
 interface CopilotServer {
   type?: string;

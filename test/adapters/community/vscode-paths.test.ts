@@ -8,7 +8,7 @@ import {
   resolveVSCodeUserDir,
   resolveVSCodeUserMcpJson,
   resolveVSCodeUserSettings,
-} from "@/adapters/vscode/paths.ts";
+} from "@/adapters/shared/vscode-paths.ts";
 import { type TestDir, createTestDir } from "../../helpers/tmp.ts";
 
 /**

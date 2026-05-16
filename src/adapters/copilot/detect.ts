@@ -1,8 +1,8 @@
 import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { resolveVSCodeUserMcpJson } from "../shared/vscode-paths.ts";
 import type { DetectResult } from "../types.ts";
-import { resolveVSCodeUserMcpJson } from "../vscode/paths.ts";
 
 /**
  * Detect whether GitHub Copilot (VS Code) is installed and discover config paths.
