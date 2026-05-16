@@ -7,10 +7,10 @@ skills/instructions/agents via git. Remember sessions in an LLM-wiki. Edit from
 terminal, local web, or cloud.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Tests: 2286 pass](https://img.shields.io/badge/tests-2286%20pass-green.svg)](#testing)
+[![Tests: 2906 pass](https://img.shields.io/badge/tests-2906%20pass-green.svg)](#testing)
 [![Coverage](https://img.shields.io/badge/coverage-see%20CI%20summary-blue.svg)](https://github.com/Codeseys-Labs/agent-manager/actions/workflows/ci.yml)
 [![Adapters: 13](https://img.shields.io/badge/adapters-13-purple.svg)](#adapter-support-matrix)
-[![MCP Tools: 33](https://img.shields.io/badge/MCP%20tools-33-orange.svg)](#mcp-server-mode)
+[![MCP Tools: 38](https://img.shields.io/badge/MCP%20tools-38-orange.svg)](#mcp-server-mode)
 [![Bun](https://img.shields.io/badge/runtime-Bun-f9f1e1.svg)](https://bun.sh)
 
 ```bash
@@ -40,7 +40,7 @@ a control plane for AI agents, built on six composing pillars:
    Package Registry** (`am search/install/update/uninstall` browses the
    upstream package index).
 2. **MCP gateway.** `am mcp-serve` exposes the catalog as a stable MCP
-   endpoint. 33+ tools, concurrency-safe writers, bearer auth, progress
+   endpoint. 38 tools (33 active + 5 deprecation aliases), concurrency-safe writers, bearer auth, progress
    notifications for streaming agent invocations.
 3. **Protocol router.** ACP for local subprocess agents (Claude Code, Codex,
    Gemini, Cursor, Kiro, Copilot…). A2A for remote. Bridge routes remote
@@ -484,7 +484,7 @@ See ADR-0027 for the loading architecture.
 
 ## MCP Server Mode
 
-`am mcp-serve` turns agent-manager into an MCP server that AI agents can call to manage their own configuration. 33 tools across 3 permission tiers, grouped by function:
+`am mcp-serve` turns agent-manager into an MCP server that AI agents can call to manage their own configuration. 38 tools (33 active + 5 deprecation aliases) across 3 permission tiers, grouped by function:
 
 ### Tool Grouping
 
@@ -493,7 +493,7 @@ Control which tools are exposed via `settings.mcp_serve.tools`. Default: `["core
 ```toml
 [settings.mcp_serve]
 allow_push = false
-tools = ["core", "registry", "a2a", "wiki", "session", "acp"]   # expose all 33 tools
+tools = ["core", "registry", "a2a", "wiki", "session", "acp"]   # expose all 38 tools (33 active + 5 deprecation aliases)
 ```
 
 | Group | Tools | Tier |
@@ -798,7 +798,7 @@ bun run deploy:web
 ```mermaid
 graph LR
     CLI["CLI (31 commands)"] --> Core["Core Engine<br/>(TOML + Zod + Git)"]
-    MCP["MCP Server<br/>(33 tools, 6 groups)"] --> Core
+    MCP["MCP Server<br/>(38 tools, 6 groups)"] --> Core
     TUI["TUI (Silvery)"] --> Core
     Web["Web UI"] --> Hono["Hono (local) /<br/>CF Workers"]
 
@@ -885,7 +885,7 @@ cache for faster downloads.
 | IDE adapters | 13 (+community) |
 | Platform adapters | 3 |
 | CLI commands | 31 |
-| MCP tools | 33 |
+| MCP tools | 38 |
 | ADRs | 30 |
 
 ### Tech Stack
