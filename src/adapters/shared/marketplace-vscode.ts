@@ -25,22 +25,26 @@ interface ExtensionPackageJson {
 }
 
 /** Extension directory locations per tool, per platform. */
-const EXTENSION_DIRS: Record<string, { darwin: string; linux: string }> = {
+const EXTENSION_DIRS: Record<string, { darwin: string; linux: string; win32: string }> = {
   copilot: {
     darwin: "Library/Application Support/Code/User/extensions",
     linux: ".vscode/extensions",
+    win32: "AppData/Roaming/Code/User/extensions",
   },
   cursor: {
     darwin: "Library/Application Support/Cursor/User/extensions",
     linux: ".cursor/extensions",
+    win32: "AppData/Roaming/Cursor/User/extensions",
   },
   kiro: {
     darwin: "Library/Application Support/Kiro/User/extensions",
     linux: ".kiro/extensions",
+    win32: "AppData/Roaming/Kiro/User/extensions",
   },
   windsurf: {
     darwin: "Library/Application Support/Windsurf/User/extensions",
     linux: ".windsurf/extensions",
+    win32: "AppData/Roaming/Windsurf/User/extensions",
   },
 };
 
@@ -67,7 +71,16 @@ export function getExtensionsDir(adapterName: string, homeDir?: string): string 
   const paths = EXTENSION_DIRS[adapterName];
   if (!paths) return undefined;
 
-  const plat = process.platform === "darwin" ? "darwin" : "linux";
+  let plat: "darwin" | "linux" | "win32";
+  if (process.platform === "darwin") plat = "darwin";
+  else if (process.platform === "win32") plat = "win32";
+  else plat = "linux";
+
+  if (plat === "win32" && process.env.APPDATA) {
+    // Honor APPDATA override (matches vscode-paths.ts convention)
+    const subPath = paths.win32.replace(/^AppData\/Roaming\//, "");
+    return join(process.env.APPDATA, subPath);
+  }
   return join(home, paths[plat]);
 }
 
