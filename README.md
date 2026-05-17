@@ -448,6 +448,60 @@ never second-guessed.
 
 ---
 
+## Agent Variants
+
+One agent name, many backends. The same `claude` you run today may
+actually need to reach Anthropic's direct API at your desk, AWS Bedrock
+on a work laptop, Vertex on a partner project, or OpenRouter on a
+personal machine. Variants ([ADR-0036](ADRs/0036-agent-variants.md))
+let you declare those backends side-by-side under one agent entry and
+pick between them at spawn time, instead of forking the agent or
+juggling shell aliases.
+
+```toml
+[agents.claude]
+default_variant = "anthropic"
+
+[agents.claude.variants.anthropic]
+protocol = "acp"
+command  = "npx -y @agentclientprotocol/claude-agent-acp@latest"
+env      = { ANTHROPIC_API_KEY = "${ANTHROPIC_API_KEY}" }
+
+[agents.claude.variants.bedrock]
+protocol = "acp"
+command  = "npx -y @agentclientprotocol/claude-agent-acp@latest"
+env      = {
+  CLAUDE_CODE_USE_BEDROCK = "1",
+  AWS_PROFILE             = "work",
+  AWS_REGION              = "us-east-1",
+}
+# Live-enforced as of DWL-T13: variant.permission_policy now wires
+# directly into the ACP permission layer at spawn, not just dry-run.
+permission_policy = "auto-approve"
+```
+
+The `${ANTHROPIC_API_KEY}` reference flows through the existing envelope
+encryption layer (ADR-0012) — secrets stay encrypted at rest and are
+decrypted only when the variant is selected.
+
+```bash
+am run claude --variant bedrock "fix the failing tests"
+```
+
+**Resolution order** (highest priority wins):
+
+1. Explicit `--variant <name>` on the CLI.
+2. Project config `default_variant` in `.agent-manager.toml`.
+3. Global config `default_variant` under `[agents.<name>]`.
+4. If exactly one variant is declared, it is the implicit default.
+5. Otherwise: error — `set default_variant or pass --variant`.
+
+**Permission-policy precedence.** A variant-declared `permission_policy`
+wins when present; otherwise `--no-auto-approve` maps to `"deny"`, and
+the absence of both leaves the spawn at `"auto-approve"`.
+
+---
+
 ## Flows Engine
 
 Multi-step workflow orchestration for ACP agents. Define workflows as typed node
