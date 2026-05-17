@@ -44,7 +44,7 @@ import {
 } from "../core/variant-resolver";
 import type { DryRunEnvelope } from "../lib/dry-run-envelope";
 import { debug, error, info, output, parsePositiveInt, warn } from "../lib/output";
-import { AcpClientError, AmAcpClient, createAcpClient } from "../protocols/acp/client";
+import { AcpClientError, type AmAcpClient, createAcpClient } from "../protocols/acp/client";
 import { sandboxEnv } from "../protocols/acp/env-sandbox";
 import { parseCommand } from "../protocols/acp/registry";
 import type { SessionUpdate } from "../protocols/acp/types";
@@ -154,16 +154,16 @@ interface DryRunExplanation {
   env_keys: string[];
   env_secrets_redacted: string[];
   cwd: string;
-  /** Effective permission policy for the live run (CLI-flag-derived today). */
+  /**
+   * Effective permission policy for the live run. Resolution order
+   * (ADR-0036): variant-declared `permission_policy` wins when present;
+   * otherwise falls back to `--no-auto-approve` → "deny", else "auto-approve".
+   */
   permission_policy: "deny" | "auto-approve";
   /**
-   * Permission policy declared on the selected variant (ADR-0036). Surfaced
-   * so operators see what the variant ASKS for, even though the MVP does NOT
-   * enforce it (schema-only). `null` when no variant override is present.
-   *
-   * When this differs from `permission_policy` a `warnings` entry is emitted
-   * so operators know the declared policy is being ignored until the
-   * enforcement-wiring follow-up ships.
+   * Permission policy declared on the selected variant (ADR-0036), reported
+   * independently of the effective policy so operators can see the raw
+   * declaration. `null` when no variant override is present.
    */
   variant_permission_policy: "deny" | "auto-approve" | null;
   allowed_paths: string[];
@@ -191,6 +191,19 @@ let whichFn: WhichFn = (name) => (Bun.which(name) as string | null) ?? null;
  */
 export function __setDryRunWhichFnForTests(fn: WhichFn | null): void {
   whichFn = fn ?? ((name) => (Bun.which(name) as string | null) ?? null);
+}
+
+/**
+ * `createAcpClient` shim — defaults to the real factory, tests can stub it
+ * via `__setRunAcpClientFactoryForTests` to assert on observable behaviour
+ * (notably `setPermissionPolicy(...)` arguments) without spawning a real
+ * subprocess. Mirrors the `whichFn` injection-seam pattern.
+ */
+type AcpClientFactory = () => AmAcpClient;
+let acpClientFactory: AcpClientFactory = () => createAcpClient();
+
+export function __setRunAcpClientFactoryForTests(factory: AcpClientFactory | null): void {
+  acpClientFactory = factory ?? (() => createAcpClient());
 }
 
 export interface ShimPreflightResult {
@@ -334,19 +347,15 @@ function buildDryRunPayload(
     }
   }
 
-  // Permission policy (ADR-0036 Correction 3 + Codex review):
-  // The dry-run MUST reflect what the LIVE path will actually do so operators
-  // don't get a false sense of security. Live path ignores variant.permission_policy
-  // in the MVP (schema-accepted but not enforced), so dry-run uses the same
-  // CLI-flag-only resolution. Variant's permission_policy is surfaced separately
-  // in `explanation.variant_permission_policy` so operators can see what's declared.
-  // TODO(ADR-0036 follow-up): wire variant.permission_policy to enforcement —
-  //   runAgent() should call client.setPermissionPolicy(resolvedVariant.permission_policy)
-  //   when present, overriding the CLI-flag default. Hook point: around line ~424
-  //   in runAgent(), before the existing args.noAutoApprove branch.
-  const permissionPolicy: "deny" | "auto-approve" = args.noAutoApprove ? "deny" : "auto-approve";
+  // Permission policy (ADR-0036): dry-run mirrors the live path. Both honour
+  // `variant.permission_policy` when declared; otherwise fall back to the
+  // CLI-flag-derived default (`--no-auto-approve` → "deny", else "auto-approve").
+  // `variant_permission_policy` is reported separately so operators see the raw
+  // declaration alongside the effective policy.
   const variantPermissionPolicy: "deny" | "auto-approve" | null =
     resolvedVariant?.permission_policy ?? null;
+  const permissionPolicy: "deny" | "auto-approve" =
+    variantPermissionPolicy ?? (args.noAutoApprove ? "deny" : "auto-approve");
 
   const variantName = resolvedVariant?.name ?? null;
   const resolveStep = variantName
@@ -369,15 +378,6 @@ function buildDryRunPayload(
         `binary '${parsed.executable}' not found on PATH — a live run would fail to spawn`,
       );
     }
-  }
-
-  // ADR-0036 Correction 3: when a variant declares permission_policy but it
-  // differs from the effective (CLI-derived) policy, warn operators loudly
-  // that the declaration is NOT being enforced in this MVP.
-  if (variantPermissionPolicy !== null && variantPermissionPolicy !== permissionPolicy) {
-    warnings.push(
-      `variant declares permission_policy='${variantPermissionPolicy}' but MVP enforces '${permissionPolicy}' (CLI-flag-derived); variant permission_policy is schema-only until ADR-0036 follow-up.`,
-    );
   }
 
   return {
@@ -561,19 +561,17 @@ async function runAgent(args: RunAgentArgs): Promise<void> {
     return;
   }
 
-  const client = createAcpClient();
+  const client = acpClientFactory();
 
-  // Permission policy:
-  //   --no-auto-approve → "deny" (already the class default post-2026-05-02
-  //                               secure-by-default flip; re-affirmed here
-  //                               for clarity).
-  //   (default)         → "auto-approve" — `am run` is headless by design;
-  //                       the operator has decided to trust the agent.
-  if (args.noAutoApprove) {
-    client.setPermissionPolicy("deny");
-  } else {
-    client.setPermissionPolicy("auto-approve");
-  }
+  // Permission policy (ADR-0036):
+  //   1. Variant-declared `permission_policy` wins when present.
+  //   2. Otherwise: `--no-auto-approve` → "deny", else "auto-approve" (the
+  //      `am run` headless default: operator has chosen to trust the agent).
+  // The class default ("deny", post-2026-05-02 secure-by-default flip) is
+  // overridden here in every case so policy is always explicit.
+  const effectivePolicy: "deny" | "auto-approve" =
+    resolvedVariant?.permission_policy ?? (args.noAutoApprove ? "deny" : "auto-approve");
+  client.setPermissionPolicy(effectivePolicy);
 
   // Accumulate text for streaming output (non-JSON mode)
   if (!args.json && !args.quiet) {

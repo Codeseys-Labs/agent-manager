@@ -216,13 +216,13 @@ command = "/nonexistent/path/am-sole-variant-binary"
     expect(err).toContain("bedrock");
   });
 
-  // ── Correction 3: variant.permission_policy schema-only, not enforced ──
+  // ── ADR-0036 (DWL-T13): variant.permission_policy is enforced live ──
 
-  test("variant.permission_policy differing from effective policy emits a warning", async () => {
+  test("variant.permission_policy overrides CLI-derived default in dry-run effective policy", async () => {
     const configWithPolicyOverride = `
 [agents.claude-policy]
 name = "claude-policy"
-description = "Variant declares auto-approve but CLI default is also auto-approve"
+description = "Variant declares deny; CLI default would be auto-approve"
 
 [agents.claude-policy.acp]
 command = "/nonexistent/path/am-policy-test-binary --acp"
@@ -234,8 +234,8 @@ permission_policy = "deny"
 `;
     await writeFile(join(dir.path, "config.toml"), configWithPolicyOverride);
 
-    // Variant declares "deny", CLI default is "auto-approve" → mismatch,
-    // expect a warning surfaced in dry-run output.
+    // Variant declares "deny", CLI default would be "auto-approve". Effective
+    // policy now equals the variant declaration (DWL-T13 enforcement wiring).
     await invokeRun({
       agent: "claude-policy",
       prompt: "hello",
@@ -248,15 +248,14 @@ permission_policy = "deny"
 
     expect(process.exitCode === 0 || process.exitCode === undefined).toBe(true);
     const parsed = JSON.parse(stdoutLines.join(""));
-    // Live policy stays CLI-derived ("auto-approve") — variant's is NOT enforced.
-    expect(parsed.explanation.permission_policy).toBe("auto-approve");
+    // Effective policy reflects the variant override.
+    expect(parsed.explanation.permission_policy).toBe("deny");
+    // Raw declaration is still surfaced separately.
     expect(parsed.explanation.variant_permission_policy).toBe("deny");
-    // A warning calls out the mismatch so operators don't get a false sense
-    // of security.
-    expect(parsed.warnings).toBeDefined();
+    // No "schema-only" / "MVP enforces" warning — the gap is closed.
     const warningText = (parsed.warnings as string[]).join(" | ");
-    expect(warningText).toContain("permission_policy");
-    expect(warningText.toLowerCase()).toContain("schema-only");
+    expect(warningText.toLowerCase()).not.toContain("schema-only");
+    expect(warningText).not.toContain("MVP enforces");
   });
 
   // ── Back-compat (no variants) ──────────────────────────────
