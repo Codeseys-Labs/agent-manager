@@ -1,32 +1,23 @@
 /**
  * Windsurf (Cascade) session reader (ADR-0016).
  *
- * Storage assumption (verified 2026-05-16): Windsurf is a Codeium-based VS Code
- * fork; per `detect.ts:17` everything lives under `~/.codeium/windsurf/`. The
- * agent feature is called "Cascade", so we read JSONL conversation transcripts
- * from `~/.codeium/windsurf/cascade/conversations/*.jsonl`.
+ * Windsurf is a VS Code fork; it stores chat/composer history in a per-workspace
+ * SQLite database at `User/workspaceStorage/<hash>/state.vscdb`. The chat blobs
+ * live in the `ItemTable` key/value table under keys such as
+ * `workbench.panel.aichat.view.aichat.chatdata` (current),
+ * `cascade.chatdata` (alt/legacy).
  *
- * No production Cascade transcripts are available on the dev machine (the seeds
- * task acknowledges this and prescribes a defensive scaffold). The reader is
- * designed to satisfy the SessionReader contract from `src/core/session.ts` so
- * the harvest pipeline can light up Windsurf as soon as the format is
- * confirmed; if the on-disk shape diverges, only the JSONL record types here
- * need to change.
+ * Session id format: `<workspace-hash>:<tabId>`.
  *
- * Each line is a typed JSON record:
- *   - "conversation_meta" — conversation metadata (id, start time, cwd, model)
- *   - "user_message"      — user turn
- *   - "assistant_message" — assistant turn (text + optional tool calls)
- *   - "tool_call"         — standalone tool invocation (rare; usually inlined)
- *   - "system_message"    — system / cascade context turn
- *
- * Defensive parsing: malformed lines are skipped, never fatal.
+ * The reader is intentionally defensive — Windsurf's schema is undocumented and
+ * shifts between releases. Every field is treated as optional and malformed
+ * rows are skipped rather than thrown.
  */
 
-import { existsSync } from "node:fs";
+import { Database } from "bun:sqlite";
+import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { homedir } from "node:os";
-import { basename, join } from "node:path";
-import { estimateTokens } from "../../core/session.ts";
+import { join } from "node:path";
 import type {
   Message,
   Session,
@@ -34,92 +25,107 @@ import type {
   SessionSummary,
   ToolCall,
 } from "../../core/session.ts";
+import { estimateTokens } from "../../core/session.ts";
 
 const ADAPTER_NAME = "windsurf";
 
-// ── JSONL record shapes ──────────────────────────────────────────
+/** Keys inside `ItemTable` that may hold chat/composer history. */
+const CHAT_KEYS = ["workbench.panel.aichat.view.aichat.chatdata", "cascade.chatdata"];
 
-interface ConversationMetaRecord {
-  type: "conversation_meta";
-  conversation_id?: string;
-  started_at?: string;
-  model?: string;
-  cwd?: string;
-  workspace?: string;
-  [key: string]: unknown;
+// ── Cross-platform path resolution ─────────────────────────────────
+
+function windsurfUserDir(homeDir: string): string {
+  if (process.platform === "darwin") {
+    return join(homeDir, "Library/Application Support/Windsurf/User");
+  }
+  if (process.platform === "win32") {
+    if (process.env.APPDATA) return join(process.env.APPDATA, "Windsurf/User");
+    return join(homeDir, "AppData/Roaming/Windsurf/User");
+  }
+  return join(homeDir, ".config/Windsurf/User");
 }
 
-interface UserMessageRecord {
-  type: "user_message";
-  content?: string;
-  timestamp?: string;
-  [key: string]: unknown;
+function workspaceStorageDir(userDir: string): string {
+  return join(userDir, "workspaceStorage");
 }
 
-interface AssistantMessageRecord {
-  type: "assistant_message";
-  content?: string | AssistantContent[];
-  timestamp?: string;
+// ── Loose record shapes (everything optional) ──────────────────────
+
+interface BubbleRecord {
+  type?: string;
+  role?: string;
+  text?: string;
+  content?: unknown;
+  timestamp?: number | string;
+  toolCalls?: ToolCallRecord[];
   tool_calls?: ToolCallRecord[];
   [key: string]: unknown;
 }
 
-interface AssistantContent {
-  type: string;
-  text?: string;
-  [key: string]: unknown;
-}
-
 interface ToolCallRecord {
-  name: string;
-  arguments?: string;
-  output?: string;
-  [key: string]: unknown;
-}
-
-interface SystemMessageRecord {
-  type: "system_message";
-  content?: string;
-  timestamp?: string;
-  [key: string]: unknown;
-}
-
-interface ToolCallStandaloneRecord {
-  type: "tool_call";
   name?: string;
-  arguments?: string;
-  output?: string;
-  timestamp?: string;
+  toolName?: string;
+  input?: unknown;
+  arguments?: unknown;
+  output?: unknown;
+  result?: unknown;
   [key: string]: unknown;
 }
 
-type JsonlRecord =
-  | ConversationMetaRecord
-  | UserMessageRecord
-  | AssistantMessageRecord
-  | SystemMessageRecord
-  | ToolCallStandaloneRecord
-  | { type: string; [key: string]: unknown };
+interface TabRecord {
+  tabId?: string;
+  id?: string;
+  chatTitle?: string;
+  title?: string;
+  createdAt?: number | string;
+  lastSendTime?: number | string;
+  bubbles?: BubbleRecord[];
+  messages?: BubbleRecord[];
+  [key: string]: unknown;
+}
 
-// ── SessionReader implementation ─────────────────────────────────
+interface ChatdataRecord {
+  tabs?: TabRecord[];
+  [key: string]: unknown;
+}
+
+// ── Reader factory ─────────────────────────────────────────────────
 
 export function createWindsurfSessionReader(homeDir?: string): SessionReader {
   const home = homeDir ?? homedir();
-  const conversationsDir = join(home, ".codeium", "windsurf", "cascade", "conversations");
+  const userDir = windsurfUserDir(home);
+  const storageDir = workspaceStorageDir(userDir);
 
   return {
     hasSessionStorage(): boolean {
-      return existsSync(conversationsDir);
+      return existsSync(storageDir);
     },
 
     async listSessions(project?: string): Promise<SessionSummary[]> {
-      const files = scanConversationFiles(conversationsDir);
-      const summaries: SessionSummary[] = [];
+      if (!existsSync(storageDir)) return [];
 
-      for (const file of files) {
-        const summary = parseSessionSummary(file, project);
-        if (summary) {
-          summaries.push(summary);
+      const summaries: SessionSummary[] = [];
+      let hashes: string[];
+      try {
+        hashes = readdirSync(storageDir);
+      } catch {
+        return [];
+      }
+
+      for (const hash of hashes) {
+        const wsDir = join(storageDir, hash);
+        if (!isDir(wsDir)) continue;
+
+        const dbPath = join(wsDir, "state.vscdb");
+        if (!existsSync(dbPath)) continue;
+
+        const projectPath = readWorkspaceFolder(wsDir);
+        if (project && projectPath !== project) continue;
+
+        const tabs = readTabsFromDb(dbPath);
+        for (const tab of tabs) {
+          const summary = summarizeTab(hash, tab, projectPath);
+          if (summary) summaries.push(summary);
         }
       }
 
@@ -128,287 +134,317 @@ export function createWindsurfSessionReader(homeDir?: string): SessionReader {
     },
 
     async loadSession(id: string): Promise<Session | null> {
-      const safeId = id.replace(/\.jsonl$/, "");
-      if (/[/\\\0]|\.\./.test(safeId)) {
-        return null;
-      }
+      if (!isSafeSessionId(id)) return null;
 
-      const files = scanConversationFiles(conversationsDir);
+      const sep = id.indexOf(":");
+      if (sep <= 0 || sep === id.length - 1) return null;
 
-      for (const file of files) {
-        if (basename(file, ".jsonl") !== safeId) continue;
-        const session = parseSessionFull(file);
-        if (session) return session;
-      }
+      const hash = id.slice(0, sep);
+      const tabId = id.slice(sep + 1);
 
-      // Fall back to scanning by recorded conversation_id when filename differs.
-      for (const file of files) {
-        const session = parseSessionFull(file);
-        if (session && session.id === safeId) {
-          return session;
+      const wsDir = join(storageDir, hash);
+      const dbPath = join(wsDir, "state.vscdb");
+      if (!existsSync(dbPath)) return null;
+
+      const projectPath = readWorkspaceFolder(wsDir);
+      const tabs = readTabsFromDb(dbPath);
+
+      for (const tab of tabs) {
+        const tId = tabIdOf(tab);
+        if (tId === tabId) {
+          return buildSession(hash, tab, projectPath);
         }
       }
-
       return null;
     },
   };
 }
 
-// ── File scanning ────────────────────────────────────────────────
+// ── ID validation ──────────────────────────────────────────────────
 
-function scanConversationFiles(conversationsDir: string): string[] {
-  if (!existsSync(conversationsDir)) return [];
-
-  const fs = require("node:fs");
-  let entries: string[];
-  try {
-    entries = fs.readdirSync(conversationsDir);
-  } catch {
-    return [];
-  }
-
-  const results: string[] = [];
-  for (const entry of entries) {
-    if (!entry.endsWith(".jsonl")) continue;
-    results.push(join(conversationsDir, entry));
-  }
-  return results;
+/**
+ * Allow only id-safe characters in the composite id `<hash>:<tabId>`:
+ * letters, digits, `-`, `_`, `.`, and exactly one `:` separator.
+ * Rejects `..`, null bytes, slashes, backslashes.
+ */
+function isSafeSessionId(id: string): boolean {
+  if (!id || typeof id !== "string") return false;
+  if (id.includes("..")) return false;
+  if (/[/\\\0]/.test(id)) return false;
+  if (!/^[A-Za-z0-9._:-]+$/.test(id)) return false;
+  // Require exactly one colon separator (workspace:tab).
+  const colonCount = (id.match(/:/g) ?? []).length;
+  if (colonCount !== 1) return false;
+  return true;
 }
 
-// ── JSONL parsing ────────────────────────────────────────────────
+// ── Filesystem helpers ─────────────────────────────────────────────
 
-function readJsonlLines(filePath: string): JsonlRecord[] {
-  const fs = require("node:fs");
-  let text: string;
+function isDir(path: string): boolean {
   try {
-    text = fs.readFileSync(filePath, "utf-8");
+    return statSync(path).isDirectory();
   } catch {
-    return [];
+    return false;
   }
+}
 
-  const records: JsonlRecord[] = [];
-  for (const line of text.split("\n")) {
-    const trimmed = line.trim();
-    if (!trimmed) continue;
+function readWorkspaceFolder(wsDir: string): string | undefined {
+  const wsJson = join(wsDir, "workspace.json");
+  if (!existsSync(wsJson)) return undefined;
+  try {
+    const raw = readFileSync(wsJson, "utf-8");
+    const parsed = JSON.parse(raw) as { folder?: unknown; workspace?: unknown };
+    if (typeof parsed.folder === "string") {
+      return fileUriToPath(parsed.folder);
+    }
+    if (typeof parsed.workspace === "string") {
+      return fileUriToPath(parsed.workspace);
+    }
+  } catch {
+    // Defensive: ignore malformed workspace.json
+  }
+  return undefined;
+}
+
+function fileUriToPath(uri: string): string {
+  if (uri.startsWith("file://")) {
     try {
-      const parsed = JSON.parse(trimmed);
-      if (parsed && typeof parsed === "object" && parsed.type) {
-        records.push(parsed);
-      }
+      return decodeURIComponent(uri.slice("file://".length));
     } catch {
-      // Skip malformed lines — defensive parsing per ADR-0016
+      return uri.slice("file://".length);
     }
   }
-
-  return records;
+  return uri;
 }
 
-// ── Session summary (lightweight scan) ──────────────────────────
+// ── SQLite reading ─────────────────────────────────────────────────
 
-function parseSessionSummary(filePath: string, projectFilter?: string): SessionSummary | null {
-  const records = readJsonlLines(filePath);
-  if (records.length === 0) return null;
+interface DbRow {
+  key: string;
+  value: string | Uint8Array;
+}
 
-  const meta = records.find((r) => r.type === "conversation_meta") as
-    | ConversationMetaRecord
-    | undefined;
+function readTabsFromDb(dbPath: string): TabRecord[] {
+  let db: Database | null = null;
+  try {
+    db = new Database(dbPath, { readonly: true });
+    const placeholders = CHAT_KEYS.map(() => "?").join(", ");
+    const stmt = db.query(`SELECT key, value FROM ItemTable WHERE key IN (${placeholders})`);
+    const rows = stmt.all(...CHAT_KEYS) as DbRow[];
 
-  const id = meta?.conversation_id ?? sessionIdFromPath(filePath);
+    const tabs: TabRecord[] = [];
+    for (const row of rows) {
+      const text = blobToText(row.value);
+      if (!text) continue;
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(text);
+      } catch {
+        continue;
+      }
+      tabs.push(...extractTabs(parsed));
+    }
+    return tabs;
+  } catch {
+    return [];
+  } finally {
+    try {
+      db?.close();
+    } catch {
+      // ignore
+    }
+  }
+}
 
-  const startedAt = meta?.started_at
-    ? new Date(meta.started_at)
-    : (firstTimestamp(records) ?? new Date());
-
-  const project = meta?.cwd ?? meta?.workspace;
-
-  if (projectFilter && project) {
-    if (!project.startsWith(projectFilter)) {
+function blobToText(value: string | Uint8Array): string | null {
+  if (typeof value === "string") return value;
+  if (value instanceof Uint8Array) {
+    try {
+      return new TextDecoder("utf-8").decode(value);
+    } catch {
       return null;
     }
-  } else if (projectFilter && !project) {
-    return null;
   }
+  return null;
+}
 
-  const messageRecords = records.filter(
-    (r) =>
-      r.type === "user_message" || r.type === "assistant_message" || r.type === "system_message",
-  );
-  const messageCount = messageRecords.length;
+function extractTabs(parsed: unknown): TabRecord[] {
+  if (!parsed || typeof parsed !== "object") return [];
 
-  let endedAt: Date | undefined;
-  for (let i = records.length - 1; i >= 0; i--) {
-    const rec = records[i] as Record<string, unknown>;
-    if (rec.timestamp) {
-      endedAt = new Date(rec.timestamp as string);
-      break;
-    }
+  const root = parsed as ChatdataRecord;
+  if (Array.isArray(root.tabs)) {
+    return root.tabs.filter((t): t is TabRecord => !!t && typeof t === "object");
   }
+  // Some older shapes are arrays of tab-like records directly.
+  if (Array.isArray(parsed)) {
+    return (parsed as unknown[]).filter((t): t is TabRecord => !!t && typeof t === "object");
+  }
+  return [];
+}
+
+// ── Session construction ───────────────────────────────────────────
+
+function tabIdOf(tab: TabRecord): string | undefined {
+  if (typeof tab.tabId === "string") return tab.tabId;
+  if (typeof tab.id === "string") return tab.id;
+  return undefined;
+}
+
+function bubblesOf(tab: TabRecord): BubbleRecord[] {
+  if (Array.isArray(tab.bubbles)) return tab.bubbles;
+  if (Array.isArray(tab.messages)) return tab.messages;
+  return [];
+}
+
+function tsToDate(ts: number | string | undefined): Date | undefined {
+  if (ts === undefined || ts === null) return undefined;
+  if (typeof ts === "number") {
+    if (!Number.isFinite(ts)) return undefined;
+    return new Date(ts);
+  }
+  if (typeof ts === "string") {
+    const d = new Date(ts);
+    return Number.isNaN(d.getTime()) ? undefined : d;
+  }
+  return undefined;
+}
+
+function summarizeTab(
+  hash: string,
+  tab: TabRecord,
+  project: string | undefined,
+): SessionSummary | null {
+  const tabId = tabIdOf(tab);
+  if (!tabId) return null;
+
+  const bubbles = bubblesOf(tab);
+  const messages = bubblesToMessages(bubbles);
+  if (messages.length === 0) return null;
+
+  const startedAt = tsToDate(tab.createdAt) ?? messages[0]?.timestamp ?? new Date(0);
+  const endedAt = tsToDate(tab.lastSendTime) ?? messages[messages.length - 1]?.timestamp;
 
   let totalText = "";
-  for (const rec of messageRecords) {
-    const content = (rec as Record<string, unknown>).content;
-    if (typeof content === "string") {
-      totalText += content;
-    } else if (Array.isArray(content)) {
-      for (const block of content) {
-        if (block && typeof block === "object" && typeof block.text === "string") {
-          totalText += block.text;
-        }
-      }
-    }
-  }
+  for (const m of messages) totalText += m.content;
 
   return {
-    id,
+    id: `${hash}:${tabId}`,
     adapter: ADAPTER_NAME,
     project,
-    messageCount,
+    messageCount: messages.length,
     startedAt,
     endedAt,
     estimatedTokens: estimateTokens(totalText),
   };
 }
 
-// ── Full session parse ───────────────────────────────────────────
+function buildSession(hash: string, tab: TabRecord, project: string | undefined): Session | null {
+  const tabId = tabIdOf(tab);
+  if (!tabId) return null;
 
-function parseSessionFull(filePath: string): Session | null {
-  const records = readJsonlLines(filePath);
-  if (records.length === 0) return null;
+  const bubbles = bubblesOf(tab);
+  const messages = bubblesToMessages(bubbles);
+  if (messages.length === 0) return null;
 
-  const meta = records.find((r) => r.type === "conversation_meta") as
-    | ConversationMetaRecord
-    | undefined;
+  const startedAt = tsToDate(tab.createdAt) ?? messages[0]?.timestamp ?? new Date(0);
+  const endedAt = tsToDate(tab.lastSendTime) ?? messages[messages.length - 1]?.timestamp;
 
-  const id = meta?.conversation_id ?? sessionIdFromPath(filePath);
-  const startedAt = meta?.started_at
-    ? new Date(meta.started_at)
-    : (firstTimestamp(records) ?? new Date());
-
-  const project = meta?.cwd ?? meta?.workspace;
-
-  const messages: Message[] = [];
-  let endedAt: Date | undefined;
-
-  for (const record of records) {
-    switch (record.type) {
-      case "user_message": {
-        const rec = record as UserMessageRecord;
-        if (rec.content === undefined) break;
-        messages.push({
-          role: "user",
-          content: rec.content,
-          ...(rec.timestamp && { timestamp: new Date(rec.timestamp) }),
-        });
-        if (rec.timestamp) endedAt = new Date(rec.timestamp);
-        break;
-      }
-      case "assistant_message": {
-        const rec = record as AssistantMessageRecord;
-        const msg = parseAssistantMessage(rec);
-        if (msg) messages.push(msg);
-        if (rec.timestamp) endedAt = new Date(rec.timestamp);
-        break;
-      }
-      case "system_message": {
-        const rec = record as SystemMessageRecord;
-        if (rec.content) {
-          messages.push({
-            role: "system",
-            content: rec.content,
-            ...(rec.timestamp && { timestamp: new Date(rec.timestamp) }),
-          });
-        }
-        if (rec.timestamp) endedAt = new Date(rec.timestamp);
-        break;
-      }
-      case "tool_call": {
-        const rec = record as ToolCallStandaloneRecord;
-        // Attach standalone tool calls to the most recent assistant message
-        // when present; otherwise emit a synthetic tool message so the call
-        // is still visible to the harvest pipeline.
-        const toolCall: ToolCall = {
-          name: rec.name ?? "unknown",
-          input: rec.arguments ? safeJsonParse(rec.arguments) : undefined,
-          output: rec.output,
-        };
-        const last = messages[messages.length - 1];
-        if (last && last.role === "assistant") {
-          last.toolCalls = [...(last.toolCalls ?? []), toolCall];
-        } else {
-          messages.push({
-            role: "tool",
-            content: rec.output ?? "",
-            ...(rec.timestamp && { timestamp: new Date(rec.timestamp) }),
-            toolCalls: [toolCall],
-          });
-        }
-        if (rec.timestamp) endedAt = new Date(rec.timestamp);
-        break;
-      }
-      // conversation_meta and unknown types — skip
-    }
-  }
+  const metadata: Record<string, unknown> = {};
+  if (typeof tab.chatTitle === "string") metadata.title = tab.chatTitle;
+  else if (typeof tab.title === "string") metadata.title = tab.title;
+  metadata.workspaceHash = hash;
 
   return {
-    id,
+    id: `${hash}:${tabId}`,
     adapter: ADAPTER_NAME,
     project,
     messages,
     startedAt,
     endedAt,
-    metadata: meta
-      ? {
-          ...(meta.model !== undefined && { model: meta.model }),
-          ...(meta.cwd !== undefined && { cwd: meta.cwd }),
-          ...(meta.workspace !== undefined && { workspace: meta.workspace }),
-        }
-      : undefined,
+    metadata,
   };
 }
 
-function parseAssistantMessage(rec: AssistantMessageRecord): Message | null {
-  const content = extractAssistantContent(rec.content);
-  const toolCalls = extractToolCalls(rec.tool_calls);
+function bubblesToMessages(bubbles: BubbleRecord[]): Message[] {
+  const out: Message[] = [];
+  for (const b of bubbles) {
+    if (!b || typeof b !== "object") continue;
 
-  if (content === null && toolCalls.length === 0) return null;
+    const role = mapRole(b);
+    const content = extractText(b);
+    const toolCalls = extractToolCalls(b);
+    const ts = tsToDate(b.timestamp);
 
-  return {
-    role: "assistant",
-    content: content ?? "",
-    ...(rec.timestamp && { timestamp: new Date(rec.timestamp) }),
-    ...(toolCalls.length > 0 && { toolCalls }),
-  };
+    if (!content && toolCalls.length === 0) continue;
+
+    const msg: Message = {
+      role,
+      content: content ?? "",
+      ...(ts && { timestamp: ts }),
+      ...(toolCalls.length > 0 && { toolCalls }),
+    };
+    out.push(msg);
+  }
+  return out;
 }
 
-function extractAssistantContent(content: string | AssistantContent[] | undefined): string | null {
-  if (typeof content === "string") return content;
-  if (Array.isArray(content)) {
+function mapRole(b: BubbleRecord): Message["role"] {
+  const raw = (b.type ?? b.role ?? "").toString().toLowerCase();
+  if (raw === "user" || raw === "human") return "user";
+  if (raw === "ai" || raw === "assistant" || raw === "bot") return "assistant";
+  if (raw === "tool" || raw === "function") return "tool";
+  return "system";
+}
+
+function extractText(b: BubbleRecord): string | null {
+  if (typeof b.text === "string" && b.text.length > 0) return b.text;
+  if (typeof b.content === "string" && b.content.length > 0) return b.content;
+  if (Array.isArray(b.content)) {
     const parts: string[] = [];
-    for (const block of content) {
-      if (block.type === "text" && typeof block.text === "string") {
-        parts.push(block.text);
+    for (const block of b.content) {
+      if (!block || typeof block !== "object") continue;
+      const blk = block as { type?: string; text?: string };
+      if (blk.type === "text" && typeof blk.text === "string") {
+        parts.push(blk.text);
       }
     }
-    return parts.length > 0 ? parts.join("\n") : null;
+    if (parts.length > 0) return parts.join("\n");
   }
   return null;
 }
 
-function extractToolCalls(records: ToolCallRecord[] | undefined): ToolCall[] {
-  if (!records || !Array.isArray(records)) return [];
+function extractToolCalls(b: BubbleRecord): ToolCall[] {
+  const raw = b.toolCalls ?? b.tool_calls;
+  if (!Array.isArray(raw)) return [];
+
   const calls: ToolCall[] = [];
-  for (const tc of records) {
-    if (!tc || typeof tc.name !== "string") continue;
+  for (const r of raw) {
+    if (!r || typeof r !== "object") continue;
+    const name =
+      typeof r.name === "string" ? r.name : typeof r.toolName === "string" ? r.toolName : "unknown";
+    const input = r.input !== undefined ? r.input : maybeParseJson(r.arguments);
+    const output =
+      typeof r.output === "string"
+        ? r.output
+        : typeof r.result === "string"
+          ? r.result
+          : r.output !== undefined
+            ? safeStringify(r.output)
+            : r.result !== undefined
+              ? safeStringify(r.result)
+              : undefined;
+
     calls.push({
-      name: tc.name,
-      input: tc.arguments ? safeJsonParse(tc.arguments) : undefined,
-      output: tc.output,
+      name,
+      ...(input !== undefined && { input }),
+      ...(output !== undefined && { output }),
     });
   }
   return calls;
 }
 
-function safeJsonParse(value: string): unknown {
+function maybeParseJson(value: unknown): unknown {
+  if (typeof value !== "string") return value;
   try {
     return JSON.parse(value);
   } catch {
@@ -416,19 +452,10 @@ function safeJsonParse(value: string): unknown {
   }
 }
 
-// ── Path utilities ───────────────────────────────────────────────
-
-function sessionIdFromPath(filePath: string): string {
-  return basename(filePath, ".jsonl");
-}
-
-function firstTimestamp(records: JsonlRecord[]): Date | undefined {
-  for (const rec of records) {
-    const ts = (rec as Record<string, unknown>).timestamp;
-    if (typeof ts === "string") {
-      const d = new Date(ts);
-      if (!Number.isNaN(d.getTime())) return d;
-    }
+function safeStringify(value: unknown): string | undefined {
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return undefined;
   }
-  return undefined;
 }
