@@ -72,12 +72,14 @@ beforeEach(async () => {
   cfgDir = await mkdtemp(join(tmpdir(), "am-apply-backup-test-"));
   process.env.AM_CONFIG_DIR = cfgDir;
   process.env.AM_APPLY_BACKUP_MAX = undefined;
+  process.env.AM_APPLY_BACKUP_MAX_AGE = undefined;
 });
 
 afterEach(async () => {
   await rm(cfgDir, { recursive: true, force: true });
   process.env.AM_CONFIG_DIR = undefined;
   process.env.AM_APPLY_BACKUP_MAX = undefined;
+  process.env.AM_APPLY_BACKUP_MAX_AGE = undefined;
 });
 
 describe("listAllBackups", () => {
@@ -185,6 +187,72 @@ describe("pruneBackups", () => {
 
     const manifest = JSON.parse(fs.readFileSync(join(dir, "manifest.json"), "utf-8"));
     expect(manifest.entries).toHaveLength(2);
+  });
+
+  test("honours AM_APPLY_BACKUP_MAX_AGE env var when no maxAgeDays passed", async () => {
+    const target = "/some/config.json";
+    const now = Date.now();
+    const dir = await seedTarget(target, [
+      { ts: new Date(now - 30 * 24 * 60 * 60 * 1000), content: "old1" },
+      { ts: new Date(now - 10 * 24 * 60 * 60 * 1000), content: "old2" },
+      { ts: new Date(now - 3 * 24 * 60 * 60 * 1000), content: "fresh1" },
+      { ts: new Date(now - 1 * 24 * 60 * 60 * 1000), content: "fresh2" },
+    ]);
+
+    process.env.AM_APPLY_BACKUP_MAX_AGE = "7";
+    try {
+      const result = await pruneBackups();
+      expect(result.removed).toBe(2);
+    } finally {
+      process.env.AM_APPLY_BACKUP_MAX_AGE = undefined;
+    }
+
+    const remaining = fs.readdirSync(dir).filter((f) => f.endsWith(".bak"));
+    expect(remaining).toHaveLength(2);
+
+    const manifest = JSON.parse(fs.readFileSync(join(dir, "manifest.json"), "utf-8"));
+    expect(manifest.entries).toHaveLength(2);
+  });
+
+  test("falls back to default 30 days when AM_APPLY_BACKUP_MAX_AGE is unparseable", async () => {
+    const target = "/some/config.json";
+    const now = Date.now();
+    const dir = await seedTarget(target, [
+      { ts: new Date(now - 60 * 24 * 60 * 60 * 1000), content: "ancient" },
+      { ts: new Date(now - 20 * 24 * 60 * 60 * 1000), content: "old" },
+      { ts: new Date(now - 5 * 24 * 60 * 60 * 1000), content: "fresh" },
+    ]);
+
+    process.env.AM_APPLY_BACKUP_MAX_AGE = "not-a-number";
+    try {
+      const result = await pruneBackups();
+      expect(result.removed).toBe(1);
+    } finally {
+      process.env.AM_APPLY_BACKUP_MAX_AGE = undefined;
+    }
+
+    const remaining = fs.readdirSync(dir).filter((f) => f.endsWith(".bak"));
+    expect(remaining).toHaveLength(2);
+  });
+
+  test("AM_APPLY_BACKUP_MAX_AGE = '0' prunes every aged entry", async () => {
+    const target = "/some/config.json";
+    const now = Date.now();
+    const dir = await seedTarget(target, [
+      { ts: new Date(now - 60 * 60 * 1000), content: "hour-old" },
+      { ts: new Date(now - 1000), content: "second-old" },
+    ]);
+
+    process.env.AM_APPLY_BACKUP_MAX_AGE = "0";
+    try {
+      const result = await pruneBackups();
+      expect(result.removed).toBe(2);
+    } finally {
+      process.env.AM_APPLY_BACKUP_MAX_AGE = undefined;
+    }
+
+    const remaining = fs.readdirSync(dir).filter((f) => f.endsWith(".bak"));
+    expect(remaining).toHaveLength(0);
   });
 
   test("honours AM_APPLY_BACKUP_MAX env var when no maxCount passed", async () => {

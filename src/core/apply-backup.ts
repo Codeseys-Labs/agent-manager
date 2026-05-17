@@ -143,6 +143,14 @@ function envMaxCount(): number {
   return parsed;
 }
 
+function envMaxAgeDays(): number {
+  const raw = process.env.AM_APPLY_BACKUP_MAX_AGE;
+  if (!raw) return DEFAULT_MAX_AGE_DAYS;
+  const parsed = Number.parseInt(raw, 10);
+  if (Number.isNaN(parsed) || parsed < 0) return DEFAULT_MAX_AGE_DAYS;
+  return parsed;
+}
+
 /**
  * Best-effort prune of every per-target dir under $AM_CONFIG_DIR/backups.
  *
@@ -160,7 +168,7 @@ function envMaxCount(): number {
 export async function pruneBackups(
   options: { maxAgeDays?: number; maxCount?: number } = {},
 ): Promise<{ removed: number; freedBytes: number }> {
-  const maxAgeDays = options.maxAgeDays ?? DEFAULT_MAX_AGE_DAYS;
+  const maxAgeDays = options.maxAgeDays ?? envMaxAgeDays();
   const maxCount = options.maxCount ?? envMaxCount();
   const ageThresholdMs = Date.now() - maxAgeDays * 24 * 60 * 60 * 1000;
 
