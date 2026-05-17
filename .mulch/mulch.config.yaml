@@ -12,6 +12,7 @@ domains:
   cli: {}
   adr-methodology: {}
   typescript: {}
+  cursor-adapter: {}
 governance:
   max_entries: 100
   warn_entries: 150
