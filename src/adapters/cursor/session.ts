@@ -1,13 +1,20 @@
 /**
  * Cursor session reader (ADR-0016).
  *
- * Cursor is a VS Code fork; it stores chat/composer history in a per-workspace
- * SQLite database at `User/workspaceStorage/<hash>/state.vscdb`. The chat blobs
- * live in the `ItemTable` key/value table under keys such as
- * `workbench.panel.aichat.view.aichat.chatdata` (current),
- * `aiService.prompts` / `aiService.generations` (older).
+ * Cursor is a VS Code fork that has shipped two chat-storage schemas:
  *
- * Session id format: `<workspace-hash>:<tabId>`.
+ *   1. Per-workspace (legacy + still in use): `User/workspaceStorage/<hash>/
+ *      state.vscdb` → `ItemTable` keys such as
+ *      `workbench.panel.aichat.view.aichat.chatdata` (current),
+ *      `aiService.prompts` / `aiService.generations` (older).
+ *      Session id: `<workspace-hash>:<tabId>`.
+ *
+ *   2. Modern globalStorage (Cursor 3.0+): `User/globalStorage/state.vscdb`
+ *      → `cursorDiskKV` table with row shapes
+ *      `composerData:<composerId>` (header listing bubble ids in order) and
+ *      `bubbleId:<composerId>:<bubbleId>` (per-message rows).
+ *      Session id: `global:composer-<composerId>` (single colon preserves
+ *      the existing `isSafeSessionId` contract).
  *
  * The reader is intentionally defensive — Cursor's schema is undocumented and
  * shifts between releases. Every field is treated as optional and malformed
@@ -36,6 +43,14 @@ const CHAT_KEYS = [
   "aiService.generations",
 ];
 
+/**
+ * SQLite default `SQLITE_MAX_VARIABLE_NUMBER` is 999 and bun:sqlite inherits
+ * that limit. Cap `WHERE key IN (...)` lookups at 500 to leave headroom.
+ */
+const SQLITE_PARAM_CHUNK = 500;
+
+const GLOBAL_PREFIX = "global:composer-";
+
 // ── Cross-platform path resolution ─────────────────────────────────
 
 function cursorUserDir(homeDir: string): string {
@@ -53,16 +68,28 @@ function workspaceStorageDir(userDir: string): string {
   return join(userDir, "workspaceStorage");
 }
 
+function globalStorageDbPath(userDir: string): string {
+  return join(userDir, "globalStorage", "state.vscdb");
+}
+
 // ── Loose record shapes (everything optional) ──────────────────────
 
 interface BubbleRecord {
-  type?: string;
+  /** Legacy: "user"/"ai"/etc. Modern: numeric (1=user, 2=assistant). */
+  type?: string | number;
   role?: string;
   text?: string;
+  /** Modern fallback when `text` is empty. */
+  richText?: string;
   content?: unknown;
   timestamp?: number | string;
+  /** Modern timing wrapper — `clientStartTime` preferred over `timestamp`. */
+  timingInfo?: { clientStartTime?: number; clientEndTime?: number };
   toolCalls?: ToolCallRecord[];
   tool_calls?: ToolCallRecord[];
+  /** Modern tool-call evidence (loose shape, undocumented). */
+  toolFormerData?: unknown;
+  capabilitiesRan?: unknown[];
   [key: string]: unknown;
 }
 
@@ -93,6 +120,20 @@ interface ChatdataRecord {
   [key: string]: unknown;
 }
 
+/** Modern globalStorage `composerData:<id>` row shape. */
+interface ComposerHeader {
+  composerId?: string;
+  name?: string;
+  createdAt?: number;
+  lastUpdatedAt?: number;
+  fullConversationHeadersOnly?: Array<{
+    bubbleId?: string;
+    type?: number | string;
+    serverBubbleId?: string;
+  }>;
+  [key: string]: unknown;
+}
+
 // ── Reader factory ─────────────────────────────────────────────────
 
 export function createCursorSessionReader(homeDir?: string): SessionReader {
@@ -102,34 +143,44 @@ export function createCursorSessionReader(homeDir?: string): SessionReader {
 
   return {
     hasSessionStorage(): boolean {
-      return existsSync(storageDir);
+      return existsSync(storageDir) || existsSync(globalStorageDbPath(userDir));
     },
 
     async listSessions(project?: string): Promise<SessionSummary[]> {
-      if (!existsSync(storageDir)) return [];
-
       const summaries: SessionSummary[] = [];
-      let hashes: string[];
-      try {
-        hashes = readdirSync(storageDir);
-      } catch {
-        return [];
+
+      // Per-workspace (legacy) sessions.
+      if (existsSync(storageDir)) {
+        let hashes: string[] = [];
+        try {
+          hashes = readdirSync(storageDir);
+        } catch {
+          hashes = [];
+        }
+
+        for (const hash of hashes) {
+          const wsDir = join(storageDir, hash);
+          if (!isDir(wsDir)) continue;
+
+          const dbPath = join(wsDir, "state.vscdb");
+          if (!existsSync(dbPath)) continue;
+
+          const projectPath = readWorkspaceFolder(wsDir);
+          if (project && projectPath !== project) continue;
+
+          const tabs = readTabsFromDb(dbPath);
+          for (const tab of tabs) {
+            const summary = summarizeTab(hash, tab, projectPath);
+            if (summary) summaries.push(summary);
+          }
+        }
       }
 
-      for (const hash of hashes) {
-        const wsDir = join(storageDir, hash);
-        if (!isDir(wsDir)) continue;
-
-        const dbPath = join(wsDir, "state.vscdb");
-        if (!existsSync(dbPath)) continue;
-
-        const projectPath = readWorkspaceFolder(wsDir);
-        if (project && projectPath !== project) continue;
-
-        const tabs = readTabsFromDb(dbPath);
-        for (const tab of tabs) {
-          const summary = summarizeTab(hash, tab, projectPath);
-          if (summary) summaries.push(summary);
+      // Modern globalStorage composers carry no workspace folder, so when a
+      // project filter is provided they cannot match — skip them entirely.
+      if (!project) {
+        for (const session of readGlobalComposers(userDir)) {
+          summaries.push(toSummary(session));
         }
       }
 
@@ -139,6 +190,14 @@ export function createCursorSessionReader(homeDir?: string): SessionReader {
 
     async loadSession(id: string): Promise<Session | null> {
       if (!isSafeSessionId(id)) return null;
+
+      // Modern globalStorage path: `global:composer-<composerId>`.
+      if (id.startsWith("global:")) {
+        if (!id.startsWith(GLOBAL_PREFIX)) return null;
+        const composerId = id.slice(GLOBAL_PREFIX.length);
+        if (!composerId) return null;
+        return loadGlobalComposer(userDir, composerId);
+      }
 
       const sep = id.indexOf(":");
       if (sep <= 0 || sep === id.length - 1) return null;
@@ -377,7 +436,7 @@ function bubblesToMessages(bubbles: BubbleRecord[]): Message[] {
     const role = mapRole(b);
     const content = extractText(b);
     const toolCalls = extractToolCalls(b);
-    const ts = tsToDate(b.timestamp);
+    const ts = bubbleTimestamp(b);
 
     if (!content && toolCalls.length === 0) continue;
 
@@ -393,6 +452,11 @@ function bubblesToMessages(bubbles: BubbleRecord[]): Message[] {
 }
 
 function mapRole(b: BubbleRecord): Message["role"] {
+  // Modern bubbles use numeric types: 1 = user, 2 = assistant.
+  if (typeof b.type === "number") {
+    if (b.type === 1) return "user";
+    if (b.type === 2) return "assistant";
+  }
   const raw = (b.type ?? b.role ?? "").toString().toLowerCase();
   if (raw === "user" || raw === "human") return "user";
   if (raw === "ai" || raw === "assistant" || raw === "bot") return "assistant";
@@ -402,6 +466,7 @@ function mapRole(b: BubbleRecord): Message["role"] {
 
 function extractText(b: BubbleRecord): string | null {
   if (typeof b.text === "string" && b.text.length > 0) return b.text;
+  if (typeof b.richText === "string" && b.richText.length > 0) return b.richText;
   if (typeof b.content === "string" && b.content.length > 0) return b.content;
   if (Array.isArray(b.content)) {
     const parts: string[] = [];
@@ -417,34 +482,88 @@ function extractText(b: BubbleRecord): string | null {
   return null;
 }
 
-function extractToolCalls(b: BubbleRecord): ToolCall[] {
-  const raw = b.toolCalls ?? b.tool_calls;
-  if (!Array.isArray(raw)) return [];
-
-  const calls: ToolCall[] = [];
-  for (const r of raw) {
-    if (!r || typeof r !== "object") continue;
-    const name =
-      typeof r.name === "string" ? r.name : typeof r.toolName === "string" ? r.toolName : "unknown";
-    const input = r.input !== undefined ? r.input : maybeParseJson(r.arguments);
-    const output =
-      typeof r.output === "string"
-        ? r.output
-        : typeof r.result === "string"
-          ? r.result
-          : r.output !== undefined
-            ? safeStringify(r.output)
-            : r.result !== undefined
-              ? safeStringify(r.result)
-              : undefined;
-
-    calls.push({
-      name,
-      ...(input !== undefined && { input }),
-      ...(output !== undefined && { output }),
-    });
+/**
+ * Extract a bubble timestamp, preferring the modern `timingInfo.clientStartTime`
+ * wrapper before falling back to the legacy top-level `timestamp`.
+ */
+function bubbleTimestamp(b: BubbleRecord): Date | undefined {
+  const timing = b.timingInfo;
+  if (timing && typeof timing.clientStartTime === "number") {
+    const d = tsToDate(timing.clientStartTime);
+    if (d) return d;
   }
-  return calls;
+  return tsToDate(b.timestamp);
+}
+
+function extractToolCalls(b: BubbleRecord): ToolCall[] {
+  // Legacy shape — preserve "unknown" fallback for missing names.
+  const raw = b.toolCalls ?? b.tool_calls;
+  if (Array.isArray(raw)) {
+    const calls: ToolCall[] = [];
+    for (const r of raw) {
+      const tc = toolCallFromRecord(r, true);
+      if (tc) calls.push(tc);
+    }
+    return calls;
+  }
+
+  // Modern bubbles: `toolFormerData` is a single tool-call-shaped object.
+  if (b.toolFormerData && typeof b.toolFormerData === "object") {
+    const tc = toolCallFromRecord(b.toolFormerData, false);
+    if (tc) return [tc];
+  }
+
+  // Modern bubbles: `capabilitiesRan` is an array of tool-call-shaped objects.
+  if (Array.isArray(b.capabilitiesRan)) {
+    const calls: ToolCall[] = [];
+    for (const r of b.capabilitiesRan) {
+      const tc = toolCallFromRecord(r, false);
+      if (tc) calls.push(tc);
+    }
+    return calls;
+  }
+
+  return [];
+}
+
+function toolCallFromRecord(r: unknown, allowUnknownName: boolean): ToolCall | null {
+  if (!r || typeof r !== "object") return null;
+  const rec = r as ToolCallRecord & { tool?: unknown; args?: unknown };
+
+  const nameRaw =
+    typeof rec.name === "string"
+      ? rec.name
+      : typeof rec.toolName === "string"
+        ? rec.toolName
+        : typeof rec.tool === "string"
+          ? rec.tool
+          : undefined;
+  if (!nameRaw && !allowUnknownName) return null;
+  const name = nameRaw ?? "unknown";
+
+  const input =
+    rec.input !== undefined
+      ? rec.input
+      : rec.args !== undefined
+        ? rec.args
+        : maybeParseJson(rec.arguments);
+
+  const output =
+    typeof rec.output === "string"
+      ? rec.output
+      : typeof rec.result === "string"
+        ? rec.result
+        : rec.output !== undefined
+          ? safeStringify(rec.output)
+          : rec.result !== undefined
+            ? safeStringify(rec.result)
+            : undefined;
+
+  return {
+    name,
+    ...(input !== undefined && { input }),
+    ...(output !== undefined && { output }),
+  };
 }
 
 function maybeParseJson(value: unknown): unknown {
@@ -462,4 +581,186 @@ function safeStringify(value: unknown): string | undefined {
   } catch {
     return undefined;
   }
+}
+
+// ── Modern globalStorage (cursorDiskKV) ────────────────────────────
+
+/**
+ * Read every composer header in `globalStorage/state.vscdb` and resolve its
+ * bubble messages. Returns full `Session` objects so callers can either keep
+ * them or summarise via `toSummary`. Defensive at every boundary: missing DB,
+ * missing table, malformed JSON, and missing bubble rows are all skipped.
+ */
+function readGlobalComposers(userDir: string): Session[] {
+  const dbPath = globalStorageDbPath(userDir);
+  if (!existsSync(dbPath)) return [];
+
+  let db: Database | null = null;
+  try {
+    db = new Database(dbPath, { readonly: true });
+
+    let headerRows: DbRow[];
+    try {
+      const stmt = db.query("SELECT key, value FROM cursorDiskKV WHERE key LIKE 'composerData:%'");
+      headerRows = stmt.all() as DbRow[];
+    } catch {
+      // Table missing on older Cursor installs — silently skip.
+      return [];
+    }
+
+    const sessions: Session[] = [];
+    for (const row of headerRows) {
+      const session = composerSessionFromHeader(db, row);
+      if (session) sessions.push(session);
+    }
+    return sessions;
+  } catch {
+    return [];
+  } finally {
+    try {
+      db?.close();
+    } catch {
+      // ignore
+    }
+  }
+}
+
+function loadGlobalComposer(userDir: string, composerId: string): Session | null {
+  const dbPath = globalStorageDbPath(userDir);
+  if (!existsSync(dbPath)) return null;
+
+  let db: Database | null = null;
+  try {
+    db = new Database(dbPath, { readonly: true });
+    let row: DbRow | null;
+    try {
+      const stmt = db.query("SELECT key, value FROM cursorDiskKV WHERE key = ?");
+      row = (stmt.get(`composerData:${composerId}`) as DbRow | null) ?? null;
+    } catch {
+      return null;
+    }
+    if (!row) return null;
+    return composerSessionFromHeader(db, row);
+  } catch {
+    return null;
+  } finally {
+    try {
+      db?.close();
+    } catch {
+      // ignore
+    }
+  }
+}
+
+function composerSessionFromHeader(db: Database, row: DbRow): Session | null {
+  const text = blobToText(row.value);
+  if (!text) return null;
+  let header: ComposerHeader;
+  try {
+    header = JSON.parse(text) as ComposerHeader;
+  } catch {
+    return null;
+  }
+  if (!header || typeof header !== "object") return null;
+
+  const composerId =
+    typeof header.composerId === "string" ? header.composerId : composerIdFromKey(row.key);
+  if (!composerId) return null;
+
+  const headers = Array.isArray(header.fullConversationHeadersOnly)
+    ? header.fullConversationHeadersOnly
+    : [];
+  if (headers.length === 0) return null;
+
+  const bubbles = fetchBubbles(db, composerId, headers);
+  const messages = bubblesToMessages(bubbles);
+  if (messages.length === 0) return null;
+
+  const startedAt = tsToDate(header.createdAt) ?? messages[0]?.timestamp ?? new Date(0);
+  const endedAt = tsToDate(header.lastUpdatedAt) ?? messages[messages.length - 1]?.timestamp;
+
+  const metadata: Record<string, unknown> = { composerId };
+  if (typeof header.name === "string") metadata.title = header.name;
+
+  let totalText = "";
+  for (const m of messages) totalText += m.content;
+
+  return {
+    id: `${GLOBAL_PREFIX}${composerId}`,
+    adapter: ADAPTER_NAME,
+    project: undefined,
+    messages,
+    startedAt,
+    endedAt,
+    metadata,
+  };
+}
+
+/**
+ * Walk `fullConversationHeadersOnly` IN ORDER and resolve each `bubbleId` row
+ * from `cursorDiskKV`. Missing bubble rows are skipped. Order is preserved
+ * (we don't sort by timestamp — the array is the source of truth).
+ */
+function fetchBubbles(
+  db: Database,
+  composerId: string,
+  headers: NonNullable<ComposerHeader["fullConversationHeadersOnly"]>,
+): BubbleRecord[] {
+  const keys: string[] = [];
+  for (const h of headers) {
+    if (h && typeof h.bubbleId === "string" && h.bubbleId.length > 0) {
+      keys.push(`bubbleId:${composerId}:${h.bubbleId}`);
+    }
+  }
+  if (keys.length === 0) return [];
+
+  const valueByKey = new Map<string, string>();
+  for (let i = 0; i < keys.length; i += SQLITE_PARAM_CHUNK) {
+    const chunk = keys.slice(i, i + SQLITE_PARAM_CHUNK);
+    const placeholders = chunk.map(() => "?").join(", ");
+    try {
+      const stmt = db.query(`SELECT key, value FROM cursorDiskKV WHERE key IN (${placeholders})`);
+      const rows = stmt.all(...chunk) as DbRow[];
+      for (const r of rows) {
+        const text = blobToText(r.value);
+        if (text !== null) valueByKey.set(r.key, text);
+      }
+    } catch {
+      // Defensive: ignore chunk failure, return whatever we have.
+    }
+  }
+
+  const bubbles: BubbleRecord[] = [];
+  for (const key of keys) {
+    const text = valueByKey.get(key);
+    if (text === undefined) continue; // missing row — skip silently
+    try {
+      const parsed = JSON.parse(text) as BubbleRecord;
+      if (parsed && typeof parsed === "object") bubbles.push(parsed);
+    } catch {
+      // malformed bubble JSON — skip
+    }
+  }
+  return bubbles;
+}
+
+function composerIdFromKey(key: string): string | undefined {
+  // `composerData:<id>` — recover id when header.composerId is missing.
+  const prefix = "composerData:";
+  if (key.startsWith(prefix)) return key.slice(prefix.length);
+  return undefined;
+}
+
+function toSummary(session: Session): SessionSummary {
+  let totalText = "";
+  for (const m of session.messages) totalText += m.content;
+  return {
+    id: session.id,
+    adapter: session.adapter,
+    project: session.project,
+    messageCount: session.messages.length,
+    startedAt: session.startedAt,
+    endedAt: session.endedAt,
+    estimatedTokens: estimateTokens(totalText),
+  };
 }
