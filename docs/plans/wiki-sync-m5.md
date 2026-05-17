@@ -1,14 +1,18 @@
 ---
 status: partially-shipped
 date: 2026-05-01
-last-updated: 2026-05-03
+last-updated: 2026-05-17
 milestone: M5
 relates-to: ADR-0022, ADR-0023, ADR-0020, src/commands/wiki.ts:1009
 research: docs/research/2026-05-01-wiki-sync-patterns.md
 implementation:
   m5_1: shipped in commit f5f7401 (2026-05-03) — 3 primitives + 2 typed errors + 9 tests
   m5_2: shipped in commit f349a5d (2026-05-03) — sync.ts pipeline + auto-commit + sidecar + 19 tests
-  m5_3: deferred — am wiki resolve, am doctor symlink check, am wiki relink, subtree export
+  m5_3:
+    resolve: shipped — `am wiki resolve` subcommand (resolveSubcommand in src/commands/wiki.ts:1173) wraps resolveConflicts (src/wiki/resolve.ts) with --strategy short-circuit + --json shape. Unit coverage in test/wiki/resolve.test.ts; command-level coverage in test/commands/wiki-resolve.test.ts (DWL-T10, 2026-05-17).
+    relink: deferred to a follow-up wave — `am wiki relink` (real-dir orphan → symlink merge).
+    doctor_symlink_check: deferred — `am doctor` symlink integrity guard (file overlap with concurrent T9 work, postponed to next wave).
+    subtree_export: deferred — `am wiki export --project --to <url>` one-way subtree-split push. Stretch goal per original plan; not blocking this milestone close.
 ---
 
 # M5 Wiki-Sync Correctness Upgrade — Implementation Plan
