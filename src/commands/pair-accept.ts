@@ -8,9 +8,12 @@
  * every existing ciphertext to include the new machine.
  *
  * Scope boundaries (per Wave T plan T1):
- *   - This verb only touches the local identity and the `.pub` file.
- *   - It does NOT commit, push, or edit `.am-secrets.toml`. Those
- *     responsibilities live in T2 (finalize) / the later router pass.
+ *   - This verb only touches the local identity, the `.pub` file, and
+ *     the `[age].recipients` array in `.am-secrets.toml` (DWL-T4 #1
+ *     deferred-item closeout). The TOML edit is idempotent — re-running
+ *     `accept --force` does not duplicate the entry.
+ *   - It does NOT commit or push. Commit/push happen on the ORIGINAL
+ *     device during `am pair finalize`.
  *   - No git operations — ADR-0047 §"Flow" has the original device do
  *     the rewrap+push, not this one.
  *
@@ -33,6 +36,7 @@ import { atomicWriteFile } from "../core/atomic-write";
 import { resolveConfigDir } from "../core/config";
 import { getDefaultBackend } from "../core/secrets";
 import { type AgeSecretsBackend, resolveIdentityPath } from "../core/secrets-age";
+import { appendAgeRecipientPath, resolveSecretsTomlPath } from "../core/secrets-toml";
 import { AmError } from "../lib/errors";
 import { amError, info, output } from "../lib/output";
 import { validatePairName } from "./pair-name-validator";
@@ -135,6 +139,9 @@ export const pairAcceptCommand = defineCommand({
 
       const identityExistedBefore = await pathExists(identityPath);
 
+      const secretsTomlPath = resolveSecretsTomlPath(configDir);
+      const recipientRelPath = `recipients/${name}.pub`;
+
       if (dryRun) {
         // Compute the projected ops without touching disk. Do NOT
         // invoke backend.initialize() — that would create identity.age.
@@ -153,6 +160,8 @@ export const pairAcceptCommand = defineCommand({
             : `write recipients/${name}.pub at ${pubPath}`,
         );
         prevented.push("recipients/*.pub write");
+        wouldDo.push(`append "${recipientRelPath}" to ${secretsTomlPath} [age].recipients`);
+        prevented.push(".am-secrets.toml [age].recipients append");
 
         if (args.json) {
           output(
@@ -166,6 +175,8 @@ export const pairAcceptCommand = defineCommand({
                 name,
                 pubPath,
                 identityPath,
+                secretsTomlPath,
+                recipientRelPath,
                 identityExisted: identityExistedBefore,
                 pubExisted,
                 force,
@@ -176,6 +187,7 @@ export const pairAcceptCommand = defineCommand({
         } else {
           info(`Would write ${pubPath}`, opts);
           if (wouldCreateIdentity) info(`Would create ${identityPath}`, opts);
+          info(`Would update ${secretsTomlPath} [age].recipients`, opts);
         }
         return;
       }
@@ -193,6 +205,11 @@ export const pairAcceptCommand = defineCommand({
       await mkdir(recipientsDir, { recursive: true });
       await atomicWriteFile(pubPath, body, { mode: 0o644 });
 
+      // ADR-0047 §"Flow" Step 2 — `[age].recipients` is the source-of-
+      // truth covered set. Append idempotently so `accept --force`
+      // doesn't duplicate the entry.
+      const tomlResult = await appendAgeRecipientPath(configDir, recipientRelPath);
+
       const fingerprint = shortFingerprint(recipient);
 
       if (args.json) {
@@ -206,6 +223,9 @@ export const pairAcceptCommand = defineCommand({
             fingerprint,
             identityCreated: !identityExistedBefore,
             overwritten: pubExisted,
+            secretsTomlPath: tomlResult.path,
+            secretsTomlChanged: tomlResult.changed,
+            recipientRelPath,
           },
           opts,
         );
@@ -214,6 +234,9 @@ export const pairAcceptCommand = defineCommand({
 
       info(`Wrote ${pubPath}`, opts);
       info(`Recipient: ${recipient}`, opts);
+      if (tomlResult.changed) {
+        info(`Updated ${tomlResult.path} [age].recipients`, opts);
+      }
       info(`Now run on the original device: am pair finalize ${name}`, opts);
     } catch (err) {
       amError(err, opts);

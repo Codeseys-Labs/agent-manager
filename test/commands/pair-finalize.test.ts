@@ -23,6 +23,7 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import * as TOML from "@iarna/toml";
 import { Decrypter, generateIdentity, identityToRecipient } from "age-encryption";
 import { pairFinalizeCommand } from "../../src/commands/pair-finalize";
 import { AgeSecretsBackend } from "../../src/core/secrets-age";
@@ -460,6 +461,65 @@ describe("ADR-0047 `am pair finalize` — Wave T sub-task T2", () => {
     const explanation = payload.explanation as Record<string, unknown>;
     expect(explanation.name).toBe(fx.peer.id);
     expect(explanation.publicKey).toBe(fx.peer.publicKey);
+  });
+
+  // ADR-0047 DWL-T4 #1 — explicit-form finalize syncs the TOML covered set.
+  test("explicit-form finalize appends recipients/<name>.pub to .am-secrets.toml", async () => {
+    await writePeerPub(fx);
+    await invokeFinalize({ file: fx.tomlPath, name: fx.peer.id, json: true });
+    expect(process.exitCode ?? 0).toBe(0);
+
+    const secretsTomlPath = join(fx.dir.path, ".am-secrets.toml");
+    const raw = await readFile(secretsTomlPath, "utf-8");
+    const parsed = TOML.parse(raw) as { age?: { recipients?: string[] } };
+    expect(parsed.age?.recipients).toEqual([`recipients/${fx.peer.id}.pub`]);
+
+    const payload = jsonFromStdout();
+    expect(payload.secretsTomlPath).toBe(secretsTomlPath);
+    expect(payload.secretsTomlChanged).toBe(true);
+    expect(payload.recipientRelPath).toBe(`recipients/${fx.peer.id}.pub`);
+  });
+
+  test("explicit-form finalize is idempotent on .am-secrets.toml", async () => {
+    await writePeerPub(fx);
+    await invokeFinalize({ file: fx.tomlPath, name: fx.peer.id, json: true });
+    expect(process.exitCode ?? 0).toBe(0);
+
+    stdoutLines = [];
+    process.exitCode = 0;
+    await invokeFinalize({ file: fx.tomlPath, name: fx.peer.id, json: true });
+    expect(process.exitCode ?? 0).toBe(0);
+
+    // Array still contains a single entry — no duplicates.
+    const secretsTomlPath = join(fx.dir.path, ".am-secrets.toml");
+    const raw = await readFile(secretsTomlPath, "utf-8");
+    const parsed = TOML.parse(raw) as { age?: { recipients?: string[] } };
+    expect(parsed.age?.recipients).toEqual([`recipients/${fx.peer.id}.pub`]);
+
+    const payload = jsonFromStdout();
+    expect(payload.secretsTomlChanged).toBe(false);
+  });
+
+  test("explicit-form finalize merges into a pre-existing .am-secrets.toml", async () => {
+    // Pre-populate the file with an unrelated entry to ensure we
+    // append rather than overwrite.
+    const secretsTomlPath = join(fx.dir.path, ".am-secrets.toml");
+    await writeFile(
+      secretsTomlPath,
+      `[age]\nrecipients = ["recipients/desktop-original.pub"]\n`,
+      "utf-8",
+    );
+
+    await writePeerPub(fx);
+    await invokeFinalize({ file: fx.tomlPath, name: fx.peer.id, json: true });
+    expect(process.exitCode ?? 0).toBe(0);
+
+    const raw = await readFile(secretsTomlPath, "utf-8");
+    const parsed = TOML.parse(raw) as { age?: { recipients?: string[] } };
+    expect(parsed.age?.recipients).toEqual([
+      "recipients/desktop-original.pub",
+      `recipients/${fx.peer.id}.pub`,
+    ]);
   });
 
   // Run-K Phase-8 review (gpt-5.5 + gemini + deepseek intersection):
