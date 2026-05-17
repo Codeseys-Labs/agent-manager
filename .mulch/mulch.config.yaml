@@ -10,6 +10,8 @@ domains:
   architecture: {}
   testing: {}
   cli: {}
+  adr-methodology: {}
+  typescript: {}
 governance:
   max_entries: 100
   warn_entries: 150
