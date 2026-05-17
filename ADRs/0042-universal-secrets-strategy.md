@@ -1,7 +1,8 @@
 ---
-status: proposed
+status: accepted
 date: 2026-05-05
-amended_by: ADR-0047
+accepted: 2026-05-16
+amended_by: [ADR-0047, ADR-0050, ADR-0051]
 ---
 
 # ADR-0042: Universal Secrets Strategy — age envelope + Argon2id-passphrase + OS keychain cache
@@ -375,6 +376,52 @@ This ADR ships `proposed`. Promotion to `accepted` requires all of:
 If any of (1)–(5) is unmet at promotion time, this ADR stays
 `proposed` and the maintainer must address the gap or fold it into a
 follow-up ADR before promoting.
+
+## Promotion Audit (2026-05-16)
+
+**Decision: promoted to `accepted`.**
+
+All five verification gates above are closed, and three subsequent
+amendment ADRs (0047, 0050, 0051) refine — but do not override — the
+foundational direction of this ADR:
+
+- **Gate 1 (ADR-0043 coherence).** ADR-0043 landed as `proposed` and
+  preserves "Worker never sees plaintext or KEK" as a load-bearing
+  property of its Tier 1–4 design. Tier 3/4 PAT encryption shares the
+  passphrase-derived-KEK primitive declared here. No drift.
+- **Gate 2 (keyring audit).** Closed inline above (2026-05-05):
+  `cross-keychain` v1.1.0 accepted; FFI fallback deferred.
+- **Gate 3 (migration plan).** Closed inline above (2026-05-05):
+  `am secrets migrate` shipped, round-trip tests pass,
+  `AesGcmLegacyBackend` retains v1 readability for one minor version.
+- **Gate 4 (SECURITY.md threat-model statement).** Present in
+  `SECURITY.md` §1 ("Secret-at-Rest Compromise"): age envelope,
+  Argon2id KEK derivation, explicit out-of-scope statement for
+  filenames / variable names / commit history.
+- **Gate 5 (`am pair` surface).** Closed by
+  [ADR-0047](0047-am-pair-cross-device-key-handoff.md) (`accepted`
+  2026-05-05), which replaces the sketched token flow with a
+  git-native rendezvous (`am pair accept` / `am pair finalize`).
+
+**Amendments confirm direction held.**
+
+- [ADR-0047](0047-am-pair-cross-device-key-handoff.md) — refines
+  gate 5; keeps per-machine identities + recipient-list semantics.
+- [ADR-0050](0050-browser-secret-decryption-bundle.md) — ratifies
+  the §"Web UI: browser as pseudo-machine" decrypt path with a
+  concrete Phase-1 bundle (`age-encryption@^0.3.0`, scrypt-only).
+  Defers Argon2id-WASM + WebAuthn PRF to Phase 2/3 but does not
+  contradict the foundational design — those primitives remain on
+  the roadmap exactly as ADR-0042 anticipated.
+- [ADR-0051](0051-secrets-rotation-grace-period.md) — splits this
+  ADR's sketched `am secrets rotate` into four lifecycle verbs
+  (`rewrap` / `rotate` / `rotate --finalize` / `revoke`). The
+  age-recipient model is unchanged; the verb surface is sharper.
+
+No amendment overrides this ADR's `## Decision`. The `enc:v2:age:`
+wire format, per-machine identity model, OS-keychain caching tier,
+and `.am-secrets.toml` backend selector all stand verbatim. Promotion
+is therefore evidentially supported, not a rationalization.
 
 ## References
 

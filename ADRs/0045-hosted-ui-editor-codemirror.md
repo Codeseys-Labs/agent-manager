@@ -2,6 +2,7 @@
 status: proposed
 date: 2026-05-05
 amends: ADR-0043
+amended_by: [ADR-0049]
 ---
 
 # ADR-0045: Hosted UI Editor — CodeMirror 6 Default, Monaco Optional for Local
@@ -133,6 +134,51 @@ ADR-0043 §2 (auth tiers) and §3 (transport) are unchanged.
 4. **`am serve` Monaco opt-in path tested** — config switch loads
    Monaco lazily; default remains CM6.
 5. **ADR-0043 updated** to reference this ADR for the editor choice.
+
+## Promotion Audit (2026-05-16)
+
+**Decision: stays `proposed`.**
+
+[ADR-0049](0049-hosted-ui-editor-cm6-implementation.md) (`accepted`
+2026-05-05) ratifies the hosted-UI implementation mechanics (language
+pack, mount route, lint Web Worker, SRI/CSP headers) and confirms the
+CM6-over-Monaco direction. It does not, however, close every
+verification gate this ADR set.
+
+**Unmet verification gates:**
+
+- **Gate 4 (`am serve` Monaco opt-in path).** ADR-0049 is scoped
+  exclusively to the Cloudflare Worker hosted UI; it does not cover
+  `am serve` (the local Hono surface). The `settings.serve.editor =
+  "monaco"` opt-in path described in this ADR §2 has no
+  implementation plan, no test, and no acceptance ADR. Until either
+  (a) that opt-in is implemented and tested, or (b) a follow-up ADR
+  retracts the local-Monaco escape hatch and consolidates on CM6
+  everywhere, this gate is open.
+- **Gate 5 (ADR-0043 updated to reference this ADR).** Inspection of
+  ADR-0043's References section shows no link to ADR-0045. The
+  cross-reference is one-way (this ADR → 0043) but not the reciprocal
+  edit ADR-0045 §4 promised. A clerical fix on ADR-0043's body would
+  close it; we are not making that edit in this audit because
+  ADR-0043 is out of file scope and is itself staying `proposed`.
+
+Gates 1–3 are addressed by ADR-0049 (bundle ≤ 300 KB enforced in CI,
+language-pack provenance handled by `@codemirror/legacy-modes/mode/toml`
+first-party, schema-via-Web-Worker integration tested at
+`test/web/lint-worker.test.ts`).
+
+**What would close this ADR:**
+
+Either retract the `am serve` Monaco opt-in (simplest: make this ADR
+hosted-only and let `am serve` inherit the same CM6 surface unchanged
+— ADR-0049 already covers that case), OR ship the opt-in with a
+test. Plus the one-line cross-link in ADR-0043's References. Both
+deliverables are small; this is a "next pass" ADR, not a structural
+re-evaluation.
+
+**Tracking:** no seeds task currently filed; recommend opening one
+under domain `docs` or `web` to capture the opt-in decision before
+attempting promotion.
 
 ## References
 

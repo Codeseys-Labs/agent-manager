@@ -2,7 +2,7 @@
 status: proposed
 date: 2026-05-05
 amends: ADR-0025
-amended_by: ADR-0048
+amended_by: [ADR-0048, ADR-0050]
 ---
 
 # ADR-0043: Hosted UI Auth + Git Backend Tiers
@@ -308,6 +308,50 @@ the following, explicitly checked off on the promotion PR:
 
 Until all five gates hold, Tier 1a (GitHub App) may be prototyped
 behind a feature flag but no tier may be enabled by default.
+
+## Promotion Audit (2026-05-16)
+
+**Decision: stays `proposed`.**
+
+ADR-0048 (`accepted` 2026-05-05) implements Phase 1 of this ADR
+(GitHub App + GitLab OAuth2/PKCE) but explicitly defers the bulk of
+the verification gates above to later phases. ADR-0050 (`accepted`
+2026-05-05) ratifies the browser-decrypt path that this ADR's Tier
+3/4 PAT-encryption story shares with ADR-0042. Together those two
+amendments are *necessary* but not yet *sufficient* for promotion.
+
+**Unmet verification gates:**
+
+- **Gate 3 (CORS proxy origin/ACL spec).** Not written. ADR-0048
+  defers Tier 4 (generic HTTPS git via isomorphic-git) to Phase 3
+  alongside Codeberg / Gitea / Forgejo. Until the proxy spec ships
+  and is reviewed for open-proxy abuse, Tier 4 is unbuilt and gate 3
+  is open.
+- **Gate 4 (Tier 5 SSH banner copy reviewed).** No record of UX-owner
+  sign-off on the banner phrasing. Tier 5 is "block honestly" — the
+  exact copy is the ship-able artifact.
+- **Gate 2 (refresh-token rotation race tested).** ADR-0048 §"GitLab
+  refresh-token rotation" describes the optimistic strategy but
+  notes the concurrent-request race remains an implementation TODO;
+  the integration test is not yet on the branch.
+
+Gates 1 (GitHub App manifest + security review) and 5 (ADR-0042
+landed) are satisfied: ADR-0048 ratifies the App manifest and ADR-0042
+was promoted in this same audit.
+
+**What would close this ADR:**
+
+A follow-up ADR (or an explicit Phase-3 implementation plan, mirroring
+the ADR-0048-for-Phase-1 pattern) covering Codeberg / Gitea / Forgejo
+OAuth + Tier 4 iso-git + the CORS proxy spec. Once that lands as
+`accepted` and the SSH banner copy is reviewed, ADR-0043 can be
+promoted in a single follow-up audit.
+
+**Tracking:** the gap is implicit in ADR-0048's "Phase 3 deferred"
+scope; no separate seeds task has been opened for the missing
+deliverables. Maintainers should file one before starting Phase 3
+work so the deferral is durable rather than load-bearing on this
+audit note.
 
 ## References
 
