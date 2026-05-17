@@ -14,6 +14,7 @@ import { detect } from "./detect.ts";
 import { diffConfig } from "./diff.ts";
 import { exportConfig } from "./export.ts";
 import { importConfig } from "./import.ts";
+import { createWindsurfSessionReader } from "./session.ts";
 
 const CAPABILITIES: Capability[] = ["mcp", "instructions", "skills", "marketplace"];
 
@@ -44,4 +45,6 @@ export const windsurfAdapter: Adapter = {
   scanMarketplace(): MarketplaceResult {
     return scanVSCodeExtensions("windsurf");
   },
+
+  sessionReader: createWindsurfSessionReader(),
 };
