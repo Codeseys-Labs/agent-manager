@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { join } from "node:path";
 import {
   getExtensionsDir,
@@ -52,6 +52,64 @@ describe("getExtensionsDir()", () => {
 
   test("returns undefined for unknown adapter", () => {
     expect(getExtensionsDir("unknown-tool", "/home/user")).toBeUndefined();
+  });
+});
+
+describe("getExtensionsDir() on win32", () => {
+  const originalPlatform = process.platform;
+  const originalAppData = process.env.APPDATA;
+
+  beforeEach(() => {
+    Object.defineProperty(process, "platform", { value: "win32", configurable: true });
+  });
+
+  afterEach(() => {
+    Object.defineProperty(process, "platform", { value: originalPlatform, configurable: true });
+    if (originalAppData === undefined) {
+      // biome-ignore lint/performance/noDelete: env var cleanup
+      delete process.env.APPDATA;
+    } else {
+      process.env.APPDATA = originalAppData;
+    }
+  });
+
+  test("copilot returns AppData path with explicit APPDATA", () => {
+    process.env.APPDATA = "C:\\Users\\test\\AppData\\Roaming";
+    const dir = getExtensionsDir("copilot", "C:\\Users\\test");
+    expect(dir).toBe(join("C:\\Users\\test\\AppData\\Roaming", "Code", "User", "extensions"));
+  });
+
+  test("cursor returns AppData path", () => {
+    process.env.APPDATA = "C:\\Users\\test\\AppData\\Roaming";
+    const dir = getExtensionsDir("cursor", "C:\\Users\\test");
+    expect(dir).toContain("Cursor");
+    expect(dir).toContain("extensions");
+  });
+
+  test("kiro returns AppData path", () => {
+    process.env.APPDATA = "C:\\Users\\test\\AppData\\Roaming";
+    const dir = getExtensionsDir("kiro", "C:\\Users\\test");
+    expect(dir).toContain("Kiro");
+    expect(dir).toContain("extensions");
+  });
+
+  test("windsurf returns AppData path", () => {
+    process.env.APPDATA = "C:\\Users\\test\\AppData\\Roaming";
+    const dir = getExtensionsDir("windsurf", "C:\\Users\\test");
+    expect(dir).toContain("Windsurf");
+    expect(dir).toContain("extensions");
+  });
+
+  test("falls back to <home>/AppData/Roaming when APPDATA unset", () => {
+    // biome-ignore lint/performance/noDelete: env var cleanup
+    delete process.env.APPDATA;
+    const dir = getExtensionsDir("copilot", "/tmp/userhome");
+    // path.join is platform-native; on linux test runner / will be the sep,
+    // so just assert key segments are present.
+    expect(dir).toContain("AppData");
+    expect(dir).toContain("Roaming");
+    expect(dir).toContain("Code");
+    expect(dir).toContain("extensions");
   });
 });
 
