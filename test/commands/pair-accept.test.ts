@@ -14,7 +14,7 @@
  */
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { readFile, readdir } from "node:fs/promises";
+import { mkdir, readFile, readdir, symlink } from "node:fs/promises";
 import { join } from "node:path";
 import * as TOML from "@iarna/toml";
 import { pairAcceptCommand } from "../../src/commands/pair-accept";
@@ -336,6 +336,81 @@ describe("ADR-0047 `am pair accept` — Wave T T1", () => {
     const raw = await readFile(secretsTomlPath, "utf-8");
     const parsed = TOML.parse(raw) as { age?: { recipients?: string[] } };
     expect(parsed.age?.recipients).toEqual(["recipients/laptop-2.pub", "recipients/desktop-3.pub"]);
+  });
+
+  // ADR-0047 §"Collision handling" (lines 108-113) — the ADR describes
+  // an auto-suffix path (e.g. `laptop-a3f9`) for the case where two
+  // laptops both attempt to register the same name. The current
+  // implementation in src/commands/pair-accept.ts:132-138 instead
+  // hard-rejects with PAIR_ACCEPT_DUPLICATE_NAME pointing at --force.
+  // The auto-suffix behaviour is future work; this test pins the
+  // current rejection contract end-to-end with TWO distinct identity
+  // directories (simulating two physical laptops sharing one config
+  // repo / recipients/ dir) and asserts the second invocation does
+  // NOT clobber the first laptop's .pub file or the .am-secrets.toml
+  // [age].recipients entry, and does NOT mint a second identity.
+  test("two laptops with the same name — second is rejected without clobbering the first's .pub or .am-secrets.toml", async () => {
+    // Laptop 1: existing fixture identity dir (already wired by
+    // beforeEach into AM_AGE_IDENTITY_DIR).
+    const laptop2IdentityDir = join(fx.dir.path, "identities-laptop-2");
+    const laptop2IdentityPath = join(laptop2IdentityDir, "identity.age");
+    const laptop2RecipientsDir = join(laptop2IdentityDir, "recipients");
+
+    // Pre-create laptop-2's identity dir and symlink its recipients/
+    // subdir to laptop-1's recipients/ so both "machines" observe the
+    // same shared `recipients/` (the real-world layout — the config
+    // repo holds recipients/, ADR-0047 §"Flow"). Without the symlink
+    // each identity dir gets its own private recipients/ and the
+    // collision could not occur, defeating the test's purpose.
+    await mkdir(laptop2IdentityDir, { recursive: true });
+    await mkdir(fx.recipientsDir, { recursive: true });
+    await symlink(fx.recipientsDir, laptop2RecipientsDir, "dir");
+
+    try {
+      // --- Laptop 1: succeeds. -------------------------------------
+      await invokePair({ name: "laptop", json: true });
+      expect(process.exitCode ?? 0).toBe(0);
+
+      const pubPath = join(fx.recipientsDir, "laptop.pub");
+      const firstPubBody = await readFile(pubPath, "utf-8");
+      const secretsTomlPath = join(fx.dir.path, ".am-secrets.toml");
+      const firstTomlRaw = await readFile(secretsTomlPath, "utf-8");
+      const firstParsed = TOML.parse(firstTomlRaw) as {
+        age?: { recipients?: string[] };
+      };
+      expect(firstParsed.age?.recipients).toEqual(["recipients/laptop.pub"]);
+
+      // --- Laptop 2: switch identity dir + reset capture. ----------
+      stdoutLines = [];
+      stderrLines = [];
+      process.env.AM_AGE_IDENTITY_DIR = laptop2IdentityDir;
+
+      await invokePair({ name: "laptop", json: true });
+      expect(process.exitCode).toBe(1);
+
+      const errorText = stderrLines.join("\n");
+      expect(errorText).toMatch(/already exists/i);
+      expect(errorText).toMatch(/--force/);
+
+      // Laptop 1's .pub is byte-identical (no clobber).
+      const afterPubBody = await readFile(pubPath, "utf-8");
+      expect(afterPubBody).toBe(firstPubBody);
+
+      // .am-secrets.toml [age].recipients unchanged (no duplicate, no
+      // extra entry from the rejected second invocation).
+      const afterTomlRaw = await readFile(secretsTomlPath, "utf-8");
+      const afterParsed = TOML.parse(afterTomlRaw) as {
+        age?: { recipients?: string[] };
+      };
+      expect(afterParsed.age?.recipients).toEqual(["recipients/laptop.pub"]);
+
+      // The second laptop's identity file was NOT created — the
+      // rejection happens before backend.initialize(), so no key was
+      // minted on the second machine.
+      expect(await pathExists(laptop2IdentityPath)).toBe(false);
+    } finally {
+      process.env.AM_AGE_IDENTITY_DIR = fx.identityDir;
+    }
   });
 
   // Gate 6: invalid name (contains '/' or '..') → rejected.
