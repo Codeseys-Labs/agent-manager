@@ -58,7 +58,7 @@ This folder contains the architectural decisions for agent-manager.
 | [0049](0049-hosted-ui-editor-cm6-implementation.md) | Hosted UI Editor CodeMirror 6 Implementation Plan | Accepted | 2026-05-05 |
 | [0050](0050-browser-secret-decryption-bundle.md) | Browser Secret Decryption Bundle (Synthesizes Lens H + Clarification) | Accepted | 2026-05-05 |
 | [0051](0051-secrets-rotation-grace-period.md) | Secrets Rotation + Grace Period (Synthesizes Lens I) | Accepted | 2026-05-05 |
-| [0052](0052-marketplace-v1-code-removal-target.md) | Marketplace v1 Code Removal Target | Proposed | 2026-05-16 |
+| [0052](0052-marketplace-v1-code-removal-target.md) | Marketplace v1 Code Removal Target | Accepted | 2026-05-16 |
 
 ## Template
 
