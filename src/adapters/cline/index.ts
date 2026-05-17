@@ -12,6 +12,7 @@ import { detect } from "./detect.ts";
 import { diffConfig } from "./diff.ts";
 import { exportConfig } from "./export.ts";
 import { importConfig } from "./import.ts";
+import { createClineSessionReader } from "./session.ts";
 
 const CAPABILITIES: Capability[] = ["mcp", "instructions"];
 
@@ -38,4 +39,6 @@ export const clineAdapter: Adapter = {
   diff(config: ResolvedConfig): DiffResult {
     return diffConfig(config);
   },
+
+  sessionReader: createClineSessionReader(),
 };
