@@ -1,6 +1,8 @@
 ---
-status: proposed
+status: accepted
 date: 2026-05-16
+accepted: 2026-05-17
+amends: ADR-0039
 ---
 
 # ADR-0052: Marketplace v1 Code Removal Target
@@ -43,10 +45,13 @@ The open mechanics questions this ADR resolves are:
   `am marketplace add <url>` after the removal release? Special-cased
   "this command was removed" stub, or the standard citty "unknown
   command" error?
-- **Vendored bundles.** Users who previously ran
-  `am marketplace add <url>` have orphan entries in their
-  `state.toml` / installed-plugin registry. There is no auto-migration to
-  the git-subtree path; that path is manual by ADR-0039's design.
+- **Vendored bundles.** Any developers who experimented with
+  `am marketplace add <url>` during the 0.4–0.5 development cycle may have
+  orphan entries in their `state.toml` / installed-plugin registry. The
+  product has not shipped to npm so this population is small in practice,
+  but the migration story still needs to be specified for completeness.
+  There is no auto-migration to the git-subtree path; that path is manual
+  by ADR-0039's design.
 - **Doc/README scrub.** README.md still carries a "Marketplace
   (deprecated)" section and pillar-4 retirement language pointing at
   ADR-0039. These have to come out in the same PR that removes the
@@ -77,8 +82,14 @@ removal plan:
   warning text at `src/commands/marketplace.ts:20-21` is the only
   signaling channel; **no `0.5.x` may strengthen the warning to a
   hard error** — that would be the breakage of `0.6.0` shipped under
-  a `0.5.x` patch version, which violates SemVer. One full minor of
-  warning is the standard grace period and is what we get.
+  a `0.5.x` patch version, which violates SemVer
+  ([SemVer §4](https://semver.org/#spec-item-4) — the 0.y.z
+  initial-development clause permits any change in a minor bump,
+  including the eventual removal in `0.6.0`, but once a deprecation
+  contract is established, strengthening it within the same minor
+  line is the breakage we are choosing not to inflict mid-grace-period).
+  One full minor of warning is the standard grace period and is what
+  we get.
 - **Single atomic deletion PR.** The removal PR deletes, in one
   commit:
   - `src/commands/marketplace.ts`
@@ -107,28 +118,28 @@ removal plan:
   removed this and now also have to maintain the removal stub" is
   exactly the kind of vestigial surface the deletion was meant to
   eliminate.
-- **Vendored bundles: manual migration only.** Users with orphan
-  entries in `state.toml` / installed-plugin registry from prior
-  `am marketplace add <url>` runs are not auto-migrated. Per
-  ADR-0039, the supported path is `git subtree add` (or
-  `git submodule`) plus `am import`, both of which are manual by
-  design. This is a one-time user-facing break; the `0.6.0` release
-  notes MUST call it out explicitly with a pointer to ADR-0039 for
-  the migration recipe and to this ADR for the removal commitment.
+- **Vendored bundles: manual migration only.** Any developers with
+  orphan entries in `state.toml` / installed-plugin registry from
+  experimental `am marketplace add <url>` runs during the 0.4–0.5
+  cycle are not auto-migrated. Per ADR-0039, the supported path is
+  `git subtree add` (or `git submodule`) plus `am import`, both of
+  which are manual by design. This is a one-time user-facing break;
+  the `0.6.0` release notes MUST call it out explicitly with a
+  pointer to ADR-0039 for the migration recipe and to this ADR for
+  the removal commitment.
 - **Doc/README scrub.** The same removal PR deletes the README's
-  "Marketplace (deprecated)" section (currently around lines
-  710–720) and the pillar-4 retirement language at lines ~49–50 and
-  ~171–172 of README.md. The only post-removal mention of the
-  marketplace lives in CHANGELOG.md as a single line:
+  §Marketplace (deprecated) section and the pillar-4 retirement
+  language wherever it appears in README.md (the §The six pillars
+  list and the §Bundles from git section). The only post-removal
+  mention of the marketplace lives in CHANGELOG.md as a single line:
   `(removed in 0.6.0; see ADR-0039 / ADR-0052)`. AGENTS.md, having
   already had its marketplace marketing scrubbed under ADR-0039 gate
   3, requires no further edit.
 
-This ADR is `status: proposed` because committing to a SemVer
-breaking change requires maintainer sign-off, even when the
-underlying retirement decision (ADR-0039) is already accepted.
-Promote to `accepted` once a maintainer signs off and the `0.6.0`
-release-engineering checklist is ready to absorb the deletion PR.
+This ADR was promoted to `accepted` on 2026-05-17 after maintainer
+sign-off and adversarial review (4 defects fixed). The `0.6.0`
+release-engineering checklist will absorb the deletion PR per the
+plan above.
 
 ## Consequences
 
