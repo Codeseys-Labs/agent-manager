@@ -12,6 +12,7 @@ import { detect } from "./detect.ts";
 import { diffConfig } from "./diff.ts";
 import { exportConfig } from "./export.ts";
 import { importConfig } from "./import.ts";
+import { createRooCodeSessionReader } from "./session.ts";
 
 const CAPABILITIES: Capability[] = ["mcp", "instructions", "modes"];
 
@@ -38,4 +39,6 @@ export const rooCodeAdapter: Adapter = {
   diff(config: ResolvedConfig): DiffResult {
     return diffConfig(config);
   },
+
+  sessionReader: createRooCodeSessionReader(),
 };
