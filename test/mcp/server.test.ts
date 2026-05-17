@@ -740,7 +740,7 @@ describe("MCP server", () => {
     const content = JSON.parse(result.content[0].text);
     expect(Array.isArray(content.sessions)).toBe(true);
     expect(typeof content.total).toBe("number");
-    expect(content.total).toBe(0); // gemini-cli has no session reader
+    expect(content.total).toBe(0); // gemini-cli has no sessions in test env
   });
 
   test("am_session_list with adapter that has no sessions returns empty", async () => {
@@ -769,7 +769,7 @@ describe("MCP server", () => {
       method: "tools/call",
       params: {
         name: "am_session_export",
-        arguments: { id: "nonexistent", adapter: "gemini-cli" },
+        arguments: { id: "nonexistent", adapter: "forgecode" },
       },
     });
 
@@ -818,7 +818,7 @@ describe("MCP server", () => {
 
   test("am_session_search with adapter filter returns results structure", async () => {
     const server = new McpServer({ auth: { token: undefined, allowUnsafeLocal: true } });
-    // Use gemini-cli — no session reader, returns empty quickly
+    // Use gemini-cli — empty session storage in test env, returns empty quickly
     const resp = await server.handleRequest({
       jsonrpc: "2.0",
       id: 25,
