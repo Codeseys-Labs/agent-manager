@@ -50,6 +50,8 @@ describe("am pair: router registration", () => {
     expect(resolved.args).toBeDefined();
     expect(resolved.args.name).toBeDefined();
     expect(resolved.args.name.type).toBe("positional");
-    expect(resolved.args.name.required).toBe(true);
+    // expansion_reason: ADR-0047 DWL-T4 #2 makes <name> optional so
+    // `am pair finalize` (no arg) can autodetect uncovered recipients.
+    expect(resolved.args.name.required).toBe(false);
   });
 });

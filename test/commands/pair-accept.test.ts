@@ -16,6 +16,7 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { readFile, readdir } from "node:fs/promises";
 import { join } from "node:path";
+import * as TOML from "@iarna/toml";
 import { pairAcceptCommand } from "../../src/commands/pair-accept";
 import { isDryRunEnvelope } from "../../src/lib/dry-run-envelope";
 import { type TestDir, createTestDir } from "../helpers/tmp";
@@ -270,6 +271,71 @@ describe("ADR-0047 `am pair accept` — Wave T T1", () => {
     expect(explanation.name).toBe("laptop-2");
     expect(explanation.identityExisted).toBe(false);
     expect(explanation.pubExisted).toBe(false);
+  });
+
+  // ADR-0047 DWL-T4 #1 — `[age].recipients` TOML round-trip.
+  test("appends recipients/<name>.pub to .am-secrets.toml [age].recipients", async () => {
+    await invokePair({ name: "laptop-2", json: true });
+    expect(process.exitCode ?? 0).toBe(0);
+
+    const secretsTomlPath = join(fx.dir.path, ".am-secrets.toml");
+    const raw = await readFile(secretsTomlPath, "utf-8");
+    const parsed = TOML.parse(raw) as {
+      age?: { recipients?: unknown };
+    };
+    expect(Array.isArray(parsed.age?.recipients)).toBe(true);
+    expect(parsed.age?.recipients).toEqual(["recipients/laptop-2.pub"]);
+
+    const payload = jsonFromStdout();
+    expect(payload.secretsTomlPath).toBe(secretsTomlPath);
+    expect(payload.secretsTomlChanged).toBe(true);
+    expect(payload.recipientRelPath).toBe("recipients/laptop-2.pub");
+  });
+
+  test("--force re-accept does NOT duplicate the .am-secrets.toml entry", async () => {
+    await invokePair({ name: "laptop-2", json: true });
+    expect(process.exitCode ?? 0).toBe(0);
+    stdoutLines = [];
+    stderrLines = [];
+
+    await invokePair({ name: "laptop-2", force: true, json: true });
+    expect(process.exitCode ?? 0).toBe(0);
+
+    const secretsTomlPath = join(fx.dir.path, ".am-secrets.toml");
+    const raw = await readFile(secretsTomlPath, "utf-8");
+    const parsed = TOML.parse(raw) as { age?: { recipients?: string[] } };
+    expect(parsed.age?.recipients).toEqual(["recipients/laptop-2.pub"]);
+
+    const payload = jsonFromStdout();
+    expect(payload.secretsTomlChanged).toBe(false);
+  });
+
+  test("--dry-run reports the planned .am-secrets.toml append without writing it", async () => {
+    await invokePair({ name: "laptop-2", "dry-run": true, json: true });
+    expect(process.exitCode ?? 0).toBe(0);
+
+    // .am-secrets.toml must NOT exist after dry-run.
+    expect(await pathExists(join(fx.dir.path, ".am-secrets.toml"))).toBe(false);
+
+    const payload = jsonFromStdout();
+    expect(isDryRunEnvelope(payload)).toBe(true);
+    const wouldDo = payload.would_do as string[];
+    expect(wouldDo.join(" ")).toMatch(/\.am-secrets\.toml/);
+    const prevented = payload.mutations_prevented as string[];
+    expect(prevented.some((s) => s.includes(".am-secrets.toml"))).toBe(true);
+  });
+
+  test("multi-device accept appends each recipient in order", async () => {
+    await invokePair({ name: "laptop-2", json: true });
+    expect(process.exitCode ?? 0).toBe(0);
+    stdoutLines = [];
+    await invokePair({ name: "desktop-3", json: true });
+    expect(process.exitCode ?? 0).toBe(0);
+
+    const secretsTomlPath = join(fx.dir.path, ".am-secrets.toml");
+    const raw = await readFile(secretsTomlPath, "utf-8");
+    const parsed = TOML.parse(raw) as { age?: { recipients?: string[] } };
+    expect(parsed.age?.recipients).toEqual(["recipients/laptop-2.pub", "recipients/desktop-3.pub"]);
   });
 
   // Gate 6: invalid name (contains '/' or '..') → rejected.

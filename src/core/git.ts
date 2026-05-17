@@ -89,6 +89,50 @@ export async function pull(dir: string, remote = "origin", branch?: string): Pro
   });
 }
 
+/**
+ * Outcome of `bestEffortPull` — used by `am pair finalize` (autodetect)
+ * to mirror the dispatch's "requires git pull integration" gate
+ * without making a transient network failure fatal.
+ */
+export type BestEffortPullResult =
+  | { kind: "no-repo" }
+  | { kind: "no-remote" }
+  | { kind: "ok" }
+  | { kind: "failed"; message: string };
+
+/**
+ * Best-effort `git pull` against `origin/<currentBranch>`. Designed for
+ * advisory pulls (e.g. before scanning `recipients/*.pub`) where:
+ *   - no git repo at `dir` → silent skip
+ *   - no remote configured → silent skip
+ *   - pull failure (network, auth, conflict) → caller reports a warning
+ *     and continues with local-only state
+ *
+ * Never throws; returns a discriminated result so the caller can decide
+ * how to surface each outcome.
+ */
+export async function bestEffortPull(
+  dir: string,
+  remote = "origin",
+): Promise<BestEffortPullResult> {
+  let remotes: Awaited<ReturnType<typeof git.listRemotes>>;
+  try {
+    remotes = await git.listRemotes({ fs, dir });
+  } catch {
+    return { kind: "no-repo" };
+  }
+  if (!remotes.some((r) => r.remote === remote)) {
+    return { kind: "no-remote" };
+  }
+  try {
+    await pull(dir, remote);
+    return { kind: "ok" };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    return { kind: "failed", message };
+  }
+}
+
 export interface LogEntry {
   oid: string;
   message: string;
