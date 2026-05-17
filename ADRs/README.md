@@ -48,7 +48,7 @@ This folder contains the architectural decisions for agent-manager.
 | [0039](0039-marketplace-v1-scope-decision.md) | Marketplace v1 Scope Decision — Retire pillar 4 in favor of MCP Registry + git-subtree bundles | Accepted | 2026-05-05 |
 | [0040](0040-controller-scope-and-concurrency.md) | Controller Scope & Concurrency Model (`withConfig` + AsyncMutex) | Accepted | 2026-05-05 |
 | [0041](0041-adr-0007-phase-2-deferred.md) | ADR-0007 Phase 2 Resolution — Delete the Adapter Schema Field | Accepted | 2026-05-05 |
-| [0042](0042-universal-secrets-strategy.md) | Universal Secrets Strategy — age envelope + Argon2id-passphrase + OS keychain cache | Proposed | 2026-05-05 |
+| [0042](0042-universal-secrets-strategy.md) | Universal Secrets Strategy — age envelope + Argon2id-passphrase + OS keychain cache | Accepted | 2026-05-05 |
 | [0043](0043-hosted-ui-auth-and-git-backend-tiers.md) | Hosted UI Auth + Git Backend Tiers | Proposed | 2026-05-05 |
 | [0044](0044-wiki-two-tier-copy-materialisation.md) | Wiki Two-Tier Materialisation — Copy Over Symlink, Project-Level + Global Store | Accepted | 2026-05-05 |
 | [0045](0045-hosted-ui-editor-codemirror.md) | Hosted UI Editor — CodeMirror 6 Default, Monaco Optional for Local | Proposed | 2026-05-05 |
