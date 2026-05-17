@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { defineCommand } from "citty";
 import { ZodError } from "zod";
 import { getAdapter, listAdapters } from "../adapters/registry";
+import { getBackupStats } from "../core/apply-backup";
 import { resolveConfigDir, resolveProjectConfig, tryReadConfig } from "../core/config";
 import { getStatus } from "../core/git";
 import { scanConfigForSecrets } from "../core/secret-detection";
@@ -31,6 +32,17 @@ export const TEAM_PASSPHRASE_CONFIG_PATTERNS = [
 
 export function hasLegacyTeamPassphraseConfig(raw: string): boolean {
   return TEAM_PASSPHRASE_CONFIG_PATTERNS.some((pattern) => pattern.test(raw));
+}
+
+/**
+ * Render a byte count as a short human-readable string. Base-1000 (not
+ * 1024) so test fixtures land on round values without floating-point
+ * drift in expectations.
+ */
+function formatBytes(bytes: number): string {
+  if (bytes < 1000) return `${bytes} B`;
+  if (bytes < 1000 * 1000) return `${(bytes / 1000).toFixed(1)} KB`;
+  return `${(bytes / (1000 * 1000)).toFixed(1)} MB`;
 }
 
 export const doctorCommand = defineCommand({
@@ -329,6 +341,42 @@ export const doctorCommand = defineCommand({
         message:
           "betterleaks not installed (run `am secret install-scanner` for enhanced scanning)",
       });
+    }
+
+    // 11. Apply backups (AM_APPLY_BACKUP) — surface state + size warning.
+    const backupEnv = process.env.AM_APPLY_BACKUP;
+    const backupEnabled = backupEnv === "1" || backupEnv === "true";
+    if (!backupEnabled) {
+      checks.push({
+        name: "Apply backups",
+        status: "ok",
+        message: "Disabled (set AM_APPLY_BACKUP=1 to enable)",
+      });
+    } else {
+      try {
+        const stats = await getBackupStats();
+        if (stats.totalBackups === 0) {
+          checks.push({ name: "Apply backups", status: "ok", message: "Enabled, no backups yet" });
+        } else {
+          const sizeText = formatBytes(stats.totalBytes);
+          const base = `${stats.targets} target(s), ${stats.totalBackups} backup(s), ${sizeText}`;
+          if (stats.totalBytes > 100 * 1024 * 1024) {
+            checks.push({
+              name: "Apply backups",
+              status: "warn",
+              message: `${base} — consider pruning`,
+            });
+          } else {
+            checks.push({ name: "Apply backups", status: "ok", message: base });
+          }
+        }
+      } catch (err) {
+        checks.push({
+          name: "Apply backups",
+          status: "warn",
+          message: `Could not read backup stats: ${errorMessage(err)}`,
+        });
+      }
     }
 
     // Output

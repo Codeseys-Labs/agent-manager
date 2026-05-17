@@ -1,9 +1,21 @@
 import { defineCommand } from "citty";
+import { pruneBackups } from "../core/apply-backup";
 import { resolveConfigDir } from "../core/config";
 import { type ApplyResolvedResult, applyResolved } from "../core/controller";
 import type { DryRunEnvelope } from "../lib/dry-run-envelope";
-import { AmError } from "../lib/errors";
+import { AmError, errorMessage } from "../lib/errors";
 import { amError, info, output, warn } from "../lib/output";
+
+/**
+ * Render a byte count as a short human-readable string (base-1000).
+ * Mirrors the helper in doctor.ts; kept inline so apply.ts has no
+ * cross-command import.
+ */
+function formatBytes(bytes: number): string {
+  if (bytes < 1000) return `${bytes} B`;
+  if (bytes < 1000 * 1000) return `${(bytes / 1000).toFixed(1)} KB`;
+  return `${(bytes / (1000 * 1000)).toFixed(1)} MB`;
+}
 
 /**
  * ADR-0038 explanation payload emitted by `am apply --dry-run --json`.
@@ -134,6 +146,28 @@ export const applyCommand = defineCommand({
         process.exitCode = 1;
       } else {
         info(`Applied to ${applyResult.succeeded.length} of ${total} adapters.`, opts);
+      }
+
+      // Proactive backup prune (DWL-T9): after a clean live apply with
+      // backups enabled, sweep stale .bak files so disk usage doesn't
+      // grow unbounded. Best-effort: never let a prune failure mask a
+      // successful apply.
+      if (
+        !args["dry-run"] &&
+        applyResult.failed.length === 0 &&
+        (process.env.AM_APPLY_BACKUP === "1" || process.env.AM_APPLY_BACKUP === "true")
+      ) {
+        try {
+          const pruneResult = await pruneBackups();
+          if (pruneResult.removed > 0 && !args.json) {
+            info(
+              `Pruned ${pruneResult.removed} old backup(s), freed ${formatBytes(pruneResult.freedBytes)}.`,
+              opts,
+            );
+          }
+        } catch (err) {
+          warn(`Backup prune failed: ${errorMessage(err)}`, opts);
+        }
       }
 
       if (args.json) {
