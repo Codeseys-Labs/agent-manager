@@ -14,6 +14,7 @@ import { detect } from "./detect.ts";
 import { diffConfig } from "./diff.ts";
 import { exportConfig } from "./export.ts";
 import { importConfig } from "./import.ts";
+import { createCopilotSessionReader } from "./session.ts";
 
 const CAPABILITIES: Capability[] = ["mcp", "instructions", "marketplace"];
 
@@ -40,6 +41,8 @@ export const copilotAdapter: Adapter = {
   diff(config: ResolvedConfig): DiffResult {
     return diffConfig(config);
   },
+
+  sessionReader: createCopilotSessionReader(),
 
   scanMarketplace(): MarketplaceResult {
     return scanVSCodeExtensions("copilot");
