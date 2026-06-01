@@ -35,21 +35,34 @@ describe("secret pipeline integration", () => {
   let keyDir: TestDir;
   const origKeyPath = process.env.AM_KEY_PATH;
 
+  const origAgeIdentityDir = process.env.AM_AGE_IDENTITY_DIR;
+  const origAgePassphrase = process.env.AM_AGE_PASSPHRASE;
+
   beforeEach(async () => {
     dir = await createTestDir("am-secret-pipeline-");
     keyDir = await createTestDir("am-secret-pipeline-keydir-");
     // Redirect master-key storage so tests never touch ~/.
     process.env.AM_KEY_PATH = join(keyDir.path, "key");
+    // RC7 (xplat): isolate the age backend from process/OS-keychain state. bun
+    // runs all test files in one process, and on Windows the age backend caches
+    // a passphrase via the OS Credential Manager — a prior secrets/pair test can
+    // leave state that lets default-backend resolution behave differently here,
+    // breaking the "v2/unknown FAIL LOUD" assertion. Pin a fresh identity dir and
+    // clear the passphrase so the fail-loud path is exercised hermetically.
+    process.env.AM_AGE_IDENTITY_DIR = join(keyDir.path, "age-identities");
+    Reflect.deleteProperty(process.env, "AM_AGE_PASSPHRASE");
   });
 
   afterEach(async () => {
     if (dir) await dir.cleanup();
     if (keyDir) await keyDir.cleanup();
-    if (origKeyPath === undefined) {
-      process.env.AM_KEY_PATH = undefined;
-    } else {
-      process.env.AM_KEY_PATH = origKeyPath;
-    }
+    if (origKeyPath === undefined) Reflect.deleteProperty(process.env, "AM_KEY_PATH");
+    else process.env.AM_KEY_PATH = origKeyPath;
+    if (origAgeIdentityDir === undefined)
+      Reflect.deleteProperty(process.env, "AM_AGE_IDENTITY_DIR");
+    else process.env.AM_AGE_IDENTITY_DIR = origAgeIdentityDir;
+    if (origAgePassphrase === undefined) Reflect.deleteProperty(process.env, "AM_AGE_PASSPHRASE");
+    else process.env.AM_AGE_PASSPHRASE = origAgePassphrase;
   });
 
   // ── Test 1: Import with auto-encrypt ──────────────────────────
