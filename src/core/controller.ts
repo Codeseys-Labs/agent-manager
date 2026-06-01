@@ -281,11 +281,11 @@ export async function applyResolved(
       const serverWord = serverCount === 1 ? "server" : "servers";
       const toolWord = adapters.length === 1 ? "tool" : "tools";
       const notice = `applying all ${serverCount} ${serverWord} to ${adapters.length} ${toolWord} — define a profile to scope this`;
+      // Advisory only. The controller is I/O-free by design (ADR-0040) — it
+      // RETURNS notices in ApplyResolvedResult.notices; each caller decides how
+      // to surface them (the CLI renders them via info(); MCP/web can merge them
+      // into their JSON payloads or ignore them). No direct process I/O here.
       notices.push(notice);
-      // Write to stderr (not stdout) so the advisory never pollutes the MCP
-      // stdio JSON-RPC stream or the web JSON payload. Mirrors the
-      // stderr-only deprecation notices in src/mcp/server.ts.
-      process.stderr.write(`info: ${notice}\n`);
     }
 
     const results: ApplyAdapterResult[] = [];
