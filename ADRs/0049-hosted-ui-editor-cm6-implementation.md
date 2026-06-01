@@ -1,5 +1,6 @@
 ---
-status: accepted
+status: proposed
+note: plan-only, code not yet landed
 date: 2026-05-05
 accepted: 2026-05-05
 amends: ADR-0045

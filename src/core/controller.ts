@@ -193,6 +193,14 @@ export interface ApplyResolvedResult {
   succeeded: string[];
   failed: Array<{ adapter: string; error: string }>;
   skipped: string[];
+  /**
+   * Advisory, non-error notices surfaced by the apply pipeline. Currently
+   * carries the default-passthrough signpost (P1-H): when no profile scopes
+   * the catalog, the ENTIRE catalog fans out to every detected tool. Machine
+   * callers (MCP / web) can merge these into their own response; the CLI
+   * renders them at info level.
+   */
+  notices: string[];
 }
 
 /**
@@ -230,6 +238,17 @@ export async function applyResolved(
     });
     const resolved = buildResolvedConfig(interpolated, profileName, configDir);
 
+    // P1-H default-passthrough signpost. `buildResolvedConfig` only filters
+    // the catalog when a matching `[profiles.<name>]` exists; otherwise the
+    // resolved config is the ENTIRE catalog (the fail-open "default"
+    // passthrough — controller resolves to "default" when no profile is set,
+    // and config.ts applies no filtering for a non-existent profile). When
+    // that happens we have no idea the user *meant* to scope, so we add an
+    // advisory notice telling them how many servers fan out to how many
+    // tools and how to narrow it. This stays advisory (no exit code change).
+    const notices: string[] = [];
+    const profileScoped = interpolated.profiles?.[profileName] !== undefined;
+
     // Issue #3 URL-credential guard: scan the post-interpolation resolved
     // config for credential-bearing query params before any adapter.export
     // writes to disk. `interpolateEnvAsync` has already expanded `${VAR}`
@@ -252,6 +271,21 @@ export async function applyResolved(
       adapters = [adapter];
     } else {
       adapters = await getDetectedAdapters();
+    }
+
+    // Emit the P1-H signpost only when the catalog is unscoped AND there is
+    // something to fan out (servers × tools). A scoped profile, an empty
+    // catalog, or zero detected tools all make the notice noise.
+    const serverCount = Object.keys(resolved.servers ?? {}).length;
+    if (!profileScoped && serverCount > 0 && adapters.length > 0) {
+      const serverWord = serverCount === 1 ? "server" : "servers";
+      const toolWord = adapters.length === 1 ? "tool" : "tools";
+      const notice = `applying all ${serverCount} ${serverWord} to ${adapters.length} ${toolWord} — define a profile to scope this`;
+      notices.push(notice);
+      // Write to stderr (not stdout) so the advisory never pollutes the MCP
+      // stdio JSON-RPC stream or the web JSON payload. Mirrors the
+      // stderr-only deprecation notices in src/mcp/server.ts.
+      process.stderr.write(`info: ${notice}\n`);
     }
 
     const results: ApplyAdapterResult[] = [];
@@ -338,6 +372,7 @@ export async function applyResolved(
       succeeded,
       failed,
       skipped,
+      notices,
     };
   });
 }

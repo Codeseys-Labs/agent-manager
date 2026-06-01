@@ -70,6 +70,8 @@ export const COMMAND_GROUPS: ReadonlyArray<{
       ["adapter", "Manage IDE adapters"],
       ["doctor", "Health check"],
       ["secret", "Manage secrets and encryption"],
+      ["secrets", "Backend-level secrets ops (migrate, rewrap, rotate, revoke)"],
+      ["pair", "Cross-device key handoff (ADR-0047)"],
       ["session", "Browse coding sessions"],
       ["version", "Show version"],
     ],
@@ -78,6 +80,7 @@ export const COMMAND_GROUPS: ReadonlyArray<{
     heading: "Interface commands",
     commands: [
       ["mcp-serve", "Start MCP server"],
+      ["mcp-superset", "Enforce project .mcp.json is a superset of global config"],
       ["tui", "Terminal dashboard"],
       ["serve", "Start web server"],
       ["completion", "Generate shell completions"],
