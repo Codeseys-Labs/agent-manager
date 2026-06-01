@@ -9,7 +9,14 @@ import {
   resolveVSCodeUserMcpJson,
   resolveVSCodeUserSettings,
 } from "@/adapters/shared/vscode-paths.ts";
+import { toPosix } from "../../helpers/path.ts";
 import { type TestDir, createTestDir } from "../../helpers/tmp.ts";
+
+// The helper branches on process.platform for the path LAYOUT, but node:path
+// `join` always emits the HOST OS separator. So when these simulated
+// darwin/linux cases run on the Windows CI runner, join() yields backslashes
+// and a literal "/"-string assertion would mismatch. Normalize both sides with
+// toPosix() so the assertions test the path STRUCTURE, not the host separator.
 
 /**
  * Unit tests for the shared VS Code paths helper.
@@ -60,16 +67,18 @@ describe("VS Code paths helper", () => {
       setPlatform("darwin");
       const home = "/Users/alice";
       const stable = resolveVSCodeUserDir({ displayName: "VS Code", dirName: "Code" }, home);
-      expect(stable).toBe("/Users/alice/Library/Application Support/Code/User");
+      expect(toPosix(stable)).toBe("/Users/alice/Library/Application Support/Code/User");
 
       const insiders = resolveVSCodeUserDir(
         { displayName: "VS Code Insiders", dirName: "Code - Insiders" },
         home,
       );
-      expect(insiders).toBe("/Users/alice/Library/Application Support/Code - Insiders/User");
+      expect(toPosix(insiders)).toBe(
+        "/Users/alice/Library/Application Support/Code - Insiders/User",
+      );
 
       const codium = resolveVSCodeUserDir({ displayName: "VSCodium", dirName: "VSCodium" }, home);
-      expect(codium).toBe("/Users/alice/Library/Application Support/VSCodium/User");
+      expect(toPosix(codium)).toBe("/Users/alice/Library/Application Support/VSCodium/User");
     });
 
     test("linux: .config/<variant>/User", () => {
@@ -77,16 +86,16 @@ describe("VS Code paths helper", () => {
       const home = "/home/alice";
 
       const stable = resolveVSCodeUserDir({ displayName: "VS Code", dirName: "Code" }, home);
-      expect(stable).toBe("/home/alice/.config/Code/User");
+      expect(toPosix(stable)).toBe("/home/alice/.config/Code/User");
 
       const insiders = resolveVSCodeUserDir(
         { displayName: "VS Code Insiders", dirName: "Code - Insiders" },
         home,
       );
-      expect(insiders).toBe("/home/alice/.config/Code - Insiders/User");
+      expect(toPosix(insiders)).toBe("/home/alice/.config/Code - Insiders/User");
 
       const cursor = resolveVSCodeUserDir({ displayName: "Cursor", dirName: "Cursor" }, home);
-      expect(cursor).toBe("/home/alice/.config/Cursor/User");
+      expect(toPosix(cursor)).toBe("/home/alice/.config/Cursor/User");
     });
 
     test("win32: injected homeDir wins over ambient APPDATA", () => {
@@ -137,9 +146,9 @@ describe("VS Code paths helper", () => {
       expect(paths.length).toBe(VSCODE_VARIANTS.length);
       for (const p of paths) {
         expect(p).toContain("globalStorage");
-        expect(p.endsWith("/saoudrizwan.claude-dev")).toBe(true);
+        expect(toPosix(p).endsWith("/saoudrizwan.claude-dev")).toBe(true);
       }
-      expect(paths[0]).toBe(
+      expect(toPosix(paths[0])).toBe(
         "/Users/alice/Library/Application Support/Code/User/globalStorage/saoudrizwan.claude-dev",
       );
     });
@@ -151,10 +160,11 @@ describe("VS Code paths helper", () => {
         "/Users/alice",
       );
       expect(paths.length).toBe(VSCODE_VARIANTS.length * 2);
-      expect(paths).toContain(
+      const posixPaths = paths.map(toPosix);
+      expect(posixPaths).toContain(
         "/Users/alice/Library/Application Support/Code/User/globalStorage/RooVeterinaryInc.roo-cline",
       );
-      expect(paths).toContain(
+      expect(posixPaths).toContain(
         "/Users/alice/Library/Application Support/Code/User/globalStorage/rooveterinaryinc.roo-cline",
       );
     });
@@ -162,13 +172,17 @@ describe("VS Code paths helper", () => {
     test("linux × single ID", () => {
       setPlatform("linux");
       const paths = resolveVSCodeExtensionStorage("kilocode.Kilo-Code", "/home/alice");
-      expect(paths[0]).toBe("/home/alice/.config/Code/User/globalStorage/kilocode.Kilo-Code");
+      expect(toPosix(paths[0])).toBe(
+        "/home/alice/.config/Code/User/globalStorage/kilocode.Kilo-Code",
+      );
       const insiders = paths.find((p) => p.includes("Code - Insiders"));
-      expect(insiders).toBe(
+      expect(insiders && toPosix(insiders)).toBe(
         "/home/alice/.config/Code - Insiders/User/globalStorage/kilocode.Kilo-Code",
       );
       const cursor = paths.find((p) => p.includes("Cursor"));
-      expect(cursor).toBe("/home/alice/.config/Cursor/User/globalStorage/kilocode.Kilo-Code");
+      expect(cursor && toPosix(cursor)).toBe(
+        "/home/alice/.config/Cursor/User/globalStorage/kilocode.Kilo-Code",
+      );
     });
 
     test("win32 × single ID", () => {
@@ -203,14 +217,14 @@ describe("VS Code paths helper", () => {
       setPlatform("darwin");
       const paths = resolveVSCodeUserSettings("/Users/alice");
       expect(paths.length).toBe(VSCODE_VARIANTS.length);
-      for (const p of paths) expect(p.endsWith("/settings.json")).toBe(true);
+      for (const p of paths) expect(toPosix(p).endsWith("/settings.json")).toBe(true);
     });
   });
 
   describe("resolveVSCodeUserMcpJson()", () => {
     test("one mcp.json per variant on darwin", () => {
       setPlatform("darwin");
-      const paths = resolveVSCodeUserMcpJson("/Users/alice");
+      const paths = resolveVSCodeUserMcpJson("/Users/alice").map(toPosix);
       expect(paths.length).toBe(VSCODE_VARIANTS.length);
       expect(paths[0]).toBe("/Users/alice/Library/Application Support/Code/User/mcp.json");
       expect(paths).toContain(
@@ -221,7 +235,7 @@ describe("VS Code paths helper", () => {
 
     test("one mcp.json per variant on linux", () => {
       setPlatform("linux");
-      const paths = resolveVSCodeUserMcpJson("/home/alice");
+      const paths = resolveVSCodeUserMcpJson("/home/alice").map(toPosix);
       expect(paths[0]).toBe("/home/alice/.config/Code/User/mcp.json");
       expect(paths).toContain("/home/alice/.config/Code - Insiders/User/mcp.json");
     });
