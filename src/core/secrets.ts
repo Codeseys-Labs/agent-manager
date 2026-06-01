@@ -325,6 +325,11 @@ export async function interpolateEnvAsync(
   const backends: DecodeBackends = {
     legacyKey: encryptionKey ?? null,
     ageBackend: ageBackend ?? null,
+    // When NO legacy key is supplied at all, fall back to ADR-0012 graceful
+    // degradation for v1 envelopes (pass the ciphertext through unchanged)
+    // rather than aborting — the caller simply hasn't configured secrets. v2
+    // and unknown envelopes still fail loud (that was the actual P0-3 leak).
+    allowV1PassthroughWithoutKey: !encryptionKey,
   };
 
   // Walk the interpolated config and decode any encrypted envelopes via the

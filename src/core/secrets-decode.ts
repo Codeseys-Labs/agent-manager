@@ -116,6 +116,16 @@ export interface DecodeBackends {
    * `enc:v2:age:`). When omitted, a v2 envelope FAILS LOUD.
    */
   ageBackend?: SecretsBackend | null;
+  /**
+   * Legacy graceful-degradation switch (ADR-0012 behavior). When true AND no
+   * `legacyKey` is configured, a `v1-aes-gcm` envelope is returned UNCHANGED
+   * instead of throwing — i.e. "the user simply hasn't set up secrets yet", so
+   * the encrypted literal flows through exactly as it did pre-P0-3. This does
+   * NOT relax the v2/unknown fail-loud rules (those were the real leak). Used
+   * by the no-key interpolate path; the apply path leaves it false so a missing
+   * key for an in-use v1 secret still surfaces loudly.
+   */
+  allowV1PassthroughWithoutKey?: boolean;
 }
 
 /**
@@ -138,6 +148,13 @@ export async function decodeEnvelope(value: string, backends: DecodeBackends): P
 
     case "v1-aes-gcm": {
       if (!backends.legacyKey) {
+        // Legacy graceful degradation (ADR-0012): with NO key configured at
+        // all, a v1 envelope passes through unchanged — the user hasn't set up
+        // secrets, and the value is AES ciphertext (not plaintext). This is the
+        // documented pre-P0-3 behavior and is scoped to v1 only; v2/unknown
+        // still fail loud below. The apply path opts OUT (leaves the flag
+        // false) so an in-use v1 secret with a missing key surfaces loudly.
+        if (backends.allowV1PassthroughWithoutKey) return value;
         throw new MissingBackendError(
           "v1-aes-gcm",
           "No AES-256-GCM key is loaded — run `am secret generate-key` or set AM_ENCRYPTION_KEY.",
