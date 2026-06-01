@@ -333,7 +333,10 @@ describe("secret pipeline integration", () => {
       expect(resolved.servers?.s2?.env?.TOKEN).toBe(secret2);
     });
 
-    test("without encryption key, enc:v1: values pass through", async () => {
+    test("without encryption key, an enc:v1: envelope FAILS LOUD (P0-3: never passes ciphertext through)", async () => {
+      // Pre-P0-3, this returned the ciphertext verbatim — the exact leak that
+      // let an undecryptable secret land in a native IDE config. The decode
+      // walk now refuses: an envelope with no backend to decrypt it throws.
       const config: Config = {
         servers: {
           s: {
@@ -345,8 +348,9 @@ describe("secret pipeline integration", () => {
         },
       };
 
-      const { config: resolved } = await interpolateEnvAsync(config);
-      expect(resolved.servers?.s?.env?.KEY).toBe("enc:v1:fake:data");
+      await expect(interpolateEnvAsync(config)).rejects.toThrow(
+        /no decryption backend|key is loaded/i,
+      );
     });
   });
 

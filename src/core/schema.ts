@@ -237,8 +237,8 @@ export const SettingsSchema = z
           "settings.secrets.team_passphrase is rejected by design (ADR-0046). " +
           "Single-passphrase team sharing has no revocation, no audit trail, " +
           "and single-point-of-compromise risk. Use per-recipient X25519 " +
-          "identities instead: see `am secrets add-recipient <pubkey>` and " +
-          "ADR-0042.",
+          "identities instead: each teammate runs `am pair accept` (you then " +
+          "run `am pair finalize`) to add their recipient. See ADR-0042.",
         path: ["team_passphrase"],
       })
       .optional(),

@@ -114,6 +114,17 @@ describe("scanServerEnvVars (Tier 1)", () => {
     expect(result.secrets).toHaveLength(0);
   });
 
+  test("ignores already-encrypted enc:v2:age: values (P0-3: don't re-flag v2 as plaintext)", () => {
+    const result = scanServerEnvVars("encrypted-v2", {
+      command: "npx",
+      env: {
+        OPENAI_API_KEY: "enc:v2:age:Y2lwaGVydGV4dA==",
+      },
+    });
+
+    expect(result.secrets).toHaveLength(0);
+  });
+
   test("ignores empty and trivial values", () => {
     const result = scanServerEnvVars("trivial", {
       command: "npx",

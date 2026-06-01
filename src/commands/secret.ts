@@ -11,15 +11,16 @@ import {
   substituteSecret,
 } from "../core/secret-detection";
 import {
-  decryptValue,
   encryptValue,
   generateKey,
+  getDefaultBackend,
   importKey,
   isEncrypted,
   loadKey,
   resolveKeyPath,
   saveKey,
 } from "../core/secrets";
+import { classifyEnvelope, decodeEnvelope } from "../core/secrets-decode";
 import { requireConfig } from "../lib/errors";
 import { amError, error, info, output } from "../lib/output";
 
@@ -124,13 +125,6 @@ const getCommand = defineCommand({
       const configDir = resolveConfigDir();
       const configPath = join(configDir, "config.toml");
 
-      const key = await loadKey(configDir);
-      if (!key) {
-        error("No encryption key found.", opts);
-        process.exitCode = 1;
-        return;
-      }
-
       const config = await tryReadConfig(configPath);
       requireConfig(config);
 
@@ -148,7 +142,23 @@ const getCommand = defineCommand({
         return;
       }
 
-      const decrypted = await decryptValue(value, key);
+      // Format-aware decode (P0-3 fix): dispatch by envelope format. Load the
+      // legacy AES key for `enc:v1:` and the age backend for `enc:v2:age:`.
+      // An unknown `enc:` prefix fails loud rather than echoing ciphertext.
+      const kind = classifyEnvelope(value);
+      const key = await loadKey(configDir);
+      const ageBackend =
+        kind === "v2-age" ? await getDefaultBackend(configDir, { config, override: "age" }) : null;
+      if (kind === "v1-aes-gcm" && !key) {
+        error("No encryption key found.", opts);
+        process.exitCode = 1;
+        return;
+      }
+
+      const decrypted = await decodeEnvelope(value, {
+        legacyKey: key ?? null,
+        ageBackend,
+      });
 
       if (args.json) {
         output({ name: args.name, value: decrypted }, opts);

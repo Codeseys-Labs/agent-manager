@@ -127,8 +127,10 @@ export function scanServerEnvVars(
   if (!server.env) return { serverName: name, secrets };
 
   for (const [key, value] of Object.entries(server.env)) {
-    // Skip already-templated or encrypted values
-    if (value.includes("${") || value.startsWith("enc:v1:")) continue;
+    // Skip already-templated or encrypted values. Match any `enc:` envelope
+    // (legacy `enc:v1:` AES-GCM and ADR-0042 `enc:v2:age:`) so v2 ciphertext
+    // is not re-flagged as a plaintext secret.
+    if (value.includes("${") || value.startsWith("enc:")) continue;
     // Skip empty/trivial values
     if (value.length === 0 || value === "true" || value === "false") continue;
 
@@ -186,8 +188,10 @@ export async function scanServerWithBetterleaks(
   }
   if (server.env) {
     for (const [key, value] of Object.entries(server.env)) {
-      // Skip values already handled by Tier 1
-      if (value.includes("${") || value.startsWith("enc:v1:")) continue;
+      // Skip values already handled by Tier 1, plus any `enc:` envelope
+      // (v1 AES-GCM or v2 age) so encrypted ciphertext is never sent to
+      // betterleaks as a candidate plaintext secret.
+      if (value.includes("${") || value.startsWith("enc:")) continue;
       if (isSecretKeyName(key)) continue; // Tier 1 already caught this
       lines.push(`${key} = "${value}"`);
     }

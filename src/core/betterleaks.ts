@@ -1,10 +1,39 @@
 import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { chmodSync, existsSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { resolveConfigDir } from "./config";
 
 const BETTERLEAKS_VERSION = "1.1.1";
 const GITHUB_REPO = "betterleaks/betterleaks";
+
+/**
+ * Pinned SHA-256 checksums per release asset (P2-H supply-chain fix).
+ *
+ * SECURITY.md §6 and ADR-0042 require pin-by-hash for any downloaded,
+ * executed artifact. Until now `installBetterleaks` chmod+exec'd a freshly
+ * downloaded GitHub-release binary with NO integrity check, so a compromised
+ * release or a MITM on the redirect chain meant code execution in the user's
+ * config dir.
+ *
+ * Keyed by the release asset filename (`platformBinaryName()`), value is the
+ * lowercase hex SHA-256 of that asset.
+ *
+ * TODO(P2-H): populate with the REAL upstream checksums for
+ * betterleaks v1.1.1. These cannot be obtained offline; until they are filled
+ * in, every platform's pin is the empty-string sentinel and installation
+ * FAILS CLOSED (see `verifyChecksum`) unless the operator supplies the
+ * expected digest out-of-band via `AM_BETTERLEAKS_SHA256` or explicitly
+ * accepts the risk via `AM_ALLOW_UNVERIFIED_BETTERLEAKS=1`.
+ */
+const BETTERLEAKS_SHA256: Record<string, string> = {
+  [`betterleaks_${BETTERLEAKS_VERSION}_darwin_arm64`]: "",
+  [`betterleaks_${BETTERLEAKS_VERSION}_darwin_amd64`]: "",
+  [`betterleaks_${BETTERLEAKS_VERSION}_linux_arm64`]: "",
+  [`betterleaks_${BETTERLEAKS_VERSION}_linux_amd64`]: "",
+  [`betterleaks_${BETTERLEAKS_VERSION}_windows_arm64.exe`]: "",
+  [`betterleaks_${BETTERLEAKS_VERSION}_windows_amd64.exe`]: "",
+};
 
 /** Where we store the managed betterleaks binary */
 function betterleaksBinDir(): string {
@@ -84,6 +113,67 @@ function downloadUrl(): string {
 }
 
 /**
+ * Resolve the expected SHA-256 for the current platform's asset.
+ *
+ * Priority:
+ *   1. `AM_BETTERLEAKS_SHA256` env var (operator-supplied out-of-band pin),
+ *   2. the built-in `BETTERLEAKS_SHA256` pin map.
+ *
+ * Returns `null` when no non-empty pin is available — the caller treats that
+ * as "unverifiable" and FAILS CLOSED.
+ */
+export function expectedBetterleaksSha256(assetName = platformBinaryName()): string | null {
+  const envPin = process.env.AM_BETTERLEAKS_SHA256?.trim().toLowerCase();
+  if (envPin) return envPin;
+  const pinned = BETTERLEAKS_SHA256[assetName]?.trim().toLowerCase();
+  return pinned ? pinned : null;
+}
+
+/** Outcome of a pre-exec checksum check. */
+export type ChecksumResult =
+  | { ok: true; sha256: string }
+  | { ok: false; reason: string; sha256: string };
+
+/**
+ * Verify a downloaded binary's SHA-256 against the platform pin BEFORE it is
+ * ever made executable (P2-H). Fail-closed semantics:
+ *
+ *   - pin present + match   → ok
+ *   - pin present + mismatch → reject (tampered / wrong asset)
+ *   - pin absent            → reject UNLESS the operator explicitly opts out
+ *     via `AM_ALLOW_UNVERIFIED_BETTERLEAKS=1` (documented escape hatch). We do
+ *     NOT silently trust an unpinned binary — that is the whole point.
+ */
+export function verifyBetterleaksChecksum(
+  data: Uint8Array,
+  assetName = platformBinaryName(),
+): ChecksumResult {
+  const actual = createHash("sha256").update(data).digest("hex").toLowerCase();
+  const expected = expectedBetterleaksSha256(assetName);
+
+  if (!expected) {
+    if (process.env.AM_ALLOW_UNVERIFIED_BETTERLEAKS === "1") {
+      return { ok: true, sha256: actual };
+    }
+    return {
+      ok: false,
+      sha256: actual,
+      reason: `No pinned SHA-256 is available for "${assetName}" — refusing to install an unverified executable. Supply the expected digest via AM_BETTERLEAKS_SHA256, or set AM_ALLOW_UNVERIFIED_BETTERLEAKS=1 to bypass at your own risk. (Observed digest: sha256:${actual})`,
+    };
+  }
+
+  if (actual !== expected) {
+    return {
+      ok: false,
+      sha256: actual,
+      reason: `Checksum mismatch for "${assetName}": expected sha256:${expected}, got sha256:${actual}. The download may be corrupt or tampered with — refusing to install.`,
+    };
+  }
+
+  return { ok: true, sha256: actual };
+}
+
+/**
  * Install betterleaks into the agent-manager config directory.
  * Downloads the binary from GitHub releases and verifies it runs.
  */
@@ -110,8 +200,17 @@ export async function installBetterleaks(): Promise<{
     }
 
     const buffer = await response.arrayBuffer();
+    const bytes = new Uint8Array(buffer);
+
+    // P2-H: verify the pinned SHA-256 BEFORE the binary is written
+    // executable. Fail-closed — never chmod+exec an unverified download.
+    const check = verifyBetterleaksChecksum(bytes);
+    if (!check.ok) {
+      return { success: false, path: binPath, error: check.reason };
+    }
+
     const { writeFile } = await import("node:fs/promises");
-    await writeFile(binPath, Buffer.from(buffer));
+    await writeFile(binPath, Buffer.from(bytes));
 
     // Make executable on Unix
     if (process.platform !== "win32") {

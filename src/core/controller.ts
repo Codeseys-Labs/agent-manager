@@ -32,7 +32,8 @@ import {
 import { commitAll, isNothingToCommitError } from "./git";
 import { AsyncMutex } from "./locks";
 import type { Config } from "./schema";
-import { interpolateEnvAsync, loadKey } from "./secrets";
+import { getDefaultBackend, interpolateEnvAsync, loadKey, selectBackendName } from "./secrets";
+import type { SecretsBackend } from "./secrets-backend";
 import { readActiveProfile } from "./state";
 import { formatCredentialHits, scanServersForUrlCredentials } from "./url-credentials";
 
@@ -58,6 +59,24 @@ export function __resetControllerLocksForTests(): void {
 /** Diagnostic accessor — exported for concurrency tests. */
 export function getConfigMutex(): AsyncMutex {
   return configMutex;
+}
+
+/**
+ * Deep-scan a config tree for any ADR-0042 age envelope (`enc:v2:age:`).
+ *
+ * Used by the apply pipeline to decide whether to load the age backend even
+ * when the *write* backend is still legacy v1 — a config can hold v2
+ * envelopes after `am secrets migrate --to age` while the default backend
+ * setting lags. Without this, applying such a config would fail-loud on the
+ * first v2 envelope (correct, but unhelpful when the user CAN decrypt).
+ */
+function configContainsAgeEnvelope(value: unknown): boolean {
+  if (typeof value === "string") return value.startsWith("enc:v2:age:");
+  if (Array.isArray(value)) return value.some(configContainsAgeEnvelope);
+  if (value !== null && typeof value === "object") {
+    return Object.values(value as Record<string, unknown>).some(configContainsAgeEnvelope);
+  }
+  return false;
 }
 
 // ── withConfig ────────────────────────────────────────────────────
@@ -232,9 +251,21 @@ export async function applyResolved(
       config.settings?.default_profile ??
       "default";
 
+    // Format-aware decrypt (P0-3 fix). Always load the legacy AES key for
+    // `enc:v1:` envelopes. ALSO load the age backend when EITHER the config
+    // selects `age` OR the config already contains `enc:v2:age:` envelopes
+    // (the post-`am secrets migrate` state) — so those are decrypted here
+    // instead of leaking ciphertext into native configs. Any unknown `enc:`
+    // prefix makes the decode walk throw — the apply aborts loudly rather
+    // than writing corrupt secrets to disk.
     const encryptionKey = await loadKey(configDir);
+    let ageBackend: SecretsBackend | null = null;
+    if (selectBackendName(config) === "age" || configContainsAgeEnvelope(config)) {
+      ageBackend = await getDefaultBackend(configDir, { config, override: "age" });
+    }
     const { config: interpolated } = await interpolateEnvAsync(config, {
       encryptionKey: encryptionKey ?? undefined,
+      ageBackend,
     });
     const resolved = buildResolvedConfig(interpolated, profileName, configDir);
 
