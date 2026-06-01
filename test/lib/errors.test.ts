@@ -1,12 +1,26 @@
 import { describe, expect, test } from "bun:test";
+import { ZodError } from "zod";
+import { ConfigSchema } from "../../src/core/schema";
 import {
   AmError,
   errorCode,
   errorMessage,
   formatError,
+  formatZodError,
   isNotFound,
   requireConfig,
 } from "../../src/lib/errors";
+
+/** Build the real ZodError a malformed config.toml would throw (P1-A). */
+function configZodError(input: unknown): ZodError {
+  try {
+    ConfigSchema.parse(input);
+  } catch (e) {
+    if (e instanceof ZodError) return e;
+    throw e;
+  }
+  throw new Error("expected ConfigSchema.parse to throw");
+}
 
 describe("AmError", () => {
   test("sets name, message, suggestion, and code", () => {
@@ -144,6 +158,49 @@ describe("formatError", () => {
   test("string with json=false coerces to string", () => {
     const result = formatError("raw string", false);
     expect(result).toBe("error: raw string");
+  });
+
+  describe("ZodError branch (P1-A)", () => {
+    test("renders human path:message lines, not a raw issue-array dump", () => {
+      // A server missing its required `command` is the canonical first-run
+      // failure surfaced by readConfig -> ConfigSchema.parse.
+      const err = configZodError({ servers: { foo: {} } });
+      const result = formatError(err, false);
+      expect(result).toContain("servers.foo.command: Required");
+      // It must NOT be a JSON dump of the issues array.
+      expect(result).not.toContain('"code"');
+      expect(result).not.toContain("invalid_type");
+      // Human framing: error header + suggestion.
+      expect(result).toContain("error: invalid configuration");
+      expect(result).toContain("suggestion:");
+    });
+
+    test("json=true returns a structured object with issues array", () => {
+      const err = configZodError({ servers: { foo: {} } });
+      const result = formatError(err, true);
+      const parsed = JSON.parse(result);
+      expect(parsed.error).toBe("Invalid configuration");
+      expect(Array.isArray(parsed.issues)).toBe(true);
+      expect(parsed.issues).toContain("servers.foo.command: Required");
+      expect(typeof parsed.suggestion).toBe("string");
+    });
+
+    test("formatZodError renders array indices as [n]", () => {
+      // args must be string[]; a number element produces an indexed path.
+      const err = configZodError({
+        servers: { foo: { command: "uvx", args: [123] } },
+      });
+      const lines = formatZodError(err);
+      expect(lines.some((l) => l.startsWith("servers.foo.args[0]:"))).toBe(true);
+    });
+
+    test("formatZodError on multiple issues yields one line each", () => {
+      const err = configZodError({ servers: { foo: {}, bar: {} } });
+      const lines = formatZodError(err);
+      expect(lines).toContain("servers.foo.command: Required");
+      expect(lines).toContain("servers.bar.command: Required");
+      expect(lines.length).toBeGreaterThanOrEqual(2);
+    });
   });
 });
 

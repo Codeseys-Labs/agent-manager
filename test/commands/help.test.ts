@@ -1,50 +1,70 @@
 import { describe, expect, it } from "bun:test";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { COMMAND_GROUPS, renderGroupedHelp } from "../../src/help";
+
+/**
+ * Hidden aliases registered in cli.ts that intentionally do NOT appear in
+ * the grouped help output (ADR-0029: "Hidden aliases are omitted from help
+ * but still route").
+ *
+ *   - `agents` — pure alias for `agent` (same `agentsCommand` export).
+ *   - `acp`    — niche protocol-ops surface (`am acp session …`); the
+ *                user-facing entry points are `run` and `flow`, both grouped.
+ */
+const HIDDEN_ALIASES = new Set(["agents", "acp"]);
+
+/**
+ * Parse the `subCommands: { … }` block of src/cli.ts and return every
+ * registered key. Reading the source (rather than hardcoding the list)
+ * keeps this coverage test honest: a command added to cli.ts but never
+ * grouped will fail here (P1-G — `pair`, `secrets`, `mcp-superset` were
+ * silently absent from help before this test parsed cli.ts directly).
+ */
+function registeredSubcommands(): string[] {
+  const src = readFileSync(join(import.meta.dir, "../../src/cli.ts"), "utf-8");
+  const block = src.match(/subCommands:\s*\{([\s\S]*?)\n\s*\},/);
+  if (!block) throw new Error("could not locate subCommands block in cli.ts");
+  const names: string[] = [];
+  // Each entry is `name: () => import(...)` or `"quoted-name": () => …`.
+  const re = /(?:^|\n)\s*(?:"([\w-]+)"|([\w-]+)):\s*\(\)\s*=>/g;
+  for (let m = re.exec(block[1]); m !== null; m = re.exec(block[1])) {
+    names.push(m[1] ?? m[2]);
+  }
+  return names;
+}
 
 describe("grouped help output (ADR-0029)", () => {
   describe("COMMAND_GROUPS", () => {
-    it("contains all registered subcommands (excluding hidden aliases)", () => {
-      // Every command that appears in cli.ts subCommands should be in a group,
-      // except hidden aliases like "agents" (alias for "agent").
+    it("contains every non-alias subcommand registered in cli.ts", () => {
+      // Derive the command list from cli.ts itself so help can never silently
+      // drift from the real command surface (P1-G).
       const groupedNames = new Set(COMMAND_GROUPS.flatMap((g) => g.commands.map(([name]) => name)));
-      const registeredCommands = [
-        "init",
-        "add",
-        "list",
-        "use",
-        "apply",
-        "status",
-        "config",
-        "profile",
-        "doctor",
-        "import",
-        "push",
-        "pull",
-        "undo",
-        "log",
-        "secret",
-        "version",
-        "adapter",
-        "mcp-serve",
-        "serve",
-        "tui",
-        "session",
-        "search",
-        "install",
-        "uninstall",
-        "update",
-        "wiki",
-        "agent",
-        "run",
-        "completion",
-        "marketplace",
-      ];
-      for (const cmd of registeredCommands) {
+      const registered = registeredSubcommands().filter((c) => !HIDDEN_ALIASES.has(c));
+
+      // Sanity: parsing actually found the commands we expect to be present.
+      expect(registered).toContain("pair");
+      expect(registered).toContain("secrets");
+      expect(registered).toContain("mcp-superset");
+
+      for (const cmd of registered) {
         // Accept either an exact match or a subcommand prefix match
         // (e.g. "wiki" is satisfied by "wiki list", "wiki show", etc.).
         const present =
           groupedNames.has(cmd) || [...groupedNames].some((name) => name.startsWith(`${cmd} `));
-        expect(present).toBe(true);
+        expect(present, `command "${cmd}" is not in any COMMAND_GROUPS group`).toBe(true);
+      }
+    });
+
+    it("lists no command that is not a registered (non-alias) subcommand", () => {
+      // Inverse coverage: every grouped name must map back to a real cli.ts
+      // command (top-level token before any space, e.g. "wiki list" -> "wiki").
+      const registered = new Set(registeredSubcommands());
+      for (const group of COMMAND_GROUPS) {
+        for (const [name] of group.commands) {
+          const top = name.split(" ")[0];
+          expect(registered.has(top), `grouped command "${name}" has no cli.ts entry`).toBe(true);
+        }
       }
     });
 

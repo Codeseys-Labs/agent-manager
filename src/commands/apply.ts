@@ -98,6 +98,14 @@ export const applyCommand = defineCommand({
         return;
       }
 
+      // P1-H: surface the controller's advisory notices (e.g. the
+      // unscoped-catalog signpost). The controller is I/O-free and returns
+      // them in `notices`; the CLI renders them at info level (suppressed in
+      // --json/--quiet, where they ride along in the JSON payload below).
+      for (const notice of applyResult.notices ?? []) {
+        info(notice, opts);
+      }
+
       // Per-adapter reporting stays at the surface — controller returns the
       // structured result, CLI formats it for the terminal.
       for (const res of applyResult.results) {
@@ -221,6 +229,7 @@ export const applyCommand = defineCommand({
               succeeded: applyResult.succeeded.length,
               failed: applyResult.failed,
               skipped: applyResult.skipped,
+              notices: applyResult.notices,
             },
             opts,
           );
@@ -235,6 +244,7 @@ export const applyCommand = defineCommand({
               succeeded: applyResult.succeeded.length,
               failed: applyResult.failed,
               skipped: applyResult.skipped,
+              notices: applyResult.notices,
             },
             opts,
           );

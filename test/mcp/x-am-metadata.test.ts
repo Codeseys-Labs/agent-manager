@@ -181,7 +181,7 @@ describe("ADR-0037 Phase 1 — x-am tool metadata", () => {
       tier: "write-remote",
       auth_required: true,
       deprecated: true,
-      deprecation: { replacement: "am_agent_invoke", removal_version: "v0.4" },
+      deprecation: { replacement: "am_agent_invoke", removal_version: "v1.0" },
       progress_supported: true, // shares invokeAgentImpl
     });
 

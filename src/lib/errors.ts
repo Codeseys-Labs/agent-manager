@@ -1,6 +1,7 @@
 /**
  * Shared error handling utilities for agent-manager CLI.
  */
+import { ZodError, type ZodIssue } from "zod";
 
 /** Extract message from unknown catch value */
 export function errorMessage(err: unknown): string {
@@ -71,9 +72,52 @@ export class WikiSyncSecretBlockedError extends AmError {
 }
 
 /**
+ * Render a single ZodError issue as a `path: message` line.
+ *
+ * The dotted path mirrors the TOML the user wrote — e.g. an issue at
+ * `["servers", "foo", "command"]` becomes `servers.foo.command`. Numeric
+ * path segments (array indices) render as `[n]` so `args[0]` reads
+ * naturally. A top-level issue (empty path) renders just the message.
+ */
+function formatZodIssue(issue: ZodIssue): string {
+  const path = issue.path.reduce<string>((acc, seg) => {
+    if (typeof seg === "number") return `${acc}[${seg}]`;
+    return acc ? `${acc}.${seg}` : seg;
+  }, "");
+  return path ? `${path}: ${issue.message}` : issue.message;
+}
+
+/**
+ * Convert a ZodError into human-readable lines like
+ * `servers.foo.command: Required` — one per issue. Exported so callers that
+ * want the lines without the surrounding `error:`/`suggestion:` framing
+ * (e.g. structured renderers) can reuse the same mapping.
+ */
+export function formatZodError(err: ZodError): string[] {
+  return err.issues.map(formatZodIssue);
+}
+
+/**
  * Format an error for CLI output, respecting --json flag.
  */
 export function formatError(err: unknown, json: boolean): string {
+  if (err instanceof ZodError) {
+    // Validation failures surface as a raw issue-array dump unless we
+    // translate them. Render each issue as `path: message` so a first-run
+    // user editing config.toml sees `servers.foo.command: Required` rather
+    // than a JSON blob (P1-A).
+    const lines = formatZodError(err);
+    const suggestion = "Check your config.toml against the documented schema";
+    if (json) {
+      return JSON.stringify({
+        error: "Invalid configuration",
+        issues: lines,
+        suggestion,
+      });
+    }
+    const body = lines.map((l) => `  ${l}`).join("\n");
+    return `error: invalid configuration\n${body}\n  suggestion: ${suggestion}`;
+  }
   if (err instanceof AmError) {
     if (json) {
       return JSON.stringify({

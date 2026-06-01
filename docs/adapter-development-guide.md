@@ -19,8 +19,14 @@ An adapter handles three operations:
 | **export** | core -> native | Take resolved config, write native config files |
 | **diff** | compare | Structural comparison for drift detection |
 
-Plus detection (is the tool installed?) and schema validation (Zod schemas for
-adapter-specific TOML fields).
+Plus detection (is the tool installed?).
+
+There is **no adapter-side schema validation**. The `[entity.adapters.<name>]`
+subtables are opaque passthrough — core preserves them verbatim but does not
+validate them (two-phase validation, ADR-0007). The old `AdapterSchema`
+interface and `Adapter.schema` field were **deleted per ADR-0041** (Phase 2 of
+ADR-0007 was never wired in 13 months of production). Do not create a
+`schema.ts` for a new adapter — nothing loads it.
 
 ## Current Adapters
 
@@ -49,13 +55,18 @@ Defined in `src/adapters/types.ts`:
 ```typescript
 interface Adapter {
   meta: AdapterMeta;                  // name, displayName, version, capabilities
-  detect(): DetectResult;             // is this tool installed?
-  import(options: ImportOptions): ImportResult;     // native -> core
-  export(config: ResolvedConfig, options: ExportOptions): ExportResult;  // core -> native
-  diff(config: ResolvedConfig): DiffResult;         // detect drift
-  schema: AdapterSchema;              // Zod schemas for adapter TOML fields
+  detect(): DetectResult | Promise<DetectResult>;             // is this tool installed?
+  import(options: ImportOptions): ImportResult | Promise<ImportResult>;     // native -> core
+  export(config: ResolvedConfig, options: ExportOptions): ExportResult | Promise<ExportResult>;  // core -> native
+  diff(config: ResolvedConfig): DiffResult | Promise<DiffResult>;         // detect drift
+  sessionReader?: SessionReader;      // optional: cross-tool session harvest (ADR-0016)
+  scanMarketplace?(): MarketplaceResult;  // optional: VS Code / plugin marketplace scan
 }
 ```
+
+The interface is **four behavioral methods** (`detect`, `import`, `export`,
+`diff`) plus `meta`. The two `?:` members are optional capabilities most
+adapters omit. There is no `schema` field (deleted per ADR-0041).
 
 **Key types:**
 
@@ -68,9 +79,17 @@ interface Adapter {
 - `ExportResult` -- `{ files: WrittenFile[], warnings: string[] }` where `WrittenFile`
   includes path, content, and a `written` boolean (false during dry-run)
 - `DiffResult` -- `{ status: "in-sync" | "drifted" | "unmanaged", changes: DiffChange[] }`
-- `AdapterSchema` -- Zod schemas for `server`, `instruction`, and `global` adapter sections
+- `SessionReader` (optional) -- cross-tool conversation export (ADR-0016)
+- `MarketplaceResult` (optional) -- returned by `scanMarketplace()` where the tool
+  has an extension/plugin marketplace to enumerate
 
 ## Step-by-Step: Creating a New Adapter
+
+Each adapter is a **5-file core pattern** under `src/adapters/<name>/` —
+`detect.ts`, `import.ts`, `export.ts`, `diff.ts`, and `index.ts` — plus
+optional helpers (`identity.ts` for server dedup, `session.ts` for a
+`SessionReader`, `marketplace.ts` for extension scans, and format helpers
+like `jsonc.ts` / `yaml.ts`). There is no `schema.ts` (ADR-0041).
 
 We'll use a hypothetical "example-tool" adapter. Study the existing adapters for
 patterns -- the Claude Code adapter is the reference implementation, while Windsurf
@@ -175,35 +194,11 @@ Return a `DiffResult`:
 Each `DiffChange` specifies the entity type, name, change type (`added-locally`,
 `removed-locally`, `modified`, `added-in-config`), and optional field-level details.
 
-### 6. Implement schema.ts
+### 6. Wire Up index.ts
 
-Define Zod schemas for adapter-specific TOML fields. These validate the
-`[servers.<name>.adapters.<your-adapter>]` and `[adapters.<your-adapter>]` sections.
-
-```typescript
-import { z } from "zod";
-import type { AdapterSchema } from "../types.ts";
-
-export const exampleServerSchema = z.object({
-  // Fields specific to this tool's server config
-}).passthrough();
-
-export const exampleGlobalSchema = z.object({
-  // Global adapter settings
-}).passthrough();
-
-export const exampleSchema: AdapterSchema = {
-  server: exampleServerSchema,
-  global: exampleGlobalSchema,
-};
-```
-
-**Always use `.passthrough()`** on schemas so unrecognized fields are preserved rather
-than stripped.
-
-### 7. Wire Up index.ts
-
-Export the adapter object that implements the full `Adapter` interface:
+Export the adapter object that implements the full `Adapter` interface. This is
+the fifth and final core file. Note there is **no `schema.ts` import** — the
+adapter is the four methods plus `meta` (ADR-0041).
 
 ```typescript
 import type { Adapter, Capability, ImportOptions, ImportResult,
@@ -212,7 +207,6 @@ import { detect } from "./detect.ts";
 import { importConfig } from "./import.ts";
 import { exportConfig } from "./export.ts";
 import { diffConfig } from "./diff.ts";
-import { exampleSchema } from "./schema.ts";
 
 const CAPABILITIES: Capability[] = ["mcp", "instructions"];
 
@@ -228,11 +222,14 @@ export const exampleToolAdapter: Adapter = {
   export: (config: ResolvedConfig, options: ExportOptions): ExportResult =>
     exportConfig(config, options),
   diff: (config: ResolvedConfig): DiffResult => diffConfig(config),
-  schema: exampleSchema,
 };
 ```
 
-### 8. Register in registry.ts
+If the tool exposes sessions to harvest or a plugin/extension marketplace to
+scan, attach the optional `sessionReader` / `scanMarketplace` members (see the
+`claude-code` adapter for both). Most adapters need neither.
+
+### 7. Register in registry.ts
 
 Add a lazy factory entry to `src/adapters/registry.ts`:
 
@@ -249,7 +246,7 @@ const ADAPTER_FACTORIES: Record<string, AdapterFactory> = {
 The lazy factory pattern means the adapter code is only loaded when requested.
 All adapters ship in the binary but unused ones are never instantiated (ADR-0011).
 
-### 9. Add Tests
+### 8. Add Tests
 
 Create `test/adapters/example-tool/` with test files mirroring the source modules:
 

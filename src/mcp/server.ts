@@ -117,11 +117,11 @@ export interface AmToolMetadata {
  */
 export const DEPRECATED_ALIASES: Record<string, { replacement: string; removal_version: string }> =
   {
-    am_agent_delegate: { replacement: "am_agent_invoke", removal_version: "v0.4" },
-    am_run_agent: { replacement: "am_agent_invoke", removal_version: "v0.4" },
-    am_acp_list_agents: { replacement: "am_agent_list", removal_version: "v0.4" },
-    am_acp_session_list: { replacement: "am_agent_session_list", removal_version: "v0.4" },
-    am_acp_session_cancel: { replacement: "am_agent_session_cancel", removal_version: "v0.4" },
+    am_agent_delegate: { replacement: "am_agent_invoke", removal_version: "v1.0" },
+    am_run_agent: { replacement: "am_agent_invoke", removal_version: "v1.0" },
+    am_acp_list_agents: { replacement: "am_agent_list", removal_version: "v1.0" },
+    am_acp_session_list: { replacement: "am_agent_session_list", removal_version: "v1.0" },
+    am_acp_session_cancel: { replacement: "am_agent_session_cancel", removal_version: "v1.0" },
   };
 
 /**
@@ -591,9 +591,12 @@ export function buildToolMetadata(toolName: string, tier: ToolTier): AmToolMetad
 function warnDeprecated(oldName: string, newName: string): void {
   if (warnedDeprecatedAliases.has(oldName)) return;
   warnedDeprecatedAliases.add(oldName);
+  // Keep the advertised removal target in lock-step with the registry so
+  // the warning never drifts from the `tools/list` deprecation metadata.
+  const removal = DEPRECATED_ALIASES[oldName]?.removal_version ?? "a future release";
   // eslint-disable-next-line no-console -- intentional stderr notice
   process.stderr.write(
-    `[am-mcp] DEPRECATED: tool "${oldName}" is an alias. Use "${newName}" instead (removal targeted for v0.4).\n`,
+    `[am-mcp] DEPRECATED: tool "${oldName}" is an alias. Use "${newName}" instead (removal targeted for ${removal}).\n`,
   );
 }
 
