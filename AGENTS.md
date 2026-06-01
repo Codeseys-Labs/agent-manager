@@ -1,5 +1,10 @@
 # AGENTS.md -- agent-manager
 
+> **Canonical agent-instruction file.** This is the single source of truth for
+> agents and contributors working on agent-manager. `CLAUDE.md` is a thin pointer
+> to this file (the project's own thesis: one definition, many tools — so we do
+> not maintain two divergent copies). When facts change, edit AGENTS.md.
+
 agent-manager (`am`) is **the control plane for AI agents**. Define your catalog
 once in TOML (MCP servers, skills, instructions, agents, profiles), sync via git,
 and generate native config files for every AI coding tool. Route any agent through
@@ -17,15 +22,23 @@ this serve?** Features orthogonal to all six are flagged for reconsideration.
    hygiene (AES-256-GCM + 24-provider detection), MCP Package Registry
    (ADR-0024).
 2. **MCP gateway** — `am mcp-serve` as the stable endpoint any agent plumbs
-   into. 33+ tools, concurrency-safe writers (iter4 Wave B), bearer auth
-   (iter2 Wave B), streaming via MCP progress notifications (iter4 Wave D).
+   into. 38 tools (33 active + 5 deprecated aliases), concurrency-safe writers
+   (iter4 Wave B), bearer auth (iter2 Wave B), streaming via MCP progress
+   notifications (iter4 Wave D).
 3. **Protocol router** — ACP local, A2A remote, A2A-ACP bridge, unified agent
    registry (ADR-0030), **auto-detection of installed agents** (iter4 Wave C),
    flows (ADR-0026) scoped to pillar 3 composition.
-4. **MCP Registry + git-vendored bundles** — Marketplace v1 is retired per
-   [ADR-0039](ADRs/0039-marketplace-v1-scope-decision.md). Use the MCP Package
-   Registry for servers and git subtree/submodule vendoring for skills,
-   instructions, and agent-profile bundles.
+4. **Marketplace (deferred to v2)** — git-backed catalogs of skills /
+   instructions / agent bundles, supply-chain hardened (SHA pinning, TOFU,
+   `--ignore-scripts`). **Deferred, not deleted:** the marketplace surface is
+   paused until the hosted web platform is live (the v2 era it pairs with), so
+   it is kept out of the v1 CLI's advertised surface but the code in
+   `src/marketplace/*` is retained. For v1, use the MCP Package Registry
+   (`am search/install`) for servers and git subtree/submodule vendoring for
+   skills, instructions, and agent-profile bundles.
+   NOTE: ADR-0039 (retire) and ADR-0052 (schedule code deletion) are
+   **superseded by this product decision** — do NOT execute the marketplace
+   deletion; it returns in v2.
 5. **LLM-wiki** — Karpathy-style session context. Session harvest (ADR-0016)
    is the cross-tool read pipeline — without it, pillar 5 is an empty shelf.
    Global git-backed + per-project local mirror. `am wiki` + MCP `am_wiki_*`.
@@ -91,7 +104,7 @@ in TOML, decrypted at apply time.
 
 ```
 src/
-  cli.ts                    # Entry point -- 30 subcommands via citty
+  cli.ts                    # Entry point -- 36 subcommands via citty
   commands/                 # One file per CLI command (includes session.ts, wiki.ts, agents.ts, run.ts, flow.ts, completion.ts)
   core/
     schema.ts               # Zod schemas (Server, Instruction, Skill, AgentProfile, Profile, Config)
@@ -148,7 +161,7 @@ src/
     registry.ts             # Platform detection (GitHub > GitLab > bare)
     github.ts, gitlab.ts, bare.ts
   mcp/
-    server.ts               # MCP server: JSON-RPC 2.0, 33 tools, 6 groups, 3 permission tiers (ADR-0009, ADR-0021)
+    server.ts               # MCP server: JSON-RPC 2.0, 38 tools (33 active + 5 deprecated aliases), 6 groups, 3 permission tiers (ADR-0009, ADR-0021)
   tui/
     index.tsx, App.tsx      # Silvery/React terminal UI with dashboard, server management (D/E/I/P keys)
   web/
@@ -157,11 +170,11 @@ src/
     git-providers.ts        # Git provider abstraction: GitHub, GitLab, Codeberg/Gitea (ADR-0025)
     public/                 # Static HTML
   lib/                      # Shared utilities (errors.ts, output.ts)
-test/                       # 146 files, 1772 tests, 5336 assertions
-ADRs/                       # 30 architectural decision records
+test/                       # 231 files, 3064 tests, 9672 assertions
+ADRs/                       # 53 architectural decision records (0001-0052, incl. 0031a)
 scripts/
   build.ts                  # Cross-platform build (5 targets)
-  install.sh                # curl-based installer
+install.sh                  # curl-based installer (repo root, not scripts/)
 ```
 
 ## CLI Commands
@@ -343,7 +356,7 @@ Workflow: `am wiki ingest --session <id>` → `am wiki search <query>` → `am w
 
 ```bash
 bun install              # Install dependencies
-bun test                 # Run all 1772 tests
+bun test                 # Run all 3064 tests
 bun test --watch         # Watch mode
 bun run dev              # Run CLI in dev mode
 bun run build            # Single binary (macOS arm64)
@@ -355,16 +368,55 @@ bun run dev:web          # Local web UI dev (Wrangler)
 
 ## Adding a New Adapter
 
-Each adapter follows a 5-6 file pattern under `src/adapters/<name>/`:
+Each adapter follows a 5-file core pattern under `src/adapters/<name>/`, plus
+optional helpers. The `Adapter` interface is four behavioral methods only —
+the old `schema.ts` / `schema` field was deleted per ADR-0041, so do NOT create
+one (it is loaded by nothing):
 
 1. `detect.ts` -- tool installation detection
 2. `import.ts` -- native config -> core config
 3. `export.ts` -- core config -> native files
 4. `diff.ts` -- structural drift comparison
-5. `schema.ts` -- Zod schemas for adapter TOML sections
-6. `index.ts` -- wire everything, export adapter object
+5. `index.ts` -- wire everything, export adapter object
+
+Optional per-adapter files (present only where needed): `identity.ts` (server
+identity matching), `session.ts` (SessionReader for harvest), `marketplace.ts`
+(VS Code extension scan), and format helpers like `jsonc.ts` / `yaml.ts`.
 
 Register the lazy factory in `src/adapters/registry.ts`. Add tests in `test/adapters/<name>/`.
+
+## Adding a New Platform Adapter
+
+1. Create `src/platforms/<name>.ts` implementing the `GitPlatformAdapter` interface
+2. Add the adapter to the `PLATFORMS` array in `src/platforms/registry.ts` (order matters -- more specific first)
+3. Add tests verifying URL detection and platform-specific behavior
+
+## Adding a New CLI Command
+
+1. Create `src/commands/<name>.ts` exporting a `defineCommand()` from citty
+2. Accept the global flags (`--json`, `--verbose`, `--quiet`, `--profile`) where relevant
+3. Use `src/lib/output.ts` helpers for all user-facing output
+4. Register in `src/cli.ts` subCommands:
+   ```typescript
+   <name>: () => import("./commands/<name>").then((m) => m.<name>Command),
+   ```
+5. Add tests in `test/commands/<name>.test.ts`
+
+## Adding an MCP Tool
+
+1. Add a `ToolEntry` to the `defineTools()` array in `src/mcp/server.ts`
+2. Choose the appropriate tier: `read-only`, `write-local`, or `write-remote`
+3. Define the JSON Schema for input parameters
+4. Implement the async handler function
+5. Write-remote tools require explicit opt-in via `settings.mcp_serve` in config.toml
+
+## Modifying the Schema
+
+1. Edit `src/core/schema.ts` -- add/change Zod schemas
+2. Update `src/core/config.ts` if merge behavior changes
+3. Update `src/core/resolver.ts` if profile resolution is affected
+4. Run `bun test test/core/schema.test.ts` to verify
+5. Adapter `[entity.adapters.<tool>]` sections are opaque passthrough (ADR-0007/0041) — core preserves them; there is no adapter-side Zod schema to update
 
 ## Config Format
 
