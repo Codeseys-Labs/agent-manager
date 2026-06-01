@@ -60,6 +60,42 @@ async function resolveDetectedAdapters(): Promise<Adapter[]> {
 }
 
 /**
+ * The subset of `@clack/prompts` the wizard uses. Pulled into a named type so a
+ * test can inject a deterministic, non-blocking double for the interactive
+ * branch WITHOUT a process-global `mock.module("@clack/prompts", …)` — that
+ * approach leaks into every other parallel test file that imports clack (see
+ * `test/core/controller-diff-throws-failclosed.test.ts` for the cautionary
+ * note). This seam mirrors `__setDetectedAdaptersForTests` above and is the
+ * only sanctioned way to exercise the interactive prompts in tests.
+ */
+export type ClackLike = Pick<
+  typeof clack,
+  | "intro"
+  | "outro"
+  | "note"
+  | "confirm"
+  | "text"
+  | "select"
+  | "multiselect"
+  | "spinner"
+  | "isCancel"
+  | "cancel"
+  | "log"
+>;
+
+let clackOverride: ClackLike | null = null;
+
+/** @internal test seam — inject a clack double for the interactive path. */
+export function __setClackForTests(impl: ClackLike | null): void {
+  clackOverride = impl;
+}
+
+/** Resolve the clack implementation (real module, or a test-injected double). */
+function getClack(): ClackLike {
+  return clackOverride ?? clack;
+}
+
+/**
  * The secret-encryption choices offered by the wizard's step 3.
  *
  * Wave 2 fence (ADR-0053 step 3 / ADR-0042 status): ONLY the legacy AES
@@ -114,12 +150,13 @@ interface StepState {
 
 /** Render the doctor `Check[]` as plain lines via clack.log. */
 function renderChecks(checks: Awaited<ReturnType<typeof collectDoctorChecks>>): void {
+  const c = getClack();
   const icons: Record<string, string> = { ok: "+", warn: "!", fail: "x" };
   for (const check of checks) {
     const line = `[${icons[check.status]}] ${check.name}: ${check.message}`;
-    if (check.status === "fail") clack.log.error(line);
-    else if (check.status === "warn") clack.log.warn(line);
-    else clack.log.success(line);
+    if (check.status === "fail") c.log.error(line);
+    else if (check.status === "warn") c.log.warn(line);
+    else c.log.success(line);
   }
 }
 
@@ -144,6 +181,12 @@ export const setupCommand = defineCommand({
     force: {
       type: "boolean",
       description: "Overwrite an existing non-default profile or a drifted apply",
+      default: false,
+    },
+    "generate-key": {
+      type: "boolean",
+      description:
+        "Non-interactive opt-in: generate an AES-256-GCM encryption key when none exists (interactive runs prompt instead)",
       default: false,
     },
     yes: {
@@ -177,8 +220,13 @@ export const setupCommand = defineCommand({
       !json &&
       !process.env.CI;
 
+    // Resolve the clack implementation once (real module, or a test double via
+    // __setClackForTests) so every interactive prompt below routes through the
+    // same instance.
+    const c = getClack();
+
     const log = (msg: string): void => {
-      if (interactive) clack.log.message(msg);
+      if (interactive) c.log.message(msg);
       else if (!json && !quiet) console.log(msg);
     };
 
@@ -186,7 +234,7 @@ export const setupCommand = defineCommand({
     const configPath = join(configDir, "config.toml");
 
     if (interactive) {
-      clack.intro("agent-manager setup");
+      c.intro("agent-manager setup");
     }
 
     try {
@@ -226,7 +274,7 @@ export const setupCommand = defineCommand({
           `Key:      ${state.hasKey ? "present" : "none"}`,
           `Tools:    ${state.detectedNames.length > 0 ? state.detectedNames.join(", ") : "none detected"}`,
         ].join("\n");
-        clack.note(summary, state.configExists ? "Existing setup (review)" : "Fresh machine");
+        c.note(summary, state.configExists ? "Existing setup (review)" : "Fresh machine");
       } else {
         log(
           `setup probe: config=${state.configExists ? "present" : "absent"}, git=${state.hasGit}, remote=${state.hasRemote}, key=${state.hasKey}, tools=[${state.detectedNames.join(", ")}]`,
@@ -242,18 +290,18 @@ export const setupCommand = defineCommand({
         : undefined;
 
       if (!fromUrl && interactive && !state.configExists) {
-        const wantsClone = await clack.confirm({
+        const wantsClone = await c.confirm({
           message: "Clone an existing catalog from a git remote (new-machine setup)?",
           initialValue: false,
         });
-        if (clack.isCancel(wantsClone)) return cancel(interactive);
+        if (c.isCancel(wantsClone)) return cancel(interactive);
         if (wantsClone) {
-          const url = await clack.text({
+          const url = await c.text({
             message: "Git URL or user/repo shorthand:",
             placeholder: "user/agent-manager-config",
             validate: (v) => (v.trim() ? undefined : "A URL or shorthand is required"),
           });
-          if (clack.isCancel(url)) return cancel(interactive);
+          if (c.isCancel(url)) return cancel(interactive);
           fromUrl = guessRepoUrl(String(url), { ssh: Boolean(args.ssh) });
         }
       }
@@ -270,7 +318,7 @@ export const setupCommand = defineCommand({
             `${configDir} is already a git repo; skipping clone of ${fromUrl} (re-run with --force to replace).`,
           );
         } else {
-          const spin = interactive ? clack.spinner() : null;
+          const spin = interactive ? c.spinner() : null;
           spin?.start(`Cloning ${fromUrl}`);
           try {
             await cloneRepo(configDir, fromUrl);
@@ -331,23 +379,33 @@ export const setupCommand = defineCommand({
       let keyGenerated = false;
       if (!state.hasKey && !cloned) {
         if (interactive) {
-          const choice = await clack.select({
+          const choice = await c.select({
             message: "Secret encryption (AES-256-GCM):",
             options: secretsBackendOptions(),
             initialValue: "generate",
           });
-          if (clack.isCancel(choice)) return cancel(interactive);
+          if (c.isCancel(choice)) return cancel(interactive);
           if (choice === "generate") {
             await saveKey(configDir, await generateKey());
             keyGenerated = true;
-            clack.note(
+            c.note(
               `Encryption key saved to ${resolveKeyPath()}\nSave this — it lives OUTSIDE the git-tracked config dir and is gitignored.\nUse \`am secret set <name> <value>\` to encrypt secrets.`,
               "Key generated",
             );
           }
+        } else if (args["generate-key"]) {
+          // Non-interactive EXPLICIT opt-in (wizard-followup nit a): a scripted
+          // / CI run can request key generation via `--generate-key`. Without
+          // this flag we never silently write a machine secret (doctor warns).
+          await saveKey(configDir, await generateKey());
+          keyGenerated = true;
+          log(
+            `Encryption key generated at ${resolveKeyPath()} (--generate-key). It lives OUTSIDE the git-tracked config dir and is gitignored.`,
+          );
         }
-        // Non-interactive: do NOT silently generate a key — that would write a
-        // machine secret without consent. Leave it absent (doctor warns).
+        // Non-interactive without --generate-key: do NOT silently generate a
+        // key — that would write a machine secret without consent. Leave it
+        // absent (doctor warns).
       } else if (state.hasKey) {
         log(`Encryption key present at ${resolveKeyPath()}`);
       }
@@ -360,13 +418,13 @@ export const setupCommand = defineCommand({
           .map((s) => s.trim())
           .filter(Boolean);
       } else if (interactive && state.detectedAdapterNames.length > 0) {
-        const picked = await clack.multiselect<string>({
+        const picked = await c.multiselect<string>({
           message: "Which tools should agent-manager manage?",
           options: detected.map((a) => ({ value: a.meta.name, label: a.meta.displayName })),
           initialValues: state.detectedAdapterNames,
           required: false,
         });
-        if (clack.isCancel(picked)) return cancel(interactive);
+        if (c.isCancel(picked)) return cancel(interactive);
         selectedTools = picked as string[];
       }
 
@@ -374,12 +432,12 @@ export const setupCommand = defineCommand({
       const profileName = resolveProfileName(args, state, interactive);
       let profileChosen = profileName;
       if (interactive && !args.profile) {
-        const entered = await clack.text({
+        const entered = await c.text({
           message: "Profile to use:",
           placeholder: "default",
           initialValue: state.currentProfile ?? "default",
         });
-        if (clack.isCancel(entered)) return cancel(interactive);
+        if (c.isCancel(entered)) return cancel(interactive);
         profileChosen = String(entered).trim() || "default";
       }
 
@@ -434,16 +492,16 @@ export const setupCommand = defineCommand({
           const lines = preview.results.map(
             (r) => `${r.adapter}: ${r.files.length} file(s)${r.diff ? ` [${r.diff.status}]` : ""}`,
           );
-          clack.note(
+          c.note(
             lines.length > 0 ? lines.join("\n") : "No tools detected to apply to.",
             "Apply preview (dry-run)",
           );
-          for (const notice of preview.notices) clack.log.warn(notice);
-          const go = await clack.confirm({
+          for (const notice of preview.notices) c.log.warn(notice);
+          const go = await c.confirm({
             message: `Write native configs for ${preview.results.length} tool(s)?`,
             initialValue: true,
           });
-          if (clack.isCancel(go)) return cancel(interactive);
+          if (c.isCancel(go)) return cancel(interactive);
           if (!go) {
             log("Apply skipped by user. Run `am apply` later.");
           } else {
@@ -500,9 +558,9 @@ export const setupCommand = defineCommand({
       } else if (interactive) {
         renderChecks(checks);
         if (hasFailures) {
-          clack.log.error("Health check: FAIL");
+          c.log.error("Health check: FAIL");
         } else {
-          clack.outro("Setup complete — health check passed.");
+          c.outro("Setup complete — health check passed.");
         }
       } else {
         const icons: Record<string, string> = { ok: "+", warn: "!", fail: "x" };
@@ -520,7 +578,7 @@ export const setupCommand = defineCommand({
       if (json) {
         console.error(JSON.stringify({ error: msg }));
       } else if (interactive) {
-        clack.cancel(msg);
+        c.cancel(msg);
       } else {
         console.error(`error: ${msg}`);
       }
@@ -556,6 +614,6 @@ function reportApply(
 
 /** Handle a clack cancel: print and set a non-zero exit code. */
 function cancel(interactive: boolean): void {
-  if (interactive) clack.cancel("Setup cancelled.");
+  if (interactive) getClack().cancel("Setup cancelled.");
   process.exitCode = 1;
 }

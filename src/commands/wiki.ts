@@ -612,7 +612,7 @@ const synthesizeSubcommand = defineCommand({
   },
 });
 
-const briefingSubcommand = defineCommand({
+export const briefingSubcommand = defineCommand({
   meta: { name: "briefing", description: "Generate agent briefing" },
   args: {
     "agent-id": { type: "positional", description: "Agent/adapter ID", required: true },
@@ -624,8 +624,11 @@ const briefingSubcommand = defineCommand({
   async run({ args }) {
     const opts = { json: args.json, quiet: args.quiet, verbose: args.verbose };
     const agentId = args["agent-id"] as string;
+    // QW-followup: thread --global so the briefing reads the global store
+    // instead of silently ignoring the declared flag (matches lint/graph).
+    const wikiDir = args.global ? resolveWikiDir({ global: true }) : undefined;
 
-    const entries = await getAllEntries();
+    const entries = await getAllEntries(wikiDir);
     const briefing = buildAgentBriefing(entries, agentId);
 
     if (args.json) {
@@ -636,7 +639,7 @@ const briefingSubcommand = defineCommand({
   },
 });
 
-const exportSubcommand = defineCommand({
+export const exportSubcommand = defineCommand({
   meta: { name: "export", description: "Export the knowledge base" },
   args: {
     json: { type: "boolean", description: "JSON output", default: false },
@@ -652,9 +655,12 @@ const exportSubcommand = defineCommand({
   async run({ args }) {
     const opts = { json: args.json, quiet: args.quiet, verbose: args.verbose };
     const fmt = args.format as string;
+    // QW-followup: thread --global so export reads the global store instead of
+    // silently ignoring the declared flag (matches lint/graph/briefing).
+    const wikiDir = args.global ? resolveWikiDir({ global: true }) : undefined;
 
-    const entries = await getAllEntries();
-    const index = await getIndex();
+    const entries = await getAllEntries(wikiDir);
+    const index = await getIndex(wikiDir);
 
     if (fmt === "markdown") {
       const tagGroups = new Map<string, KnowledgeEntry[]>();

@@ -63,6 +63,7 @@ function makeArgs(overrides: Record<string, unknown> = {}): Record<string, unkno
     profile: undefined,
     "no-apply": false,
     force: false,
+    "generate-key": false,
     yes: false,
     "non-interactive": false,
     json: false,
