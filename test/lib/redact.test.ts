@@ -43,10 +43,14 @@ describe("redactConfigSecrets — structural envelope redaction", () => {
 });
 
 describe("redactSecretish — free-form envelope redaction", () => {
-  test("redacts a v1 envelope substring", () => {
+  test("redacts a v1 envelope substring — including the ciphertext body", () => {
     const out = redactSecretish("token=enc:v1:aXY=:Y3Q= done");
     expect(out).toContain("[encrypted]");
     expect(out).not.toContain("enc:v1:aXY");
+    // The Wave 2 review caught that the iv:ct colon split left <ct_b64>
+    // exposed. Assert the ciphertext segment is gone, not just the prefix.
+    expect(out).not.toContain("Y3Q=");
+    expect(out).toBe("token=[encrypted] done");
   });
 
   test("redacts a v2 age envelope substring (was leaking pre-fix)", () => {
