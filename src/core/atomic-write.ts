@@ -363,7 +363,14 @@ export function atomicWriteFileSync(
     // fsync: open, fsync, close. This guarantees the data is durable before
     // we rename over the target — otherwise a crash between write and rename
     // could leave an empty target (rename succeeded, data not yet flushed).
-    fd = openSync(tmp, "r");
+    //
+    // The handle MUST be opened with write access ("r+", not "r"): on Windows
+    // FlushFileBuffers requires a write-capable handle, so fsync of a
+    // read-only fd returns EPERM ("operation not permitted, fsync"). POSIX
+    // permits fsync on a read-only fd, which is why the read-only variant
+    // passed on Linux/macOS but hard-failed every Windows CI leg. "r+" keeps
+    // the existing tmp content and merely grants the write bit.
+    fd = openSync(tmp, "r+");
     fsyncSync(fd);
     closeSync(fd);
     fd = null;
@@ -412,7 +419,9 @@ export async function atomicWriteFile(
   try {
     await writeFile(tmp, data, options.mode !== undefined ? { mode: options.mode } : undefined);
 
-    const handle = await open(tmp, "r");
+    // "r+" (read+write) is required for Windows FlushFileBuffers — fsync of a
+    // read-only handle returns EPERM there. See atomicWriteFileSync above.
+    const handle = await open(tmp, "r+");
     try {
       await handle.sync();
     } finally {

@@ -18,7 +18,7 @@
  * exception. Path-traversal in session IDs is rejected.
  */
 
-import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync, realpathSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import type { Message, Session, SessionReader, SessionSummary } from "../../core/session.ts";
@@ -62,7 +62,13 @@ export function createRooCodeSessionReader(
 ): SessionReader {
   const home = homeDir ?? homedir();
   const extensionIds = opts?.extensionIds ?? [...ROO_EXTENSION_IDS];
-  const candidateDirs = () => resolveVSCodeExtensionStorage(extensionIds, home);
+  // De-dupe physically-identical candidate dirs. On case-insensitive
+  // filesystems (macOS APFS, Windows NTFS) the two ROO_EXTENSION_IDS casings
+  // (`RooVeterinaryInc.roo-cline` vs `rooveterinaryinc.roo-cline`) resolve to
+  // the same physical directory, so without this each task dir would be
+  // scanned once per casing and listSessions would double-count. Keying on
+  // realpathSync collapses the aliases; a no-op on case-sensitive Linux.
+  const candidateDirs = () => dedupeByRealpath(resolveVSCodeExtensionStorage(extensionIds, home));
 
   return {
     hasSessionStorage(): boolean {
@@ -109,6 +115,34 @@ export function createRooCodeSessionReader(
       return null;
     },
   };
+}
+
+// ── Candidate-dir de-duplication ────────────────────────────────────
+
+/**
+ * Collapse candidate dirs that resolve to the same physical directory.
+ *
+ * On case-insensitive filesystems (macOS APFS, Windows NTFS) the multiple
+ * extension-id casings we probe point at one on-disk directory, so scanning
+ * every candidate would visit the same task dirs multiple times. Keying on
+ * `realpathSync` de-dupes those aliases. Paths that don't exist yet (no
+ * realpath) fall back to the literal string so they stay distinct.
+ */
+function dedupeByRealpath(dirs: string[]): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const dir of dirs) {
+    let key: string;
+    try {
+      key = realpathSync(dir);
+    } catch {
+      key = dir;
+    }
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(dir);
+  }
+  return out;
 }
 
 // ── Filesystem helpers ─────────────────────────────────────────────

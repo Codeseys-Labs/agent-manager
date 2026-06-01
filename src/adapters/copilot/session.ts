@@ -16,7 +16,7 @@
  * casing/shape we have seen in the wild.
  */
 
-import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync, realpathSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, join } from "node:path";
 import type { Message, Session, SessionReader, SessionSummary } from "../../core/session.ts";
@@ -62,7 +62,14 @@ export function createCopilotSessionReader(
 ): SessionReader {
   const home = homeDir ?? homedir();
   const extensionIds = opts?.extensionIds ?? DEFAULT_EXTENSION_IDS;
-  const candidateDirs = () => resolveVSCodeExtensionStorage(extensionIds, home);
+  // De-dupe physically-identical candidate dirs. resolveVSCodeExtensionStorage
+  // emits one path per (VS Code variant × extension-id casing). On
+  // case-insensitive filesystems (macOS APFS, Windows NTFS) the multiple
+  // ID casings collapse onto the SAME physical directory, so without this the
+  // reader would scan each session file once per casing and double-count
+  // results. Keying on realpathSync collapses those aliases to one entry while
+  // remaining a no-op on case-sensitive Linux.
+  const candidateDirs = () => dedupeByRealpath(resolveVSCodeExtensionStorage(extensionIds, home));
 
   return {
     hasSessionStorage(): boolean {
@@ -105,6 +112,36 @@ export function createCopilotSessionReader(
       return null;
     },
   };
+}
+
+// ── Candidate-dir de-duplication ────────────────────────────────────
+
+/**
+ * Collapse candidate dirs that resolve to the same physical directory.
+ *
+ * On case-insensitive filesystems (macOS APFS, Windows NTFS) the multiple
+ * extension-id casings we probe (`GitHub.copilot-chat` vs
+ * `github.copilot-chat`) point at one on-disk directory, so scanning every
+ * candidate would visit the same session files multiple times. Keying on
+ * `realpathSync` de-dupes those aliases. Paths that don't exist yet (no
+ * realpath) fall back to the literal string so they stay distinct and the
+ * caller's `existsSync` guard still works.
+ */
+function dedupeByRealpath(dirs: string[]): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const dir of dirs) {
+    let key: string;
+    try {
+      key = realpathSync(dir);
+    } catch {
+      key = dir;
+    }
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(dir);
+  }
+  return out;
 }
 
 // ── File scanning ───────────────────────────────────────────────────
