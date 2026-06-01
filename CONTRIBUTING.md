@@ -24,7 +24,7 @@ bun install
 bun test
 ```
 
-If all tests pass (1864), you're ready.
+If all tests pass (3000+), you're ready.
 
 ## Project Structure
 
@@ -130,14 +130,16 @@ Keep changes focused. One feature or fix per PR.
 ### 5. Validate
 
 ```bash
-bun test            # All tests pass (1864)
+bun test            # All tests pass (3000+)
 bun test --coverage --coverage-reporter=text --coverage-reporter=lcov --config=/dev/null
                     # Coverage summary + coverage/lcov.info
 bun run lint        # Biome linting + formatting
-bun run typecheck   # TypeScript type checking
+bun run typecheck   # TypeScript type checking (first-party src/ must be clean;
+                    # @silvery vendor .ts files emit known noise — see scripts)
 ```
 
-All three must pass before pushing.
+All must pass before pushing. Stats in README are generated — run
+`bun run scripts/stats.ts` if you changed counts (CI enforces `--check`).
 
 ### 6. Commit
 
@@ -198,7 +200,9 @@ Key conventions:
 
 See `docs/adapter-development-guide.md` for the full walkthrough. Summary:
 
-1. Create `src/adapters/<name>/` with detect, import, export, diff, schema, index
+1. Create `src/adapters/<name>/` with detect, import, export, diff, index (5-file
+   core). Optional helpers as needed: identity, session, marketplace, jsonc/yaml.
+   There is **no** `schema.ts` (the adapter schema field was deleted per ADR-0041).
 2. Register the lazy factory in `src/adapters/registry.ts`
 3. Add tests in `test/adapters/<name>/`
 
@@ -238,18 +242,39 @@ MCP tools are defined in `src/mcp/server.ts`:
 
 ### Extend Config
 
-Config is TOML-based with two-phase validation (ADR-0007):
-- **Phase 1 (core):** `src/core/schema.ts` validates universal fields
-- **Phase 2 (adapter):** Each adapter's `schema.ts` validates its `[adapters.<name>]` sections
+Config is TOML-based with two-phase validation (ADR-0007, ADR-0041):
+- **Phase 1 (core):** `src/core/schema.ts` validates universal fields strictly.
+- **Phase 2 (adapter):** `[entity.adapters.<tool>]` subtables are opaque passthrough
+  — core preserves them but does not validate them. There is **no** adapter
+  `schema.ts` file (the adapter `schema` field was deleted per ADR-0041).
 
-To add a new core field, update the Zod schema and the `Resolved*` types in `types.ts`.
-To add an adapter-specific field, update only that adapter's `schema.ts`.
+To add a new core field, update the Zod schema in `src/core/schema.ts` and the
+`Resolved*` types. To add an adapter-specific field, just write it under
+`[<entity>.adapters.<tool>]` — no schema change is needed; the adapter reads it.
 
 ## Architecture Decisions
 
-Design decisions are recorded in [30 ADRs](ADRs/README.md). Before proposing a change
+Design decisions are recorded in [53 ADRs](ADRs/README.md). Before proposing a change
 that conflicts with an existing ADR, read it first. To propose a new direction, create
 a new ADR using `ADRs/template.md`.
+
+## AI-Assisted Development
+
+Most work on this project is done with AI agents, and the workflow is structured so
+that humans and agents follow the same rules. The full working model — research-first,
+multi-agent **workflows** (investigate → architect → plan → act → review with a
+concurrent review team), **parallel `wave/N-*` branches in isolated worktrees**
+partitioned by disjoint file ownership, the deterministic **merge-order / rebase plan**
+(`docs/audit/assessment-2026-05-31/INTEGRATION-PLAN.md`), **stacked PRs** for
+CodeRabbit review, and the **Seeds-tracked goal-driven backlog loop** — is documented
+in [`AGENTS.md`](AGENTS.md) under "How We Work". Read it before opening a multi-part PR.
+
+Key conventions for contributors (human or agent):
+- One wave / one concern per branch; keep PRs focused so review stays tractable.
+- Shared "hub" files (`README.md`, `ROADMAP.md`, `src/cli.ts`, `src/help.ts`) are
+  edited by one branch at a time — coordinate, don't race.
+- Track work in Seeds (`sd`); record durable insights in Mulch (`ml`).
+- Marketplace (pillar 4) is **deferred to v2**, not deleted. ACP/A2A are in v1 scope.
 
 ## Questions?
 
