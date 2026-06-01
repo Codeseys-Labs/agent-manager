@@ -1,14 +1,16 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { join } from "node:path";
 import { CommunityAdapterProxy } from "../../../src/adapters/community/proxy.ts";
+import { bunExe } from "../../helpers/bun-exe.ts";
 
 const MOCK_ADAPTER = join(import.meta.dir, "mock-adapter.ts");
+const BUN = bunExe();
 
 describe("CommunityAdapterProxy", () => {
   let proxy: CommunityAdapterProxy;
 
   beforeEach(async () => {
-    proxy = await CommunityAdapterProxy.create("bun", [MOCK_ADAPTER]);
+    proxy = await CommunityAdapterProxy.create(BUN, [MOCK_ADAPTER]);
   });
 
   afterEach(() => {
@@ -74,13 +76,13 @@ describe("CommunityAdapterProxy", () => {
 
 describe("CommunityAdapterProxy.isAlive()", () => {
   it("returns true when subprocess is running", async () => {
-    const p = await CommunityAdapterProxy.create("bun", [MOCK_ADAPTER]);
+    const p = await CommunityAdapterProxy.create(BUN, [MOCK_ADAPTER]);
     expect(p.isAlive()).toBe(true);
     p.kill();
   });
 
   it("returns false after kill()", async () => {
-    const p = await CommunityAdapterProxy.create("bun", [MOCK_ADAPTER]);
+    const p = await CommunityAdapterProxy.create(BUN, [MOCK_ADAPTER]);
     p.kill();
     expect(p.isAlive()).toBe(false);
   });

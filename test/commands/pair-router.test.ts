@@ -6,11 +6,16 @@
  * alias for `accept` — same code path, plus a stderr deprecation warning.
  */
 
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, setDefaultTimeout, test } from "bun:test";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { resolveMeta, resolveSubCommands } from "../helpers/citty";
 import { type TestDir, createTestDir } from "../helpers/tmp";
+
+// age scrypt identity wrapping is slow under CI coverage; the 5s default
+// would time out and leak global state across the shared bun process. See
+// pair-finalize.test.ts for the full rationale. (Wave CI / P0-5.)
+setDefaultTimeout(30_000);
 
 describe("am pair: router registration", () => {
   test("pairCommand exports with meta", async () => {

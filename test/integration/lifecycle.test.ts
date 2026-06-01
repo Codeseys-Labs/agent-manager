@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, setDefaultTimeout, test } from "bun:test";
 import { join } from "node:path";
+import { bunExe } from "../helpers/bun-exe";
 import { type TestDir, createTestDir } from "../helpers/tmp";
 
 // Each test spawns `bun run src/cli.ts` — cold-start overhead is 1-3s
@@ -11,7 +12,7 @@ setDefaultTimeout(30_000);
 let testDir: TestDir;
 
 async function runAM(...args: string[]): Promise<{ stdout: string; stderr: string; code: number }> {
-  const proc = Bun.spawn(["bun", "run", "src/cli.ts", ...args], {
+  const proc = Bun.spawn([bunExe(), "run", "src/cli.ts", ...args], {
     cwd: join(import.meta.dir, "../.."),
     env: { ...process.env, AM_CONFIG_DIR: testDir.path },
     stdout: "pipe",
@@ -284,7 +285,7 @@ describe("lifecycle integration tests", () => {
     async function runAMWithHome(
       ...args: string[]
     ): Promise<{ stdout: string; stderr: string; code: number }> {
-      const proc = Bun.spawn(["bun", "run", "src/cli.ts", ...args], {
+      const proc = Bun.spawn([bunExe(), "run", "src/cli.ts", ...args], {
         cwd: join(import.meta.dir, "../.."),
         env: { ...process.env, AM_CONFIG_DIR: testDir.path, HOME: fakeHome },
         stdout: "pipe",
@@ -333,7 +334,7 @@ describe("lifecycle integration tests", () => {
     async function runAMWithHome(
       ...args: string[]
     ): Promise<{ stdout: string; stderr: string; code: number }> {
-      const proc = Bun.spawn(["bun", "run", "src/cli.ts", ...args], {
+      const proc = Bun.spawn([bunExe(), "run", "src/cli.ts", ...args], {
         cwd: join(import.meta.dir, "../.."),
         env: { ...process.env, AM_CONFIG_DIR: testDir.path, HOME: fakeHome },
         stdout: "pipe",
@@ -370,7 +371,7 @@ describe("lifecycle integration tests", () => {
     async function runAMWithHome(
       ...args: string[]
     ): Promise<{ stdout: string; stderr: string; code: number }> {
-      const proc = Bun.spawn(["bun", "run", "src/cli.ts", ...args], {
+      const proc = Bun.spawn([bunExe(), "run", "src/cli.ts", ...args], {
         cwd: join(import.meta.dir, "../.."),
         env: { ...process.env, AM_CONFIG_DIR: testDir.path, HOME: fakeHome },
         stdout: "pipe",
@@ -416,7 +417,7 @@ describe("lifecycle integration tests", () => {
       configDir: string,
       ...args: string[]
     ): Promise<{ stdout: string; stderr: string; code: number }> {
-      const proc = Bun.spawn(["bun", "run", "src/cli.ts", ...args], {
+      const proc = Bun.spawn([bunExe(), "run", "src/cli.ts", ...args], {
         cwd: join(import.meta.dir, "../.."),
         env: { ...process.env, AM_CONFIG_DIR: configDir, HOME: fakeHome },
         stdout: "pipe",

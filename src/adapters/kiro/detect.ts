@@ -87,6 +87,11 @@ function getKiroVersion(): string | undefined {
     const proc = Bun.spawnSync(["kiro", "--version"], {
       stdout: "pipe",
       stderr: "pipe",
+      // stdin must be detached: a CLI that blocks reading stdin would hang
+      // the synchronous spawn (and the single-threaded test event loop).
+      stdin: "ignore",
+      // Cap the probe: a slow / hung CLI must not block tool detection.
+      timeout: 2000,
     });
     if (proc.exitCode === 0) {
       return proc.stdout.toString().trim();

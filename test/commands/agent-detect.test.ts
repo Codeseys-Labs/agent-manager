@@ -1,5 +1,14 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, setDefaultTimeout, test } from "bun:test";
 import { __setWhichFn, resetAgentDetectionCache } from "../../src/core/agent-detection";
+
+// The no-arg `am agent detect` path runs full adapter detection, which
+// probes installed IDE CLIs via Bun.spawnSync([<cli>, "--version"]). On a
+// dev box with several IDE CLIs actually installed, those serialized probes
+// (each capped at 2s in the adapter detect()s) can exceed the 5s default
+// under full-suite load. CI runners have no IDE CLIs so this is fast there;
+// 30s gives headroom on dev machines without hiding real regressions.
+// (Wave CI / P0-5.)
+setDefaultTimeout(30_000);
 
 // ── Test harness ────────────────────────────────────────────────
 

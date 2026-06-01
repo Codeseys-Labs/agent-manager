@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, setDefaultTimeout, test } from "bun:test";
 import * as TOML from "@iarna/toml";
 import {
   BUILT_IN_ACP_AGENTS,
@@ -11,6 +11,13 @@ import {
   resolveAgentAsync,
 } from "../../src/core/agent-registry";
 import { type TestDir, createTestDir } from "../helpers/tmp";
+
+// listAllAgentsAsync({ detect: true }) runs full adapter detection, which
+// probes installed IDE CLIs via Bun.spawnSync. On a dev box those serialized
+// probes can exceed the 5s default under full-suite load (CI has none, so
+// it's fast there). 30s gives headroom without hiding regressions.
+// (Wave CI / P0-5.)
+setDefaultTimeout(30_000);
 
 // ── Helpers ─────────────────────────────────────────────────────
 

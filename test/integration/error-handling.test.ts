@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, setDefaultTimeout, test } from "bun:test";
 import { join } from "node:path";
+import { bunExe } from "../helpers/bun-exe";
 import { type TestDir, createTestDir } from "../helpers/tmp";
 
 // Integration tests spawn bun subprocesses per runAM() call; the cold-start
@@ -11,7 +12,7 @@ setDefaultTimeout(30_000);
 let testDir: TestDir;
 
 async function runAM(...args: string[]): Promise<{ stdout: string; stderr: string; code: number }> {
-  const proc = Bun.spawn(["bun", "run", "src/cli.ts", ...args], {
+  const proc = Bun.spawn([bunExe(), "run", "src/cli.ts", ...args], {
     cwd: join(import.meta.dir, "../.."),
     env: { ...process.env, AM_CONFIG_DIR: testDir.path },
     stdout: "pipe",
