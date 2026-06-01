@@ -33,7 +33,10 @@ describe("ADR-0046: schema rejects team_passphrase", () => {
     const errs = result.error.issues.map((i) => i.message).join("\n");
     expect(errs).toContain("ADR-0046");
     expect(errs).toContain("team_passphrase");
-    expect(errs).toContain("am secrets add-recipient");
+    // P0-3 §4: the message must point at the REAL command (`am pair accept`),
+    // not the dead `am secrets add-recipient` that never existed.
+    expect(errs).toContain("am pair accept");
+    expect(errs).not.toContain("am secrets add-recipient");
   });
 
   test("error path points at team_passphrase", () => {

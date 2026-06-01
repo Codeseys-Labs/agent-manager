@@ -7,15 +7,20 @@
 
 /**
  * Redact a TOML-style config object in place, replacing encrypted values
- * (prefixed with `enc:v1:`) with the placeholder "[encrypted]".
+ * (any `enc:` envelope — legacy `enc:v1:` AES-GCM or ADR-0042 `enc:v2:age:`)
+ * with the placeholder "[encrypted]".
  *
  * This is a structural redactor — it walks the tree and only touches strings
  * matching the encrypted sentinel. Non-encrypted secrets (plaintext API keys
  * in env maps, etc.) should be caught by `redactSecretish` applied to the
  * output text, not this helper.
+ *
+ * The sentinel match is the broad `enc:` prefix (not just `enc:v1:`) so that
+ * v2 age ciphertext is never leaked through MCP `config_show`, and so any
+ * future envelope format is redacted by default rather than by omission.
  */
 export function redactConfigSecrets(obj: unknown): unknown {
-  if (typeof obj === "string" && obj.startsWith("enc:v1:")) return "[encrypted]";
+  if (typeof obj === "string" && obj.startsWith("enc:")) return "[encrypted]";
   if (Array.isArray(obj)) return obj.map(redactConfigSecrets);
   if (obj && typeof obj === "object") {
     return Object.fromEntries(
@@ -47,8 +52,16 @@ export function redactConfigSecrets(obj: unknown): unknown {
  *     catch the credential families we actually care about.
  */
 const SECRET_PATTERNS: Array<{ re: RegExp; replace: string }> = [
-  // Encrypted sentinel from src/core/secrets.ts (enc:v1:<base64>)
-  { re: /enc:v1:[A-Za-z0-9+/=_-]+/g, replace: "[encrypted]" },
+  // Encrypted sentinel from src/core/secrets.ts. Must match the FULL envelope
+  // so no ciphertext body survives:
+  //   - v2 age:     enc:v2:age:<b64>
+  //   - v1 AES-GCM: enc:v1:<iv_b64>:<ct_b64>  — TWO base64 segments joined by a
+  //     colon. The optional `(?::[A-Za-z0-9+/=_-]+)?` tail swallows the iv:ct
+  //     join; without it the match stopped at the iv and leaked <ct_b64>
+  //     (pre-existing bug surfaced in the Wave 2 review).
+  // v2 must precede the generic v-arm so `enc:v2:age:...` isn't half-matched.
+  { re: /enc:v2:age:[A-Za-z0-9+/=_-]+/g, replace: "[encrypted]" },
+  { re: /enc:v\d+:[A-Za-z0-9+/=_-]+(?::[A-Za-z0-9+/=_-]+)?/g, replace: "[encrypted]" },
   // SSH/PEM private keys — multiline, non-greedy body. Must precede generic
   // Bearer/sk- rules so we don't half-redact the body. The `m` flag lets `.`
   // match newlines under the `s` flag (dotall).

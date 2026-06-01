@@ -5,6 +5,7 @@ import { atomicWriteFile } from "./atomic-write";
 import type { Config } from "./schema";
 import type { SecretEnvelope, SecretsBackend } from "./secrets-backend";
 import { getBackend, registerBackend } from "./secrets-backend";
+import { type DecodeBackends, decodeEnvelope } from "./secrets-decode";
 
 // --- Encryption constants ---
 const ALGO = "AES-GCM";
@@ -288,22 +289,52 @@ export function interpolateEnv(
 }
 
 /**
- * Async interpolation that also decrypts `enc:v1:` values.
+ * Async interpolation that also decrypts encrypted envelopes.
+ *
  * Performs variable interpolation first, then walks all strings to decrypt.
+ *
+ * Decoding is **format-aware and fail-loud** (P0-3 fix): every envelope is
+ * dispatched through `decodeEnvelope`, which routes `enc:v1:` to the AES-GCM
+ * key, `enc:v2:age:` to the age backend, and THROWS on any unrecognised
+ * `enc:` prefix. It never passes ciphertext through verbatim — that was the
+ * bug that let age-migrated secrets leak as plaintext into native configs.
+ *
+ * - Pass `encryptionKey` to decrypt legacy `enc:v1:` envelopes.
+ * - Pass `ageBackend` to decrypt `enc:v2:age:` envelopes.
+ * - If an envelope is encountered without a backend that can decrypt it
+ *   (e.g. a v2 envelope with no `ageBackend`, or any envelope with no key),
+ *   decode THROWS (MissingBackendError) — the apply aborts rather than
+ *   corrupting configs.
+ * - An unknown `enc:` prefix THROWS (UnknownEnvelopeError).
+ *
+ * Plaintext (including `${VAR}`-expanded strings) always flows through
+ * untouched. The walk ALWAYS runs — there is deliberately no "no backend →
+ * skip decryption" shortcut, because that shortcut was the exact bug that let
+ * `enc:v2:age:` / unknown envelopes leak verbatim into native configs.
  */
 export async function interpolateEnvAsync(
   config: Config,
-  options: InterpolateOptions & { encryptionKey?: CryptoKey } = {},
+  options: InterpolateOptions & {
+    encryptionKey?: CryptoKey;
+    ageBackend?: SecretsBackend | null;
+  } = {},
 ): Promise<InterpolateResult> {
-  const { encryptionKey, ...interpolateOpts } = options;
+  const { encryptionKey, ageBackend, ...interpolateOpts } = options;
   const result = interpolateEnv(config, interpolateOpts);
 
-  if (!encryptionKey) return result;
+  const backends: DecodeBackends = {
+    legacyKey: encryptionKey ?? null,
+    ageBackend: ageBackend ?? null,
+  };
 
-  // Walk the interpolated config and decrypt any enc:v1: values
+  // Walk the interpolated config and decode any encrypted envelopes via the
+  // format-aware, fail-loud dispatcher. `decodeEnvelope` returns plaintext
+  // unchanged and only acts on (or throws for) `enc:`-prefixed values.
   async function walkDecrypt(value: unknown): Promise<unknown> {
-    if (typeof value === "string" && isEncrypted(value)) {
-      return decryptValue(value, encryptionKey!);
+    // Route every `enc:`-prefixed string through the fail-loud dispatcher —
+    // known envelopes decrypt, unknown ones throw, ciphertext never leaks.
+    if (typeof value === "string" && value.startsWith("enc:")) {
+      return decodeEnvelope(value, backends);
     }
     if (Array.isArray(value)) {
       return Promise.all(value.map(walkDecrypt));
