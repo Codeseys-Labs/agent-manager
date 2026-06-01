@@ -1,0 +1,47 @@
+(fail) ADR-0044 Wave B — wiki init/migrate/publish/pull > path: legacy-only project prints legacy
+(fail) ADR-0047 `am pair finalize` — Wave T sub-task T2 > exits non-zero when the .pub file does 
+(fail) Action node cwd override > action node respects cwd override
+(fail) AgeSecretsBackend — paths > resolveIdentityDir defaults to XDG_CONFIG_HOME or ~/.config
+(fail) AgeSecretsBackend — paths > resolveIdentityDir respects AM_AGE_IDENTITY_DIR override
+(fail) Cline session reader > falls back to numeric taskId for startedAt when ui_messages.json is
+(fail) Cline session reader > hasSessionStorage returns false when no globalStorage exists
+(fail) Cline session reader > listSessions skips entries with unsafe ids in tasks dir
+(fail) Cline session reader > listSessions skips tasks missing api_conversation_history.json
+(fail) Cline session reader > listSessions skips tasks whose conversation produces zero messages
+(fail) Cline session reader > listSessions skips tasks with malformed api_conversation_history.js
+(fail) Codex CLI session reader > derives date from path when no started_at in meta
+(fail) Codex CLI session reader > derives session ID from filename when no session_meta
+(fail) Copilot Chat session reader > listSessions filters by project when session has cwd metadat
+(fail) Copilot Chat session reader > listSessions parses chat session JSON file
+(fail) Copilot Chat session reader > listSessions parses sessions nested under chatSessions/
+(fail) Copilot Chat session reader > listSessions sorts by startedAt descending and skips malform
+(fail) Cursor adapter roundtrip > import → transform → export → diff shows in-sync
+(fail) Cursor session reader > defensive: malformed composer JSON is skipped
+(fail) Cursor session reader > defensive: missing bubble row is skipped
+(fail) Cursor session reader > defensive: missing cursorDiskKV table does not throw 
+(fail) Cursor session reader > hasSessionStorage returns true when workspaceStorage exists
+(fail) Cursor session reader > listSessions discovers sessions across multiple workspaces and sor
+(fail) Cursor session reader > listSessions filters by project (workspace.json folder) 
+(fail) Cursor session reader > listSessions includes modern globalStorage composer sessions 
+(fail) Cursor session reader > listSessions merges modern + legacy in one call, sorted newest fir
+(fail) Cursor session reader > listSessions(project) excludes global composers 
+(fail) Cursor session reader > loadSession maps tool calls into Message.toolCalls
+(fail) Cursor session reader > loadSession parses a full session with timestamps and project
+(fail) Cursor session reader > loadSession retrieves a global composer by id
+(fail) Cursor session reader > session without workspace.json still loads, project is undefined
+(fail) Cursor session reader > skips tabs missing bubbles entirely
+(fail) Cursor session reader > skips workspace dir lacking state.vscdb but lists others
+(fail) Cursor session reader > skips workspace whose chatdata blob is unparseable JSON 
+(fail) Cursor session reader > supports older `aiService.prompts` key when chatdata absent
+(fail) Cursor session reader > tool call extraction handles modern toolFormerData shape 
+(fail) Kiro adapter roundtrip > import → transform → export → diff shows in-sync
+(fail) MCP concurrency safety (Wave B) > 2x am_apply concurrent — no writes are lost
+(fail) MCP concurrency safety (Wave B) > am_apply + am_add_server race — ordering stays coherent 
+(fail) Mixed node type flows > acp -> compute -> action flow with mock executor
+(fail) Mixed node type flows > compute -> action -> compute pipeline
+(fail) P0-3: applyResolved fails loud instead of writing ciphertext verbatim > applyResolved refu
+(fail) Roo Code adapter roundtrip > instructions roundtrip through .roo/rules/
+(fail) Roo Code adapter roundtrip > project servers roundtrip through .roo/mcp.json
+(fail) Roo Code session reader > hasSessionStorage returns false when no globalStorage exists
+(fail) Roo Code session reader > listSessions falls back to ui_messages.json when api file is mis
+(fail) Roo Code
