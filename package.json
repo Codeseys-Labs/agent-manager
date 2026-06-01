@@ -12,7 +12,6 @@
   "files": [
     "src/",
     "bin/",
-    "dist/",
     "LICENSE",
     "README.md"
   ],

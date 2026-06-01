@@ -21,6 +21,13 @@ export const initCommand = defineCommand({
       default: false,
     },
     json: { type: "boolean", description: "JSON output", default: false },
+    yes: {
+      type: "boolean",
+      alias: "y",
+      description:
+        "Non-interactive: accept defaults, skip all prompts (key + remote skipped unless flagged)",
+      default: false,
+    },
     quiet: {
       type: "boolean",
       alias: "q",
@@ -31,6 +38,10 @@ export const initCommand = defineCommand({
   },
   async run({ args }) {
     const opts = { json: args.json, quiet: args.quiet, verbose: args.verbose };
+    // Non-interactive when explicitly requested (--yes/--json/--quiet) or when
+    // there is no TTY (CI, pipes, Docker RUN). Prompts are gated on this so a
+    // scripted `am init` never hangs and `--yes` is an honest, declared flag.
+    const interactive = !args.yes && !args.json && !args.quiet && Boolean(process.stdin.isTTY);
 
     // --project mode: scan workspace and create .agent-manager.toml
     if (args.project) {
@@ -110,7 +121,7 @@ export const initCommand = defineCommand({
 
     // Offer encryption key generation (interactive only, not in JSON/quiet mode)
     let keyGenerated = false;
-    if (!args.json && !args.quiet && process.stdin.isTTY) {
+    if (interactive) {
       const setupKey = await clack.confirm({
         message: "Generate an encryption key for secrets?",
         initialValue: true,
@@ -126,7 +137,7 @@ export const initCommand = defineCommand({
 
     // Offer remote setup (interactive only)
     let remoteConfigured: string | null = null;
-    if (!args.json && !args.quiet && process.stdin.isTTY) {
+    if (interactive) {
       const remoteUrl = await clack.text({
         message: "Git remote URL for sync (leave empty to skip):",
         placeholder: "https://github.com/user/agent-manager-config.git",
