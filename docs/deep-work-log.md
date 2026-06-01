@@ -2307,3 +2307,20 @@ IN FLIGHT (2 parallel workflows, will notify):
 Backlog after Wave 7: ~8 open. Remaining after these waves land: TEST-1/2 (command-handler coverage), QW-followup, SEC-4b + summary-line follow-ups.
 
 Total session: production audit → 15 PRs merged → green 3165-test baseline. The CLI is materially closer to the audit's v1.0 bar: install honest, secrets-corruption fixed, security hardened, CI green, docs reconciled, working model internalized, type-cycle broken, and the wizard in flight.
+
+## Run 2026-06-01 — checkpoint 6 (audit backlog CLEARED; forward work remains)
+
+main @ bca6bea. Local full suite: **3204 pass / 0 fail**. Repo hygiene clean (overstory + TMP-PROMPT untracked, stats generated).
+
+**17 PRs merged this session (#4–#20).** The ENTIRE original production-readiness-audit backlog (every P0/P1/P2) is resolved + merged:
+- P0: install honesty, am setup wizard (#19), age-secrets corruption fix (#7), doc honesty, CI-green.
+- Security: path-traversal, A2A SSRF (+loopback bypasses), MCP buffer.
+- Refactors: core↔adapters type cycle (#13), adapter export dedup -207 LOC (#17).
+- DX/dist/docs: ZodError UX, help coverage, Windows CI, installer integrity, AGENTS canonical, ROADMAP, ADR-0053 wizard, RM-1 coverage.
+- 2 genuine cross-platform PRODUCT bugs found by chasing CI green: Windows fsync-on-readonly-fd (#18), POSIX-only path-prefix check (#20).
+
+**User directives addressed:** stacked PRs + worktrees throughout; CI/CD deep-work-loop (#18, #20, CI-3 in flight); wiki/Context-Hub assessment → ADR-0054 (knowledge as first-class peer) + R1-R8 backlog; north-star (git-versioned superset) reaffirmed coherent.
+
+**In flight:** CI-3 — systematic Windows cross-platform path/env hardening (46 build-verify failures clustered in session readers + age-secrets/wiki paths + cwd); a deep-work-loop diagnose→fix→review on ci/xplat-hardening.
+
+**Remaining forward backlog (16):** ADR-0054 wiki R1-R8 (the knowledge initiative), CI-3, TEST-1/2, SEC-4b, P1-B, review follow-ups.
