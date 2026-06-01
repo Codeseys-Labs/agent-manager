@@ -368,11 +368,14 @@ describe("loadCommunityAdapters() checksum integration", () => {
 
   it("rejects adapter with checksum mismatch via loadCommunityAdapters", async () => {
     const binaryPath = await dir.write("fake-adapter", "#!/bin/sh\necho hello\n");
+    // JSON.stringify escapes backslashes so a native Windows path
+    // (C:\…\fake-adapter) is a valid TOML basic string rather than an invalid
+    // escape sequence. The loader reads this exact path to hash it.
     await dir.write(
       "adapters.toml",
       `[adapters.bad]
 source = "local:./bad-adapter"
-command = "${binaryPath}"
+command = ${JSON.stringify(binaryPath)}
 installed_at = "2026-04-15T10:00:00Z"
 checksum = "sha256:0000000000000000000000000000000000000000000000000000000000000000"
 `,

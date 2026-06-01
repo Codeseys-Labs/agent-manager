@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { fileURLToPath } from "node:url";
 import type { Session, SessionFilter, SessionSummary } from "../../src/core/session";
 import { estimateTokens, filterMessages, formatJson, formatMarkdown } from "../../src/core/session";
 
@@ -265,9 +266,12 @@ describe("am session", () => {
     });
 
     test("session command is registered in CLI", async () => {
-      // Verify cli.ts has the session command import
+      // Verify cli.ts has the session command import.
+      // `new URL(...).pathname` yields `/C:/...` on Windows (leading slash
+      // before the drive letter), which Bun.file cannot open. fileURLToPath
+      // converts the file URL to a valid native path on every platform.
       const cliContent = await Bun.file(
-        new URL("../../src/cli.ts", import.meta.url).pathname,
+        fileURLToPath(new URL("../../src/cli.ts", import.meta.url)),
       ).text();
       expect(cliContent).toContain("sessionCommand");
       expect(cliContent).toContain("./commands/session");

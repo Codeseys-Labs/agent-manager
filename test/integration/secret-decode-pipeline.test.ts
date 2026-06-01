@@ -15,10 +15,17 @@
  *      v2 envelope it cannot decrypt.
  */
 
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, setDefaultTimeout, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+
+// The age backend's scrypt identity wrap/unwrap is 8-9s per op under CI
+// coverage and slower on the Windows 2-vcpu runner. The 5s default fires
+// mid-operation for the v2 round-trip + applyResolved cases below; a killed
+// async test leaks global process.env/state into sibling tests because bun runs
+// every file in ONE process. Mirrors test/core/secrets-age.test.ts (Wave CI).
+setDefaultTimeout(30_000);
 import { writeConfig } from "../../src/core/config";
 import { applyResolved } from "../../src/core/controller";
 import { initRepo } from "../../src/core/git";

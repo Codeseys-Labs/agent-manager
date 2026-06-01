@@ -13,6 +13,7 @@ import {
   writeConfig,
 } from "../../src/core/config";
 import type { Config } from "../../src/core/schema";
+import { toPosix } from "../helpers/path";
 
 const FIXTURES = join(import.meta.dir, "..", "fixtures");
 
@@ -35,7 +36,10 @@ describe("resolveConfigDir", () => {
   test("returns default path when AM_CONFIG_DIR is not set", () => {
     process.env.AM_CONFIG_DIR = undefined;
     const result = resolveConfigDir();
-    expect(result).toEndWith("/.config/agent-manager");
+    // The default config dir is ~/.config/agent-manager on EVERY platform (it
+    // is a git repo, ADR-0002). node:path.join emits the host separator, so
+    // normalize to POSIX before the forward-slash suffix assert.
+    expect(toPosix(result)).toEndWith("/.config/agent-manager");
   });
 });
 

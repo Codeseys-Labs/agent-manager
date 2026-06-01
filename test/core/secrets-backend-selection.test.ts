@@ -6,11 +6,19 @@
  *   - end-to-end `secrets-migrate` walk (legacy -> age round-trip)
  */
 
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, setDefaultTimeout, test } from "bun:test";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import * as TOML from "@iarna/toml";
+
+// The `age` backend's scrypt identity wrap/unwrap is 8-9s per op under CI
+// coverage (and slower still on the Windows runner). The 5s default would time
+// out the age round-trip + secrets-migrate cases below — and because bun runs
+// every test file in ONE process, a timed-out async test leaks global env/state
+// into the sibling getDefaultBackend(aes-gcm-legacy) cases, failing them too.
+// Mirrors test/core/secrets-age.test.ts (Wave CI / P0-5).
+setDefaultTimeout(30_000);
 import {
   AesGcmLegacyBackend,
   type SelectableBackendName,

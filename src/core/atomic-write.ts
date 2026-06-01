@@ -35,7 +35,6 @@ import {
   mkdir,
   open,
   readFile,
-  readdir,
   realpath,
   rename,
   stat,
@@ -151,11 +150,27 @@ async function maybeBackup(target: string, data: string | Uint8Array): Promise<B
   manifest.entries.push({ name, sha, ts });
   // REV-3 (2026-05-03): prune the manifest alongside the .bak files so
   // listBackupsForTarget never returns paths pointing to deleted files.
+  // Prune by INSERTION ORDER (the manifest is append-ordered) and delete
+  // exactly the .bak files that fall out of the keep-window. The older
+  // approach re-sorted on-disk filenames lexically, which only matches
+  // insertion order if `<ts>-<hr>` sorts identically to insertion — true on
+  // POSIX but NOT guaranteed on Windows where the hrtime tail can wrap a
+  // 1e9-ns boundary between two same-millisecond writes. Driving on-disk
+  // deletion straight from the dropped manifest entries makes manifest and
+  // disk lockstep on every platform.
+  let dropped: Array<{ name: string }> = [];
   if (manifest.entries.length > DEFAULT_KEEP_COUNT) {
+    dropped = manifest.entries.slice(0, manifest.entries.length - DEFAULT_KEEP_COUNT);
     manifest.entries = manifest.entries.slice(-DEFAULT_KEEP_COUNT);
   }
   await writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, "utf-8");
-  await pruneBackups(dir, DEFAULT_KEEP_COUNT);
+  for (const d of dropped) {
+    try {
+      await unlink(join(dir, d.name));
+    } catch {
+      // best-effort: file may already be gone
+    }
+  }
   return { target, timestamp: ts, sha, path };
 }
 
@@ -195,43 +210,23 @@ function maybeBackupSync(target: string, data: string | Uint8Array): BackupMeta 
   manifest.entries.push({ name, sha, ts });
   // REV-3 (2026-05-03): prune the manifest alongside .bak files so
   // listBackupsForTarget never returns paths pointing to deleted files.
+  // Prune by INSERTION ORDER and delete exactly the dropped entries' files —
+  // see maybeBackup for why re-sorting filenames lexically diverges on
+  // Windows (hrtime-tail wrap across a 1e9-ns boundary).
+  let dropped: Array<{ name: string }> = [];
   if (manifest.entries.length > DEFAULT_KEEP_COUNT) {
+    dropped = manifest.entries.slice(0, manifest.entries.length - DEFAULT_KEEP_COUNT);
     manifest.entries = manifest.entries.slice(-DEFAULT_KEEP_COUNT);
   }
   fsSync.writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, "utf-8");
-  // Sync prune: best-effort, swallow errors.
-  try {
-    const files = fsSync
-      .readdirSync(dir)
-      .filter((f) => f.endsWith(".bak"))
-      .sort();
-    while (files.length > DEFAULT_KEEP_COUNT) {
-      const victim = files.shift();
-      if (victim) fsSync.unlinkSync(join(dir, victim));
+  for (const d of dropped) {
+    try {
+      fsSync.unlinkSync(join(dir, d.name));
+    } catch {
+      // best-effort: file may already be gone
     }
-  } catch {
-    // best-effort
   }
   return { target, timestamp: ts, sha, path };
-}
-
-/** Remove .bak files beyond the keep-count, oldest first. */
-async function pruneBackups(dir: string, keepCount: number): Promise<void> {
-  try {
-    const entries = (await readdir(dir)).filter((f) => f.endsWith(".bak")).sort();
-    while (entries.length > keepCount) {
-      const victim = entries.shift();
-      if (victim) {
-        try {
-          await unlink(join(dir, victim));
-        } catch {
-          // best-effort
-        }
-      }
-    }
-  } catch {
-    // dir might not exist or be unreadable — treat as success
-  }
 }
 
 /**

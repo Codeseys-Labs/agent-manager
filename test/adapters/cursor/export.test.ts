@@ -6,6 +6,7 @@ import type {
   ResolvedInstruction,
   ResolvedServer,
 } from "@/adapters/types.ts";
+import { toPosix } from "../../helpers/path.ts";
 import { type TestDir, createTestDir } from "../../helpers/tmp.ts";
 
 /** Helper to build a minimal ResolvedServer. */
@@ -94,7 +95,7 @@ describe("cursor exportConfig()", () => {
     });
 
     const result = exportConfig(cfg, { dryRun: true }, dir.path);
-    const globalFile = result.files.find((f) => f.path.includes(".cursor/mcp.json"));
+    const globalFile = result.files.find((f) => toPosix(f.path).includes(".cursor/mcp.json"));
     expect(globalFile).toBeDefined();
 
     const parsed = JSON.parse(globalFile!.content);
@@ -118,7 +119,9 @@ describe("cursor exportConfig()", () => {
     });
 
     const result = exportConfig(cfg, { projectPath: projectDir, dryRun: true }, dir.path);
-    const projectFile = result.files.find((f) => f.path.includes("project/.cursor/mcp.json"));
+    const projectFile = result.files.find((f) =>
+      toPosix(f.path).includes("project/.cursor/mcp.json"),
+    );
     expect(projectFile).toBeDefined();
     const parsed = JSON.parse(projectFile!.content);
     expect(parsed.mcpServers["db-mcp"].command).toBe("npx");
@@ -140,7 +143,7 @@ describe("cursor exportConfig()", () => {
     });
 
     const result = exportConfig(cfg, { projectPath: projectDir, dryRun: true }, dir.path);
-    const mdcFile = result.files.find((f) => f.path.endsWith(".mdc"));
+    const mdcFile = result.files.find((f) => toPosix(f.path).endsWith(".mdc"));
     expect(mdcFile).toBeDefined();
     expect(mdcFile!.content).toContain("alwaysApply: true");
     expect(mdcFile!.content).toContain('description: "TypeScript conventions"');
@@ -164,7 +167,7 @@ describe("cursor exportConfig()", () => {
     });
 
     const result = exportConfig(cfg, { projectPath: projectDir, dryRun: true }, dir.path);
-    const mdcFile = result.files.find((f) => f.path.endsWith(".mdc"));
+    const mdcFile = result.files.find((f) => toPosix(f.path).endsWith(".mdc"));
     expect(mdcFile!.content).toContain('globs: ["**/*.ts", "**/*.tsx"]');
     expect(mdcFile!.content).toContain("alwaysApply: false");
   });
@@ -183,7 +186,7 @@ describe("cursor exportConfig()", () => {
     });
 
     const result = exportConfig(cfg, { projectPath: projectDir, dryRun: true }, dir.path);
-    const mdcFiles = result.files.filter((f) => f.path.endsWith(".mdc"));
+    const mdcFiles = result.files.filter((f) => toPosix(f.path).endsWith(".mdc"));
     expect(mdcFiles).toHaveLength(0);
   });
 
@@ -201,7 +204,7 @@ describe("cursor exportConfig()", () => {
     });
 
     const result = exportConfig(cfg, { projectPath: projectDir, dryRun: true }, dir.path);
-    const agentFile = result.files.find((f) => f.path.includes("agents/researcher.md"));
+    const agentFile = result.files.find((f) => toPosix(f.path).includes("agents/researcher.md"));
     expect(agentFile).toBeDefined();
     expect(agentFile!.content).toContain("# researcher");
     expect(agentFile!.content).toContain("Research agent");
@@ -236,7 +239,7 @@ describe("cursor exportConfig()", () => {
     });
 
     const result = exportConfig(cfg, { dryRun: true }, dir.path);
-    const globalFile = result.files.find((f) => f.path.includes(".cursor/mcp.json"));
+    const globalFile = result.files.find((f) => toPosix(f.path).includes(".cursor/mcp.json"));
     const parsed = JSON.parse(globalFile!.content);
     expect(parsed.mcpServers.enabled_one).toBeDefined();
     expect(parsed.mcpServers.disabled_one).toBeUndefined();
@@ -251,7 +254,7 @@ describe("cursor exportConfig()", () => {
     });
 
     const result = exportConfig(cfg, {}, dir.path);
-    const globalFile = result.files.find((f) => f.path.includes(".cursor/mcp.json"));
+    const globalFile = result.files.find((f) => toPosix(f.path).includes(".cursor/mcp.json"));
     expect(globalFile?.written).toBe(true);
     expect(await dir.exists(".cursor/mcp.json")).toBe(true);
     const content = JSON.parse(await dir.read(".cursor/mcp.json"));

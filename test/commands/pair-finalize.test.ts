@@ -28,6 +28,7 @@ import { Decrypter, generateIdentity, identityToRecipient } from "age-encryption
 import { pairFinalizeCommand } from "../../src/commands/pair-finalize";
 import { AgeSecretsBackend } from "../../src/core/secrets-age";
 import { isDryRunEnvelope } from "../../src/lib/dry-run-envelope";
+import { toPosix } from "../helpers/path";
 import { type TestDir, createTestDir } from "../helpers/tmp";
 
 // age's passphrase wrapping uses scrypt at a deliberately high work factor;
@@ -352,10 +353,12 @@ describe("ADR-0047 `am pair finalize` — Wave T sub-task T2", () => {
     await invokeFinalize({ file: fx.tomlPath, name: fx.peer.id, json: true });
     expect(process.exitCode).toBe(1);
 
-    // The error is reported via amError to stderr.
+    // The error is reported via amError to stderr. The error string embeds the
+    // .pub path with native separators; normalize both sides to POSIX so the
+    // substring match is separator-agnostic on the Windows host.
     const stderrText = stderrLines.join("\n");
     expect(stderrText).toMatch(/invalid/i);
-    expect(stderrText).toContain(pubPath);
+    expect(toPosix(stderrText)).toContain(toPosix(pubPath));
 
     // Envelope untouched.
     const env = await readEnvelope(fx.tomlPath);

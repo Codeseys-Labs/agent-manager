@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import * as fs from "node:fs";
-import { join, sep } from "node:path";
+import { join, resolve, sep } from "node:path";
 import { writeConfig } from "../../src/core/config";
 import { initRepo } from "../../src/core/git";
 import type { Config } from "../../src/core/schema";
@@ -47,7 +47,9 @@ describe("marketplace/security: path traversal", () => {
     test("accepts a relative path inside the plugin dir", () => {
       const base = "/plugins/foo";
       const resolved = safeResolveInsidePlugin(base, "skills/my-skill/", "skills");
-      expect(resolved.startsWith(`/plugins/foo${sep === "/" ? "/" : sep}`)).toBe(true);
+      // resolve() emits native separators and (on Windows) a drive-letter
+      // prefix, so build the expected base prefix the same way.
+      expect(resolved.startsWith(resolve(base) + sep)).toBe(true);
     });
 
     test("rejects ../../../etc/passwd", () => {
@@ -126,7 +128,11 @@ describe("marketplace/security: path traversal", () => {
 
       const result = applyPlugin(config, plugin);
       expect(result.skills).toEqual(["my-skill"]);
-      expect(config.skills?.["my-skill"]?.path).toBe("/plugins/good-plugin/skills/my-skill");
+      // path.resolve emits native separators + drive letter on Windows; build
+      // the expected with the same resolve for a platform-agnostic assertion.
+      expect(config.skills?.["my-skill"]?.path).toBe(
+        resolve("/plugins/good-plugin", "skills/my-skill"),
+      );
     });
   });
 

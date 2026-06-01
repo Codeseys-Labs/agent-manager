@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { extractPackageId } from "@/adapters/claude-code/identity.ts";
 import { importConfig } from "@/adapters/claude-code/import.ts";
+import { toPosix } from "../../helpers/path.ts";
 import { type TestDir, createTestDir } from "../../helpers/tmp.ts";
 
 // ── extractPackageId ────────────────────────────────────────────
@@ -204,7 +205,7 @@ describe("importConfig()", () => {
     const research = result.skills.find((s) => s.name === "research-rabbithole");
     expect(research).toBeDefined();
     expect(research?.description).toBe("Research Rabbithole");
-    expect(research?.path).toContain(".claude/skills/research-rabbithole");
+    expect(toPosix(research?.path ?? "")).toContain(".claude/skills/research-rabbithole");
   });
 
   test("imports project skills from <project>/.claude/skills/", async () => {

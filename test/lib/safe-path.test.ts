@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { join } from "node:path";
+import { join, sep } from "node:path";
 import {
   UnsafePathSegmentError,
   assertSafePathSegment,
@@ -35,9 +35,11 @@ describe("lib/safe-path", () => {
       expect(cleaned).not.toContain("/");
       expect(cleaned).not.toContain("..");
       // Joining the cleaned segment under a base must stay inside the base.
-      const base = "/tmp/target";
+      // join() emits the native separator (`\` on Windows), so build the
+      // expected base prefix with `sep` for a separator-agnostic assertion.
+      const base = join("/tmp", "target");
       const result = join(base, `${cleaned}.md`);
-      expect(result.startsWith(`${base}/`)).toBe(true);
+      expect(result.startsWith(`${base}${sep}`)).toBe(true);
     });
 
     test("strips path separators and shell metacharacters", () => {

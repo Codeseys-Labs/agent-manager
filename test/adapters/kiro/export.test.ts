@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { exportConfig } from "@/adapters/kiro/export.ts";
 import type { ResolvedConfig, ResolvedServer } from "@/adapters/types.ts";
+import { toPosix } from "../../helpers/path.ts";
 import { type TestDir, createTestDir } from "../../helpers/tmp.ts";
 
 function makeConfig(overrides: Partial<ResolvedConfig> = {}): ResolvedConfig {
@@ -52,7 +53,9 @@ describe("kiro exportConfig()", () => {
     const result = exportConfig(config, { dryRun: true }, dir.path);
     expect(result.files.length).toBeGreaterThanOrEqual(1);
 
-    const globalFile = result.files.find((f) => f.path.includes(".kiro/settings/mcp.json"));
+    const globalFile = result.files.find((f) =>
+      toPosix(f.path).includes(".kiro/settings/mcp.json"),
+    );
     expect(globalFile).toBeDefined();
     const parsed = JSON.parse(globalFile!.content);
     expect(parsed.mcpServers.fetch.command).toBe("uvx");
@@ -74,7 +77,7 @@ describe("kiro exportConfig()", () => {
 
     const result = exportConfig(config, { projectPath: projectDir, dryRun: true }, dir.path);
     const projectFile = result.files.find((f) =>
-      f.path.includes("project/.kiro/settings/mcp.json"),
+      toPosix(f.path).includes("project/.kiro/settings/mcp.json"),
     );
     expect(projectFile).toBeDefined();
     const parsed = JSON.parse(projectFile!.content);
@@ -141,7 +144,9 @@ describe("kiro exportConfig()", () => {
     });
 
     const result = exportConfig(config, { projectPath: projectDir, dryRun: true }, dir.path);
-    const steeringFile = result.files.find((f) => f.path.includes(".kiro/steering/code-style.md"));
+    const steeringFile = result.files.find((f) =>
+      toPosix(f.path).includes(".kiro/steering/code-style.md"),
+    );
     expect(steeringFile).toBeDefined();
     expect(steeringFile!.content).toContain("inclusion: always");
     expect(steeringFile!.content).toContain("<!-- am:begin -->");
@@ -176,7 +181,7 @@ describe("kiro exportConfig()", () => {
     });
 
     const result = exportConfig(config, { projectPath: projectDir, dryRun: true }, dir.path);
-    const steeringFiles = result.files.filter((f) => f.path.includes(".kiro/steering/"));
+    const steeringFiles = result.files.filter((f) => toPosix(f.path).includes(".kiro/steering/"));
     expect(steeringFiles).toHaveLength(1);
     expect(steeringFiles[0].content).toContain("Kiro rules");
   });

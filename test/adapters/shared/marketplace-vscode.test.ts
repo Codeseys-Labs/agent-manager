@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { join } from "node:path";
+import { join, relative } from "node:path";
 import {
   getExtensionsDir,
   resolveExtensionVars,
@@ -115,8 +115,23 @@ describe("getExtensionsDir() on win32", () => {
 
 describe("scanVSCodeExtensions()", () => {
   let dir: TestDir;
+  // On Windows the host's real APPDATA would make getExtensionsDir() resolve
+  // outside the temp homeDir we pass, so clear it to force the
+  // join(home, paths.win32) fallback under dir.path. No-op on POSIX.
+  const originalAppData = process.env.APPDATA;
+
+  beforeEach(() => {
+    // biome-ignore lint/performance/noDelete: env var isolation for the scan
+    delete process.env.APPDATA;
+  });
 
   afterEach(async () => {
+    if (originalAppData === undefined) {
+      // biome-ignore lint/performance/noDelete: env var cleanup
+      delete process.env.APPDATA;
+    } else {
+      process.env.APPDATA = originalAppData;
+    }
     if (dir) await dir.cleanup();
   });
 
@@ -144,7 +159,7 @@ describe("scanVSCodeExtensions()", () => {
     const extPath = join(extDir, "publisher.my-ext-1.0.0");
 
     await dir.write(
-      `${extPath.replace(`${dir.path}/`, "")}/package.json`,
+      join(relative(dir.path, extPath), "package.json"),
       JSON.stringify({
         name: "my-ext",
         displayName: "My Extension",
@@ -188,7 +203,7 @@ describe("scanVSCodeExtensions()", () => {
 
     // Extension with no MCP servers
     await dir.write(
-      `${join(extDir, "pub.theme-1.0.0").replace(`${dir.path}/`, "")}/package.json`,
+      join(relative(dir.path, join(extDir, "pub.theme-1.0.0")), "package.json"),
       JSON.stringify({
         name: "theme",
         publisher: "pub",
@@ -208,7 +223,7 @@ describe("scanVSCodeExtensions()", () => {
     const extDir = getExtensionsDir("cursor", dir.path)!;
 
     await dir.write(
-      `${join(extDir, "pub.ext-a-1.0.0").replace(`${dir.path}/`, "")}/package.json`,
+      join(relative(dir.path, join(extDir, "pub.ext-a-1.0.0")), "package.json"),
       JSON.stringify({
         name: "ext-a",
         publisher: "pub",
@@ -222,7 +237,7 @@ describe("scanVSCodeExtensions()", () => {
     );
 
     await dir.write(
-      `${join(extDir, "pub.ext-b-2.0.0").replace(`${dir.path}/`, "")}/package.json`,
+      join(relative(dir.path, join(extDir, "pub.ext-b-2.0.0")), "package.json"),
       JSON.stringify({
         name: "ext-b",
         publisher: "pub",
@@ -250,7 +265,7 @@ describe("scanVSCodeExtensions()", () => {
     const extDir = getExtensionsDir("copilot", dir.path)!;
 
     await dir.write(
-      `${join(extDir, "pub.str-repo-1.0.0").replace(`${dir.path}/`, "")}/package.json`,
+      join(relative(dir.path, join(extDir, "pub.str-repo-1.0.0")), "package.json"),
       JSON.stringify({
         name: "str-repo",
         publisher: "pub",
@@ -273,7 +288,7 @@ describe("scanVSCodeExtensions()", () => {
     const extDir = getExtensionsDir("kiro", dir.path)!;
 
     await dir.write(
-      `${join(extDir, "pub.kiro-ext-1.0.0").replace(`${dir.path}/`, "")}/package.json`,
+      join(relative(dir.path, join(extDir, "pub.kiro-ext-1.0.0")), "package.json"),
       JSON.stringify({
         name: "kiro-ext",
         publisher: "pub",
@@ -296,7 +311,7 @@ describe("scanVSCodeExtensions()", () => {
     const extDir = getExtensionsDir("windsurf", dir.path)!;
 
     await dir.write(
-      `${join(extDir, "pub.ws-ext-1.0.0").replace(`${dir.path}/`, "")}/package.json`,
+      join(relative(dir.path, join(extDir, "pub.ws-ext-1.0.0")), "package.json"),
       JSON.stringify({
         name: "ws-ext",
         publisher: "pub",
@@ -319,7 +334,7 @@ describe("scanVSCodeExtensions()", () => {
     const extDir = getExtensionsDir("copilot", dir.path)!;
 
     await dir.write(
-      `${join(extDir, "pub.bad-ext-1.0.0").replace(`${dir.path}/`, "")}/package.json`,
+      join(relative(dir.path, join(extDir, "pub.bad-ext-1.0.0")), "package.json"),
       "{ not valid json ]]]",
     );
 
@@ -333,7 +348,7 @@ describe("scanVSCodeExtensions()", () => {
     const extDir = getExtensionsDir("copilot", dir.path)!;
 
     // Create a file (not directory) in extensions dir
-    await dir.write(join(extDir, ".DS_Store").replace(`${dir.path}/`, ""), "junk");
+    await dir.write(relative(dir.path, join(extDir, ".DS_Store")), "junk");
 
     const result = scanVSCodeExtensions("copilot", dir.path);
     expect(result.items).toHaveLength(0);

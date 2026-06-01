@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { detect } from "@/adapters/windsurf/detect.ts";
+import { toPosix } from "../../helpers/path.ts";
 import { type TestDir, createTestDir } from "../../helpers/tmp.ts";
 
 describe("windsurf detect()", () => {
@@ -14,7 +15,7 @@ describe("windsurf detect()", () => {
     await dir.write(".codeium/windsurf/.keep", "");
     const result = detect(dir.path);
     expect(result.installed).toBe(true);
-    expect(result.paths.configDir).toContain(".codeium/windsurf");
+    expect(toPosix(result.paths.configDir ?? "")).toContain(".codeium/windsurf");
   });
 
   test("detects mcp_config.json", async () => {
@@ -39,7 +40,7 @@ describe("windsurf detect()", () => {
     await dir.write("project/.windsurf/rules/test.md", "# Rule");
 
     const result = detect(dir.path, projectDir);
-    expect(result.paths.rulesDir).toContain(".windsurf/rules");
+    expect(toPosix(result.paths.rulesDir ?? "")).toContain(".windsurf/rules");
   });
 
   test("includes legacy .windsurfrules path", async () => {
@@ -67,7 +68,7 @@ describe("windsurf detect()", () => {
     await dir.write("project/.windsurf/skills/my-skill/SKILL.md", "# My Skill");
 
     const result = detect(dir.path, projectDir);
-    expect(result.paths.skillsDir).toContain(".windsurf/skills");
+    expect(toPosix(result.paths.skillsDir ?? "")).toContain(".windsurf/skills");
   });
 
   test("includes AGENTS.md path when present", async () => {

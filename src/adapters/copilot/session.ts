@@ -128,6 +128,17 @@ export function createCopilotSessionReader(
  * caller's `existsSync` guard still works.
  */
 function dedupeByRealpath(dirs: string[]): string[] {
+  // On case-INsensitive filesystems (Windows NTFS, macOS APFS/HFS+) two
+  // candidate paths that differ only by the casing of the extension-id segment
+  // (`GitHub.copilot-chat` vs `github.copilot-chat`) name ONE physical
+  // directory. `realpathSync` is supposed to canonicalize them to an identical
+  // string, but on Windows it does not reliably case-fold every path segment,
+  // so the raw realpath strings can still differ and the Set fails to collapse
+  // the alias — making listSessions scan the same files twice and double-count.
+  // Case-folding the dedup key on case-insensitive platforms makes the collapse
+  // deterministic. It is a no-op on case-sensitive Linux, where the two casings
+  // are genuinely distinct directories.
+  const caseInsensitiveFs = process.platform === "win32" || process.platform === "darwin";
   const seen = new Set<string>();
   const out: string[] = [];
   for (const dir of dirs) {
@@ -137,6 +148,7 @@ function dedupeByRealpath(dirs: string[]): string[] {
     } catch {
       key = dir;
     }
+    if (caseInsensitiveFs) key = key.toLowerCase();
     if (seen.has(key)) continue;
     seen.add(key);
     out.push(dir);
