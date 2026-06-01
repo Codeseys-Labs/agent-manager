@@ -8,6 +8,7 @@
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { atomicWriteFileSync } from "../../core/atomic-write.ts";
+import { sanitizePathSegment } from "../../lib/safe-path.ts";
 import type { ExportOptions, ExportResult, ResolvedConfig, WrittenFile } from "../types.ts";
 
 /**
@@ -96,7 +97,7 @@ function generateRuleFiles(config: ResolvedConfig, projectPath: string): Written
     }
 
     const content = `${instr.content}\n`;
-    const filePath = join(projectPath, ".amazonq", "rules", `${name}.md`);
+    const filePath = join(projectPath, ".amazonq", "rules", `${sanitizePathSegment(name)}.md`);
     files.push({ path: filePath, content, written: false });
   }
 

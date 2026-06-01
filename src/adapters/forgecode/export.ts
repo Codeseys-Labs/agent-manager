@@ -8,6 +8,7 @@
 import { dirname, join } from "node:path";
 import { atomicWriteFileSync } from "../../core/atomic-write.ts";
 import { generateWikiContext, spliceWikiBlock } from "../../core/instructions.ts";
+import { sanitizePathSegment } from "../../lib/safe-path.ts";
 import { AM_BEGIN, AM_END, spliceMarkerBlock } from "../shared/utils.ts";
 import type {
   ExportOptions,
@@ -78,7 +79,13 @@ export async function exportConfig(
       const content = (fcAdapter.content as string) ?? "";
       if (!content) continue;
 
-      const skillPath = join(options.projectPath, ".forge", "skills", name, "SKILL.md");
+      const skillPath = join(
+        options.projectPath,
+        ".forge",
+        "skills",
+        sanitizePathSegment(name),
+        "SKILL.md",
+      );
       files.push({ path: skillPath, content, written: false });
     }
   }

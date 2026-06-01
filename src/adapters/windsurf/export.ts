@@ -10,6 +10,7 @@ import { dirname, join } from "node:path";
 import { atomicWriteFileSync } from "../../core/atomic-write.ts";
 import { generateAgentsMd } from "../../core/instructions.ts";
 import { filterByTarget } from "../../core/instructions.ts";
+import { sanitizePathSegment } from "../../lib/safe-path.ts";
 import type {
   ExportOptions,
   ExportResult,
@@ -150,7 +151,7 @@ function generateSkillFiles(config: ResolvedConfig, projectPath: string): Writte
       continue;
     }
 
-    const skillDir = join(projectPath, ".windsurf", "skills", name);
+    const skillDir = join(projectPath, ".windsurf", "skills", sanitizePathSegment(name));
     const skillMdPath = join(skillDir, "SKILL.md");
     const content = `# ${name}\n\n${skill.description}\n`;
     files.push({ path: skillMdPath, content, written: false });
@@ -176,7 +177,7 @@ function generateRuleFiles(config: ResolvedConfig, projectPath: string): Written
     frontmatter += "---\n";
 
     const content = `${frontmatter}\n${instr.content}\n`;
-    const filePath = join(projectPath, ".windsurf", "rules", `${name}.md`);
+    const filePath = join(projectPath, ".windsurf", "rules", `${sanitizePathSegment(name)}.md`);
     files.push({ path: filePath, content, written: false });
   }
 

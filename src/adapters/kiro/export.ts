@@ -9,6 +9,7 @@
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { atomicWriteFileSync } from "../../core/atomic-write.ts";
+import { sanitizePathSegment } from "../../lib/safe-path.ts";
 import { AM_BEGIN, AM_END, spliceMarkerBlock } from "../shared/utils.ts";
 import type {
   ExportOptions,
@@ -156,7 +157,7 @@ function generateSteeringFiles(
     }
 
     const inclusion = scopeToInclusion(instr.scope);
-    const steeringName = name.replace(/^steering-/, "");
+    const steeringName = sanitizePathSegment(name.replace(/^steering-/, ""));
     const filePath = join(projectPath, ".kiro", "steering", `${steeringName}.md`);
 
     // Wrap managed content in am markers

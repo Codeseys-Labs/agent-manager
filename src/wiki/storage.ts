@@ -31,6 +31,7 @@ import { basename, dirname, join } from "node:path";
 import MiniSearch from "minisearch";
 import { resolveConfigDir, resolveProjectConfig } from "../core/config";
 import { isNotFound } from "../lib/errors";
+import { sanitizePathSegment } from "../lib/safe-path";
 import type {
   EntityType,
   KnowledgeEntry,
@@ -363,11 +364,16 @@ export async function pushToGlobal(
 ): Promise<{ pushed: string | null; conflict: boolean }> {
   const localRoot = join(projectDir, WIKI_PROJECT_DIRNAME);
 
+  // SEC-2: contain the slug to a single safe path segment before using it to
+  // build local/global file paths (it ultimately derives from a user-supplied
+  // entry id).
+  const safeSlug = sanitizePathSegment(slug);
+
   // Locate the entry under one of the PAGE_SUBDIRS subdirs.
   let localPath: string | null = null;
   let foundSubdir: string | null = null;
   for (const subdir of Object.values(PAGE_SUBDIRS)) {
-    const candidate = join(localRoot, subdir, `${slug}.md`);
+    const candidate = join(localRoot, subdir, `${safeSlug}.md`);
     if (existsSync(candidate)) {
       localPath = candidate;
       foundSubdir = subdir;
@@ -381,7 +387,7 @@ export async function pushToGlobal(
 
   const projectName = resolveProjectName(projectDir);
   const globalSubdir = join(getProjectWikiDir(projectName), foundSubdir);
-  const globalPath = join(globalSubdir, `${slug}.md`);
+  const globalPath = join(globalSubdir, `${safeSlug}.md`);
 
   await mkdir(globalSubdir, { recursive: true });
 
@@ -407,7 +413,10 @@ function pageDir(type: WikiPageType, baseDir?: string): string {
 }
 
 function pagePath(slug: string, type: WikiPageType, baseDir?: string): string {
-  return join(pageDir(type, baseDir), `${slug}.md`);
+  // SEC-2: the slug is derived from a user/agent-controlled entry id. Sanitize
+  // it to a single safe path segment so a slug like `../../escape` cannot break
+  // out of the wiki directory on write/read/delete.
+  return join(pageDir(type, baseDir), `${sanitizePathSegment(slug)}.md`);
 }
 
 // ── Directory setup ─────────────────────────────────────────────
