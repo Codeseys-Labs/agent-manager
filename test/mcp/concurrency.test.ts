@@ -18,6 +18,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { join } from "node:path";
 import { readConfig, writeConfig } from "../../src/core/config";
+import { __setAdapterResolverForTests } from "../../src/core/controller";
 import { initRepo } from "../../src/core/git";
 import type { Config } from "../../src/core/schema";
 import { McpServer } from "../../src/mcp/server";
@@ -55,6 +56,9 @@ describe("MCP concurrency safety (Wave B)", () => {
     } else {
       process.env.AM_CONFIG_DIR = undefined;
     }
+    // Always clear the adapter-resolution seam so it never leaks into other
+    // test files (Bun runs all files in one process).
+    __setAdapterResolverForTests(null);
     if (dir) await dir.cleanup();
     dir = undefined;
   });
@@ -78,18 +82,18 @@ describe("MCP concurrency safety (Wave B)", () => {
   });
 
   test("2x am_apply concurrent — no writes are lost", async () => {
-    // Apply with an empty adapter set (nothing detected in the tmpdir)
-    // still exercises the full `applyResolved` pipeline and would
-    // previously race if two calls interleaved their state.toml reads.
+    // Apply with an empty adapter set still exercises the full `applyResolved`
+    // pipeline (resolve → interpolate → mutex) and would previously race if
+    // two calls interleaved their state.toml reads.
     //
-    // Timeout raised from bun:test's default 5s to 30s (2026-05-03): this
-    // test was flaky under full-suite load (187 files in parallel on WSL2)
-    // because `applyResolved` + `getDetectedAdapters` + loading 13 adapters'
-    // detect() results exceeds 5s on loaded hosts. Same fix pattern as
-    // test/adapters/registry.test.ts getDetectedAdapters. Not masking a
-    // real concurrency bug — the test passes 5/5 in isolation; only the
-    // full-suite race produces the timeout. Tracked as the resolution of
-    // task #32 (run-A 2026-05-01 baseline flake).
+    // Route adapter resolution through the controller's test seam so the test
+    // does NOT pay the cost of `getDetectedAdapters()` (13 adapters probing the
+    // real filesystem across %APPDATA% / VS Code variants). Those stat calls
+    // are markedly slower on the Windows runner; serialized under the
+    // AsyncMutex, two parallel applies could blow the timeout. The mutex
+    // behaviour under test is unchanged — we only remove the platform-speed
+    // dependence. The 30s override is retained as defence-in-depth.
+    __setAdapterResolverForTests(async () => []);
     const ctx = await setupConfig({
       servers: {
         shared: { command: "echo", transport: "stdio", enabled: true },
@@ -116,6 +120,12 @@ describe("MCP concurrency safety (Wave B)", () => {
   }, 30_000);
 
   test("am_apply + am_add_server race — ordering stays coherent", async () => {
+    // Route adapter resolution through the controller seam (empty set) so
+    // am_apply does not pay the 13-adapter `getDetectedAdapters()` filesystem
+    // cost — markedly slower on the Windows runner and serialized under the
+    // AsyncMutex. The lock/ordering behaviour under test is unchanged; only the
+    // platform-speed dependence is removed. 30s override kept as defence.
+    __setAdapterResolverForTests(async () => []);
     const ctx = await setupConfig({ servers: {} });
     dir = ctx.dir;
 
@@ -135,10 +145,6 @@ describe("MCP concurrency safety (Wave B)", () => {
     // After both complete, the server must exist regardless of who ran first.
     const final = await readConfig(join(ctx.configDir, "config.toml"));
     expect(final.servers?.gamma?.command).toBe("cmd-g");
-    // 30s override (matches the "2x am_apply" test above): am_apply runs all 13
-    // adapters' detect() under the AsyncMutex, and the per-adapter filesystem
-    // probes are markedly slower on the Windows runner — the default 5s timed
-    // out there. The mutex behavior under test is unchanged; only wall-time differs.
   }, 30_000);
 
   test("batch request with 3 writers — all three lands, none lost", async () => {
