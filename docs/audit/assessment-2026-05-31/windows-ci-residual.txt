@@ -1,0 +1,99 @@
+(fail) ADR-0047 `am pair finalize` — Wave T sub-task T2 > exits non-zero when the .pub 
+(fail) Copilot Chat session reader > listSessions filters by project when session has c
+(fail) Copilot Chat session reader > listSessions parses chat session JSON file 
+(fail) Copilot Chat session reader > listSessions parses sessions nested under chatSess
+(fail) Copilot Chat session reader > listSessions sorts by startedAt descending and ski
+(fail) MCP concurrency safety (Wave B) > 2x am_apply concurrent — no writes are lost
+(fail) MCP concurrency safety (Wave B) > am_apply + am_add_server race — ordering stays
+(fail) P0-3: applyResolved fails loud instead of writing ciphertext verbatim > applyRes
+(fail) Roo Code session reader > listSessions falls back to ui_messages.json when api f
+(fail) Roo Code session reader > listSessions filters by project from record-level cwd
+(fail) Roo Code session reader > listSessions filters by project from sibling task_meta
+(fail) Roo Code session reader > listSessions parses one task with api_conversation_his
+(fail) Roo Code session reader > listSessions skips malformed/empty/non-array files sil
+(fail) Roo Code session reader > listSessions sorts by startedAt descending
+(fail) VS Code paths helper > resolveVSCodeExtensionStorage() > darwin × array IDs: cro
+(fail) VS Code paths helper > resolveVSCodeExtensionStorage() > darwin × single ID: one
+(fail) VS Code paths helper > resolveVSCodeExtensionStorage() > linux × single ID
+(fail) VS Code paths helper > resolveVSCodeUserDir() > darwin: Library/Application Supp
+(fail) VS Code paths helper > resolveVSCodeUserDir() > linux: .config/<variant>/User
+(fail) VS Code paths helper > resolveVSCodeUserMcpJson() > one mcp.json per variant on 
+(fail) VS Code paths helper > resolveVSCodeUserSettings() > one settings.json per varia
+(fail) am session > command structure > session command is registered in CLI
+(fail) am wiki resolve > --json output shape includes action, sidecarCleared, commitOid
+(fail) am wiki resolve > --strategy keep-local resolves all files non-interactively + c
+(fail) amazon-q detect() > detects when ~/.aws/amazonq/ exists
+(fail) amazon-q detect() > includes project .amazonq/mcp.json path
+(fail) amazon-q detect() > includes project .amazonq/rules/ path
+(fail) atomicWriteFile (async) > preserves file mode when specified
+(fail) atomicWriteFileSync > preserves file mode when specified
+(fail) cline detect() — VS Code variants > detects stable Code install 
+(fail) cline detect() — VS Code variants > getGlobalStoragePath returns stable Code pat
+(fail) copilot detect() — variant + platform coverage > darwin: detects user mcp.json u
+(fail) copilot detect() — variant + platform coverage > prefers stable Code over Inside
+(fail) copilot exportConfig() — writes to existing user-scope mcp.json > writes to user
+(fail) cursor exportConfig() > actual write creates files on disk
+(fail) cursor exportConfig() > generates agent .md files
+(fail) cursor exportConfig() > generates global ~/.cursor/mcp.json with mcpServers
+(fail) cursor exportConfig() > generates project .cursor/mcp.json for project-scoped se
+(fail) cursor exportConfig() > skips disabled servers
+(fail) error handling — commands that gracefully handle missing config > am apply befor
+(fail) error handling — invalid arguments > am apply --target nonexistent --json return
+(fail) error handling — invalid arguments > am apply --target nonexistent shows availab
+(fail) getDefaultBackend > returns aes-gcm-legacy with a loaded key by default
+(fail) getDefaultBackend > throws a descriptive error when aes-gcm-legacy has no key
+(fail) importConfig() > imports global skills from ~/.claude/skills/ 
+(fail) interpolateEnv > throws on unresolved variable (strict mode)
+(fail) interpolateEnv > warns on unresolved variable (non-strict)
+(fail) kilo-code VS Code extension surface > detect() reports installed:true when only 
+(fail) kilo-code VS Code extension surface > exportConfig() writes extension mcp_settin
+(fail) kiro exportConfig() > filters instructions by target
+(fail) kiro exportConfig() > generates project .kiro/settings/mcp.json for project-scop
+(fail) kiro exportConfig() > generates steering files from instructions
+(fail) kiro exportConfig() > generates ~/.kiro/settings/mcp.json with servers
+(fail) legacyKeyPath > returns configDir/.agent-manager/key.txt
+(fail) lib/safe-path > sanitizePathSegment > contains a traversal name so it cannot esc
+(fail) lifecycle integration tests > add → apply → import round-trip preserves server c
+(fail) lifecycle integration tests > am apply --target claude-code --dry-run shows plan
+(fail) lifecycle integration tests > am apply writes native config files (not dry-run) 
+(fail) lifecycle integration tests > am import reads native claude-code config 
+(fail) lifecycle integration tests > full lifecycle: init → add → apply → status → undo
+(fail) loadCommunityAdapters() checksum integration > rejects adapter with checksum mis
+(fail) marketplace/client > addMarketplace (local) > adds a local marketplace via symli
+(fail) marketplace/client > addMarketplace (local) > throws on duplicate name
+(fail) marketplace/client > listMarketplaces > returns all added marketplaces
+(fail) marketplace/client > removeMarketplace > removes a local marketplace
+(fail) marketplace/installer > applyPlugin > adds skills from plugin manifest to config
+(fail) marketplace/installer > installPlugin > does not touch adapters.toml when manife
+(fail) marketplace/installer > installPlugin > installs a plugin and writes to config
+(fail) marketplace/installer > installPlugin > registers community adapter in adapters.
+(fail) marketplace/scanner > searchPlugins > returns empty for no matches
+(fail) marketplace/scanner > searchPlugins > searches by description
+(fail) marketplace/scanner > searchPlugins > searches by plugin name
+(fail) marketplace/scanner > searchPlugins > searches by server name
+(fail) marketplace/security: path traversal > applyPlugin: skills path traversal > acce
+(fail) marketplace/security: path traversal > installPlugin: end-to-end rejects travers
+(fail) marketplace/security: path traversal > safeResolveInsidePlugin > accepts a relat
+(fail) marketplace/security: trust-on-first-use > addMarketplace: TOFU gate > local fil
+(fail) resolveConfigDir > returns default path when AM_CONFIG_DIR is not set
+(fail) resolveConflicts — M5.3-lite > edit invokes io.openEditor with absolute path, th
+(fail) resolveConflicts — M5.3-lite > keep-local for a clean file (no changes) does NOT
+(fail) resolveConflicts — M5.3-lite > keep-local for all files → commits resolution + c
+(fail) resolveConflicts — M5.3-lite > mixed keep-local + skip: commits kept files but k
+(fail) resolveConflicts — M5.3-lite > take-remote overwrites workdir with remote blob f
+(fail) resolveKeyPath > Linux: uses XDG_DATA_HOME when set
+(fail) roo-code detect() — VS Code variants + casing > getGlobalStoragePath prefers mix
+(fail) roo-code exportConfig() > exports project servers to .roo/mcp.json
+(fail) roo-code exportConfig() > generates .roo/rules/*.md from instructions
+(fail) scanClaudePlugins() > scans plugin with skills
+(fail) scanVSCodeExtensions() > handles extension with string repository
+(fail) scanVSCodeExtensions() > scans extension with contributes.mcpServers
+(fail) scanVSCodeExtensions() > scans multiple extensions
+(fail) scanVSCodeExtensions() > uses kiro source for kiro adapter
+(fail) scanVSCodeExtensions() > uses windsurf source for windsurf adapter
+(fail) secrets migrate — walk + re-encrypt > migrates enc:v1: envelopes in a config.tom
+(fail) windsurf detect() > detects when ~/.codeium/windsurf/ exists
+(fail) windsurf detect() > includes project .windsurf/rules/ path
+(fail) windsurf detect() > includes project .windsurf/skills/ path
+(fail) windsurf exportConfig() > generates .windsurf/skills/ from resolved skills
+(fail) windsurf importConfig() > imports skill directories from .windsurf/skills/
