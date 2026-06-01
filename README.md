@@ -127,17 +127,16 @@ cd agent-manager && bun install && bun run build
 ### First-Time Setup
 
 ```bash
-am init                    # create the config repo, generate an encryption key,
-                           # detect installed tools, optionally set a git remote
-am import auto             # import MCP servers + instructions from detected tools
-                           # (secrets auto-detected and encrypted on import)
-am secret scan --fix       # review/auto-encrypt any remaining detected API keys
-am apply                   # write native configs for all detected tools
+am setup                   # guided wizard: detect tools → import configs → set up
+                           # an encryption key → create a profile → apply →
+                           # ends on a green `am doctor` health check
 ```
 
-> A single guided `am setup` wizard that chains detect → import → key → profile →
-> apply is in progress (see the roadmap). Today the steps above are run
-> individually; each is idempotent and supports `--json` for scripting.
+`am setup` is idempotent (safe to re-run — it resumes/repairs rather than
+clobbering) and fully scriptable: `--yes`/`--json`/`--non-interactive` for CI,
+`--from <git-url>` to clone an existing catalog onto a new machine, `--no-apply`
+to stop short of writing native configs. The individual steps remain available
+standalone (`am init`, `am import auto`, `am secret scan --fix`, `am apply`).
 
 ### Daily Usage
 
