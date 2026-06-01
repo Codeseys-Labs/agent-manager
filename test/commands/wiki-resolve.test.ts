@@ -210,6 +210,67 @@ describe("am wiki resolve", () => {
     expect(consoleErrors.join("\n")).toMatch(/Sidecar NOT cleared/i);
   });
 
+  test("UX-2: no --strategy in non-interactive mode → error + exit 1 (does not hang)", async () => {
+    // Seed a real sidecar so we get past the sidecar-absent guard and reach
+    // the interactivity check. The test runner stdin is not a TTY, so without
+    // --strategy the @clack/prompts.select prompt would hang forever; the
+    // guard must surface a structured error and ask for --strategy instead.
+    await writeFile(join(wikiDir, "ni.md"), "orig");
+    await commitAll(wikiDir, "baseline");
+    await writeFile(join(wikiDir, "ni.md"), "local-ni");
+    await writeConflictSidecar(wikiDir, {
+      timestamp: "2026-05-03T00:00:00Z",
+      remote: "origin",
+      conflictedFiles: ["ni.md"],
+    });
+
+    const cmd = await getResolveSubcommand();
+    await cmd.run({ args: makeArgs() });
+
+    expect(process.exitCode).toBe(1);
+    const errText = consoleErrors.join("\n");
+    expect(errText).toContain("--strategy");
+    // Sidecar must remain untouched — nothing was resolved.
+    expect(existsSync(join(wikiDir, "wiki-conflict.json"))).toBe(true);
+  });
+
+  test("UX-2: --json with no --strategy → error + exit 1 (no prompt)", async () => {
+    await writeFile(join(wikiDir, "j.md"), "orig");
+    await commitAll(wikiDir, "baseline");
+    await writeFile(join(wikiDir, "j.md"), "local-j");
+    await writeConflictSidecar(wikiDir, {
+      timestamp: "2026-05-03T00:00:00Z",
+      remote: "origin",
+      conflictedFiles: ["j.md"],
+    });
+
+    const cmd = await getResolveSubcommand();
+    await cmd.run({ args: makeArgs({ json: true }) });
+
+    expect(process.exitCode).toBe(1);
+    // In --json mode the error is emitted as a JSON object on stderr.
+    expect(consoleErrors.join("\n")).toContain("--strategy");
+  });
+
+  test("UX-2: invalid --strategy errors before any IO even with a sidecar present", async () => {
+    await writeFile(join(wikiDir, "v.md"), "orig");
+    await commitAll(wikiDir, "baseline");
+    await writeFile(join(wikiDir, "v.md"), "local-v");
+    await writeConflictSidecar(wikiDir, {
+      timestamp: "2026-05-03T00:00:00Z",
+      remote: "origin",
+      conflictedFiles: ["v.md"],
+    });
+
+    const cmd = await getResolveSubcommand();
+    await cmd.run({ args: makeArgs({ strategy: "nonsense" }) });
+
+    expect(process.exitCode).toBe(1);
+    expect(consoleErrors.join("\n")).toContain("nonsense");
+    // Sidecar untouched: validation happened up front.
+    expect(existsSync(join(wikiDir, "wiki-conflict.json"))).toBe(true);
+  });
+
   test("--strategy take-remote with no remote ref yields a structured error (not a stack trace)", async () => {
     // No FETCH_HEAD and no origin/<branch> in the bare local repo → take-remote
     // can't locate the remote blob. The subcommand should surface the

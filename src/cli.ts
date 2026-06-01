@@ -1,6 +1,7 @@
 #!/usr/bin/env bun
 import { defineCommand, runMain } from "citty";
 import { showGroupedUsage } from "./help";
+import { resolveParentHelp } from "./lib/parent-help";
 import { AM_VERSION } from "./lib/version";
 
 const main = defineCommand({
@@ -10,9 +11,20 @@ const main = defineCommand({
     description:
       "The control plane for your AI agents — catalog + git sync, MCP gateway, ACP/A2A router, marketplace, LLM-wiki, three UIs",
   },
+  // Global flags are also accepted as args on every subcommand (each command
+  // re-declares json/quiet/verbose, and profile-aware commands accept
+  // --profile). Per citty's per-level parsing, place a flag AFTER the command
+  // it should affect — e.g. `am wiki list --json`, not `am --json wiki list`.
   args: {
-    profile: { type: "string", description: "Override active profile" },
-    json: { type: "boolean", description: "JSON output for scripting/agents", default: false },
+    profile: {
+      type: "string",
+      description: "Override active profile (place after the command: `am list --profile work`)",
+    },
+    json: {
+      type: "boolean",
+      description: "JSON output for scripting/agents (place after the command)",
+      default: false,
+    },
     verbose: { type: "boolean", alias: "v", description: "Increase log verbosity", default: false },
     quiet: {
       type: "boolean",
@@ -61,4 +73,20 @@ const main = defineCommand({
   },
 });
 
-runMain(main, { showUsage: showGroupedUsage });
+/**
+ * UX-1: parent commands (those with `subCommands` but no `run`) print help and
+ * exit 0 when invoked with no subcommand — standard CLI behavior (git, gh,
+ * docker, cargo) — instead of citty's default "No command specified." + exit 1.
+ * `--help`/`-h` and real subcommands fall through to citty unchanged.
+ */
+async function start(): Promise<void> {
+  const rawArgs = process.argv.slice(2);
+  const parentHelp = await resolveParentHelp(main, rawArgs);
+  if (parentHelp) {
+    await showGroupedUsage(parentHelp.cmd, parentHelp.parent);
+    process.exit(0);
+  }
+  await runMain(main, { showUsage: showGroupedUsage });
+}
+
+start();

@@ -224,8 +224,12 @@ export const profileDeleteCommand = defineCommand({
           }
         }
 
-        // Confirmation prompt (skip if --yes flag or non-interactive)
-        if (!args.yes) {
+        // Confirmation prompt. Skipped (and the delete proceeds) when --yes is
+        // passed OR when running non-interactively (--json or no TTY), matching
+        // the codebase convention used by `am uninstall`/`am update`. This
+        // keeps the command from hanging on a prompt in scripts/CI; the change
+        // is recoverable via `am undo` (withConfig auto-commits).
+        if (!args.yes && !args.json && process.stdin.isTTY) {
           const confirmed = await confirm({
             message: `Delete profile '${name}'? This cannot be undone.`,
           });

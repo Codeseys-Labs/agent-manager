@@ -1205,14 +1205,35 @@ const resolveSubcommand = defineCommand({
     // Build the IO handler. When --strategy is given, short-circuit
     // the prompt; otherwise use @clack/prompts select.
     const strategyFlag = args.strategy as string | undefined;
+
+    // Validate --strategy up front so a bad value fails before any IO,
+    // and so the error path doesn't depend on a file being present.
+    if (strategyFlag && !["keep-local", "take-remote", "skip"].includes(strategyFlag)) {
+      error(
+        `Invalid --strategy "${strategyFlag}". Expected: keep-local | take-remote | skip`,
+        opts,
+      );
+      process.exitCode = 1;
+      return;
+    }
+
+    // UX-2: never hang on an interactive prompt in non-interactive contexts.
+    // The per-file picker requires a TTY (and human text output); when running
+    // under --json or without a TTY, demand an explicit --strategy instead of
+    // blocking forever on @clack/prompts.select.
+    const interactive = !args.json && Boolean(process.stdin.isTTY);
+    if (!strategyFlag && !interactive) {
+      error(
+        "am wiki resolve needs a choice in non-interactive mode. Re-run with --strategy keep-local | take-remote | skip (no TTY / --json detected).",
+        opts,
+      );
+      process.exitCode = 1;
+      return;
+    }
+
     const io: ResolveIo = {
       async pickChoice(file) {
         if (strategyFlag) {
-          if (!["keep-local", "take-remote", "skip"].includes(strategyFlag)) {
-            throw new Error(
-              `Invalid --strategy "${strategyFlag}". Expected: keep-local | take-remote | skip`,
-            );
-          }
           return strategyFlag as ResolveChoice;
         }
         const clack = await import("@clack/prompts");
