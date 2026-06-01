@@ -17,6 +17,7 @@ import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { atomicWriteFileSync } from "../../core/atomic-write.ts";
+import { sanitizePathSegment } from "../../lib/safe-path.ts";
 import type { ExportOptions, ExportResult, ResolvedConfig, WrittenFile } from "../types.ts";
 import { parseYaml, stringifyYaml } from "./yaml.ts";
 
@@ -192,7 +193,7 @@ function generateRuleFiles(
 
     const content = `${instr.content}\n`;
     const basePath = projectPath ?? home;
-    const filePath = join(basePath, ".continue", "rules", `${name}.md`);
+    const filePath = join(basePath, ".continue", "rules", `${sanitizePathSegment(name)}.md`);
     files.push({ path: filePath, content, written: false });
   }
   return files;

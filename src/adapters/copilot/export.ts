@@ -9,6 +9,7 @@ import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { atomicWriteFileSync } from "../../core/atomic-write.ts";
+import { sanitizePathSegment } from "../../lib/safe-path.ts";
 import { resolveVSCodeUserMcpJson } from "../shared/vscode-paths.ts";
 import type {
   ExportOptions,
@@ -215,7 +216,12 @@ function generateScopedInstructions(config: ResolvedConfig, projectPath: string)
 
     const applyTo = instr.globs.join(",");
     const content = `---\napplyTo: "${applyTo}"\n---\n\n${instr.content}\n`;
-    const filePath = join(projectPath, ".github", "instructions", `${name}.instructions.md`);
+    const filePath = join(
+      projectPath,
+      ".github",
+      "instructions",
+      `${sanitizePathSegment(name)}.instructions.md`,
+    );
     files.push({ path: filePath, content, written: false });
   }
 

@@ -70,6 +70,16 @@ export const PREFERRED_MCP_PROTOCOL_VERSION: (typeof SUPPORTED_MCP_PROTOCOL_VERS
  */
 const PRE_INIT_ALLOWED_METHODS = new Set<string>(["initialize", "ping"]);
 
+/**
+ * SEC-5: maximum length (in UTF-16 code units, ~bytes for ASCII JSON) of a
+ * single newline-delimited JSON-RPC line read from stdin. A peer that streams
+ * bytes without a newline would otherwise grow the read buffer without bound.
+ * Lines past this cap are rejected with a JSON-RPC parse error (-32700) and
+ * the buffer is discarded. 16 MiB comfortably exceeds any legitimate
+ * MCP request while bounding memory.
+ */
+export const MAX_STDIN_LINE_BYTES = 16 * 1024 * 1024;
+
 // ── MCP tool definition ─────────────────────────────────────────
 
 interface McpToolDef {
@@ -3190,27 +3200,40 @@ export class McpServer {
 
     const decoder = new TextDecoder();
     let buffer = "";
+    const write = (obj: unknown) => process.stdout.write(`${JSON.stringify(obj)}\n`);
 
     for await (const chunk of Bun.stdin.stream()) {
       buffer += decoder.decode(chunk, { stream: true });
 
-      let newlineIdx: number = buffer.indexOf("\n");
-      while (newlineIdx !== -1) {
-        const line = buffer.substring(0, newlineIdx).trim();
-        buffer = buffer.substring(newlineIdx + 1);
+      // SEC-5: split off any complete newline-delimited lines and bound the
+      // unflushed remainder. `drainStdinBuffer` returns oversized-line markers
+      // so a peer streaming bytes without a newline can't grow the buffer
+      // without limit.
+      const { lines, remainder } = McpServer.drainStdinBuffer(buffer);
+      buffer = remainder;
 
+      for (const item of lines) {
+        if (item.overflow) {
+          // Oversized line (complete or pending) → JSON-RPC parse error.
+          write({
+            jsonrpc: "2.0",
+            id: null,
+            error: {
+              code: -32700,
+              message: `Parse error: line exceeds maximum length (${MAX_STDIN_LINE_BYTES} bytes)`,
+            },
+          });
+          continue;
+        }
+
+        const line = item.line.trim();
         if (!line) continue;
 
         let req: JsonRpcRequest;
         try {
           req = JSON.parse(line);
         } catch {
-          const errResp: JsonRpcResponse = {
-            jsonrpc: "2.0",
-            id: null,
-            error: { code: -32700, message: "Parse error" },
-          };
-          process.stdout.write(`${JSON.stringify(errResp)}\n`);
+          write({ jsonrpc: "2.0", id: null, error: { code: -32700, message: "Parse error" } });
           continue;
         }
 
@@ -3222,18 +3245,61 @@ export class McpServer {
           const responses = await this.handleBatch(req);
           const filtered = responses.filter(Boolean);
           if (filtered.length > 0) {
-            process.stdout.write(`${JSON.stringify(filtered)}\n`);
+            write(filtered);
           }
           continue;
         }
 
         const resp = await this.handleRequest(req);
         if (resp) {
-          process.stdout.write(`${JSON.stringify(resp)}\n`);
+          write(resp);
         }
-        newlineIdx = buffer.indexOf("\n");
       }
     }
+  }
+
+  /**
+   * SEC-5: split a stdin buffer into complete lines, bounding line length.
+   *
+   * Returns the parsed `lines` (each either a normal `line` string or an
+   * `overflow` marker for a line that exceeds {@link MAX_STDIN_LINE_BYTES})
+   * and the `remainder` to retain for the next chunk.
+   *
+   * - Complete lines (terminated by `\n`) that are over the cap are emitted as
+   *   `{ overflow: true }` instead of returning a multi-megabyte string to
+   *   `JSON.parse`.
+   * - An unterminated remainder over the cap is also emitted as
+   *   `{ overflow: true }` and discarded (remainder reset to ""), so a peer
+   *   that never sends a newline cannot grow memory without bound.
+   *
+   * Pure and static so it can be unit-tested without driving real stdin.
+   */
+  static drainStdinBuffer(buffer: string): {
+    lines: Array<{ line: string; overflow?: false } | { overflow: true }>;
+    remainder: string;
+  } {
+    const lines: Array<{ line: string; overflow?: false } | { overflow: true }> = [];
+    let rest = buffer;
+
+    let newlineIdx = rest.indexOf("\n");
+    while (newlineIdx !== -1) {
+      const line = rest.substring(0, newlineIdx);
+      rest = rest.substring(newlineIdx + 1);
+      if (line.length > MAX_STDIN_LINE_BYTES) {
+        lines.push({ overflow: true });
+      } else {
+        lines.push({ line });
+      }
+      newlineIdx = rest.indexOf("\n");
+    }
+
+    // Bound the unterminated remainder.
+    if (rest.length > MAX_STDIN_LINE_BYTES) {
+      lines.push({ overflow: true });
+      rest = "";
+    }
+
+    return { lines, remainder: rest };
   }
 
   /** Expose tools for testing. */

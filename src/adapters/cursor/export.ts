@@ -8,6 +8,7 @@
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { atomicWriteFileSync } from "../../core/atomic-write.ts";
+import { sanitizePathSegment } from "../../lib/safe-path.ts";
 import type {
   ExportOptions,
   ExportResult,
@@ -147,7 +148,7 @@ function generateMdcRules(config: ResolvedConfig, projectPath: string): WrittenF
     }
 
     const mdcContent = generateMdc(instr);
-    const safeName = name.replace(/[^a-zA-Z0-9_-]/g, "-");
+    const safeName = sanitizePathSegment(name);
     const filePath = join(projectPath, ".cursor", "rules", `${safeName}.mdc`);
     files.push({ path: filePath, content: mdcContent, written: false });
   }
@@ -187,7 +188,7 @@ function generateAgentFiles(config: ResolvedConfig, projectPath: string): Writte
 
   for (const [name, agent] of Object.entries(config.agents)) {
     const content = generateAgentMd(agent);
-    const safeName = name.replace(/[^a-zA-Z0-9_-]/g, "-");
+    const safeName = sanitizePathSegment(name);
     const filePath = join(projectPath, ".cursor", "agents", `${safeName}.md`);
     files.push({ path: filePath, content, written: false });
   }

@@ -20,6 +20,7 @@ import type {
   TaskState,
   TaskStatusUpdateEvent,
 } from "./types";
+import { AgentCardSchema, validateRemoteUrl } from "./url-guard";
 import { A2A_PROTOCOL_VERSION, A2A_VERSION_HEADER } from "./version";
 
 // ── Error types ─────────────────────────────────────────────────
@@ -44,6 +45,12 @@ export interface A2AClientOptions {
   bearerToken?: string;
   /** API key for authenticated endpoints */
   apiKey?: string;
+  /**
+   * SEC-3: allow A2A requests to private/loopback/link-local hosts. Defaults
+   * to the `AM_A2A_ALLOW_PRIVATE` env var (off). Intended for local
+   * development against `http://localhost:...` agents only.
+   */
+  allowPrivateNetwork?: boolean;
 }
 
 // ── Helpers ─────────────────────────────────────────────────────
@@ -95,6 +102,9 @@ export class A2AClient {
    * path. Returns null when both 404.
    */
   async discoverAgent(baseUrl: string): Promise<AgentCard | null> {
+    // SEC-3: reject non-http(s) schemes and (unless opted in) private/internal
+    // targets before issuing any request.
+    validateRemoteUrl(baseUrl, { allowPrivateNetwork: this.opts.allowPrivateNetwork });
     const base = normalizeUrl(baseUrl);
     const candidates = [`${base}/.well-known/agent.json`, `${base}/.well-known/agent-card.json`];
     const timeout = this.opts.timeout ?? 30_000;
@@ -123,7 +133,9 @@ export class A2AClient {
         continue;
       }
 
-      const card = (await resp.json()) as AgentCard;
+      // SEC-3: the card is untrusted remote JSON — validate its shape before
+      // returning it to callers that index into required fields.
+      const card = AgentCardSchema.parse(await resp.json()) as AgentCard;
       return card;
     }
 
@@ -186,6 +198,8 @@ export class A2AClient {
    * Convention: base URL + /a2a
    */
   private resolveEndpoint(baseUrl: string): string {
+    // SEC-3: gate every task RPC behind the SSRF guard.
+    validateRemoteUrl(baseUrl, { allowPrivateNetwork: this.opts.allowPrivateNetwork });
     return `${normalizeUrl(baseUrl)}/a2a`;
   }
 
