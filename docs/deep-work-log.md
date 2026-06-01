@@ -2247,3 +2247,18 @@ as designed.
 **Integration order:** #4/#5 (docs) any time; #6 before #7 (controller.ts overlap → #7 rebases); #8 independent; #3-wizard impl after #6+#7.
 
 **Remaining backlog:** 22 open (Wave 5 refactor, SEC-1/2/3/5 security, test-coverage TEST-1/2, BUG/UX/DOC items, P0-5 CI-red, wizard impl).
+
+## Run 2026-05-31 — checkpoint 2
+
+**Merged to main:** PR #4 (Wave 0 docs+working-model+stats.ts), PR #5 (ROADMAP). main @ ec1e4a2.
+
+**Open PRs (CodeRabbit-reviewed, awaiting CI-green baseline to merge code):**
+- #6 Wave 1 dx-core, #7 Wave 2 safety (P0-3 fix), #8 Wave 4 dist-ci, #9 Wave 3 wizard design, #10 Wave 5 security (SEC-1/2/3/5), #11 Wave 5 quickwins.
+
+**In flight:** wave/5-ci-green agent fixing the RED main CI (P0-5) — long-tail (iterating vs the 8-min suite). Blocks cascade-merge of code PRs #6/#7/#8/#10/#11 (can't distinguish new breakage from pre-existing red until main CI is green).
+
+**Key learning (recorded to Mulch):** (1) Seeds is branch-scoped — keep backlog on main. (2) Can't integrate code PRs while main CI red — fix ci-green first. (3) "make CI green" is a slow verify-fix loop, poor fit for pipelined review; run standalone next time.
+
+**Backlog:** 22 open (mostly Wave-6 refactor P2-A/B/C/D + the in-flight ci-green + wizard impl). 67 closed.
+
+**Next:** land ci-green → cascade-merge #6→#7(rebase)→#8→#10→#11 against green → wave-6 refactor → wizard impl → final verify.
