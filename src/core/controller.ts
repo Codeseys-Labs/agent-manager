@@ -62,6 +62,23 @@ export function getConfigMutex(): AsyncMutex {
 }
 
 /**
+ * Test-only adapter-resolution seam (mirrors the `__set...ForTests` pattern
+ * in `src/commands/run.ts`). When set, `applyResolved` resolves adapters via
+ * this override instead of the real registry. This lets the SEC-4 drift-gate
+ * tests inject an adapter whose `diff()` throws WITHOUT globally mocking
+ * `../adapters/registry` (`mock.module` is process-global in Bun and leaks
+ * into other test files — it is NOT undone by `mock.restore()`). Each test
+ * sets this in a try/finally and clears it with `null`. Never set in prod.
+ */
+type AdapterResolver = (target: string | undefined) => Promise<Adapter[]>;
+let adapterResolverOverride: AdapterResolver | null = null;
+
+/** @internal test seam — see `adapterResolverOverride`. */
+export function __setAdapterResolverForTests(fn: AdapterResolver | null): void {
+  adapterResolverOverride = fn;
+}
+
+/**
  * Deep-scan a config tree for any ADR-0042 age envelope (`enc:v2:age:`).
  *
  * Used by the apply pipeline to decide whether to load the age backend even
@@ -292,7 +309,10 @@ export async function applyResolved(
     }
 
     let adapters: Adapter[];
-    if (options.target) {
+    if (adapterResolverOverride) {
+      // Test seam only — see `__setAdapterResolverForTests`.
+      adapters = await adapterResolverOverride(options.target);
+    } else if (options.target) {
       const adapter = await getAdapter(options.target);
       if (!adapter) {
         throw new Error(
@@ -335,6 +355,15 @@ export async function applyResolved(
           | { status: "in-sync" | "drifted" | "unmanaged"; changes: number }
           | undefined;
         let skipDueToDrift = false;
+        // SEC-4: a thrown diff() means drift is UNKNOWN, not absent. In
+        // `--diff` live mode without `--force` we must NOT assume the native
+        // config is clean — that would silently overwrite a possibly-drifted
+        // file (fail-open). Treat an exception as "drift unknown" and skip the
+        // adapter (fail-closed/safe) with a clear warning. The warning carries
+        // the diff failure reason so the user can re-run with --force after
+        // inspecting. See the 2026-04-15 `~/.claude.json` wipe lineage.
+        let skipDueToDiffError = false;
+        let diffErrorMessage: string | undefined;
         if (options.diff) {
           try {
             const diff = await adapter.diff(resolved);
@@ -347,11 +376,34 @@ export async function applyResolved(
             ) {
               skipDueToDrift = true;
             }
-          } catch {
-            // Adapter diff is best-effort. A failure shouldn't block the
-            // apply pipeline — fall through to export() as before.
+          } catch (e: unknown) {
+            // Drift is now UNKNOWN. We only have safe defaults for the live
+            // gate: in dry-run we can't write anyway (preview), and with
+            // --force the caller has explicitly opted into overwriting. In
+            // live mode WITHOUT --force we fail closed — skip rather than
+            // overwrite a config whose drift state we cannot confirm.
             driftSummary = undefined;
+            if (!options.dryRun && !options.force) {
+              skipDueToDiffError = true;
+              diffErrorMessage = (e instanceof Error ? e.message : String(e)) || "diff failed";
+            }
+            // dry-run / --force: best-effort diff failed — fall through to
+            // export() as before (no live gate to honor).
           }
+        }
+
+        if (skipDueToDiffError) {
+          // SEC-4 fail-closed gate: diff() threw, so we can't confirm the
+          // native config is in sync. Refuse to overwrite without --force.
+          results.push({
+            adapter: adapter.meta.name,
+            files: [],
+            warnings: [
+              `drift check failed (${diffErrorMessage}); drift state unknown — refusing to overwrite. Re-run with --force to apply anyway.`,
+            ],
+          });
+          skipped.push(adapter.meta.name);
+          continue;
         }
 
         if (skipDueToDrift) {
