@@ -333,11 +333,13 @@ describe("secret pipeline integration", () => {
       expect(resolved.servers?.s2?.env?.TOKEN).toBe(secret2);
     });
 
-    test("without encryption key, an enc:v1: envelope FAILS LOUD (P0-3: never passes ciphertext through)", async () => {
-      // Pre-P0-3, this returned the ciphertext verbatim — the exact leak that
-      // let an undecryptable secret land in a native IDE config. The decode
-      // walk now refuses: an envelope with no backend to decrypt it throws.
-      const config: Config = {
+    test("without any key, enc:v1: passes through (ADR-0012) but enc:v2:/unknown FAIL LOUD (P0-3)", async () => {
+      // The P0-3 leak was v2/unknown envelopes flowing to native configs as
+      // ciphertext. For a LEGACY v1 envelope with NO key configured at all, the
+      // documented ADR-0012 behavior is graceful passthrough (the user simply
+      // hasn't set up secrets; the value is AES ciphertext, not plaintext). The
+      // fail-loud guarantee applies to v2/unknown — those must never leak.
+      const v1Config: Config = {
         servers: {
           s: {
             command: "server",
@@ -347,9 +349,36 @@ describe("secret pipeline integration", () => {
           },
         },
       };
+      // v1 + no key → graceful passthrough (unchanged), not a throw.
+      const { config: out } = await interpolateEnvAsync(v1Config);
+      expect(out.servers?.s?.env?.KEY).toBe("enc:v1:fake:data");
 
-      await expect(interpolateEnvAsync(config)).rejects.toThrow(
-        /no decryption backend|key is loaded/i,
+      // v2 (age) with no age backend → FAILS LOUD (the real P0-3 leak class).
+      const v2Config: Config = {
+        servers: {
+          s: {
+            command: "server",
+            transport: "stdio",
+            enabled: true,
+            env: { KEY: "enc:v2:age:ZmFrZQ" },
+          },
+        },
+      };
+      await expect(interpolateEnvAsync(v2Config)).rejects.toThrow(/age|backend|unlock/i);
+
+      // Unknown enc: version → FAILS LOUD (never echoed verbatim).
+      const unknownConfig: Config = {
+        servers: {
+          s: {
+            command: "server",
+            transport: "stdio",
+            enabled: true,
+            env: { KEY: "enc:v99:whatever" },
+          },
+        },
+      };
+      await expect(interpolateEnvAsync(unknownConfig)).rejects.toThrow(
+        /unrecogni[sz]ed|unknown|envelope/i,
       );
     });
   });
