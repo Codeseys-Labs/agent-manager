@@ -1,0 +1,93 @@
+(fail) ADR-0047 `am pair finalize` — Wave T sub-task T2 > exits non-zero when the 
+(fail) Copilot Chat session reader > listSessions filters by project when session 
+(fail) Copilot Chat session reader > listSessions parses chat session JSON file
+(fail) Copilot Chat session reader > listSessions parses sessions nested under cha
+(fail) Copilot Chat session reader > listSessions sorts by startedAt descending an
+(fail) MCP concurrency safety (Wave B) > 2x am_apply concurrent — no writes are lo
+(fail) MCP concurrency safety (Wave B) > am_apply + am_add_server race — ordering 
+(fail) P0-3: applyResolved fails loud instead of writing ciphertext verbatim > app
+(fail) Roo Code session reader > listSessions falls back to ui_messages.json when 
+(fail) Roo Code session reader > listSessions filters by project from record-level
+(fail) Roo Code session reader > listSessions filters by project from sibling task
+(fail) Roo Code session reader > listSessions parses one task with api_conversatio
+(fail) Roo Code session reader > listSessions skips malformed/empty/non-array file
+(fail) Roo Code session reader > listSessions sorts by startedAt descending 
+(fail) am session > command structure > session command is registered in CLI
+(fail) am wiki resolve > --json output shape includes action, sidecarCleared, comm
+(fail) am wiki resolve > --strategy keep-local resolves all files non-interactivel
+(fail) amazon-q detect() > detects when ~/.aws/amazonq/ exists 
+(fail) amazon-q detect() > includes project .amazonq/mcp.json path
+(fail) amazon-q detect() > includes project .amazonq/rules/ path
+(fail) atomic-write backup hook > prune keeps at most 10 entries — manifest AND on
+(fail) atomicWriteFile (async) > preserves file mode when specified
+(fail) atomicWriteFileSync > preserves file mode when specified
+(fail) cline detect() — VS Code variants > detects stable Code install
+(fail) cline detect() — VS Code variants > getGlobalStoragePath returns stable Cod
+(fail) copilot detect() — variant + platform coverage > darwin: detects user mcp.j
+(fail) copilot detect() — variant + platform coverage > prefers stable Code over I
+(fail) copilot exportConfig() — writes to existing user-scope mcp.json > writes to
+(fail) cursor exportConfig() > actual write creates files on disk
+(fail) cursor exportConfig() > generates agent .md files
+(fail) cursor exportConfig() > generates global ~/.cursor/mcp.json with mcpServers
+(fail) cursor exportConfig() > generates project .cursor/mcp.json for project-scop
+(fail) cursor exportConfig() > skips disabled servers
+(fail) error handling — commands that gracefully handle missing config > am apply 
+(fail) error handling — invalid arguments > am apply --target nonexistent --json r
+(fail) error handling — invalid arguments > am apply --target nonexistent shows av
+(fail) getDefaultBackend > returns aes-gcm-legacy with a loaded key by default
+(fail) getDefaultBackend > throws a descriptive error when aes-gcm-legacy has no k
+(fail) importConfig() > imports global skills from ~/.claude/skills/
+(fail) interpolateEnv > throws on unresolved variable (strict mode)
+(fail) interpolateEnv > warns on unresolved variable (non-strict)
+(fail) kilo-code VS Code extension surface > detect() reports installed:true when 
+(fail) kilo-code VS Code extension surface > exportConfig() writes extension mcp_s
+(fail) kiro exportConfig() > filters instructions by target
+(fail) kiro exportConfig() > generates project .kiro/settings/mcp.json for project
+(fail) kiro exportConfig() > generates steering files from instructions
+(fail) kiro exportConfig() > generates ~/.kiro/settings/mcp.json with servers
+(fail) legacyKeyPath > returns configDir/.agent-manager/key.txt
+(fail) lib/safe-path > sanitizePathSegment > contains a traversal name so it canno
+(fail) lifecycle integration tests > add → apply → import round-trip preserves ser
+(fail) lifecycle integration tests > am apply --target claude-code --dry-run shows
+(fail) lifecycle integration tests > am apply writes native config files (not dry-
+(fail) lifecycle integration tests > am import reads native claude-code config 
+(fail) lifecycle integration tests > full lifecycle: init → add → apply → status →
+(fail) loadCommunityAdapters() checksum integration > rejects adapter with checksu
+(fail) marketplace/client > addMarketplace (local) > adds a local marketplace via 
+(fail) marketplace/client > addMarketplace (local) > throws on duplicate name
+(fail) marketplace/client > listMarketplaces > returns all added marketplaces
+(fail) marketplace/client > removeMarketplace > removes a local marketplace
+(fail) marketplace/installer > applyPlugin > adds skills from plugin manifest to c
+(fail) marketplace/installer > installPlugin > does not touch adapters.toml when m
+(fail) marketplace/installer > installPlugin > installs a plugin and writes to con
+(fail) marketplace/installer > installPlugin > registers community adapter in adap
+(fail) marketplace/scanner > searchPlugins > returns empty for no matches
+(fail) marketplace/scanner > searchPlugins > searches by description
+(fail) marketplace/scanner > searchPlugins > searches by plugin name
+(fail) marketplace/scanner > searchPlugins > searches by server name
+(fail) marketplace/security: path traversal > applyPlugin: skills path traversal >
+(fail) marketplace/security: path traversal > installPlugin: end-to-end rejects tr
+(fail) marketplace/security: path traversal > safeResolveInsidePlugin > accepts a 
+(fail) marketplace/security: trust-on-first-use > addMarketplace: TOFU gate > loca
+(fail) resolveConfigDir > returns default path when AM_CONFIG_DIR is not set
+(fail) resolveConflicts — M5.3-lite > edit invokes io.openEditor with absolute pat
+(fail) resolveConflicts — M5.3-lite > keep-local for a clean file (no changes) doe
+(fail) resolveConflicts — M5.3-lite > keep-local for all files → commits resolutio
+(fail) resolveConflicts — M5.3-lite > mixed keep-local + skip: commits kept files 
+(fail) resolveConflicts — M5.3-lite > take-remote overwrites workdir with remote b
+(fail) resolveKeyPath > Linux: uses XDG_DATA_HOME when set
+(fail) roo-code detect() — VS Code variants + casing > getGlobalStoragePath prefer
+(fail) roo-code exportConfig() > exports project servers to .roo/mcp.json
+(fail) roo-code exportConfig() > generates .roo/rules/*.md from instructions 
+(fail) scanClaudePlugins() > scans plugin with skills
+(fail) scanVSCodeExtensions() > handles extension with string repository
+(fail) scanVSCodeExtensions() > scans extension with contributes.mcpServers
+(fail) scanVSCodeExtensions() > scans multiple extensions
+(fail) scanVSCodeExtensions() > uses kiro source for kiro adapter 
+(fail) scanVSCodeExtensions() > uses windsurf source for windsurf adapter
+(fail) secrets migrate — walk + re-encrypt > migrates enc:v1: envelopes in a confi
+(fail) windsurf detect() > detects when ~/.codeium/windsurf/ exists
+(fail) windsurf detect() > includes project .windsurf/rules/ path
+(fail) windsurf detect() > includes project .windsurf/skills/ path
+(fail) windsurf exportConfig() > generates .windsurf/skills/ from resolved skills
+(fail) windsurf importConfig() > imports skill directories from .windsurf/skills/
