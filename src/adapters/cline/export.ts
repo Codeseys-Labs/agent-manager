@@ -7,9 +7,15 @@
 
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { atomicWriteFileSync } from "../../core/atomic-write.ts";
 import { sanitizePathSegment } from "../../lib/safe-path.ts";
-import type { ExportOptions, ExportResult, ResolvedConfig, WrittenFile } from "../types.ts";
+import { buildMcpServersJson, writeExportFiles } from "../shared/export-utils.ts";
+import type {
+  ExportOptions,
+  ExportResult,
+  ResolvedConfig,
+  ResolvedServer,
+  WrittenFile,
+} from "../types.ts";
 import { getGlobalStoragePath } from "./detect.ts";
 
 /**
@@ -25,8 +31,12 @@ export function exportConfig(
   const warnings: string[] = [];
 
   // 1. Generate cline_mcp_settings.json
+  const enabledServers: Record<string, ResolvedServer> = {};
+  for (const [name, server] of Object.entries(config.servers)) {
+    if (server.enabled) enabledServers[name] = server;
+  }
   const mcpPath = join(getGlobalStoragePath(home), "settings", "cline_mcp_settings.json");
-  const mcpContent = generateMcpSettings(config, mcpPath);
+  const mcpContent = buildMcpServersJson(enabledServers, mcpPath, { adapterKey: "cline" });
   files.push({ path: mcpPath, content: mcpContent, written: false });
 
   // 2. Generate .clinerules/*.md (instructions)
@@ -35,57 +45,9 @@ export function exportConfig(
     files.push(...ruleFiles);
   }
 
-  // Write files unless dryRun
-  if (!options.dryRun) {
-    const fs = require("node:fs");
-    for (const file of files) {
-      try {
-        const dir = file.path.substring(0, file.path.lastIndexOf("/"));
-        fs.mkdirSync(dir, { recursive: true });
-        atomicWriteFileSync(file.path, file.content);
-        file.written = true;
-      } catch (err) {
-        warnings.push(
-          `Failed to write ${file.path}: ${err instanceof Error ? err.message : String(err)}`,
-        );
-      }
-    }
-  }
+  writeExportFiles(files, warnings, { dryRun: options.dryRun });
 
   return { files, warnings };
-}
-
-/** Generate cline_mcp_settings.json, preserving existing non-managed fields. */
-function generateMcpSettings(config: ResolvedConfig, existingPath: string): string {
-  const fs = require("node:fs");
-
-  let existing: Record<string, unknown> = {};
-  try {
-    const text = fs.readFileSync(existingPath, "utf-8");
-    existing = JSON.parse(text);
-  } catch {
-    // No existing file — start fresh
-  }
-
-  const mcpServers: Record<string, unknown> = {};
-  for (const [name, server] of Object.entries(config.servers)) {
-    if (!server.enabled) continue;
-
-    const entry: Record<string, unknown> = { command: server.command };
-    if (server.args.length > 0) entry.args = server.args;
-    if (Object.keys(server.env).length > 0) entry.env = server.env;
-
-    // Map adapter-specific fields (alwaysAllow, disabled, etc.)
-    const clineExtras = server.adapters?.cline ?? {};
-    for (const [key, value] of Object.entries(clineExtras)) {
-      entry[key] = value;
-    }
-
-    mcpServers[name] = entry;
-  }
-
-  const output = { ...existing, mcpServers };
-  return `${JSON.stringify(output, null, 2)}\n`;
 }
 
 /** Generate .clinerules/*.md files from instructions. */

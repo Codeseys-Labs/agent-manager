@@ -6,15 +6,15 @@
  */
 
 import { homedir } from "node:os";
-import { dirname, join } from "node:path";
-import { atomicWriteFileSync } from "../../core/atomic-write.ts";
+import { join } from "node:path";
+import { generateCursorMdc } from "../../core/instructions.ts";
 import { sanitizePathSegment } from "../../lib/safe-path.ts";
+import { writeExportFiles } from "../shared/export-utils.ts";
 import type {
   ExportOptions,
   ExportResult,
   ResolvedAgent,
   ResolvedConfig,
-  ResolvedInstruction,
   ResolvedServer,
   WrittenFile,
 } from "../types.ts";
@@ -71,22 +71,7 @@ export function exportConfig(
     files.push(...agentFiles);
   }
 
-  // Write files unless dryRun
-  if (!options.dryRun) {
-    for (const file of files) {
-      try {
-        const fs = require("node:fs");
-        const dir = dirname(file.path);
-        fs.mkdirSync(dir, { recursive: true });
-        atomicWriteFileSync(file.path, file.content);
-        file.written = true;
-      } catch (err) {
-        warnings.push(
-          `Failed to write ${file.path}: ${err instanceof Error ? err.message : String(err)}`,
-        );
-      }
-    }
-  }
+  writeExportFiles(files, warnings, { dryRun: options.dryRun });
 
   return { files, warnings };
 }
@@ -147,39 +132,13 @@ function generateMdcRules(config: ResolvedConfig, projectPath: string): WrittenF
       continue;
     }
 
-    const mdcContent = generateMdc(instr);
+    const mdcContent = generateCursorMdc(instr);
     const safeName = sanitizePathSegment(name);
     const filePath = join(projectPath, ".cursor", "rules", `${safeName}.mdc`);
     files.push({ path: filePath, content: mdcContent, written: false });
   }
 
   return files;
-}
-
-/** Generate a single .mdc file content. */
-function generateMdc(instr: ResolvedInstruction): string {
-  const parts: string[] = ["---"];
-
-  if (instr.description) {
-    parts.push(`description: "${instr.description}"`);
-  }
-
-  if (instr.globs.length > 0) {
-    const globsStr = instr.globs.map((g) => `"${g}"`).join(", ");
-    parts.push(`globs: [${globsStr}]`);
-  }
-
-  if (instr.scope === "always") {
-    parts.push("alwaysApply: true");
-  } else {
-    parts.push("alwaysApply: false");
-  }
-
-  parts.push("---");
-  parts.push("");
-  parts.push(instr.content);
-
-  return `${parts.join("\n")}\n`;
 }
 
 /** Generate .cursor/agents/*.md files from agents. */

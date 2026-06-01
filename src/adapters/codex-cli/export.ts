@@ -8,9 +8,9 @@
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { parse as parseTOML } from "@iarna/toml";
-import { atomicWriteFileSync } from "../../core/atomic-write.ts";
 import { generateWikiContext, spliceWikiBlock } from "../../core/instructions.ts";
 import { tomlStringify as stringifyTOML } from "../../lib/toml";
+import { writeExportFiles } from "../shared/export-utils.ts";
 import { AM_BEGIN, AM_END, spliceMarkerBlock } from "../shared/utils.ts";
 import type {
   ExportOptions,
@@ -76,22 +76,7 @@ export async function exportConfig(
     }
   }
 
-  // Write files unless dryRun
-  if (!options.dryRun) {
-    for (const file of files) {
-      try {
-        const fs = require("node:fs");
-        const dir = file.path.substring(0, file.path.lastIndexOf("/"));
-        fs.mkdirSync(dir, { recursive: true });
-        atomicWriteFileSync(file.path, file.content);
-        file.written = true;
-      } catch (err) {
-        warnings.push(
-          `Failed to write ${file.path}: ${err instanceof Error ? err.message : String(err)}`,
-        );
-      }
-    }
-  }
+  writeExportFiles(files, warnings, { dryRun: options.dryRun });
 
   return { files, warnings };
 }

@@ -105,8 +105,27 @@ export interface ExportResult {
 
 // ── Diff ─────────────────────────────────────────────────────────
 
+/**
+ * A single drift change surfaced by an adapter's `diff()`.
+ *
+ * `entity` is narrowed to the two entity kinds adapters actually emit
+ * (P2-D, wave 8): every adapter diffs `server`, and the marker-based
+ * instruction adapters (claude-code, codex-cli, cursor, kilo-code) additionally
+ * diff `instruction` via {@link "./shared/diff-utils".compareInstructions}.
+ *
+ * Instruction-drift coverage is therefore PARTIAL for v1: adapters that emit
+ * instructions but do not yet wire `compareInstructions` (amazon-q, cline,
+ * continue, copilot, gemini-cli, kiro, roo-code, windsurf) report only server
+ * drift, so a hand-edited rule file in those tools will not be flagged. Full
+ * per-adapter instruction-drift coverage is tracked as v1.x follow-up.
+ *
+ * `skill` / `agent` / `setting` were advertised here but never emitted by any
+ * adapter; they were removed rather than ship a union no producer satisfies. If
+ * a future adapter diffs those entities, re-add the variant alongside the
+ * producing code.
+ */
 export interface DiffChange {
-  entity: "server" | "instruction" | "skill" | "agent" | "setting";
+  entity: "server" | "instruction";
   name: string;
   type: "added-locally" | "removed-locally" | "modified" | "added-in-config";
   details?: { field: string; expected: unknown; actual: unknown }[];

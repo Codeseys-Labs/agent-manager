@@ -91,9 +91,12 @@ describe("DiffChange", () => {
     expect(change.details?.[0].field).toBe("content");
   });
 
-  it("supports all entity types", () => {
-    const entities: DiffChange["entity"][] = ["server", "instruction", "skill", "agent", "setting"];
-    expect(entities).toHaveLength(5);
+  it("supports the entity types adapters actually emit (P2-D narrowed union)", () => {
+    // Narrowed to the two kinds any adapter produces: server (all 13) and
+    // instruction (marker-based adapters via compareInstructions). skill/agent/
+    // setting were removed because no adapter ever emitted them.
+    const entities: DiffChange["entity"][] = ["server", "instruction"];
+    expect(entities).toHaveLength(2);
   });
 
   it("supports all change types", () => {

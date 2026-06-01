@@ -8,9 +8,9 @@
 
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { atomicWriteFileSync } from "../../core/atomic-write.ts";
+import { generateKiroSteering } from "../../core/instructions.ts";
 import { sanitizePathSegment } from "../../lib/safe-path.ts";
-import { AM_BEGIN, AM_END, spliceMarkerBlock } from "../shared/utils.ts";
+import { buildMcpServersJson, writeExportFiles } from "../shared/export-utils.ts";
 import type {
   ExportOptions,
   ExportResult,
@@ -47,108 +47,37 @@ export function exportConfig(
 
   // 1. Generate ~/.kiro/settings/mcp.json (global servers)
   const globalPath = join(home, ".kiro", "settings", "mcp.json");
-  const globalContent = generateMcpJson(globalServers, globalPath, warnings);
+  const globalContent = buildMcpServersJson(globalServers, globalPath, {
+    adapterKey: "kiro",
+    skipExtras: ["scope"],
+    remote: true,
+  });
   files.push({ path: globalPath, content: globalContent, written: false });
 
   // 2. Generate .kiro/settings/mcp.json (project-scoped servers)
   if (options.projectPath && Object.keys(projectServers).length > 0) {
     const projectMcpPath = join(options.projectPath, ".kiro", "settings", "mcp.json");
-    const projectContent = generateMcpJson(projectServers, projectMcpPath, warnings);
+    const projectContent = buildMcpServersJson(projectServers, projectMcpPath, {
+      adapterKey: "kiro",
+      skipExtras: ["scope"],
+      remote: true,
+    });
     files.push({ path: projectMcpPath, content: projectContent, written: false });
   }
 
   // 3. Generate steering files (instructions)
   if (options.projectPath) {
-    const steeringFiles = generateSteeringFiles(config, options.projectPath, warnings);
+    const steeringFiles = generateSteeringFiles(config, options.projectPath);
     files.push(...steeringFiles);
   }
 
-  // Write files unless dryRun
-  if (!options.dryRun) {
-    for (const file of files) {
-      try {
-        const fs = require("node:fs");
-        const dir = file.path.substring(0, file.path.lastIndexOf("/"));
-        fs.mkdirSync(dir, { recursive: true });
-        atomicWriteFileSync(file.path, file.content);
-        file.written = true;
-      } catch (err) {
-        warnings.push(
-          `Failed to write ${file.path}: ${err instanceof Error ? err.message : String(err)}`,
-        );
-      }
-    }
-  }
+  writeExportFiles(files, warnings, { dryRun: options.dryRun });
 
   return { files, warnings };
 }
 
-/** Build mcp.json content, preserving existing non-MCP fields. */
-function generateMcpJson(
-  servers: Record<string, ResolvedServer>,
-  existingPath: string,
-  warnings: string[],
-): string {
-  // Read existing file to preserve non-MCP fields
-  let existing: Record<string, unknown> = {};
-  try {
-    const fs = require("node:fs");
-    const text = fs.readFileSync(existingPath, "utf-8");
-    existing = JSON.parse(text);
-  } catch {
-    // No existing file or malformed — start fresh
-  }
-
-  const mcpServers: Record<string, unknown> = {};
-  for (const [name, server] of Object.entries(servers)) {
-    const isHttp = server.transport === "streamable-http" || server.transport === "sse";
-    const entry: Record<string, unknown> = {};
-
-    if (isHttp) {
-      entry.url = server.command;
-    } else {
-      entry.command = server.command;
-      if (server.args.length > 0) entry.args = server.args;
-    }
-
-    if (Object.keys(server.env).length > 0) entry.env = server.env;
-
-    // Map adapter-specific fields (autoApprove, disabledTools, timeout, etc.)
-    const kiroExtras = server.adapters?.kiro ?? {};
-    for (const [key, value] of Object.entries(kiroExtras)) {
-      if (key === "scope") continue; // internal routing hint
-      entry[key] = value;
-    }
-
-    mcpServers[name] = entry;
-  }
-
-  const output = { ...existing, mcpServers };
-  return `${JSON.stringify(output, null, 2)}\n`;
-}
-
-/** Map scope values to Kiro inclusion modes. */
-function scopeToInclusion(scope: string): string {
-  switch (scope) {
-    case "always":
-      return "always";
-    case "agent-decision":
-      return "auto";
-    case "glob":
-      return "fileMatch";
-    case "manual":
-      return "manual";
-    default:
-      return "always";
-  }
-}
-
 /** Generate steering markdown files from instructions. */
-function generateSteeringFiles(
-  config: ResolvedConfig,
-  projectPath: string,
-  warnings: string[],
-): WrittenFile[] {
+function generateSteeringFiles(config: ResolvedConfig, projectPath: string): WrittenFile[] {
   const files: WrittenFile[] = [];
 
   for (const [name, instr] of Object.entries(config.instructions)) {
@@ -156,15 +85,11 @@ function generateSteeringFiles(
       continue;
     }
 
-    const inclusion = scopeToInclusion(instr.scope);
     const steeringName = sanitizePathSegment(name.replace(/^steering-/, ""));
     const filePath = join(projectPath, ".kiro", "steering", `${steeringName}.md`);
 
-    // Wrap managed content in am markers
-    const managedBlock = `${AM_BEGIN}\n${instr.content}\n${AM_END}`;
-
-    let content: string;
-    // Try to read existing file and splice managed section
+    // Try to read existing file so the shared generator can splice the managed
+    // section while preserving hand-written content outside the am markers.
     let existingContent: string | undefined;
     try {
       const fs = require("node:fs");
@@ -173,13 +98,7 @@ function generateSteeringFiles(
       // No existing file
     }
 
-    if (existingContent) {
-      content = spliceMarkerBlock(managedBlock, existingContent);
-    } else {
-      // No existing file — generate with frontmatter
-      content = `---\ninclusion: ${inclusion}\ndescription: "${instr.description}"\n---\n\n${managedBlock}\n`;
-    }
-
+    const content = generateKiroSteering(instr, existingContent);
     files.push({ path: filePath, content, written: false });
   }
 

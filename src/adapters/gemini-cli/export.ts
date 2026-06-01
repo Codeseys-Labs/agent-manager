@@ -8,8 +8,8 @@
 
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { atomicWriteFileSync } from "../../core/atomic-write.ts";
 import { filterByTarget, generateGeminiMd } from "../../core/instructions.ts";
+import { buildMcpServersJson, writeExportFiles } from "../shared/export-utils.ts";
 import type {
   ExportOptions,
   ExportResult,
@@ -46,7 +46,10 @@ export function exportConfig(
 
   // 1. Generate ~/.gemini/settings.json
   const globalPath = join(home, ".gemini", "settings.json");
-  const globalContent = generateSettingsJson(globalServers, globalPath, warnings);
+  const globalContent = buildMcpServersJson(globalServers, globalPath, {
+    adapterKey: "gemini-cli",
+    skipExtras: ["scope"],
+  });
   files.push({
     path: globalPath,
     content: globalContent,
@@ -56,7 +59,10 @@ export function exportConfig(
   // 2. Generate .gemini/settings.json (project-scoped servers)
   if (options.projectPath && Object.keys(projectServers).length > 0) {
     const projectSettingsPath = join(options.projectPath, ".gemini", "settings.json");
-    const projectContent = generateSettingsJson(projectServers, projectSettingsPath, warnings);
+    const projectContent = buildMcpServersJson(projectServers, projectSettingsPath, {
+      adapterKey: "gemini-cli",
+      skipExtras: ["scope"],
+    });
     files.push({
       path: projectSettingsPath,
       content: projectContent,
@@ -85,58 +91,7 @@ export function exportConfig(
     }
   }
 
-  // Write files unless dryRun
-  if (!options.dryRun) {
-    for (const file of files) {
-      try {
-        const fs = require("node:fs");
-        const dir = file.path.substring(0, file.path.lastIndexOf("/"));
-        fs.mkdirSync(dir, { recursive: true });
-        atomicWriteFileSync(file.path, file.content);
-        file.written = true;
-      } catch (err) {
-        warnings.push(
-          `Failed to write ${file.path}: ${err instanceof Error ? err.message : String(err)}`,
-        );
-      }
-    }
-  }
+  writeExportFiles(files, warnings, { dryRun: options.dryRun });
 
   return { files, warnings };
-}
-
-/** Build settings.json with mcpServers, preserving existing non-MCP fields. */
-function generateSettingsJson(
-  servers: Record<string, ResolvedServer>,
-  existingPath: string,
-  warnings: string[],
-): string {
-  // Read existing file to preserve non-MCP fields
-  let existing: Record<string, unknown> = {};
-  try {
-    const fs = require("node:fs");
-    const text = fs.readFileSync(existingPath, "utf-8");
-    existing = JSON.parse(text);
-  } catch {
-    // No existing file or malformed — start fresh
-  }
-
-  const mcpServers: Record<string, unknown> = {};
-  for (const [name, server] of Object.entries(servers)) {
-    const entry: Record<string, unknown> = { command: server.command };
-    if (server.args.length > 0) entry.args = server.args;
-    if (Object.keys(server.env).length > 0) entry.env = server.env;
-
-    // Map adapter-specific fields
-    const gcExtras = server.adapters?.["gemini-cli"] ?? {};
-    for (const [key, value] of Object.entries(gcExtras)) {
-      if (key === "scope") continue; // internal routing hint
-      entry[key] = value;
-    }
-
-    mcpServers[name] = entry;
-  }
-
-  const output = { ...existing, mcpServers };
-  return `${JSON.stringify(output, null, 2)}\n`;
 }

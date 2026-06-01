@@ -5,10 +5,10 @@
  * and AGENTS.md (instructions with am:begin/am:end markers).
  */
 
-import { dirname, join } from "node:path";
-import { atomicWriteFileSync } from "../../core/atomic-write.ts";
+import { join } from "node:path";
 import { generateWikiContext, spliceWikiBlock } from "../../core/instructions.ts";
 import { sanitizePathSegment } from "../../lib/safe-path.ts";
+import { writeExportFiles } from "../shared/export-utils.ts";
 import { AM_BEGIN, AM_END, spliceMarkerBlock } from "../shared/utils.ts";
 import type {
   ExportOptions,
@@ -90,22 +90,7 @@ export async function exportConfig(
     }
   }
 
-  // Write files unless dryRun
-  if (!options.dryRun) {
-    for (const file of files) {
-      try {
-        const fs = require("node:fs");
-        const dir = dirname(file.path);
-        fs.mkdirSync(dir, { recursive: true });
-        atomicWriteFileSync(file.path, file.content);
-        file.written = true;
-      } catch (err) {
-        warnings.push(
-          `Failed to write ${file.path}: ${err instanceof Error ? err.message : String(err)}`,
-        );
-      }
-    }
-  }
+  writeExportFiles(files, warnings, { dryRun: options.dryRun });
 
   return { files, warnings };
 }

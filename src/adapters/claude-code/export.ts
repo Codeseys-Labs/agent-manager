@@ -7,8 +7,8 @@
 
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { atomicWriteFileSync } from "../../core/atomic-write.ts";
 import { generateWikiContext, spliceWikiBlock } from "../../core/instructions.ts";
+import { buildMcpServersJson, writeExportFiles } from "../shared/export-utils.ts";
 import type {
   ExportOptions,
   ExportResult,
@@ -48,7 +48,13 @@ export async function exportConfig(
 
   // 1. Generate ~/.claude.json
   const globalPath = join(home, ".claude.json");
-  const globalContent = generateClaudeJson(globalServers, config, globalPath, warnings);
+  const globalContent = buildMcpServersJson(globalServers, globalPath, {
+    adapterKey: "claude-code",
+    skipExtras: ["scope"],
+    // Map core field names to Claude Code native names.
+    mapExtra: (key, value) =>
+      key === "alwaysAllow" || key === "always_allow" ? ["always_allow", value] : [key, value],
+  });
   files.push({
     path: globalPath,
     content: globalContent,
@@ -84,66 +90,9 @@ export async function exportConfig(
     }
   }
 
-  // Write files unless dryRun
-  if (!options.dryRun) {
-    for (const file of files) {
-      try {
-        const fs = require("node:fs");
-        const dir = file.path.substring(0, file.path.lastIndexOf("/"));
-        fs.mkdirSync(dir, { recursive: true });
-        atomicWriteFileSync(file.path, file.content);
-        file.written = true;
-      } catch (err) {
-        warnings.push(
-          `Failed to write ${file.path}: ${err instanceof Error ? err.message : String(err)}`,
-        );
-      }
-    }
-  }
+  writeExportFiles(files, warnings, { dryRun: options.dryRun });
 
   return { files, warnings };
-}
-
-/** Build the mcpServers object for ~/.claude.json, preserving existing non-MCP fields. */
-function generateClaudeJson(
-  servers: Record<string, ResolvedServer>,
-  config: ResolvedConfig,
-  existingPath: string,
-  warnings: string[],
-): string {
-  // Read existing file to preserve non-MCP fields (numStartups, etc.)
-  let existing: Record<string, unknown> = {};
-  try {
-    const fs = require("node:fs");
-    const text = fs.readFileSync(existingPath, "utf-8");
-    existing = JSON.parse(text);
-  } catch {
-    // No existing file or malformed — start fresh
-  }
-
-  const mcpServers: Record<string, unknown> = {};
-  for (const [name, server] of Object.entries(servers)) {
-    const entry: Record<string, unknown> = { command: server.command };
-    if (server.args.length > 0) entry.args = server.args;
-    if (Object.keys(server.env).length > 0) entry.env = server.env;
-
-    // Map adapter-specific fields
-    const ccExtras = server.adapters?.["claude-code"] ?? {};
-    for (const [key, value] of Object.entries(ccExtras)) {
-      if (key === "scope") continue; // internal routing hint
-      // Map core field names to Claude Code native names
-      if (key === "alwaysAllow" || key === "always_allow") {
-        entry.always_allow = value;
-      } else {
-        entry[key] = value;
-      }
-    }
-
-    mcpServers[name] = entry;
-  }
-
-  const output = { ...existing, mcpServers };
-  return `${JSON.stringify(output, null, 2)}\n`;
 }
 
 /** Build .mcp.json for project-scoped servers. */
