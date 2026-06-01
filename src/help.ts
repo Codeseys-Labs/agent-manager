@@ -14,6 +14,7 @@ export const COMMAND_GROUPS: ReadonlyArray<{
     heading: "Config commands",
     commands: [
       ["init", "Initialize agent-manager config"],
+      ["setup", "Guided first-run setup (detect, import, secrets, apply)"],
       ["add", "Add an entity (server, instruction, skill, agent)"],
       ["list", "List entities (servers, instructions, skills, agents, profiles)"],
       ["use", "Switch active profile"],
