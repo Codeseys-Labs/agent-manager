@@ -171,7 +171,7 @@ src/
     public/                 # Static HTML
   lib/                      # Shared utilities (errors.ts, output.ts)
 test/                       # 231 files, 3064 tests, 9672 assertions
-ADRs/                       # 53 architectural decision records (0001-0052, incl. 0031a)
+ADRs/                       # 54 architectural decision records (0001-0053, incl. 0031a)
 scripts/
   build.ts                  # Cross-platform build (5 targets)
 install.sh                  # curl-based installer (repo root, not scripts/)

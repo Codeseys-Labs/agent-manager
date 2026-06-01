@@ -881,7 +881,7 @@ graph LR
     A2A <--> Bridge["A2A-ACP Bridge"] <--> ACP
 ```
 
-Design decisions documented in [53 ADRs](ADRs/README.md).
+Design decisions documented in [54 ADRs](ADRs/README.md).
 
 ---
 
@@ -950,7 +950,7 @@ cache for faster downloads.
 | Platform adapters | 3 |
 | CLI commands | 36 |
 | MCP tools | 38 (33 active + 5 deprecated aliases) |
-| ADRs | 53 |
+| ADRs | 54 |
 <!-- stats:end -->
 
 ### Tech Stack
