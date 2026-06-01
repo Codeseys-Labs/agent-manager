@@ -82,9 +82,13 @@ describe("ADR-0046: legacy environment variable hints", () => {
       AGENT_MANAGER_TEAM_PASSPHRASE: process.env.AGENT_MANAGER_TEAM_PASSPHRASE,
       AM_SHARED_PASSPHRASE: process.env.AM_SHARED_PASSPHRASE,
     };
-    process.env.AM_TEAM_PASSPHRASE = undefined;
-    process.env.AGENT_MANAGER_TEAM_PASSPHRASE = undefined;
-    process.env.AM_SHARED_PASSPHRASE = undefined;
+    // Use delete, NOT `= undefined`: assigning undefined coerces to the STRING
+    // "undefined" (truthy), so envHints() would see the var as set. This is the
+    // bug that failed the Windows build-verify deterministically (the empty-list
+    // and clean-state cases). delete genuinely unsets the var on all platforms.
+    delete process.env.AM_TEAM_PASSPHRASE;
+    delete process.env.AGENT_MANAGER_TEAM_PASSPHRASE;
+    delete process.env.AM_SHARED_PASSPHRASE;
   });
 
   afterEach(() => {
