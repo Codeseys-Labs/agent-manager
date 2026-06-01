@@ -43,3 +43,6 @@ report.[0-9]_.[0-9]_.[0-9]_.[0-9]_.json
 # overstory dev-accelerator (multi-agent orchestration; not a product feature)
 .overstory/
 TMP-PROMPT.md
+
+# Claude Code session state (worktrees, workflow journals, local settings)
+.claude/
