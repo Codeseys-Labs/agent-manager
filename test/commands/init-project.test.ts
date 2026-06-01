@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, setDefaultTimeout, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, setDefaultTimeout, test } from "bun:test";
 import { join } from "node:path";
 import { initProject } from "@/commands/init-project.ts";
 import type { ProjectConfig } from "@/core/schema.ts";
@@ -16,12 +16,24 @@ const silentOpts = { json: false, quiet: true, verbose: false };
 describe("initProject()", () => {
   let dir: TestDir;
 
+  // Hermetic isolation by construction (Windows CI fix):
+  //   - beforeEach mints a UNIQUE mkdtemp dir for every test, so no test can
+  //     ever observe another test's `.agent-manager.toml`. This does not rely
+  //     on each test body remembering to reassign `dir`.
+  //   - afterEach resets `process.exitCode`. initProject()'s "Already
+  //     initialized" / "nothing found" guards set `process.exitCode = 1` as a
+  //     process-global side effect; without this reset that 1 leaks into later
+  //     tests and the test runner's own exit status.
+  beforeEach(async () => {
+    dir = await createTestDir("am-init-project-");
+  });
+
   afterEach(async () => {
     if (dir) await dir.cleanup();
+    process.exitCode = 0;
   });
 
   test("scans Claude Code project configs and creates .agent-manager.toml", async () => {
-    dir = await createTestDir("am-init-project-");
     const projectDir = join(dir.path, "my-app");
 
     // Write Claude Code project config (.mcp.json)
@@ -65,7 +77,6 @@ describe("initProject()", () => {
   });
 
   test("uses content_file for instructions within the project", async () => {
-    dir = await createTestDir("am-init-project-");
     const projectDir = join(dir.path, "my-app");
 
     // Write Claude Code configs
@@ -98,7 +109,6 @@ describe("initProject()", () => {
   });
 
   test("deduplicates servers across adapters by identity", async () => {
-    dir = await createTestDir("am-init-project-");
     const projectDir = join(dir.path, "my-app");
 
     // Claude Code: has fetch server
@@ -135,7 +145,6 @@ describe("initProject()", () => {
   });
 
   test("refuses when .agent-manager.toml already exists", async () => {
-    dir = await createTestDir("am-init-project-");
     const projectDir = join(dir.path, "my-app");
 
     await dir.write("my-app/.agent-manager.toml", "# existing");
@@ -151,7 +160,6 @@ describe("initProject()", () => {
   });
 
   test("returns written:false when no configs found", async () => {
-    dir = await createTestDir("am-init-project-");
     const projectDir = join(dir.path, "empty-project");
     await dir.write("empty-project/.keep", "");
 
@@ -160,7 +168,6 @@ describe("initProject()", () => {
   });
 
   test("handles multiple instruction sources", async () => {
-    dir = await createTestDir("am-init-project-");
     const projectDir = join(dir.path, "my-app");
 
     // Claude Code
@@ -185,7 +192,6 @@ describe("initProject()", () => {
   });
 
   test("JSON output includes structured data", async () => {
-    dir = await createTestDir("am-init-project-");
     const projectDir = join(dir.path, "my-app");
 
     await dir.write(
@@ -218,7 +224,6 @@ describe("initProject()", () => {
   });
 
   test("preserves server env vars and description", async () => {
-    dir = await createTestDir("am-init-project-");
     const projectDir = join(dir.path, "my-app");
 
     await dir.write(
