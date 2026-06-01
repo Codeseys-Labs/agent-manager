@@ -81,6 +81,9 @@ import type {
   Provenance,
   WikiPage,
 } from "../wiki/types";
+// ADR-0054 R4: page confidence is now the low|medium|high enum. normalizeConfidence
+// tolerates both the enum and any transitional legacy numeric value.
+import { normalizeConfidence } from "../wiki/types";
 
 // ── Subcommands ─────────────────────────────────────────────────
 
@@ -254,7 +257,7 @@ export const showSubcommand = defineCommand({
       info(`Updated:    ${page.updated}`, opts);
       info(`Tags:       ${page.tags.join(", ") || "(none)"}`, opts);
       if (page.confidence !== undefined) {
-        info(`Confidence: ${page.confidence.toFixed(2)}`, opts);
+        info(`Confidence: ${normalizeConfidence(page.confidence) ?? page.confidence}`, opts);
       }
       if (page.sources.length > 0) {
         info(`Sources:    ${page.sources.join(", ")}`, opts);

@@ -9,7 +9,7 @@
 import { readFile, rename, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { isNotFound } from "../lib/errors";
-import { entityToSlug, extractEntities } from "./ner";
+import { type NerOptions, entityToSlug, extractEntities } from "./ner";
 import { ensureWikiDirs, resolveWikiDir } from "./storage";
 import type { GraphEdge, KnowledgeGraph, WikiPage, WikiPageType } from "./types";
 
@@ -47,10 +47,17 @@ export async function saveGraph(graph: KnowledgeGraph, wikiDir?: string): Promis
 
 // ── Graph Mutation ──────────────────────────────────────────────
 
-/** Add a page to the graph, extracting entities and creating edges */
+/**
+ * Add a page to the graph, extracting entities and creating edges.
+ *
+ * ADR-0054 R3: pass `opts.catalogEntities` so entity-mention edges include the
+ * real catalog names (servers/agents/skills/instructions), not just the static
+ * fallback vocabulary.
+ */
 export async function addPageToGraph(
   page: WikiPage,
   graph: KnowledgeGraph,
+  opts?: NerOptions,
 ): Promise<KnowledgeGraph> {
   // Add or update node
   graph.nodes[page.slug] = {
@@ -87,7 +94,7 @@ export async function addPageToGraph(
   }
 
   // Extract entities from content and create entity_mention edges
-  const entities = extractEntities(page.content);
+  const entities = extractEntities(page.content, opts);
   const mentionedSlugs = new Set<string>();
   for (const entity of entities) {
     const slug = entityToSlug(entity.text);
