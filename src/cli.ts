@@ -35,6 +35,7 @@ const main = defineCommand({
   },
   subCommands: {
     init: () => import("./commands/init").then((m) => m.initCommand),
+    setup: () => import("./commands/setup").then((m) => m.setupCommand),
     add: () => import("./commands/add").then((m) => m.addCommand),
     list: () => import("./commands/list").then((m) => m.listCommand),
     use: () => import("./commands/use").then((m) => m.useCommand),

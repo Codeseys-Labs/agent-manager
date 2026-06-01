@@ -343,3 +343,97 @@ export async function softResetHead(dir: string): Promise<void> {
     }
   }
 }
+
+/**
+ * Outcome of {@link cloneRepo}.
+ */
+export interface CloneResult {
+  /** The branch that was checked out. */
+  branch: string;
+  /** How the clone was performed — "http" (network) or "local" (filesystem). */
+  transport: "http" | "local";
+}
+
+/**
+ * Strip a leading `file://` scheme from a remote URL, returning the bare
+ * filesystem path. `file:///abs/path` → `/abs/path`. Anything that is not a
+ * `file://` URL is returned unchanged.
+ */
+function fileUrlToPath(url: string): string {
+  if (!url.startsWith("file://")) return url;
+  // file:///abs → /abs ; file://host/abs is rejected (we only support local).
+  const withoutScheme = url.slice("file://".length);
+  // A triple-slash form leaves a leading slash already; a host form
+  // (file://host/path) would leave "host/path" — treat the first slash as the
+  // path root for the local-only contract.
+  if (withoutScheme.startsWith("/")) return withoutScheme;
+  const slash = withoutScheme.indexOf("/");
+  return slash === -1 ? withoutScheme : withoutScheme.slice(slash);
+}
+
+/**
+ * Decide whether a remote URL points at the local filesystem (a bare repo on
+ * disk or a `file://` URL) rather than a network host. Network schemes
+ * (`http`, `https`, `ssh`, `git`) and SCP-style `git@host:org/repo` shorthand
+ * are NOT local.
+ */
+export function isLocalRemote(url: string): boolean {
+  if (url.startsWith("file://")) return true;
+  if (/^[a-z][a-z0-9+.-]*:\/\//i.test(url)) return false; // http(s)://, ssh://, git://
+  if (/^[^/]+@[^/]+:/.test(url)) return false; // scp-style git@host:org/repo
+  return true; // bare path: /abs/path, ./rel, ../rel, C:\… handled by callers
+}
+
+/**
+ * Clone a git repository into `dir`. Two transports:
+ *   - HTTP(S): isomorphic-git's network clone (uses the node http client).
+ *   - Local (a bare repo path or `file://` URL): isomorphic-git has no local
+ *     transport, so we filesystem-copy the bare repo's git database into
+ *     `<dir>/.git`, record `origin`, and check out the default branch. This
+ *     is the path exercised by tests (a local bare repo as the remote) and by
+ *     dotfile bootstraps that point at a synced-down catalog.
+ *
+ * The destination `dir` must not already be a git repo (no `.git`). Callers
+ * (e.g. the setup wizard) gate on that and merge rather than clobber.
+ */
+export async function cloneRepo(dir: string, url: string): Promise<CloneResult> {
+  await fs.promises.mkdir(dir, { recursive: true });
+
+  if (isLocalRemote(url)) {
+    const sourcePath = fileUrlToPath(url);
+    // The source may be a bare repo (its own root is the git db) or a normal
+    // repo (git db under `.git`). Detect which and copy the right tree.
+    let gitDbSource = sourcePath;
+    try {
+      await fs.promises.access(join(sourcePath, ".git"));
+      gitDbSource = join(sourcePath, ".git");
+    } catch {
+      // No nested `.git` → treat `sourcePath` itself as the git database
+      // (the bare-repo case).
+    }
+    const destGit = join(dir, ".git");
+    await fs.promises.cp(gitDbSource, destGit, { recursive: true });
+    // A copied bare repo is marked `core.bare = true`; flip it so checkout
+    // treats `dir` as a working tree. isomorphic-git reads config lazily, so
+    // the simplest robust fix is to drop the bare flag via setConfig.
+    try {
+      await git.setConfig({ fs, dir, path: "core.bare", value: false });
+    } catch {
+      // Non-fatal: a non-bare source has no bare flag to clear.
+    }
+    await git.addRemote({ fs, dir, remote: "origin", url, force: true });
+    const branch = (await git.currentBranch({ fs, dir })) ?? "main";
+    await git.checkout({ fs, dir, ref: branch, force: true });
+    return { branch, transport: "local" };
+  }
+
+  await git.clone({
+    fs,
+    http: (await import("isomorphic-git/http/node")).default,
+    dir,
+    url,
+    singleBranch: true,
+  });
+  const branch = (await git.currentBranch({ fs, dir })) ?? "main";
+  return { branch, transport: "http" };
+}
