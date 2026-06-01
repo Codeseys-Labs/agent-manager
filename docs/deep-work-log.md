@@ -2293,3 +2293,17 @@ Post-integration fixes (caught by full-suite-on-main):
 Backlog: 13 open / 77 closed. Remaining = next iteration: P0-2 wizard impl (design done), P2-A/B/C/D core/adapter refactor, SEC-4 drift-gate, TEST-1/2 coverage, small UX/RM.
 
 Key learnings recorded to Mulch: Seeds-is-branch-scoped, can't-integrate-on-red-CI, stale-branch-merge-resurrects-deletions, disjoint-file-ownership partitioning.
+
+## Run 2026-05-31 — checkpoint 5
+
+Wave 7 MERGED (PRs #13/#14/#15): P2-A type-cycle refactor (src/core/resolved.ts), SEC-4 drift-gate fail-closed (mutation-tested), UX-1/UX-2 (parent-help exit 0, non-interactive guards). main @ 6536693, full suite 3165/0 (verified by wave agents).
+
+Follow-ups filed from SEC-4 review: SEC-4b (MCP/web apply bypass drift gate), apply-summary-line wording.
+
+IN FLIGHT (2 parallel workflows, will notify):
+- wave/8-wizard: P0-2 am setup wizard impl per ADR-0053 (the product front door).
+- wave/8-adapter-dedup (P2-B/C/D shared export-utils + wire dead generators) + wave/8-coverage-ci (RM-1).
+
+Backlog after Wave 7: ~8 open. Remaining after these waves land: TEST-1/2 (command-handler coverage), QW-followup, SEC-4b + summary-line follow-ups.
+
+Total session: production audit → 15 PRs merged → green 3165-test baseline. The CLI is materially closer to the audit's v1.0 bar: install honest, secrets-corruption fixed, security hardened, CI green, docs reconciled, working model internalized, type-cycle broken, and the wizard in flight.
