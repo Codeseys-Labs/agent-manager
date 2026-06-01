@@ -2268,3 +2268,28 @@ as designed.
 - FIXED regression: a code-wave merge resurrected .overstory (stale-branch-merge hazard) — re-removed + synced ADR count to 54.
 - HARD REQUIREMENT for remaining merges: rebase #6/#7/#8/#10/#11 onto current main (they carry .overstory from pre-removal fork) and verify deletions survive before/after each merge.
 - ci-green (#5-ci-green branch, P0-5) still converging after ~70min — CPU-contended 15min suite + a competing claude process. Converged 6→2 failures (TUI-headless + ACP-subprocess, likely need CI skips not fixes). Blocks code-PR cascade.
+
+## Run 2026-05-31 — checkpoint 4 (MILESTONE: green baseline achieved)
+
+**main @ 1541745. Full suite: 3160 pass / 0 fail across 241 files. CI-red (P0-5) RESOLVED.**
+
+ALL WAVES MERGED to main (12 PRs: #4-#12):
+- #4 Wave 0 docs honesty + AGENTS.md working model + scripts/stats.ts
+- #5 ROADMAP reconciliation · #9 ADR-0053 wizard design
+- #6 Wave 1 DX/core (ZodError UX, help coverage, passthrough notice, ADR re-status, alias bump)
+- #7 Wave 2 P0-3 age-secrets apply-corruption fix (decodeEnvelope + integration test) + betterleaks SHA pin
+- #8 Wave 4 install.sh integrity, Windows CI smoke, packaging, Formula
+- #10 Wave 5 security (path traversal, A2A SSRF + loopback-bypass fix, MCP buffer)
+- #11 Wave 5 quickwins (wiki --global, ACP timer, install exit code, dead field, historical docs)
+- #12 P0-5 CI-green (bun-PATH helper, test isolation) — the 6→0 failure fix
+
+Post-integration fixes (caught by full-suite-on-main):
+- v1-no-key graceful passthrough regression (Wave 2 was too strict) — restored ADR-0012 behavior, v2/unknown still fail loud.
+- Reconciled the conflicting v1-fail-loud test to the correct contract.
+- P2-I: first-party typecheck now 0 errors; scripts/typecheck.ts filters @silvery vendor noise.
+- DOC-2: ADR-0053 in index.
+- Re-removed .overstory (resurrected by stale-branch merge).
+
+Backlog: 13 open / 77 closed. Remaining = next iteration: P0-2 wizard impl (design done), P2-A/B/C/D core/adapter refactor, SEC-4 drift-gate, TEST-1/2 coverage, small UX/RM.
+
+Key learnings recorded to Mulch: Seeds-is-branch-scoped, can't-integrate-on-red-CI, stale-branch-merge-resurrects-deletions, disjoint-file-ownership partitioning.
