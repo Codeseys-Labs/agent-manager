@@ -2229,3 +2229,21 @@ as designed.
 - git pull/push integration into pair-finalize.
 
 **Out-of-scope (vendor):** @silvery/ag-react typecheck noise (52 errors).
+
+## Run 2026-05-31 (goal: backlog-to-zero) — checkpoint 1
+
+**Started at** 1b7bb9c. Backlog seeded from the 2026-05-31 production audit + concurrent discovery review.
+
+**PRs opened (stacked, CodeRabbit-reviewed):**
+- #4 Wave 0 — docs honesty (install, fictional Quick Start, badges) + internalized AI working model into AGENTS.md/CONTRIBUTING + scripts/stats.ts generator
+- #5 DOC-1 — ROADMAP reconciled to current state
+- #6 Wave 1 — DX/core: ZodError UX, help coverage, default-passthrough notice, adapter-guide, ADR re-status, alias bump
+- #7 Wave 2 — P0-3 age-secrets apply-corruption fix (decodeEnvelope, fail-loud) + integration test + betterleaks SHA pin
+- #8 Wave 4 — install.sh integrity, Windows CI smoke, packaging, Formula two-binary
+- #9 Wave 3 (design) — ADR-0053 am setup wizard + design spec
+
+**Method:** parallel execution in isolated worktrees (waves 1/2/4 file-disjoint per INTEGRATION-PLAN.md) + concurrent adversarial review (all 3 returned request-changes; findings fixed in-loop) + concurrent discovery review (5 lenses → 14 new backlog items incl. security: adapter/wiki path traversal, A2A SSRF, drift-gate fail-open).
+
+**Integration order:** #4/#5 (docs) any time; #6 before #7 (controller.ts overlap → #7 rebases); #8 independent; #3-wizard impl after #6+#7.
+
+**Remaining backlog:** 22 open (Wave 5 refactor, SEC-1/2/3/5 security, test-coverage TEST-1/2, BUG/UX/DOC items, P0-5 CI-red, wizard impl).
