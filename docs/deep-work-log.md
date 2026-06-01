@@ -2262,3 +2262,9 @@ as designed.
 **Backlog:** 22 open (mostly Wave-6 refactor P2-A/B/C/D + the in-flight ci-green + wizard impl). 67 closed.
 
 **Next:** land ci-green → cascade-merge #6→#7(rebase)→#8→#10→#11 against green → wave-6 refactor → wizard impl → final verify.
+
+## Run 2026-05-31 — checkpoint 3
+- Merged #9 (ADR-0053 wizard design). main @ 56a7911.
+- FIXED regression: a code-wave merge resurrected .overstory (stale-branch-merge hazard) — re-removed + synced ADR count to 54.
+- HARD REQUIREMENT for remaining merges: rebase #6/#7/#8/#10/#11 onto current main (they carry .overstory from pre-removal fork) and verify deletions survive before/after each merge.
+- ci-green (#5-ci-green branch, P0-5) still converging after ~70min — CPU-contended 15min suite + a competing claude process. Converged 6→2 failures (TUI-headless + ACP-subprocess, likely need CI skips not fixes). Blocks code-PR cascade.
