@@ -213,6 +213,78 @@ describe("am install", () => {
 
     const allErrors = consoleErrors.join("\n");
     expect(allErrors).toContain("not found");
+    // BUG-3 regression: a not-found package must set a non-zero exit code so
+    // `am install bogus` fails loudly for callers and CI (was exit 0).
+    expect(process.exitCode).toBe(1);
+  });
+
+  test("returns the JSON failure result for a not-found package", async () => {
+    dir = await createTestDir("am-install-");
+    const configDir = dir.path;
+    process.env.AM_CONFIG_DIR = configDir;
+    await initRepo(configDir);
+
+    await writeConfig(join(configDir, "config.toml"), { servers: {} });
+
+    // 200 OK but null body — the registry's "package does not exist" shape.
+    mockFetchResponse(null);
+
+    const { installCommand } = await import("../../src/commands/install");
+    await installCommand.run!({
+      args: {
+        packages: "ghost-pkg",
+        "dry-run": false,
+        yes: true,
+        "no-cache": true,
+        json: true,
+        quiet: false,
+        verbose: false,
+      } as any,
+      rawArgs: [],
+      cmd: installCommand as any,
+    });
+
+    expect(process.exitCode).toBe(1);
+    const jsonOut = consoleOutput.find((l) => l.includes('"action"'));
+    expect(jsonOut).toBeDefined();
+    const parsed = JSON.parse(jsonOut!);
+    expect(parsed.results[0].action).toBe("failed");
+    expect(parsed.results[0].reason).toBe("not found");
+  });
+
+  test("a registry fetch error (HTTP 500) sets a non-zero exit code", async () => {
+    dir = await createTestDir("am-install-");
+    const configDir = dir.path;
+    process.env.AM_CONFIG_DIR = configDir;
+    await initRepo(configDir);
+
+    await writeConfig(join(configDir, "config.toml"), { servers: {} });
+
+    // Non-404 error response — getPackage() throws a RegistryError, exercising
+    // install's per-package fetch-fail branch (distinct from the 404 path).
+    globalThis.fetch = (async () =>
+      new Response("Internal Server Error", { status: 500 })) as unknown as typeof fetch;
+
+    const { installCommand } = await import("../../src/commands/install");
+    await installCommand.run!({
+      args: {
+        packages: "boom-pkg",
+        "dry-run": false,
+        yes: true,
+        "no-cache": true,
+        json: true,
+        quiet: false,
+        verbose: false,
+      } as any,
+      rawArgs: [],
+      cmd: installCommand as any,
+    });
+
+    expect(process.exitCode).toBe(1);
+    const jsonOut = consoleOutput.find((l) => l.includes('"action"'));
+    expect(jsonOut).toBeDefined();
+    const parsed = JSON.parse(jsonOut!);
+    expect(parsed.results[0].action).toBe("failed");
   });
 
   test("sets placeholder env vars for required env in non-interactive mode", async () => {

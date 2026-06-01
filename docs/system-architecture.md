@@ -217,7 +217,6 @@ classDiagram
         +import(options: ImportOptions) ImportResult
         +export(config: ResolvedConfig, options: ExportOptions) ExportResult
         +diff(config: ResolvedConfig) DiffResult
-        +schema: AdapterSchema
         +sessionReader?: SessionReader
     }
 
@@ -320,24 +319,23 @@ Key properties:
 - **Detection**: `getDetectedAdapters()` iterates all factories, loads each adapter,
   and returns only those where `detect().installed === true`
 
-### Two-Phase Validation (ADR-0007)
+### Core Validation (ADR-0007, ADR-0041)
 
-Validation happens in two passes:
-
-1. **Phase 1 -- Core validation**: `ConfigSchema.parse(parsed)` in `src/core/schema.ts`
-   validates all core fields strictly. Adapter sections (`[servers.X.adapters.Y]`)
-   are typed as `z.record(z.string(), z.unknown()).optional()` -- preserved but not
-   validated.
-
-2. **Phase 2 -- Adapter validation**: Each adapter's `schema` property contains Zod
-   schemas for its own section. When the adapter processes its data (during import or
-   export), it validates its portion.
-
+`ConfigSchema.parse(parsed)` in `src/core/schema.ts` validates all core fields
+strictly. Adapter sections (`[servers.X.adapters.Y]`) are typed as
+`z.record(z.string(), z.unknown()).optional()` -- preserved but not validated.
 This allows adding adapter-specific fields without changing the core schema.
+
+> HISTORICAL: ADR-0007 originally envisioned a **Phase 2 adapter validation**
+> step where each adapter carried a `schema` property and validated its own
+> `[entity.adapters.<name>]` section. That phase never shipped — **ADR-0041
+> deleted the adapter `schema` field**. Adapter sections are now opaque
+> passthrough; the only validation is the core pass above.
 
 ### Adapter File Structure
 
-Each adapter follows the same directory layout:
+Each adapter follows the same directory layout (no `schema.ts` — deleted per
+ADR-0041; the `Adapter` interface is four behavioral methods only):
 
 ```
 src/adapters/<name>/
@@ -346,7 +344,6 @@ src/adapters/<name>/
   import.ts   -- parses native config files into ImportResult
   export.ts   -- writes ResolvedConfig to native config files
   diff.ts     -- structural comparison for drift detection
-  schema.ts   -- Zod schemas for adapter-specific TOML fields
 ```
 
 ---
@@ -399,8 +396,10 @@ The bare adapter has no key storage capability.
 
 ## 5. MCP Server Architecture
 
-`am mcp-serve` implements a JSON-RPC 2.0 server over stdio, exposing 14 tools
-across 3 permission tiers.
+`am mcp-serve` implements a JSON-RPC 2.0 server over stdio, exposing tools
+across 3 permission tiers. (The tool *count* grew past the 14 shown in the
+diagrams below — see AGENTS.md and `src/mcp/server.ts` for the live set, 38
+tools across 6 groups at time of writing; the architecture is unchanged.)
 
 ### Server Architecture
 

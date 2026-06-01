@@ -213,7 +213,16 @@ export class AmAcpClient {
     // CRITICAL-1 fix: wrap the initialize race in try/catch and forcibly kill
     // the subprocess if it throws or times out, otherwise orphaned agent
     // processes accumulate indefinitely.
+    //
+    // BUG fix (Wave QW): the timeout's setTimeout was never cleared, so a
+    // successful initialize() left a 10s timer pending and kept the event
+    // loop alive (`am run` hung at exit). The timeout helper now returns a
+    // handle; we clearTimeout in the finally below regardless of outcome.
     const initTimeout = opts?.initTimeout ?? 10_000;
+    const timeout = timeoutPromise<Awaited<ReturnType<ClientSideConnection["initialize"]>>>(
+      initTimeout,
+      "Agent initialization timed out",
+    );
     try {
       const initResponse = await Promise.race([
         this.connection.initialize({
@@ -224,10 +233,7 @@ export class AmAcpClient {
             terminal: true,
           },
         }),
-        timeoutPromise<Awaited<ReturnType<ClientSideConnection["initialize"]>>>(
-          initTimeout,
-          "Agent initialization timed out",
-        ),
+        timeout.promise,
       ]);
 
       this.connInfo = {
@@ -242,6 +248,8 @@ export class AmAcpClient {
       this.connection = null;
       this.connInfo = null;
       throw err;
+    } finally {
+      timeout.clear();
     }
   }
 
@@ -613,10 +621,29 @@ export function createClientHandler(
 
 // ── Helpers ────────────────────────────────────────────────────
 
-function timeoutPromise<T>(ms: number, message: string): Promise<T> {
-  return new Promise((_, reject) => {
-    setTimeout(() => reject(new AcpClientError(message, "TIMEOUT")), ms);
+/**
+ * A rejecting timeout whose timer can be cleared by the caller. Returning the
+ * handle (rather than a bare Promise) lets the `connect()` race cancel the
+ * pending `setTimeout` once `initialize()` resolves — otherwise the timer
+ * keeps the event loop alive for the full `ms` window after a successful init.
+ */
+export function timeoutPromise<T>(
+  ms: number,
+  message: string,
+): { promise: Promise<T>; clear: () => void } {
+  let handle: ReturnType<typeof setTimeout> | undefined;
+  const promise = new Promise<T>((_, reject) => {
+    handle = setTimeout(() => reject(new AcpClientError(message, "TIMEOUT")), ms);
   });
+  return {
+    promise,
+    clear() {
+      if (handle !== undefined) {
+        clearTimeout(handle);
+        handle = undefined;
+      }
+    },
+  };
 }
 
 /** Convenience: create a client instance. */
