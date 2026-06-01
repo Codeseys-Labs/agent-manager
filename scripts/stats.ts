@@ -54,7 +54,15 @@ const adrFiles = readdirSync(join(ROOT, "ADRs")).filter((f) => /^\d{4}[a-z]?-.*\
 
 // CLI subcommands: keys inside the `subCommands: { ... }` block of src/cli.ts
 const cli = readFileSync(join(ROOT, "src/cli.ts"), "utf8");
-const subBlock = cli.slice(cli.indexOf("subCommands:"));
+const subCommandsIndex = cli.indexOf("subCommands:");
+if (subCommandsIndex === -1) {
+  console.error(
+    "stats: could not locate `subCommands:` in src/cli.ts — the CLI structure changed. " +
+      "Update scripts/stats.ts before trusting the command count.",
+  );
+  process.exit(2);
+}
+const subBlock = cli.slice(subCommandsIndex);
 const cliCommands = new Set(
   [...subBlock.matchAll(/^\s+"?([a-z][a-zA-Z0-9_-]*)"?:\s*\(\)\s*=>/gm)].map((m) => m[1]),
 ).size;

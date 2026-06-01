@@ -7,7 +7,7 @@ skills/instructions/agents via git. Remember sessions in an LLM-wiki. Edit from
 terminal, local web, or cloud.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Tests: 3064 pass](https://img.shields.io/badge/tests-3064%20pass-green.svg)](#testing)
+[![Tests: 3064 pass](https://img.shields.io/badge/tests-3064%20pass-green.svg)](#development)
 [![Coverage](https://img.shields.io/badge/coverage-see%20CI%20summary-blue.svg)](https://github.com/Codeseys-Labs/agent-manager/actions/workflows/ci.yml)
 [![Adapters: 13](https://img.shields.io/badge/adapters-13-purple.svg)](#adapter-support-matrix)
 [![MCP Tools: 38](https://img.shields.io/badge/MCP%20tools-38-orange.svg)](#mcp-server-mode)
