@@ -44,17 +44,15 @@ async function seedWorkspace(home: string, ws: WorkspaceSeed): Promise<string> {
   try {
     db.run("CREATE TABLE IF NOT EXISTS ItemTable (key TEXT PRIMARY KEY, value BLOB)");
     if (ws.rawChatdata !== undefined) {
-      db.run(
-        "INSERT INTO ItemTable (key, value) VALUES (?, ?)",
+      db.run("INSERT INTO ItemTable (key, value) VALUES (?, ?)", [
         "workbench.panel.aichat.view.aichat.chatdata",
         ws.rawChatdata,
-      );
+      ]);
     } else if (ws.chatdata !== undefined) {
-      db.run(
-        "INSERT INTO ItemTable (key, value) VALUES (?, ?)",
+      db.run("INSERT INTO ItemTable (key, value) VALUES (?, ?)", [
         "workbench.panel.aichat.view.aichat.chatdata",
         JSON.stringify(ws.chatdata),
-      );
+      ]);
     }
   } finally {
     db.close();
@@ -421,8 +419,7 @@ describe("Windsurf session reader", () => {
     const db = new Database(dbPath);
     try {
       db.run("CREATE TABLE IF NOT EXISTS ItemTable (key TEXT PRIMARY KEY, value BLOB)");
-      db.run(
-        "INSERT INTO ItemTable (key, value) VALUES (?, ?)",
+      db.run("INSERT INTO ItemTable (key, value) VALUES (?, ?)", [
         "cascade.chatdata",
         JSON.stringify({
           tabs: [
@@ -433,7 +430,7 @@ describe("Windsurf session reader", () => {
             },
           ],
         }),
-      );
+      ]);
     } finally {
       db.close();
     }

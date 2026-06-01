@@ -51,7 +51,8 @@
     "lint": "bunx @biomejs/biome check ./src ./test",
     "lint:fix": "bunx @biomejs/biome check --write ./src ./test",
     "lint:fix:unsafe": "bunx @biomejs/biome check --write --unsafe ./src ./test",
-    "typecheck": "bun x tsc --noEmit",
+    "typecheck": "bun run scripts/typecheck.ts",
+    "typecheck:full": "bun x tsc --noEmit",
     "dev:web": "wrangler dev",
     "deploy:web": "wrangler deploy",
     "web:kv:create": "wrangler kv namespace create AM_SESSIONS"

@@ -152,3 +152,6 @@ for (const target of targets) {
 }
 
 console.log("\nBuild complete.");
+
+// Mark this file as a module so top-level `await` typechecks (TS1375).
+export {};

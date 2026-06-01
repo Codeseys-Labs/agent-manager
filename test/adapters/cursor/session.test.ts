@@ -68,31 +68,28 @@ async function seedGlobalStorage(home: string, seed: GlobalStorageSeed): Promise
     db.run("CREATE TABLE IF NOT EXISTS cursorDiskKV (key TEXT PRIMARY KEY, value BLOB)");
 
     for (const c of seed.composers) {
-      db.run(
-        "INSERT INTO cursorDiskKV (key, value) VALUES (?, ?)",
+      db.run("INSERT INTO cursorDiskKV (key, value) VALUES (?, ?)", [
         `composerData:${c.composerId}`,
         JSON.stringify({ composerId: c.composerId, ...c.header }),
-      );
+      ]);
 
       if (!c.bubbles) continue;
       for (const [bubbleId, body] of Object.entries(c.bubbles)) {
         if (body === null) continue; // explicit "missing row"
         const value = typeof body === "string" ? body : JSON.stringify(body);
-        db.run(
-          "INSERT INTO cursorDiskKV (key, value) VALUES (?, ?)",
+        db.run("INSERT INTO cursorDiskKV (key, value) VALUES (?, ?)", [
           `bubbleId:${c.composerId}:${bubbleId}`,
           value,
-        );
+        ]);
       }
     }
 
     if (seed.rawComposerRows) {
       for (const r of seed.rawComposerRows) {
-        db.run(
-          "INSERT INTO cursorDiskKV (key, value) VALUES (?, ?)",
+        db.run("INSERT INTO cursorDiskKV (key, value) VALUES (?, ?)", [
           `composerData:${r.composerId}`,
           r.raw,
-        );
+        ]);
       }
     }
   } finally {
@@ -117,17 +114,15 @@ async function seedWorkspace(home: string, ws: WorkspaceSeed): Promise<string> {
   try {
     db.run("CREATE TABLE IF NOT EXISTS ItemTable (key TEXT PRIMARY KEY, value BLOB)");
     if (ws.rawChatdata !== undefined) {
-      db.run(
-        "INSERT INTO ItemTable (key, value) VALUES (?, ?)",
+      db.run("INSERT INTO ItemTable (key, value) VALUES (?, ?)", [
         "workbench.panel.aichat.view.aichat.chatdata",
         ws.rawChatdata,
-      );
+      ]);
     } else if (ws.chatdata !== undefined) {
-      db.run(
-        "INSERT INTO ItemTable (key, value) VALUES (?, ?)",
+      db.run("INSERT INTO ItemTable (key, value) VALUES (?, ?)", [
         "workbench.panel.aichat.view.aichat.chatdata",
         JSON.stringify(ws.chatdata),
-      );
+      ]);
     }
   } finally {
     db.close();
@@ -494,8 +489,7 @@ describe("Cursor session reader", () => {
     const db = new Database(dbPath);
     try {
       db.run("CREATE TABLE IF NOT EXISTS ItemTable (key TEXT PRIMARY KEY, value BLOB)");
-      db.run(
-        "INSERT INTO ItemTable (key, value) VALUES (?, ?)",
+      db.run("INSERT INTO ItemTable (key, value) VALUES (?, ?)", [
         "aiService.prompts",
         JSON.stringify({
           tabs: [
@@ -506,7 +500,7 @@ describe("Cursor session reader", () => {
             },
           ],
         }),
-      );
+      ]);
     } finally {
       db.close();
     }
