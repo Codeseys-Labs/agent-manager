@@ -1,0 +1,47 @@
+# CodeRabbit configuration — agent-manager
+# https://docs.coderabbit.ai/getting-started/configure-coderabbit
+language: en-US
+early_access: false
+reviews:
+  profile: chill
+  request_changes_workflow: false
+  high_level_summary: true
+  poem: false
+  review_status: true
+  collapse_walkthrough: false
+  auto_review:
+    enabled: true
+    drafts: false
+    base_branches:
+      - main
+      - "wave/.*"
+  path_filters:
+    # Skip generated / vendored / process artifacts
+    - "!**/*.lock"
+    - "!bun.lock"
+    - "!dist/**"
+    - "!coverage/**"
+    - "!.mulch/**"
+    - "!.seeds/**"
+    - "!.canopy/**"
+    - "!docs/audit/**"
+    - "!docs/research/**"
+    - "!docs/reviews/**"
+  path_instructions:
+    - path: "src/**/*.ts"
+      instructions: >-
+        TypeScript strict, ES2022, Bun runtime. Enforce: no `as any`; structured
+        output via src/lib/output.ts helpers; all config mutations go through
+        withConfig/applyResolved (ADR-0040) — flag any raw writeConfig outside
+        core/config.ts and core/controller.ts. Adapter [entity.adapters.<tool>]
+        sections are opaque passthrough (ADR-0041) — there is no adapter Zod schema.
+    - path: "src/adapters/**"
+      instructions: >-
+        Adapters implement detect/import/export/diff only. No schema.ts file
+        (deleted per ADR-0041). Prefer shared helpers in src/adapters/shared/.
+    - path: "test/**/*.ts"
+      instructions: >-
+        bun:test. Tests set AM_CONFIG_DIR to a temp dir for isolation. New
+        features need command-handler-level tests, not just unit helpers.
+chat:
+  auto_reply: true
