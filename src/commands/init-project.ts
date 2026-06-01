@@ -6,7 +6,7 @@
  */
 
 import { existsSync } from "node:fs";
-import { basename, join, relative } from "node:path";
+import { basename, isAbsolute, join, relative, sep } from "node:path";
 import { getAdapter, listAdapters } from "../adapters/registry";
 import type { ImportedInstruction, ImportedServer } from "../adapters/types";
 import { writeProjectConfig } from "../core/config";
@@ -20,6 +20,22 @@ interface ScanResult {
   displayName: string;
   servers: ImportedServer[];
   instructions: ImportedInstruction[];
+}
+
+/**
+ * Is `child` a path strictly inside `parent`?
+ *
+ * Uses path.relative() so it is separator-agnostic. A naive
+ * `child.startsWith(`${parent}/`)` check is POSIX-only: on Windows
+ * `join()` produces backslash separators, so the hardcoded forward slash
+ * never matches and project-scoped instructions are silently dropped.
+ * `relative()` returns "" for an identical path, a `..`-prefixed path for
+ * something outside, or an absolute path on a different drive — none of
+ * which count as "inside".
+ */
+function isInsideProject(parent: string, child: string): boolean {
+  const rel = relative(parent, child);
+  return rel !== "" && !rel.startsWith("..") && !isAbsolute(rel);
 }
 
 /**
@@ -165,7 +181,7 @@ async function scanAdapters(projectPath: string, opts: OutputOptions): Promise<S
     const projectServers = imported.servers.filter((s) => s.scope === "project");
     const projectInstructions = imported.instructions.filter((i) => {
       // Include instructions with a sourcePath inside the project
-      if (i.sourcePath?.startsWith(`${projectPath}/`)) return true;
+      if (i.sourcePath && isInsideProject(projectPath, i.sourcePath)) return true;
       // Exclude instructions from global paths (home dir, ~/.config, etc.)
       if (i.sourcePath) return false;
       // No sourcePath — include only if we also found project servers
@@ -255,8 +271,11 @@ function mergeInstructions(
       nameSet.add(name);
 
       // Use content_file if we have a sourcePath within the project
-      if (instr.sourcePath?.startsWith(`${projectPath}/`)) {
-        const relPath = relative(projectPath, instr.sourcePath);
+      if (instr.sourcePath && isInsideProject(projectPath, instr.sourcePath)) {
+        // Normalise to forward slashes so the stored content_file reference is
+        // portable: a config committed on Windows must resolve on POSIX and
+        // vice versa. relative() returns native separators (backslash on Win).
+        const relPath = relative(projectPath, instr.sourcePath).split(sep).join("/");
         instructions[name] = {
           content_file: relPath,
           scope: instr.scope,
