@@ -33,7 +33,14 @@ jobs:
         run: |
           set +e
           OUTPUT=$(bun test --coverage --coverage-reporter=text --coverage-reporter=lcov --config=/dev/null 2>&1)
+          # Surface the full test + coverage output in the job log. The text
+          # coverage table is report-only for v1 (RM-1): we do NOT fail CI on a
+          # coverage threshold — only on a test failure (the FAIL_COUNT gate
+          # below). Wrap in a collapsible group so the coverage summary is easy
+          # to find amid the suite output.
+          echo "::group::Test output + coverage summary"
           echo "$OUTPUT"
+          echo "::endgroup::"
           # CODEX-13 (2026-05-02): hardening parity with build-verify job
           # (ci.yml:65-88). Even though this job runs on Linux-only and
           # shouldn't see CRLF today, Bun output-format regressions or a
