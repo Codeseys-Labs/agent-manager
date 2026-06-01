@@ -77,7 +77,6 @@ export interface KnowledgeEntry {
   tags: string[];
   references: string[]; // IDs of related entries
   provenance: Provenance;
-  embeddings?: number[];
 }
 
 export type EntityType = "fact" | "procedure" | "preference" | "relationship" | "capability";

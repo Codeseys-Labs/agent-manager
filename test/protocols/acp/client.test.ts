@@ -11,6 +11,7 @@ import {
   createAcpClient,
   createClientHandler,
   isPathAllowed,
+  timeoutPromise,
 } from "../../../src/protocols/acp/client";
 import { listAgents, parseCommand, resolveAgent } from "../../../src/protocols/acp/registry";
 import type { AcpSettings } from "../../../src/protocols/acp/types";
@@ -898,5 +899,52 @@ describe("requestPermission — deny-policy cannot be bypassed by missing reject
     if (res.outcome.outcome === "selected") {
       expect(res.outcome.optionId).toBe("ok1");
     }
+  });
+});
+
+// ── timeoutPromise (BUG-2: timer must be clearable) ─────────────
+//
+// The init race in connect() used to leak its setTimeout: on a successful
+// initialize() the rejecting timer stayed pending for the full window and
+// kept the event loop alive (`am run` hung at exit). timeoutPromise() now
+// returns a { promise, clear } handle so connect() can cancel the timer in
+// its finally block. These tests pin that contract directly.
+
+describe("timeoutPromise (BUG-2 regression)", () => {
+  test("rejects with a TIMEOUT AcpClientError when not cleared", async () => {
+    const t = timeoutPromise<never>(5, "boom");
+    let caught: unknown;
+    try {
+      await t.promise;
+    } catch (err) {
+      caught = err;
+    }
+    expect(caught).toBeInstanceOf(AcpClientError);
+    expect((caught as AcpClientError).code).toBe("TIMEOUT");
+    expect((caught as AcpClientError).message).toBe("boom");
+  });
+
+  test("clear() cancels the timer so the promise never rejects", async () => {
+    const t = timeoutPromise<string>(5, "should-not-fire");
+    t.clear();
+    // Race the (now-cancelled) timeout against a longer settle window. If the
+    // timer had survived clear(), it would reject within 5ms and we'd see
+    // "rejected"; a cleared timer leaves the promise pending → "settled" wins.
+    const outcome = await Promise.race([
+      t.promise.then(
+        () => "resolved",
+        () => "rejected",
+      ),
+      new Promise<string>((resolve) => setTimeout(() => resolve("settled"), 40)),
+    ]);
+    expect(outcome).toBe("settled");
+  });
+
+  test("clear() is idempotent (safe to call twice)", () => {
+    const t = timeoutPromise<void>(1000, "x");
+    expect(() => {
+      t.clear();
+      t.clear();
+    }).not.toThrow();
   });
 });

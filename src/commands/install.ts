@@ -198,6 +198,13 @@ export const installCommand = defineCommand({
           .filter((r) => r.action === "installed" || r.action === "replaced")
           .map((r) => r.package);
 
+        // BUG fix (Wave QW): a not-found / fetch-fail package previously left
+        // the process exit code at 0, so `am install bogus-pkg` looked like a
+        // success to callers and CI. Any "failed" result is a non-zero exit.
+        if (results.some((r) => r.action === "failed")) {
+          process.exitCode = 1;
+        }
+
         if (args.json) {
           output({ action: "install", dryRun, results }, opts);
         }

@@ -767,7 +767,7 @@ const importSubcommand = defineCommand({
   },
 });
 
-const lintSubcommand = defineCommand({
+export const lintSubcommand = defineCommand({
   meta: { name: "lint", description: "Check for orphans, stale pages, broken links" },
   args: {
     json: { type: "boolean", description: "JSON output", default: false },
@@ -777,9 +777,10 @@ const lintSubcommand = defineCommand({
   },
   async run({ args }) {
     const opts = { json: args.json, quiet: args.quiet, verbose: args.verbose };
+    const wikiDir = args.global ? resolveWikiDir({ global: true }) : undefined;
 
-    const pages = await listPages();
-    const graph = await loadGraph();
+    const pages = await listPages({ wikiDir });
+    const graph = await loadGraph(wikiDir);
 
     // Find orphans (no inbound links)
     const orphans = findOrphans(graph);
@@ -870,7 +871,7 @@ const lintSubcommand = defineCommand({
   },
 });
 
-const graphSubcommand = defineCommand({
+export const graphSubcommand = defineCommand({
   meta: { name: "graph", description: "Export knowledge graph as JSON" },
   args: {
     json: { type: "boolean", description: "JSON output", default: false },
@@ -885,7 +886,8 @@ const graphSubcommand = defineCommand({
   },
   async run({ args }) {
     const opts = { json: args.json, quiet: args.quiet, verbose: args.verbose };
-    const graph = await loadGraph();
+    const wikiDir = args.global ? resolveWikiDir({ global: true }) : undefined;
+    const graph = await loadGraph(wikiDir);
 
     if (args.format === "raw") {
       output(graph, opts);

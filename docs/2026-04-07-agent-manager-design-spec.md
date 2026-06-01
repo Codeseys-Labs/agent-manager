@@ -1,8 +1,16 @@
 # agent-manager Design Specification
 
+> **⚠️ HISTORICAL — DO NOT TREAT AS CURRENT.** This is the v0.3.0 design
+> spec (2026-04-13), preserved for context. It predates several decisions that
+> changed the architecture — most notably ADR-0041 (the adapter `schema.ts` /
+> Zod `schema` field was deleted) and the growth of the MCP gateway to 38 tools
+> across 6 groups. The single source of truth for the current architecture is
+> [AGENTS.md](../AGENTS.md); for individual decisions see the [ADRs](../ADRs/).
+> Where this document and AGENTS.md disagree, **AGENTS.md wins.**
+
 > **Version:** 0.3.0
 > **Date:** 2026-04-13
-> **Status:** Updated with ADRs 0018-0024 (registry, wiki, A2A, secret detection, tool grouping)
+> **Status:** HISTORICAL (superseded by AGENTS.md + ADRs 0031+)
 >
 > chezmoi for AI agent configs — define your MCP servers, skills, and instructions
 > once in TOML, sync via git, and generate native configs for every AI coding tool.
@@ -629,7 +637,11 @@ MCP server mode (ADR-0009):
 }
 ```
 
-**MCP Server Permission Model (26 tools across 4 groups):**
+**MCP Server Permission Model:**
+
+> HISTORICAL: this table reflects the v0.3.0 tool set. The gateway has since
+> grown to 38 tools across 6 groups (core, registry, a2a, wiki, session, acp).
+> See AGENTS.md and `src/mcp/server.ts` for the live tool list.
 
 Tool groups are controlled by `settings.mcp_serve.tools` (ADR-0021). Default: `["core"]`.
 
@@ -746,19 +758,23 @@ am
 
 ## 11. Validation (ADR-0007)
 
-Two-phase Zod validation:
+> HISTORICAL: this section described a two-phase model where each adapter
+> validated its own `[entity.adapters.<name>]` section via a per-adapter
+> Zod `schema`. **ADR-0041 deleted that adapter schema field** — the planned
+> "Phase 2" never shipped and adapter sections are now opaque passthrough that
+> core preserves but no longer validates. See AGENTS.md "Modifying the Schema".
 
-**Phase 1 — Core:** Validates all core fields strictly. Adapter sections are
-`z.record(z.string(), z.unknown()).optional()` — preserved but not validated.
+Core Zod validation:
 
-**Phase 2 — Adapter:** Each installed adapter validates its own
-`[entity.adapters.<name>]` section with its Zod schema.
+**Core:** Validates all core fields strictly. Adapter sections are
+`z.record(z.string(), z.unknown()).optional()` — preserved but not validated
+(ADR-0007 / ADR-0041).
 
 | Situation | Behavior |
 |-----------|----------|
 | Unknown core field | Warn (likely typo) |
 | Unknown adapter name | Preserve silently, optional info message |
-| Invalid adapter field | Warn (adapter validation failure) |
+| Adapter field | Preserved as-is (no adapter-side schema; ADR-0041) |
 | Missing required core field | Error (fail validation) |
 
 ---
@@ -893,14 +909,13 @@ agent-manager/
 │   │   ├── registry.ts           # Lazy factory registry
 │   │   ├── types.ts              # Adapter interface
 │   │   ├── claude-code/
-│   │   │   ├── index.ts          # detect, import, export, diff
-│   │   │   └── schema.ts         # Adapter-specific Zod schema
+│   │   │   └── index.ts          # detect, import, export, diff (no schema.ts — deleted per ADR-0041)
 │   │   ├── cursor/
 │   │   ├── windsurf/
 │   │   ├── copilot/
 │   │   └── ...
 │   ├── mcp/                      # MCP server mode
-│   │   └── server.ts             # JSON-RPC 2.0, 26 tools, 4 groups
+│   │   └── server.ts             # JSON-RPC 2.0 (now 38 tools across 6 groups — see AGENTS.md)
 │   ├── registry/                 # MCP package registry
 │   │   ├── types.ts              # RegistryPackage, provenance types
 │   │   └── client.ts             # HTTP client with LRU cache, retry

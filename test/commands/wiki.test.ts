@@ -1,13 +1,17 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { existsSync } from "node:fs";
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import {
+  graphSubcommand,
+  lintSubcommand,
   listSubcommand,
   pathSubcommand,
   searchSubcommand,
   showSubcommand,
 } from "../../src/commands/wiki";
+import { addPageToGraph, loadGraph, saveGraph } from "../../src/wiki/graph";
 import {
+  WIKI_PROJECT_DIRNAME,
   deletePage,
   ensureWikiDirs,
   getAllEntries,
@@ -353,5 +357,122 @@ describe("am wiki: list/show/search/path commands", () => {
     const payload = JSON.parse(consoleOutput.join("\n"));
     expect(payload.path).toBe(wikiDir);
     expect(payload.global).toBe(true);
+  });
+});
+
+// ── BUG-1 regression: `am wiki lint/graph --global` must read the GLOBAL wiki ──
+//
+// Previously lint/graph called listPages()/loadGraph() with no wikiDir, so the
+// declared `--global` flag was silently ignored: both subcommands always read
+// whatever resolveWikiDir() picked (a project `.am-wiki/` when one exists). We
+// set cwd to a temp project with an EMPTY `.am-wiki/` and seed pages + a graph
+// ONLY in the global store. With --global threaded, both commands must report
+// the global content; pre-fix they reported the empty project wiki (0 pages,
+// 0 nodes).
+
+describe("am wiki: --global threading for lint/graph (BUG-1 regression)", () => {
+  let dir: TestDir;
+  let configDir: string;
+  let globalWikiDir: string;
+  let projectDir: string;
+  const origCwd = process.cwd();
+
+  beforeEach(async () => {
+    dir = await createTestDir("am-wiki-global-");
+    configDir = dir.path;
+    process.env.AM_CONFIG_DIR = configDir;
+
+    // Global wiki gets real content.
+    globalWikiDir = resolveWikiDir({ global: true });
+    await ensureWikiDirs(globalWikiDir);
+
+    // A sibling project dir with .agent-manager.toml + an EMPTY .am-wiki/, so
+    // the non-global resolveWikiDir() points at an empty project wiki.
+    projectDir = join(dir.path, "proj");
+    mkdirSync(projectDir, { recursive: true });
+    writeFileSync(join(projectDir, ".agent-manager.toml"), "[settings]\n", "utf-8");
+    const projectWiki = join(projectDir, WIKI_PROJECT_DIRNAME);
+    await ensureWikiDirs(projectWiki);
+    process.chdir(projectDir);
+
+    captureConsole();
+    process.exitCode = undefined;
+  });
+
+  afterEach(async () => {
+    restoreConsole();
+    process.chdir(origCwd);
+    process.exitCode = undefined;
+    if (origConfigDir === undefined) {
+      // biome-ignore lint/performance/noDelete: env var cleanup
+      delete process.env.AM_CONFIG_DIR;
+    } else {
+      process.env.AM_CONFIG_DIR = origConfigDir;
+    }
+    if (dir) await dir.cleanup();
+  });
+
+  async function seedGlobal(): Promise<void> {
+    const page = makePage({
+      slug: "global-only-page",
+      type: "entity",
+      title: "Global Only",
+      content: "Lives in the global store, not the project wiki.",
+      tags: ["global"],
+    });
+    await writePage(page, globalWikiDir);
+    // Persist a graph in the global store so `graph` has nodes to report.
+    const graph = await loadGraph(globalWikiDir);
+    await addPageToGraph(page, graph);
+    await saveGraph(graph, globalWikiDir);
+  }
+
+  test("lint --global reports pages from the global store, not the empty project wiki", async () => {
+    await seedGlobal();
+    await lintSubcommand.run!({
+      args: { json: true, global: true, quiet: false, verbose: false },
+      cmd: lintSubcommand,
+      rawArgs: [],
+      data: undefined,
+    } as any);
+    const payload = JSON.parse(consoleOutput.join("\n"));
+    expect(payload.total_pages).toBe(1);
+  });
+
+  test("lint without --global sees the empty project wiki (proves the flag matters)", async () => {
+    await seedGlobal();
+    await lintSubcommand.run!({
+      args: { json: true, global: false, quiet: false, verbose: false },
+      cmd: lintSubcommand,
+      rawArgs: [],
+      data: undefined,
+    } as any);
+    const payload = JSON.parse(consoleOutput.join("\n"));
+    expect(payload.total_pages).toBe(0);
+  });
+
+  test("graph --global reports nodes from the global store, not the empty project wiki", async () => {
+    await seedGlobal();
+    await graphSubcommand.run!({
+      args: { json: true, global: true, quiet: false, verbose: false, format: "viz" },
+      cmd: graphSubcommand,
+      rawArgs: [],
+      data: undefined,
+    } as any);
+    const payload = JSON.parse(consoleOutput.join("\n"));
+    expect(payload.nodes.length).toBe(1);
+    expect(payload.nodes[0].id).toBe("global-only-page");
+  });
+
+  test("graph without --global sees the empty project wiki (proves the flag matters)", async () => {
+    await seedGlobal();
+    await graphSubcommand.run!({
+      args: { json: true, global: false, quiet: false, verbose: false, format: "viz" },
+      cmd: graphSubcommand,
+      rawArgs: [],
+      data: undefined,
+    } as any);
+    const payload = JSON.parse(consoleOutput.join("\n"));
+    expect(payload.nodes.length).toBe(0);
   });
 });
