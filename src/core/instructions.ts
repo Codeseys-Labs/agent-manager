@@ -7,7 +7,7 @@
 
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import type { ResolvedInstruction } from "../adapters/types.ts";
+import type { ResolvedInstruction } from "./resolved.ts";
 
 const AM_BEGIN = "<!-- am:begin -->";
 const AM_END = "<!-- am:end -->";

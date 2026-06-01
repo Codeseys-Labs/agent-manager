@@ -3,16 +3,16 @@ import { readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join, parse as parsePath } from "node:path";
 import * as TOML from "@iarna/toml";
+import { isNotFound } from "../lib/errors";
+import { tomlStringify } from "../lib/toml";
+import { atomicWriteFile } from "./atomic-write";
 import type {
   ResolvedAgent,
   ResolvedConfig,
   ResolvedInstruction,
   ResolvedServer,
   ResolvedSkill,
-} from "../adapters/types";
-import { isNotFound } from "../lib/errors";
-import { tomlStringify } from "../lib/toml";
-import { atomicWriteFile } from "./atomic-write";
+} from "./resolved";
 import { resolveProfile } from "./resolver";
 import { type Config, ConfigSchema, type ProjectConfig, ProjectConfigSchema } from "./schema";
 
