@@ -2324,3 +2324,16 @@ main @ bca6bea. Local full suite: **3204 pass / 0 fail**. Repo hygiene clean (ov
 **In flight:** CI-3 — systematic Windows cross-platform path/env hardening (46 build-verify failures clustered in session readers + age-secrets/wiki paths + cwd); a deep-work-loop diagnose→fix→review on ci/xplat-hardening.
 
 **Remaining forward backlog (16):** ADR-0054 wiki R1-R8 (the knowledge initiative), CI-3, TEST-1/2, SEC-4b, P1-B, review follow-ups.
+
+## Run 2026-06-01 — checkpoint 7 (CI/CD: source bugs fixed; residual Windows test-sweep tracked)
+
+main @ 1241c90. **22 PRs merged (#4–#22).** Original audit backlog 100% cleared.
+
+CI/CD work (user directive "fix CI so we stop failing"):
+- Found + fixed **3 genuine cross-platform PRODUCT bugs** by making Windows CI hard-fail surface them: fsync-on-readonly-fd (#18), POSIX-only path-prefix in init-project (#20), APPDATA-shadows-injected-home + codex literal-`/` split (#21 RC1/RC2).
+- Fixed test-hygiene clusters: env-var coercion (#20), separator-agnostic path assertions in secrets-age/flows/concurrency/secret-pipeline/wiki/roundtrip (#21 RC3-7), vscode-paths (#22).
+- macOS + Ubuntu build-verify: **GREEN**. integration-windows (real .exe smoke): **GREEN** — the Windows binary works.
+
+**RESIDUAL (CI-3c, tracked):** ~Windows-only unit-test failures remain in the session readers (Copilot/Roo/Cline — test-helper path computation vs RC1-fixed source on the Windows filesystem), pair-finalize, and P0-3/concurrency. All are test-assertion / test-isolation issues (forward-slash literals + helper-vs-source path alignment), NOT product bugs — the CLI itself runs on Windows (integration-windows passes). Honest blocker: reliably fixing these needs a Windows host or a CI-driven debug loop; blind-fixing from Linux risks churn. Failure list: docs/audit/assessment-2026-05-31/windows-ci-residual.txt. The ci.yml comment correctly forbids weakening the Windows gate to fake-green — so it stays red until the sweep lands.
+
+Remaining forward backlog: CI-3c (Windows test sweep), ADR-0054 wiki R1-R8 (knowledge initiative), TEST-1/2, SEC-4b, P1-B, minor follow-ups.
