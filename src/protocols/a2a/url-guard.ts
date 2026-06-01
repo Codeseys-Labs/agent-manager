@@ -47,6 +47,10 @@ function normalizeHost(hostname: string): string {
   if (h.startsWith("[") && h.endsWith("]")) h = h.slice(1, -1);
   const pct = h.indexOf("%");
   if (pct !== -1) h = h.slice(0, pct);
+  // Strip a single trailing dot (fully-qualified form). Without this,
+  // `localhost.` / `127.0.0.1.` are valid FQDNs that resolve to loopback but
+  // slip past the literal checks (SSRF guard bypass caught in review).
+  if (h.endsWith(".")) h = h.slice(0, -1);
   return h;
 }
 
@@ -67,9 +71,26 @@ export function isPrivateHost(hostname: string): boolean {
   if (host === "::1" || host === "::") return true;
   if (host.startsWith("fc") || host.startsWith("fd")) return true; // fc00::/7 unique-local
   if (host.startsWith("fe80")) return true; // link-local
-  // IPv4-mapped IPv6 (::ffff:a.b.c.d) — defer to the IPv4 check on the tail.
-  if (host.startsWith("::ffff:")) {
-    return isPrivateHost(host.slice("::ffff:".length));
+  // IPv4-mapped IPv6, all spellings:
+  //   - dotted tail   ::ffff:127.0.0.1            → recurse on the IPv4 tail
+  //   - hex tail      ::ffff:7f00:1               → decode the last two hextets
+  //   - expanded      0:0:0:0:0:ffff:7f00:1       → same, after the ffff marker
+  // Anchor on the `ffff:` marker so any spelling that embeds it is covered.
+  const ffffIdx = host.lastIndexOf("ffff:");
+  if (host.includes("::ffff:") || /(^|:)0*:?ffff:/.test(host)) {
+    const tail = host.slice(ffffIdx + "ffff:".length);
+    if (tail.includes(".")) return isPrivateHost(tail); // dotted-quad tail
+    // Hex tail: two hextets → 4 octets. e.g. 7f00:1 → 127.0.0.1
+    const hextets = tail.split(":").filter(Boolean);
+    if (hextets.length === 2) {
+      const hi = Number.parseInt(hextets[0], 16);
+      const lo = Number.parseInt(hextets[1], 16);
+      if (Number.isFinite(hi) && Number.isFinite(lo)) {
+        const a = (hi >> 8) & 0xff;
+        const b = hi & 0xff;
+        return isPrivateHost(`${a}.${b}.${(lo >> 8) & 0xff}.${lo & 0xff}`);
+      }
+    }
   }
 
   // IPv4 dotted-quad checks.

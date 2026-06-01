@@ -66,6 +66,18 @@ describe("SEC-3: isPrivateHost classification", () => {
     expect(isPrivateHost("::ffff:127.0.0.1")).toBe(true);
   });
 
+  test("closes the loopback bypasses caught in review", () => {
+    // Trailing-dot FQDN loopback.
+    expect(isPrivateHost("localhost.")).toBe(true);
+    expect(isPrivateHost("127.0.0.1.")).toBe(true);
+    // IPv6-mapped IPv4 loopback in hex + expanded spellings.
+    expect(isPrivateHost("::ffff:7f00:1")).toBe(true); // 127.0.0.1
+    expect(isPrivateHost("0:0:0:0:0:ffff:7f00:1")).toBe(true);
+    expect(isPrivateHost("::ffff:a9fe:a9fe")).toBe(true); // 169.254.169.254 metadata
+    // Public stays public.
+    expect(isPrivateHost("::ffff:8.8.8.8")).toBe(false);
+  });
+
   test("treats public hosts as non-private", () => {
     expect(isPrivateHost("example.com")).toBe(false);
     expect(isPrivateHost("8.8.8.8")).toBe(false);
