@@ -5,6 +5,12 @@ on:
   pull_request:
     branches: [main]
 
+# Least-privilege default GITHUB_TOKEN scope. The only token consumer is
+# livewing/lcov-job-summary (writes a job summary), which works under
+# contents:read. No job pushes, comments, or releases here.
+permissions:
+  contents: read
+
 jobs:
   test:
     runs-on: blacksmith-2vcpu-ubuntu-2404

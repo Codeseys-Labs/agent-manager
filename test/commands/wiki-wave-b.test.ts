@@ -19,6 +19,7 @@ import {
   mkdirSync,
   readFileSync,
   readdirSync,
+  realpathSync,
   symlinkSync,
   writeFileSync,
 } from "node:fs";
@@ -313,8 +314,13 @@ describe("ADR-0044 Wave B — wiki init/migrate/publish/pull", () => {
   // ── path ──────────────────────────────────────────────────────
 
   test("path: post-migration project prints .am-wiki/ path", async () => {
-    const localWikiDir = join(projectDir.path, ".am-wiki");
-    const legacyDir = join(projectDir.path, ".agent-manager", "wiki");
+    // The `path` subcommand builds its result from process.cwd(), which on
+    // macOS resolves the /var → /private/var symlink. Anchor the expected
+    // dirs to realpathSync(projectDir.path) so the assertion matches what the
+    // command emits on case-insensitive/symlinked tmp dirs (no-op on Linux).
+    const projectRoot = realpathSync(projectDir.path);
+    const localWikiDir = join(projectRoot, ".am-wiki");
+    const legacyDir = join(projectRoot, ".agent-manager", "wiki");
     const globalDir = getProjectWikiDir(projectName);
     mkdirSync(localWikiDir, { recursive: true });
     seedGlobalEntry(configHome.path, projectName, "entities", "alice", PAGE_MD("alice", "Alice"));
@@ -331,8 +337,11 @@ describe("ADR-0044 Wave B — wiki init/migrate/publish/pull", () => {
   });
 
   test("path: legacy-only project prints legacy wiki path", async () => {
-    const legacyDir = join(projectDir.path, ".agent-manager", "wiki");
-    const localWikiDir = join(projectDir.path, ".am-wiki");
+    // See sibling test: anchor to realpathSync so the /private/var prefix on
+    // macOS doesn't spuriously fail the toBe comparison (no-op on Linux).
+    const projectRoot = realpathSync(projectDir.path);
+    const legacyDir = join(projectRoot, ".agent-manager", "wiki");
+    const localWikiDir = join(projectRoot, ".am-wiki");
     const globalDir = getProjectWikiDir(projectName);
     mkdirSync(legacyDir, { recursive: true });
     writeFileSync(join(legacyDir, "marker.txt"), "legacy");
