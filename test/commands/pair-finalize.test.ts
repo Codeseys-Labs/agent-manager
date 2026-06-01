@@ -353,12 +353,17 @@ describe("ADR-0047 `am pair finalize` — Wave T sub-task T2", () => {
     await invokeFinalize({ file: fx.tomlPath, name: fx.peer.id, json: true });
     expect(process.exitCode).toBe(1);
 
-    // The error is reported via amError to stderr. The error string embeds the
-    // .pub path with native separators; normalize both sides to POSIX so the
-    // substring match is separator-agnostic on the Windows host.
+    // The error is reported via amError to stderr. In --json mode amError emits
+    // `JSON.stringify({ error })`, which escapes every native `\` in a Windows
+    // path to `\\`. toPosix-ing the RAW json string would then split each `\\`
+    // into `//` (double slashes) and never match the single-`/` pubPath. Parse
+    // the envelope FIRST so JSON.parse restores single backslashes, THEN toPosix
+    // both sides for a separator-agnostic substring match. The source path is
+    // correct (built with node:path.join); this is purely an assertion fix.
     const stderrText = stderrLines.join("\n");
-    expect(stderrText).toMatch(/invalid/i);
-    expect(toPosix(stderrText)).toContain(toPosix(pubPath));
+    const parsed = JSON.parse(stderrText) as { error: string };
+    expect(parsed.error).toMatch(/invalid/i);
+    expect(toPosix(parsed.error)).toContain(toPosix(pubPath));
 
     // Envelope untouched.
     const env = await readEnvelope(fx.tomlPath);

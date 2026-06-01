@@ -22,7 +22,11 @@ describe("resolveConfigDir", () => {
 
   afterEach(() => {
     if (origEnv === undefined) {
-      process.env.AM_CONFIG_DIR = undefined;
+      // Windows portability: `process.env.X = undefined` coerces to the STRING
+      // "undefined" on Windows (truthy), so `resolveConfigDir()`'s `?? join(...)`
+      // never fires and returns "undefined". POSIX Bun deletes it instead.
+      // `Reflect.deleteProperty` genuinely unsets on every platform.
+      Reflect.deleteProperty(process.env, "AM_CONFIG_DIR");
     } else {
       process.env.AM_CONFIG_DIR = origEnv;
     }
@@ -34,7 +38,7 @@ describe("resolveConfigDir", () => {
   });
 
   test("returns default path when AM_CONFIG_DIR is not set", () => {
-    process.env.AM_CONFIG_DIR = undefined;
+    Reflect.deleteProperty(process.env, "AM_CONFIG_DIR");
     const result = resolveConfigDir();
     // The default config dir is ~/.config/agent-manager on EVERY platform (it
     // is a git repo, ADR-0002). node:path.join emits the host separator, so

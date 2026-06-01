@@ -38,19 +38,23 @@ import "../../src/core/secrets-age"; // side-effect: register `age` factory
 describe("selectBackendName", () => {
   const origEnv = process.env.AM_SECRETS_BACKEND;
   afterEach(() => {
-    if (origEnv === undefined) process.env.AM_SECRETS_BACKEND = undefined;
+    // Windows portability: `process.env.X = undefined` coerces to the STRING
+    // "undefined" on Windows (POSIX Bun deletes it). A leaked "undefined" then
+    // poisons `selectBackendName`/`loadKey`. `Reflect.deleteProperty` genuinely
+    // unsets on every platform and satisfies Biome's noDelete rule.
+    if (origEnv === undefined) Reflect.deleteProperty(process.env, "AM_SECRETS_BACKEND");
     else process.env.AM_SECRETS_BACKEND = origEnv;
   });
 
   test("defaults to aes-gcm-legacy when nothing is configured", () => {
-    process.env.AM_SECRETS_BACKEND = undefined;
+    Reflect.deleteProperty(process.env, "AM_SECRETS_BACKEND");
     expect(selectBackendName(null)).toBe("aes-gcm-legacy");
     expect(selectBackendName({})).toBe("aes-gcm-legacy");
     expect(selectBackendName({ settings: {} })).toBe("aes-gcm-legacy");
   });
 
   test("honours settings.secrets.backend when set to a known value", () => {
-    process.env.AM_SECRETS_BACKEND = undefined;
+    Reflect.deleteProperty(process.env, "AM_SECRETS_BACKEND");
     const cfg = { settings: { secrets: { backend: "age" } } } as unknown as Parameters<
       typeof selectBackendName
     >[0];
@@ -58,7 +62,7 @@ describe("selectBackendName", () => {
   });
 
   test("ignores settings.secrets.backend with an unknown value", () => {
-    process.env.AM_SECRETS_BACKEND = undefined;
+    Reflect.deleteProperty(process.env, "AM_SECRETS_BACKEND");
     const cfg = { settings: { secrets: { backend: "bogus" } } } as unknown as Parameters<
       typeof selectBackendName
     >[0];
@@ -112,19 +116,23 @@ describe("getDefaultBackend", () => {
   beforeEach(async () => {
     tmp = await makeTempConfigDir();
     process.env.AM_KEY_PATH = join(tmp.configDir, "key");
-    process.env.AM_ENCRYPTION_KEY = undefined;
-    process.env.AM_SECRETS_BACKEND = undefined;
+    // `= undefined` would stringify to "undefined" on Windows and poison
+    // `loadKey` (importKey("undefined") → atob throws "invalid characters",
+    // masquerading as the wrong error AND leaking into spawned `am` subprocesses
+    // that inherit process.env). Delete to genuinely unset on every platform.
+    Reflect.deleteProperty(process.env, "AM_ENCRYPTION_KEY");
+    Reflect.deleteProperty(process.env, "AM_SECRETS_BACKEND");
   });
   afterEach(async () => {
-    if (origKeyPath === undefined) process.env.AM_KEY_PATH = undefined;
+    if (origKeyPath === undefined) Reflect.deleteProperty(process.env, "AM_KEY_PATH");
     else process.env.AM_KEY_PATH = origKeyPath;
-    if (origEncKey === undefined) process.env.AM_ENCRYPTION_KEY = undefined;
+    if (origEncKey === undefined) Reflect.deleteProperty(process.env, "AM_ENCRYPTION_KEY");
     else process.env.AM_ENCRYPTION_KEY = origEncKey;
-    if (origAgePp === undefined) process.env.AM_AGE_PASSPHRASE = undefined;
+    if (origAgePp === undefined) Reflect.deleteProperty(process.env, "AM_AGE_PASSPHRASE");
     else process.env.AM_AGE_PASSPHRASE = origAgePp;
-    if (origAgeDir === undefined) process.env.AM_AGE_IDENTITY_DIR = undefined;
+    if (origAgeDir === undefined) Reflect.deleteProperty(process.env, "AM_AGE_IDENTITY_DIR");
     else process.env.AM_AGE_IDENTITY_DIR = origAgeDir;
-    if (origBackendEnv === undefined) process.env.AM_SECRETS_BACKEND = undefined;
+    if (origBackendEnv === undefined) Reflect.deleteProperty(process.env, "AM_SECRETS_BACKEND");
     else process.env.AM_SECRETS_BACKEND = origBackendEnv;
     await tmp.cleanup();
   });
@@ -194,11 +202,11 @@ describe("secrets migrate — walk + re-encrypt", () => {
     process.env.AM_AGE_PASSPHRASE = "migrate-pw";
   });
   afterEach(async () => {
-    if (origKeyPath === undefined) process.env.AM_KEY_PATH = undefined;
+    if (origKeyPath === undefined) Reflect.deleteProperty(process.env, "AM_KEY_PATH");
     else process.env.AM_KEY_PATH = origKeyPath;
-    if (origAgePp === undefined) process.env.AM_AGE_PASSPHRASE = undefined;
+    if (origAgePp === undefined) Reflect.deleteProperty(process.env, "AM_AGE_PASSPHRASE");
     else process.env.AM_AGE_PASSPHRASE = origAgePp;
-    if (origAgeDir === undefined) process.env.AM_AGE_IDENTITY_DIR = undefined;
+    if (origAgeDir === undefined) Reflect.deleteProperty(process.env, "AM_AGE_IDENTITY_DIR");
     else process.env.AM_AGE_IDENTITY_DIR = origAgeDir;
     await tmp.cleanup();
   });
@@ -251,7 +259,7 @@ describe("secrets migrate — walk + re-encrypt", () => {
         },
       });
     } finally {
-      if (configDirBefore === undefined) process.env.AM_CONFIG_DIR = undefined;
+      if (configDirBefore === undefined) Reflect.deleteProperty(process.env, "AM_CONFIG_DIR");
       else process.env.AM_CONFIG_DIR = configDirBefore;
     }
 
