@@ -1,7 +1,14 @@
 # Roadmap
 
-> agent-manager (`am`) — chezmoi for AI agent configs. Single source of truth
-> for MCP servers, instructions, skills, and agent profiles across every AI tool.
+> agent-manager (`am`) — **the control plane for AI agents.** Define your catalog
+> once in TOML (MCP servers, instructions, skills, agents, profiles), sync via git,
+> generate native configs for every AI tool, route agents through an MCP gateway,
+> and delegate locally (ACP) or remotely (A2A).
+>
+> Canonical project docs live in [`AGENTS.md`](AGENTS.md); this file tracks status
+> and forward plans only. The CLI's v1 supported core is pillars 1 (catalog+sync),
+> 2 (MCP gateway), and 3 (ACP/A2A). Marketplace (pillar 4) is **deferred to v2**
+> (pairs with the hosted web platform) — not deleted.
 
 This document tracks the project vision, implementation status, and future plans.
 
@@ -60,7 +67,7 @@ programmatically. Keep secrets encrypted. Build knowledge from sessions.
 | Amazon Q | mcp, instructions | 0005, 0011 |
 | Continue | mcp, instructions | 0005, 0011 |
 
-All adapters: detect, import, export, drift detection. 6-file pattern.
+All adapters: detect, import, export, drift detection. 5-file pattern (index/detect/import/export/diff; no schema.ts — deleted per ADR-0041) + optional helpers.
 
 ### Platform Adapters (3) — Complete
 
@@ -72,7 +79,7 @@ All adapters: detect, import, export, drift detection. 6-file pattern.
 
 Future candidates: Gitea, Codeberg, Forgejo, BitBucket (ADR-0013 updated).
 
-### CLI (31 commands) — Complete
+### CLI (36 commands) — Complete
 
 Config: init, add, list, use, apply, status, config, profile
 Git: push, pull, undo, log
@@ -85,7 +92,7 @@ Marketplace: marketplace (7 subcommands)
 Tools: import, adapter (5 subcommands), doctor, secret (6 subcommands), session, version
 Interfaces: mcp-serve, tui, serve, completion (bash/zsh/fish)
 
-### MCP Server (33 tools, 6 groups) — Complete
+### MCP Server (38 tools: 33 active + 5 deprecated aliases, 6 groups) — Complete
 
 | Group | Tools | Default |
 |-------|-------|---------|
@@ -163,8 +170,8 @@ Search, install, uninstall, update with provenance tracking. ADR-0024.
 
 | Interface | Status | Notes |
 |-----------|--------|-------|
-| CLI (citty + clack) | Done | 31 commands, --json/--quiet everywhere |
-| MCP Server | Done | 33 tools, 3 permission tiers, 6 groups |
+| CLI (citty + clack) | Done | 36 commands, --json/--quiet everywhere |
+| MCP Server | Done | 38 tools (33 active + 5 aliases), 3 permission tiers, 6 groups |
 | TUI (Silvery + React) | Done | Dashboard, server management (D/E/I/P keys), status, profiles |
 | Local Web (Hono + Bearer auth) | Done | REST API + SSE, server CRUD, wiki endpoints |
 | Stateless Web (CF Workers) | Done | Multi-backend git auth (ADR-0025), wiki browsing, git-backed config |
@@ -179,7 +186,7 @@ Search, install, uninstall, update with provenance tracking. ADR-0024.
 |-----------|--------|-------|
 | Bridge message parsing | Done | Text + structured data formats |
 | Bridge task handler | Done | A2A → ACP routing with fallthrough |
-| Unified Agent Registry (ADR-0030) | Done | config > ACP built-in (16) > A2A roster |
+| Unified Agent Registry (ADR-0030) | Done | config > tiered ACP built-in (tier-1/2/3, ADR-0033) > A2A roster |
 | Wiki context injection | Done | Auto-inject at apply time via synthesizer |
 
 ### Phase 2: Knowledge Synthesis
@@ -213,14 +220,19 @@ Search, install, uninstall, update with provenance tracking. ADR-0024.
 | Conflict resolution (--auto, --report) | Done | ADR-0028 |
 | Marketplace scanning (--marketplace) | Done | Plugins + VS Code extensions |
 
-### Git-Based Marketplace — Complete
+### Git-Based Marketplace — Built, DEFERRED to v2
+
+Marketplace (pillar 4) is fully implemented but **deferred to v2**, where it pairs
+with the hosted web platform. The code in `src/marketplace/*` is retained (this
+supersedes the ADR-0039 retire / ADR-0052 delete decisions — do not remove it); the
+`am marketplace` surface is simply kept out of the v1 CLI's advertised onboarding.
 
 | Component | Status | Notes |
 |-----------|--------|-------|
-| Marketplace client | Done | `src/marketplace/client.ts` |
-| Plugin scanner | Done | `src/marketplace/scanner.ts` |
-| Plugin installer | Done | `src/marketplace/installer.ts` |
-| CLI (7 subcommands) | Done | `am marketplace add/remove/list/search/install/uninstall/update` |
+| Marketplace client | Built (v2-deferred) | `src/marketplace/client.ts` |
+| Plugin scanner | Built (v2-deferred) | `src/marketplace/scanner.ts` |
+| Plugin installer | Built (v2-deferred) | `src/marketplace/installer.ts` |
+| CLI (7 subcommands) | Built (v2-deferred) | `am marketplace add/remove/list/search/install/uninstall/update` |
 
 ### Phase 2: Adapters
 
@@ -269,9 +281,10 @@ am-cli as a runtime MCP proxy — accept tool calls, route to configured servers
 
 ## ADR Index
 
-47 architectural decisions (full set in `ADRs/`; table below highlights
-foundational + recently-accepted entries — ADRs 0031–0035, 0037–0043,
-0045–0046 are present in the repo and not yet mirrored here).
+**53 architectural decisions** (0001–0053, including 0031a). The canonical,
+always-current index is [`ADRs/README.md`](ADRs/README.md) and the `AGENTS.md`
+ADR table — this list is no longer mirrored here to avoid drift. Foundational
+entries for orientation:
 
 | ADR | Title | Date |
 |-----|-------|------|
@@ -312,16 +325,19 @@ foundational + recently-accepted entries — ADRs 0031–0035, 0037–0043,
 
 ## Stats
 
+> The authoritative, generated stats table lives in [`README.md`](README.md)
+> (run `bun run scripts/stats.ts`). Summary as of 2026-05-31:
+
 | Metric | Count |
 |--------|-------|
-| Source files | 176 |
-| Test files | 152 |
-| Tests | 1,916 |
-| Assertions | 5,655 |
+| Source files | 215 |
+| Test files | 231 |
+| Tests | 3,064 |
+| Assertions | 9,672 |
 | IDE adapters | 13 (+community) |
 | Platform adapters | 3 |
-| CLI commands | 31 |
-| MCP tools | 33 |
-| ADRs | 47 |
+| CLI commands | 36 |
+| MCP tools | 38 (33 active + 5 deprecated aliases) |
+| ADRs | 53 |
 | `as any` in src/ | 0 |
 | `err: any` in src/ | 0 |
