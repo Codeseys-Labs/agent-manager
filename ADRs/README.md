@@ -60,6 +60,7 @@ This folder contains the architectural decisions for agent-manager.
 | [0051](0051-secrets-rotation-grace-period.md) | Secrets Rotation + Grace Period (Synthesizes Lens I) | Accepted | 2026-05-05 |
 | [0052](0052-marketplace-v1-code-removal-target.md) | Marketplace v1 Code Removal Target (superseded — marketplace deferred to v2, not deleted) | Superseded | 2026-05-16 |
 | [0053](0053-am-setup-first-run-wizard.md) | `am setup` — First-Run Setup Wizard | Proposed | 2026-05-31 |
+| [0054](0054-knowledge-as-first-class-peer.md) | Knowledge as a First-Class Peer — Live Write-Path, Cross-Project Index, Context-Hub Boundary | Proposed | 2026-06-01 |
 
 ## Template
 
