@@ -135,7 +135,11 @@ describe("MCP concurrency safety (Wave B)", () => {
     // After both complete, the server must exist regardless of who ran first.
     const final = await readConfig(join(ctx.configDir, "config.toml"));
     expect(final.servers?.gamma?.command).toBe("cmd-g");
-  });
+    // 30s override (matches the "2x am_apply" test above): am_apply runs all 13
+    // adapters' detect() under the AsyncMutex, and the per-adapter filesystem
+    // probes are markedly slower on the Windows runner — the default 5s timed
+    // out there. The mutex behavior under test is unchanged; only wall-time differs.
+  }, 30_000);
 
   test("batch request with 3 writers — all three lands, none lost", async () => {
     const ctx = await setupConfig({ servers: {} });
