@@ -53,12 +53,23 @@ const GLOBAL_PREFIX = "global:composer-";
 
 // ── Cross-platform path resolution ─────────────────────────────────
 
-function cursorUserDir(homeDir: string): string {
+/**
+ * Resolve Cursor's VS Code User directory.
+ *
+ * @param homeDir - resolved home directory (always defined by the caller).
+ * @param injected - whether the caller supplied an explicit homeDir override.
+ *   When `true`, the override MUST win over the ambient %APPDATA% so resolution
+ *   stays under the supplied home (hermetic tests). %APPDATA% is only the
+ *   correct default when resolving the REAL user's location (no override). On
+ *   the GitHub Windows runner %APPDATA% is always set, so reading it
+ *   unconditionally would make the reader ignore the injected temp home.
+ */
+function cursorUserDir(homeDir: string, injected: boolean): string {
   if (process.platform === "darwin") {
     return join(homeDir, "Library/Application Support/Cursor/User");
   }
   if (process.platform === "win32") {
-    if (process.env.APPDATA) return join(process.env.APPDATA, "Cursor/User");
+    if (!injected && process.env.APPDATA) return join(process.env.APPDATA, "Cursor/User");
     return join(homeDir, "AppData/Roaming/Cursor/User");
   }
   return join(homeDir, ".config/Cursor/User");
@@ -138,7 +149,7 @@ interface ComposerHeader {
 
 export function createCursorSessionReader(homeDir?: string): SessionReader {
   const home = homeDir ?? homedir();
-  const userDir = cursorUserDir(home);
+  const userDir = cursorUserDir(home, homeDir !== undefined);
   const storageDir = workspaceStorageDir(userDir);
 
   return {
