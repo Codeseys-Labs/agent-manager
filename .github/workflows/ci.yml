@@ -74,10 +74,14 @@ jobs:
         include:
           - os: blacksmith-2vcpu-ubuntu-2404
           - os: blacksmith-6vcpu-macos-latest
+          # Windows is a first-class platform (install.sh:158-160, build.ts ALL_TARGETS,
+          # bin/am.js maps win32). It used to be continue-on-error:true here, which meant
+          # a broken Windows build never failed CI ("unknown by construction"). It is now
+          # a hard-failing leg, and `integration-windows` below smoke-tests the actual
+          # compiled .exe end-to-end. Do NOT reintroduce continue-on-error without also
+          # downgrading Windows to "experimental" in the README.
           - os: blacksmith-2vcpu-windows-2025
-            continue_on_error: true
     runs-on: ${{ matrix.os }}
-    continue-on-error: ${{ matrix.continue_on_error || false }}
     steps:
       - uses: actions/checkout@v4
       - uses: useblacksmith/setup-bun@v1
@@ -256,3 +260,60 @@ jobs:
 
       - name: Summary
         run: echo "Integration tests PASSED — compiled binary verified end-to-end"
+
+  # Windows smoke leg (H1): the Windows build used to be continue-on-error, so
+  # the .exe was compiled but never executed — "does Windows actually work?" was
+  # unknown by construction. This job runs the actual compiled am-windows-x64.exe
+  # through version / init / list so a runtime-broken Windows binary fails CI.
+  # All steps use `shell: bash` (Git Bash ships on the windows runner).
+  integration-windows:
+    needs: test
+    runs-on: blacksmith-2vcpu-windows-2025
+    steps:
+      - uses: actions/checkout@v4
+      - uses: useblacksmith/setup-bun@v1
+        with:
+          bun-version: 1.3.11
+      - run: bun install --frozen-lockfile
+
+      - name: Build Windows binary
+        shell: bash
+        run: VERSION=ci-test bun run build -- --target bun-windows-x64
+
+      - name: "Artifact: am-windows-x64.exe produced and non-empty"
+        shell: bash
+        run: |
+          set -euo pipefail
+          EXE="dist/am-windows-x64.exe"
+          if [ ! -f "$EXE" ]; then
+            echo "::error::$EXE was not produced by the build"
+            exit 1
+          fi
+          # Bun --compile binaries are tens of MB; anything tiny is a failed build.
+          SIZE=$(wc -c < "$EXE")
+          echo "Artifact size: $SIZE bytes"
+          if [ "$SIZE" -lt 1000000 ]; then
+            echo "::error::$EXE is suspiciously small ($SIZE bytes) — likely a broken build"
+            exit 1
+          fi
+          echo "Windows artifact: PASS"
+
+      - name: "Binary: version"
+        shell: bash
+        run: ./dist/am-windows-x64.exe version
+
+      - name: "Binary: init + list"
+        shell: bash
+        run: |
+          set -euo pipefail
+          TEST_HOME=$(mktemp -d)
+          export HOME="$TEST_HOME"
+          # USERPROFILE is what Windows tooling reads; keep it aligned with HOME
+          # so the binary writes its config under the throwaway temp dir.
+          export USERPROFILE="$TEST_HOME"
+          ./dist/am-windows-x64.exe init --yes
+          ./dist/am-windows-x64.exe list servers --json
+          echo "Windows smoke (version/init/list): PASS"
+
+      - name: Summary
+        run: echo "Windows integration smoke PASSED — compiled .exe verified"

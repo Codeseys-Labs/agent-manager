@@ -1,11 +1,22 @@
+# npm publish is deferred (no NPM_TOKEN; see release.yml). When it lands, the
+# distribution strategy is NOT to ship the per-platform compiled binaries
+# inside this one tarball. The plan (per the distribution-and-packaging audit,
+# 2026-05-31) is the esbuild/swc pattern: a thin launcher package + per-platform
+# `optionalDependencies` that each carry one `dist/am-<os>-<arch>` binary. So
+# `dist/` is intentionally excluded here, and `package.json` "files" no longer
+# lists it — the two files agreed to disagree before, which silently dropped
+# dist from the publish set. Until that strategy is built, npm ships only the
+# source + bin/ launchers (which fall back to `bun run src/cli.ts`).
+dist/
+
 test/
 docs/
 research/
 ADRs/
-dist/
 scripts/
 .github/
 .claude/
+.overstory/
 wrangler.toml
 biome.json
 tsconfig.json
