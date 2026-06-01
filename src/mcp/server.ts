@@ -697,7 +697,11 @@ const TOOL_SCHEMAS: Record<string, z.ZodTypeAny> = {
   am_undo: withAuth({}),
   am_use_profile: withAuth({ profile: zStrNonEmpty }),
   am_import: withAuth({ source: zStrNonEmpty }),
-  am_apply: withAuth({ target: zStr.optional(), dryRun: zBool.optional() }),
+  am_apply: withAuth({
+    target: zStr.optional(),
+    dryRun: zBool.optional(),
+    force: zBool.optional(),
+  }),
 
   // ── core write-remote ─────────────────────────────────────
   am_sync_push: withAuth({}),
@@ -1715,7 +1719,7 @@ function defineTools(): ToolEntry[] {
       def: {
         name: "am_apply",
         description:
-          "Sync the agent-manager catalog to IDE-native config files (Claude Code, Cursor, etc.). WARNING: writes files outside the am config directory. Run after am_add_server or am_remove_server to propagate changes. Set dryRun=true to preview without writing.",
+          "Sync the agent-manager catalog to IDE-native config files (Claude Code, Cursor, etc.). WARNING: writes files outside the am config directory. Run after am_add_server or am_remove_server to propagate changes. Set dryRun=true to preview without writing. SEC-4b: this surface defaults to a fail-closed drift check — adapters whose native config has DRIFTED (or whose drift state cannot be read) are SKIPPED, not overwritten. Pass force=true to overwrite anyway.",
         inputSchema: {
           type: "object",
           properties: {
@@ -1727,18 +1731,36 @@ function defineTools(): ToolEntry[] {
               type: "boolean",
               description: "Preview changes without writing files",
             },
+            force: {
+              type: "boolean",
+              description:
+                "Overwrite even if the native config has drifted from the catalog (bypasses the fail-closed drift gate). Default false.",
+            },
           },
         },
       },
       tier: "write-local",
       handler: async (args) => {
         const configDir = resolveConfigDir();
+        // SEC-4b: extend the CLI's fail-closed drift gate to the MCP surface.
+        // An agent calling am_apply must NOT blindly clobber a native config a
+        // human (or another tool) edited out of band — that is the 2026-04-15
+        // `~/.claude.json` wipe class of bug. We default `diff: true` so the
+        // controller runs `adapter.diff()` and SKIPS any adapter that is
+        // drifted (or whose drift state cannot be read because diff() threw).
+        // `force: true` is the explicit opt-in to overwrite, matching the CLI's
+        // `--force`. dryRun previews regardless and is never gated.
+        const force = !!args.force;
         const applyResult = await applyResolved(configDir, {
           dryRun: !!args.dryRun,
           target: args.target as string | undefined,
+          diff: true,
+          force,
         });
         // Shape the response to the existing MCP contract (files count, not
-        // full per-file list) and redact error messages.
+        // full per-file list) and redact error messages. `skipped` surfaces the
+        // fail-closed gate so the agent caller can see which adapters were NOT
+        // written (and re-issue with force=true if it really means to).
         const results = applyResult.results.map((r) => ({
           adapter: r.adapter,
           files: r.files.filter((f) => f.written).length,
@@ -1751,6 +1773,7 @@ function defineTools(): ToolEntry[] {
           profile: applyResult.profile,
           dryRun: applyResult.dryRun,
           results,
+          skipped: applyResult.skipped,
         };
       },
     },

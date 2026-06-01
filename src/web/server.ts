@@ -526,7 +526,27 @@ export async function createApp(options?: CreateAppOptions) {
 
   app.post("/api/apply", async (c) => {
     try {
-      const applyResult = await applyResolved(resolveConfigDir(), { dryRun: false });
+      // SEC-4b: the local web UI is a write-local surface — POST /api/apply
+      // writes IDE-native config files just like `am apply`. It must inherit
+      // the CLI's fail-closed drift gate so a button click cannot silently
+      // overwrite a native config a human edited out of band (the 2026-04-15
+      // `~/.claude.json` wipe class). Default `diff: true` so the controller
+      // runs `adapter.diff()` and SKIPS drifted (or unreadable-drift) adapters.
+      // The caller opts into overwriting with `{ "force": true }` in the body,
+      // mirroring the CLI `--force`. The body is optional — a bodiless POST
+      // keeps the safe (force=false) default.
+      let force = false;
+      try {
+        const body = (await c.req.json()) as { force?: unknown } | null;
+        force = body?.force === true;
+      } catch {
+        // No / invalid JSON body — keep the safe default (force=false).
+      }
+      const applyResult = await applyResolved(resolveConfigDir(), {
+        dryRun: false,
+        diff: true,
+        force,
+      });
       return c.json({
         action: "apply",
         profile: applyResult.profile,
@@ -536,6 +556,9 @@ export async function createApp(options?: CreateAppOptions) {
           files: r.files,
           warnings: r.warnings,
         })),
+        // Surface the fail-closed gate so the UI can show which tools were
+        // NOT written and offer a force re-apply.
+        skipped: applyResult.skipped,
       });
     } catch (e: unknown) {
       return c.json({ error: errorMessage(e) || "Apply failed" }, 500);

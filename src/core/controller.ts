@@ -184,6 +184,18 @@ export interface ApplyResolvedOptions {
   /** Restrict to a single adapter by name. */
   target?: string;
   /**
+   * P1-B: restrict to an explicit set of adapters by name (per-target
+   * opt-in). When present, only these adapters are applied — a superset of
+   * `target` for callers (e.g. the interactive CLI selection or a
+   * `--targets a,b` flag) that need to scope the fan-out to more than one
+   * tool without applying to every detected adapter. `target` (singular)
+   * still works and is treated as a one-element `targets`. An unknown name
+   * throws, mirroring the single-`target` path. The controller stays
+   * I/O-free: it only resolves the named adapters; the surface owns how the
+   * list was chosen (TTY prompt, flag, JSON body).
+   */
+  targets?: string[];
+  /**
    * Override the active profile (e.g. `am apply --profile work`). When
    * absent, the active profile from state.toml or the default is used.
    */
@@ -308,18 +320,35 @@ export async function applyResolved(
       throw new Error(formatCredentialHits(credentialHits));
     }
 
+    // Normalize the explicit-target selection: `targets[]` is the general
+    // form; a singular `target` is folded in as a one-element list. Empty /
+    // whitespace names are dropped so a stray `--targets ,` doesn't resolve
+    // to an empty fan-out that silently writes nothing.
+    const explicitTargets = [
+      ...(options.targets ?? []),
+      ...(options.target ? [options.target] : []),
+    ]
+      .map((t) => t.trim())
+      .filter((t) => t.length > 0);
+
     let adapters: Adapter[];
     if (adapterResolverOverride) {
       // Test seam only — see `__setAdapterResolverForTests`.
       adapters = await adapterResolverOverride(options.target);
-    } else if (options.target) {
-      const adapter = await getAdapter(options.target);
-      if (!adapter) {
-        throw new Error(
-          `Adapter "${options.target}" not found. Available: ${listAdapters().join(", ")}`,
-        );
+    } else if (explicitTargets.length > 0) {
+      // De-dupe while preserving order so `--targets a,a,b` resolves once.
+      const seen = new Set<string>();
+      const resolved: Adapter[] = [];
+      for (const name of explicitTargets) {
+        if (seen.has(name)) continue;
+        seen.add(name);
+        const adapter = await getAdapter(name);
+        if (!adapter) {
+          throw new Error(`Adapter "${name}" not found. Available: ${listAdapters().join(", ")}`);
+        }
+        resolved.push(adapter);
       }
-      adapters = [adapter];
+      adapters = resolved;
     } else {
       adapters = await getDetectedAdapters();
     }
