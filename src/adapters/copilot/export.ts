@@ -8,8 +8,9 @@
 import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { atomicWriteFileSync } from "../../core/atomic-write.ts";
+import { generateCopilotInstruction } from "../../core/instructions.ts";
 import { sanitizePathSegment } from "../../lib/safe-path.ts";
+import { writeExportFiles } from "../shared/export-utils.ts";
 import { resolveVSCodeUserMcpJson } from "../shared/vscode-paths.ts";
 import type {
   ExportOptions,
@@ -74,22 +75,7 @@ export function exportConfig(
     files.push(...scopedFiles);
   }
 
-  // Write files unless dryRun
-  if (!options.dryRun) {
-    const fs = require("node:fs");
-    for (const file of files) {
-      try {
-        const dir = file.path.substring(0, file.path.lastIndexOf("/"));
-        fs.mkdirSync(dir, { recursive: true });
-        atomicWriteFileSync(file.path, file.content);
-        file.written = true;
-      } catch (err) {
-        warnings.push(
-          `Failed to write ${file.path}: ${err instanceof Error ? err.message : String(err)}`,
-        );
-      }
-    }
-  }
+  writeExportFiles(files, warnings, { dryRun: options.dryRun });
 
   return { files, warnings };
 }
@@ -214,8 +200,7 @@ function generateScopedInstructions(config: ResolvedConfig, projectPath: string)
     }
     if (instr.scope !== "glob" || instr.globs.length === 0) continue;
 
-    const applyTo = instr.globs.join(",");
-    const content = `---\napplyTo: "${applyTo}"\n---\n\n${instr.content}\n`;
+    const content = generateCopilotInstruction(instr);
     const filePath = join(
       projectPath,
       ".github",

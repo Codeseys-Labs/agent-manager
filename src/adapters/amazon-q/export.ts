@@ -7,9 +7,15 @@
 
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { atomicWriteFileSync } from "../../core/atomic-write.ts";
 import { sanitizePathSegment } from "../../lib/safe-path.ts";
-import type { ExportOptions, ExportResult, ResolvedConfig, WrittenFile } from "../types.ts";
+import { buildMcpServersJson, writeExportFiles } from "../shared/export-utils.ts";
+import type {
+  ExportOptions,
+  ExportResult,
+  ResolvedConfig,
+  ResolvedServer,
+  WrittenFile,
+} from "../types.ts";
 
 /**
  * Export resolved config to Amazon Q native files.
@@ -24,8 +30,12 @@ export function exportConfig(
   const warnings: string[] = [];
 
   // 1. Generate ~/.aws/amazonq/mcp.json
+  const enabledServers: Record<string, ResolvedServer> = {};
+  for (const [name, server] of Object.entries(config.servers)) {
+    if (server.enabled) enabledServers[name] = server;
+  }
   const mcpPath = join(home, ".aws", "amazonq", "mcp.json");
-  const mcpContent = generateMcpConfig(config, mcpPath);
+  const mcpContent = buildMcpServersJson(enabledServers, mcpPath, { adapterKey: "amazon-q" });
   files.push({ path: mcpPath, content: mcpContent, written: false });
 
   // 2. Generate .amazonq/rules/*.md (instructions)
@@ -34,57 +44,9 @@ export function exportConfig(
     files.push(...ruleFiles);
   }
 
-  // Write files unless dryRun
-  if (!options.dryRun) {
-    const fs = require("node:fs");
-    for (const file of files) {
-      try {
-        const dir = file.path.substring(0, file.path.lastIndexOf("/"));
-        fs.mkdirSync(dir, { recursive: true });
-        atomicWriteFileSync(file.path, file.content);
-        file.written = true;
-      } catch (err) {
-        warnings.push(
-          `Failed to write ${file.path}: ${err instanceof Error ? err.message : String(err)}`,
-        );
-      }
-    }
-  }
+  writeExportFiles(files, warnings, { dryRun: options.dryRun });
 
   return { files, warnings };
-}
-
-/** Generate mcp.json, preserving existing non-MCP fields. */
-function generateMcpConfig(config: ResolvedConfig, existingPath: string): string {
-  const fs = require("node:fs");
-
-  let existing: Record<string, unknown> = {};
-  try {
-    const text = fs.readFileSync(existingPath, "utf-8");
-    existing = JSON.parse(text);
-  } catch {
-    // No existing file — start fresh
-  }
-
-  const mcpServers: Record<string, unknown> = {};
-  for (const [name, server] of Object.entries(config.servers)) {
-    if (!server.enabled) continue;
-
-    const entry: Record<string, unknown> = { command: server.command };
-    if (server.args.length > 0) entry.args = server.args;
-    if (Object.keys(server.env).length > 0) entry.env = server.env;
-
-    // Map adapter-specific fields
-    const aqExtras = server.adapters?.["amazon-q"] ?? {};
-    for (const [key, value] of Object.entries(aqExtras)) {
-      entry[key] = value;
-    }
-
-    mcpServers[name] = entry;
-  }
-
-  const output = { ...existing, mcpServers };
-  return `${JSON.stringify(output, null, 2)}\n`;
 }
 
 /** Generate .amazonq/rules/*.md files from instructions (plain markdown). */
