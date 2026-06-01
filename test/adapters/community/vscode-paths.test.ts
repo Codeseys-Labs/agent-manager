@@ -89,14 +89,30 @@ describe("VS Code paths helper", () => {
       expect(cursor).toBe("/home/alice/.config/Cursor/User");
     });
 
-    test("win32: uses APPDATA", () => {
+    test("win32: injected homeDir wins over ambient APPDATA", () => {
+      // An explicit homeDir MUST take precedence over the ambient %APPDATA% so
+      // resolution stays hermetic (the CI Windows runner always has APPDATA set
+      // to the real user's Roaming dir). Derive %APPDATA% under the supplied
+      // home instead of reading the env var.
       setPlatform("win32");
-      process.env.APPDATA = "C:\\Users\\alice\\AppData\\Roaming";
+      process.env.APPDATA = "D:\\runner\\AppData\\Roaming"; // junk: must be ignored
 
       const stable = resolveVSCodeUserDir(
         { displayName: "VS Code", dirName: "Code" },
         "C:\\Users\\alice",
       );
+      expect(stable).toContain("Code");
+      expect(stable).toContain("User");
+      // Path is derived from the injected home, NOT the ambient APPDATA.
+      expect(stable).toBe(join("C:\\Users\\alice", "AppData", "Roaming", "Code", "User"));
+      expect(stable).not.toContain("runner");
+    });
+
+    test("win32: uses ambient APPDATA when no homeDir injected", () => {
+      // With no override, fall back to the real user's %APPDATA% verbatim.
+      setPlatform("win32");
+      process.env.APPDATA = "C:\\Users\\alice\\AppData\\Roaming";
+      const stable = resolveVSCodeUserDir({ displayName: "VS Code", dirName: "Code" });
       expect(stable).toContain("Code");
       expect(stable).toContain("User");
       expect(stable.startsWith("C:\\Users\\alice\\AppData\\Roaming")).toBe(true);

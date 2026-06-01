@@ -51,8 +51,18 @@ export function resolveVSCodeUserDir(variant: VSCodeVariant, homeDir?: string): 
     return join(home, "Library", "Application Support", variant.dirName, "User");
   }
   if (process.platform === "win32") {
-    const appData = process.env.APPDATA ?? join(home, "AppData", "Roaming");
-    return join(appData, variant.dirName, "User");
+    // When a caller injects an explicit homeDir, derive %APPDATA% UNDER that
+    // home so resolution stays hermetic. The ambient process.env.APPDATA is
+    // only the correct default when resolving the real user's location (no
+    // override supplied). On the GitHub Windows runner %APPDATA% is always set
+    // to the runner's real Roaming dir, so consulting it when a temp homeDir
+    // was injected would make every reader ignore that temp home and break
+    // test isolation.
+    const roaming =
+      homeDir !== undefined
+        ? join(home, "AppData", "Roaming")
+        : (process.env.APPDATA ?? join(home, "AppData", "Roaming"));
+    return join(roaming, variant.dirName, "User");
   }
   // Linux and other XDG-style platforms
   return join(home, ".config", variant.dirName, "User");

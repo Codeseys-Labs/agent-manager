@@ -34,12 +34,23 @@ const CHAT_KEYS = ["workbench.panel.aichat.view.aichat.chatdata", "cascade.chatd
 
 // ── Cross-platform path resolution ─────────────────────────────────
 
-function windsurfUserDir(homeDir: string): string {
+/**
+ * Resolve Windsurf's VS Code User directory.
+ *
+ * @param homeDir - resolved home directory (always defined by the caller).
+ * @param injected - whether the caller supplied an explicit homeDir override.
+ *   When `true`, the override MUST win over the ambient %APPDATA% so resolution
+ *   stays under the supplied home (hermetic tests). %APPDATA% is only the
+ *   correct default when resolving the REAL user's location (no override). On
+ *   the GitHub Windows runner %APPDATA% is always set, so reading it
+ *   unconditionally would make the reader ignore the injected temp home.
+ */
+function windsurfUserDir(homeDir: string, injected: boolean): string {
   if (process.platform === "darwin") {
     return join(homeDir, "Library/Application Support/Windsurf/User");
   }
   if (process.platform === "win32") {
-    if (process.env.APPDATA) return join(process.env.APPDATA, "Windsurf/User");
+    if (!injected && process.env.APPDATA) return join(process.env.APPDATA, "Windsurf/User");
     return join(homeDir, "AppData/Roaming/Windsurf/User");
   }
   return join(homeDir, ".config/Windsurf/User");
@@ -93,7 +104,7 @@ interface ChatdataRecord {
 
 export function createWindsurfSessionReader(homeDir?: string): SessionReader {
   const home = homeDir ?? homedir();
-  const userDir = windsurfUserDir(home);
+  const userDir = windsurfUserDir(home, homeDir !== undefined);
   const storageDir = workspaceStorageDir(userDir);
 
   return {

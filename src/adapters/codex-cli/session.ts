@@ -13,7 +13,7 @@
 
 import { existsSync } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { estimateTokens } from "../../core/session.ts";
 import type {
   Message,
@@ -427,18 +427,24 @@ function safeJsonParse(value: string): unknown {
 /**
  * Extract a session ID from the file path.
  * e.g. ~/.codex/sessions/2026/04/08/abc123.jsonl → "abc123"
+ *
+ * Uses node:path `basename` so it works regardless of separator — on Windows
+ * `scanSessionFiles` builds paths with `join` (backslashes), so splitting on a
+ * literal "/" would return the whole path instead of the filename.
  */
 function sessionIdFromPath(filePath: string): string {
-  const basename = filePath.split("/").pop() ?? filePath;
-  return basename.replace(".jsonl", "");
+  return basename(filePath).replace(/\.jsonl$/, "");
 }
 
 /**
  * Derive a date from the YYYY/MM/DD directory structure.
  * e.g. ~/.codex/sessions/2026/04/08/abc.jsonl → 2026-04-08
+ *
+ * Splits on BOTH separators (`/` and `\`) so the YYYY/MM/DD walk works on
+ * Windows, where the path is built with `join` (backslashes).
  */
 function dateFromPath(filePath: string): Date {
-  const parts = filePath.split("/");
+  const parts = filePath.split(/[\\/]/);
   // Look for YYYY/MM/DD pattern in the path
   for (let i = 0; i < parts.length - 2; i++) {
     const year = Number.parseInt(parts[i], 10);

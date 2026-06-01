@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
+import { realpathSync } from "node:fs";
 import { mkdtemp, readFile, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -20,6 +21,7 @@ import {
   loadRunState,
   runFlow,
 } from "../../../src/protocols/acp/flows";
+import { printArgCommand, printCwdCommand } from "../../helpers/spawn";
 
 // ── Helpers ─────────────────────────────────────────────────────
 
@@ -227,7 +229,9 @@ describe("runFlow with action nodes", () => {
     const flow = defineFlow({
       name: "shell-echo",
       nodes: {
-        echo: action({ command: "echo hello-flows" }),
+        // Cross-platform print (bun -e) — POSIX `echo` is not spawnable on
+        // Windows (it is a cmd.exe builtin, not a standalone .exe).
+        echo: action({ command: printArgCommand("hello-flows") }),
       },
       edges: [],
     });
@@ -245,7 +249,10 @@ describe("runFlow with action nodes", () => {
     const flow = defineFlow({
       name: "failing-action",
       nodes: {
-        fail: action({ command: "false" }),
+        // Cross-platform non-zero exit (bun -e) instead of POSIX `false`,
+        // which is not spawnable on Windows. Exercises the exit-code != 0
+        // -> ACTION_FAILED path on every platform.
+        fail: action({ command: `'${process.execPath}' -e 'process.exit(1)'` }),
       },
       edges: [],
     });
@@ -270,7 +277,7 @@ describe("runFlow with action nodes", () => {
       name: "template-action",
       nodes: {
         produce: compute({ fn: () => ({ greeting: "hello-from-template" }) }),
-        echo: action({ command: "echo {{greeting}}" }),
+        echo: action({ command: printArgCommand("{{greeting}}") }),
       },
       edges: [{ from: "produce", to: "echo" }],
     });
@@ -926,10 +933,15 @@ describe("Checkpoint handler nodeId", () => {
 
 describe("Action node cwd override", () => {
   test("action node respects cwd override", async () => {
+    // Use an OS-correct temp dir (not the POSIX-only "/tmp" literal) and a
+    // cross-platform print command (bun -e) instead of POSIX `pwd`, which is
+    // not spawnable on Windows. Anchor to realpathSync so symlink prefixes
+    // (e.g. macOS /tmp -> /private/tmp) don't spuriously fail the comparison.
+    const cwd = realpathSync(tmpdir());
     const flow = defineFlow({
       name: "action-cwd",
       nodes: {
-        pwd: action({ command: "pwd", cwd: "/tmp" }),
+        pwd: action({ command: printCwdCommand(), cwd }),
       },
       edges: [],
     });
@@ -937,8 +949,7 @@ describe("Action node cwd override", () => {
     const result = await runFlow(flow, { runsDir });
     expect(result.status).toBe("completed");
     const output = result.nodes.pwd.output as { stdout: string };
-    // /tmp may resolve to /private/tmp on macOS
-    expect(output.stdout).toContain("tmp");
+    expect(realpathSync(output.stdout)).toBe(cwd);
   });
 });
 
@@ -1069,7 +1080,9 @@ describe("Mixed node type flows", () => {
       name: "mixed-pipeline",
       nodes: {
         prepare: compute({ fn: () => ({ filename: "test-output" }) }),
-        run: action({ command: "echo {{filename}}" }),
+        // Cross-platform print (bun -e) instead of POSIX `echo`, which is a
+        // cmd.exe builtin (not a spawnable .exe) on Windows.
+        run: action({ command: printArgCommand("{{filename}}") }),
         collect: compute({
           fn: (input) => ({ collected: (input.stdout as string).trim() }),
         }),
@@ -1103,7 +1116,7 @@ describe("Mixed node type flows", () => {
             description: input.text,
           }),
         }),
-        report: action({ command: "echo {{description}}" }),
+        report: action({ command: printArgCommand("{{description}}") }),
       },
       edges: [
         { from: "analyze", to: "categorize" },

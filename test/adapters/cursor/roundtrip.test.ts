@@ -4,6 +4,7 @@ import { diffConfig } from "@/adapters/cursor/diff.ts";
 import { exportConfig } from "@/adapters/cursor/export.ts";
 import { importConfig } from "@/adapters/cursor/import.ts";
 import type { ResolvedConfig, ResolvedServer } from "@/adapters/types.ts";
+import { toPosix } from "../../helpers/path.ts";
 import { type TestDir, createTestDir } from "../../helpers/tmp.ts";
 
 describe("Cursor adapter roundtrip", () => {
@@ -64,7 +65,7 @@ describe("Cursor adapter roundtrip", () => {
     // 4. Export (writes to disk)
     const exported = exportConfig(resolved, {}, dir.path);
     expect(exported.warnings).toHaveLength(0);
-    const globalFile = exported.files.find((f) => f.path.includes(".cursor/mcp.json"));
+    const globalFile = exported.files.find((f) => toPosix(f.path).includes(".cursor/mcp.json"));
     expect(globalFile).toBeDefined();
     expect(globalFile?.written).toBe(true);
 

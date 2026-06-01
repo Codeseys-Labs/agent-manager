@@ -4,6 +4,7 @@ import { diffConfig } from "@/adapters/kiro/diff.ts";
 import { exportConfig } from "@/adapters/kiro/export.ts";
 import { importConfig } from "@/adapters/kiro/import.ts";
 import type { ResolvedConfig, ResolvedServer } from "@/adapters/types.ts";
+import { toPosix } from "../../helpers/path.ts";
 import { type TestDir, createTestDir } from "../../helpers/tmp.ts";
 
 describe("Kiro adapter roundtrip", () => {
@@ -64,7 +65,9 @@ describe("Kiro adapter roundtrip", () => {
     // 4. Export (writes to disk)
     const exported = exportConfig(resolved, {}, dir.path);
     expect(exported.warnings).toHaveLength(0);
-    const globalFile = exported.files.find((f) => f.path.includes(".kiro/settings/mcp.json"));
+    const globalFile = exported.files.find((f) =>
+      toPosix(f.path).includes(".kiro/settings/mcp.json"),
+    );
     expect(globalFile).toBeDefined();
     expect(globalFile?.written).toBe(true);
 

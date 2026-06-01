@@ -5,6 +5,7 @@ import { diffConfig } from "@/adapters/roo-code/diff.ts";
 import { exportConfig } from "@/adapters/roo-code/export.ts";
 import { importConfig } from "@/adapters/roo-code/import.ts";
 import type { ResolvedConfig, ResolvedServer } from "@/adapters/types.ts";
+import { toPosix } from "../../helpers/path.ts";
 import { type TestDir, createTestDir } from "../../helpers/tmp.ts";
 
 function settingsRel(home: string): string {
@@ -140,7 +141,7 @@ describe("Roo Code adapter roundtrip", () => {
 
     // Export
     const exported = exportConfig(resolved, { projectPath: projectDir }, dir.path);
-    const projectMcpFile = exported.files.find((f) => f.path.includes(".roo/mcp.json"));
+    const projectMcpFile = exported.files.find((f) => toPosix(f.path).includes(".roo/mcp.json"));
     expect(projectMcpFile).toBeDefined();
     const output = JSON.parse(projectMcpFile!.content);
     expect(output.mcpServers["local-dev"].command).toBe("node");
@@ -187,7 +188,7 @@ describe("Roo Code adapter roundtrip", () => {
     // Export (dry run)
     const exported = exportConfig(resolved, { projectPath: projectDir, dryRun: true }, dir.path);
     const ruleFile = exported.files.find(
-      (f) => f.path.endsWith(".md") && f.path.includes(".roo/rules/"),
+      (f) => f.path.endsWith(".md") && toPosix(f.path).includes(".roo/rules/"),
     );
     expect(ruleFile).toBeDefined();
     expect(ruleFile!.content).toContain("Use TypeScript strict mode.");

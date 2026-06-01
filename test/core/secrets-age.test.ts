@@ -58,20 +58,25 @@ describe("AgeSecretsBackend — paths", () => {
   }
 
   test("resolveIdentityDir respects AM_AGE_IDENTITY_DIR override", () => {
-    setEnv("AM_AGE_IDENTITY_DIR", "/tmp/custom-am-id");
+    // Build the override + expectations with join() so the assertion is
+    // separator-agnostic (resolveIdentityPath uses node:path internally, which
+    // emits backslashes on Windows — a hardcoded "/" literal would mismatch).
+    const overrideDir = join(tmpdir(), "custom-am-id");
+    setEnv("AM_AGE_IDENTITY_DIR", overrideDir);
     try {
-      expect(resolveIdentityDir()).toBe("/tmp/custom-am-id");
-      expect(resolveIdentityPath()).toBe("/tmp/custom-am-id/identity.age");
+      expect(resolveIdentityDir()).toBe(overrideDir);
+      expect(resolveIdentityPath()).toBe(join(overrideDir, "identity.age"));
     } finally {
       restoreEnv();
     }
   });
 
   test("resolveIdentityDir defaults to XDG_CONFIG_HOME or ~/.config", () => {
+    const xdg = join(tmpdir(), "xdg");
     setEnv("AM_AGE_IDENTITY_DIR", undefined);
-    setEnv("XDG_CONFIG_HOME", "/tmp/xdg");
+    setEnv("XDG_CONFIG_HOME", xdg);
     try {
-      expect(resolveIdentityDir()).toBe("/tmp/xdg/agent-manager/identities");
+      expect(resolveIdentityDir()).toBe(join(xdg, "agent-manager", "identities"));
     } finally {
       restoreEnv();
     }

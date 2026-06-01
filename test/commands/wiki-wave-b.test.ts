@@ -26,6 +26,7 @@ import {
 import { join } from "node:path";
 import { wikiCommand } from "../../src/commands/wiki";
 import { getProjectWikiDir, resolveProjectName } from "../../src/wiki/storage";
+import { toPosix } from "../helpers/path";
 import { type TestDir, createTestDir } from "../helpers/tmp";
 
 // ── citty introspection ─────────────────────────────────────────
@@ -350,7 +351,7 @@ describe("ADR-0044 Wave B — wiki init/migrate/publish/pull", () => {
 
     const parsed = JSON.parse(stdoutLines.join("\n"));
     expect(parsed.path).toBe(legacyDir);
-    expect(parsed.path).toContain(".agent-manager/wiki");
+    expect(toPosix(parsed.path)).toContain(".agent-manager/wiki");
     expect(parsed.path).not.toBe(localWikiDir);
     expect(parsed.path).not.toBe(globalDir);
     expect(parsed.path).not.toContain(".am-wiki");
