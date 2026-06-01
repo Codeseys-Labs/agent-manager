@@ -20,7 +20,7 @@
  * `test/commands/secrets-revoke.test.ts`.
  */
 
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, setDefaultTimeout, test } from "bun:test";
 import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import * as TOML from "@iarna/toml";
@@ -29,6 +29,14 @@ import { pairFinalizeCommand } from "../../src/commands/pair-finalize";
 import { AgeSecretsBackend } from "../../src/core/secrets-age";
 import { isDryRunEnvelope } from "../../src/lib/dry-run-envelope";
 import { type TestDir, createTestDir } from "../helpers/tmp";
+
+// age's passphrase wrapping uses scrypt at a deliberately high work factor;
+// each fixture init + rewrap is 8-9s under CI's 2-vcpu coverage run. The 5s
+// default timeout would fire mid-operation, and a killed test leaks global
+// process.env / process.exitCode into every subsequent secrets/pair test in
+// the same bun process (bun runs all files in ONE process), cascading into
+// ~1000 false failures. 30s gives comfortable headroom. (Wave CI / P0-5.)
+setDefaultTimeout(30_000);
 
 const AGE_PREFIX = "enc:v2:age:";
 

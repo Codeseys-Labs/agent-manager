@@ -17,6 +17,7 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { CommunityAdapterProxy } from "../../../src/adapters/community/proxy";
+import { bunExe } from "../../helpers/bun-exe.ts";
 
 const ENV_DUMP_ADAPTER = `#!/usr/bin/env bun
 import { createInterface } from "node:readline";
@@ -88,7 +89,7 @@ afterEach(async () => {
 async function dumpChildEnv(opts?: { env?: Record<string, string> }): Promise<
   Record<string, string>
 > {
-  const proxy = await CommunityAdapterProxy.create("bun", [scriptPath], opts);
+  const proxy = await CommunityAdapterProxy.create(bunExe(), [scriptPath], opts);
   try {
     // call() is private — reach in for the test. The proxy exposes high-level
     // methods (detect/import/...) that wouldn't return our env. This is the

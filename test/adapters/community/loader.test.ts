@@ -16,6 +16,7 @@ import type {
   AdaptersToml,
   CommunityAdapterConfig,
 } from "../../../src/adapters/community/types.ts";
+import { bunExe } from "../../helpers/bun-exe.ts";
 import { type TestDir, createTestDir } from "../../helpers/tmp.ts";
 
 describe("readAdaptersToml()", () => {
@@ -414,7 +415,7 @@ describe("loadCommunityAdapters() dead proxy detection", () => {
     const { CommunityAdapterProxy } = await import("../../../src/adapters/community/proxy.ts");
 
     // First: create a live proxy
-    const proxy = await CommunityAdapterProxy.create("bun", [MOCK_ADAPTER]);
+    const proxy = await CommunityAdapterProxy.create(bunExe(), [MOCK_ADAPTER]);
     expect(proxy.isAlive()).toBe(true);
 
     // Simulate crash
@@ -422,7 +423,7 @@ describe("loadCommunityAdapters() dead proxy detection", () => {
     expect(proxy.isAlive()).toBe(false);
 
     // A second create should give us a fresh, alive proxy
-    const proxy2 = await CommunityAdapterProxy.create("bun", [MOCK_ADAPTER]);
+    const proxy2 = await CommunityAdapterProxy.create(bunExe(), [MOCK_ADAPTER]);
     expect(proxy2.isAlive()).toBe(true);
     expect(proxy2).not.toBe(proxy); // Different instance
     proxy2.kill();

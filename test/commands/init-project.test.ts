@@ -1,9 +1,15 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, setDefaultTimeout, test } from "bun:test";
 import { join } from "node:path";
 import { initProject } from "@/commands/init-project.ts";
 import type { ProjectConfig } from "@/core/schema.ts";
 import * as TOML from "@iarna/toml";
 import { type TestDir, createTestDir } from "../helpers/tmp.ts";
+
+// initProject() runs full adapter detection (scanAdapters), which probes
+// installed IDE CLIs via Bun.spawnSync. On a dev box those serialized probes
+// can exceed the 5s default under full-suite load (CI has none, so it's fast
+// there). 30s gives headroom without hiding regressions. (Wave CI / P0-5.)
+setDefaultTimeout(30_000);
 
 const silentOpts = { json: false, quiet: true, verbose: false };
 

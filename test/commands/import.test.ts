@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, setDefaultTimeout, test } from "bun:test";
 import { join } from "node:path";
 import { extractServerIdentity } from "../../src/commands/import";
 import { writeConfig } from "../../src/core/config";
@@ -6,6 +6,13 @@ import { initRepo } from "../../src/core/git";
 import type { Config } from "../../src/core/schema";
 import { McpServer } from "../../src/mcp/server";
 import { type TestDir, createTestDir } from "../helpers/tmp";
+
+// The `am_import` source:"auto" regression test runs full adapter detection,
+// which probes installed IDE CLIs via Bun.spawnSync([<cli>, "--version"]).
+// On a dev box with IDE CLIs installed those serialized probes can exceed
+// the 5s default under full-suite load (CI runners have none, so it's fast
+// there). 30s gives headroom without hiding regressions. (Wave CI / P0-5.)
+setDefaultTimeout(30_000);
 
 describe("extractServerIdentity", () => {
   test("strips npx -y prefix and @version suffix", () => {

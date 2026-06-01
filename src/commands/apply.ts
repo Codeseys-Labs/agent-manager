@@ -87,6 +87,55 @@ export const applyCommand = defineCommand({
 
       const total = applyResult.results.length;
       if (total === 0) {
+        // JSON consumers must always get a parseable envelope — even when no
+        // tools are detected (e.g. a CI host with no IDEs installed). Without
+        // this, `--json` mode would emit nothing here (info() is suppressed in
+        // JSON mode), so callers parsing stdout hit "Unexpected EOF". Emit the
+        // canonical (empty-results) envelope and return. (Wave CI / P0-5.)
+        if (args.json) {
+          if (args["dry-run"]) {
+            const envelope: DryRunEnvelope<ApplyExplanation> = {
+              action: "apply",
+              reads_only: true,
+              would_do: [],
+              mutations_prevented: ["adapter file writes"],
+              warnings: [],
+              explanation: {
+                profile: applyResult.profile,
+                results: [],
+                succeeded: 0,
+                failed: [],
+                skipped: [],
+              },
+            };
+            output(
+              {
+                ...envelope,
+                profile: applyResult.profile,
+                dryRun: true,
+                results: [],
+                succeeded: 0,
+                failed: [],
+                skipped: [],
+              },
+              opts,
+            );
+          } else {
+            output(
+              {
+                action: "apply",
+                profile: applyResult.profile,
+                dryRun: false,
+                results: [],
+                succeeded: 0,
+                failed: [],
+                skipped: [],
+              },
+              opts,
+            );
+          }
+          return;
+        }
         // Novice first-run recovery (2026-05-03-E, per Codex-B audit):
         // don't leave the user at a dead end. Point at the three commands
         // most likely to produce immediate value.

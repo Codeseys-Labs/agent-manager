@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, test } from "bun:test";
+import { beforeEach, describe, expect, setDefaultTimeout, test } from "bun:test";
 import { mkdtemp, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -11,6 +11,11 @@ import {
   resolveIdentityPath,
 } from "../../src/core/secrets-age";
 import { getBackend } from "../../src/core/secrets-backend";
+
+// age scrypt identity wrap/unwrap is 8-9s per op under CI coverage; the 5s
+// default would time out and (because bun runs all files in one process)
+// leak global state into later secrets/pair tests. (Wave CI / P0-5.)
+setDefaultTimeout(30_000);
 
 // In-memory keychain adapter for hermetic tests. Mirrors the
 // `cross-keychain` top-level surface the backend consumes.

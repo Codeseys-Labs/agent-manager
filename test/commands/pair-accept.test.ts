@@ -13,13 +13,18 @@
  * `test/commands/secrets-revoke.test.ts`.
  */
 
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, setDefaultTimeout, test } from "bun:test";
 import { mkdir, readFile, readdir, symlink } from "node:fs/promises";
 import { join } from "node:path";
 import * as TOML from "@iarna/toml";
 import { pairAcceptCommand } from "../../src/commands/pair-accept";
 import { isDryRunEnvelope } from "../../src/lib/dry-run-envelope";
 import { type TestDir, createTestDir } from "../helpers/tmp";
+
+// age scrypt identity wrapping is slow under CI coverage; the 5s default
+// would time out and leak global state across the shared bun process. See
+// pair-finalize.test.ts for the full rationale. (Wave CI / P0-5.)
+setDefaultTimeout(30_000);
 
 // ── Console capture ──────────────────────────────────────────────
 

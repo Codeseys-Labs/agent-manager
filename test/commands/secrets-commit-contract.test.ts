@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, setDefaultTimeout, test } from "bun:test";
 import * as fs from "node:fs";
 import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -10,6 +10,11 @@ import { secretsRotateCommand } from "../../src/commands/secrets-rotate";
 import { commitAll, initRepo } from "../../src/core/git";
 import { AgeSecretsBackend } from "../../src/core/secrets-age";
 import { type TestDir, createTestDir } from "../helpers/tmp";
+
+// age scrypt identity wrapping is slow under CI coverage; the 5s default
+// would time out and leak global state across the shared bun process. See
+// pair-finalize.test.ts for the full rationale. (Wave CI / P0-5.)
+setDefaultTimeout(30_000);
 
 interface Fixture {
   dir: TestDir;

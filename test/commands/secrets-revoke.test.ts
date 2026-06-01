@@ -24,7 +24,7 @@
  * learn one test shape for the four age-verbs.
  */
 
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, setDefaultTimeout, test } from "bun:test";
 import { readFile, readdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { Decrypter, generateIdentity, identityToRecipient } from "age-encryption";
@@ -32,6 +32,11 @@ import { secretsRevokeCommand } from "../../src/commands/secrets-revoke";
 import { AgeSecretsBackend } from "../../src/core/secrets-age";
 import { isDryRunEnvelope } from "../../src/lib/dry-run-envelope";
 import { type TestDir, createTestDir } from "../helpers/tmp";
+
+// age scrypt identity wrapping is slow under CI coverage; the 5s default
+// would time out and leak global state across the shared bun process. See
+// pair-finalize.test.ts for the full rationale. (Wave CI / P0-5.)
+setDefaultTimeout(30_000);
 
 const AGE_PREFIX = "enc:v2:age:";
 
