@@ -690,7 +690,7 @@ agents = ["researcher"]
 
 | Command | Description |
 |---------|-------------|
-| `am init` | First-time setup -- detect tools, import configs, init git repo |
+| `am init` | First-time setup -- detect tools, init git repo (run `am import auto` to import existing configs) |
 | `am init --project` | Initialize project-level `.agent-manager.toml` |
 | `am add server <name>` | Add an MCP server (secrets auto-detected) |
 | `am list servers` | List servers with status, tags, and profile filtering |
