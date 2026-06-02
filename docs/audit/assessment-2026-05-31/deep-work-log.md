@@ -16,7 +16,7 @@ Key lessons recorded to Mulch (cross-platform domain): real multi-OS CI is irrep
 
 ## Checkpoint 9 — 2026-06-02 (BACKLOG ZERO)
 
-All 11 PRs merged (#23–#33). main @ 6048e6c. **Backlog: 0 open / 0 in_progress / 52 closed.**
+All 11 PRs merged (#23–#33). main @ 6048e6c. **Backlog: 0 open / 0 in_progress / 129 closed (project total).**
 
 Waves B/C/D/E + ACP-leak landed after the wave-A stack:
 - Wave B: wiki-core request-changes fixes (lint enum, R3 wiring, delete-path) → approve; apply follow-ups (SEC-4c TUI, silent-failure narrow, shared default) → approve. (#26, #27)

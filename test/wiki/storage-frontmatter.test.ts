@@ -1,7 +1,12 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { readPage, serializeFrontmatter, writePage } from "../../src/wiki/storage";
+import {
+  getSupersedeInfo,
+  readPage,
+  serializeFrontmatter,
+  writePage,
+} from "../../src/wiki/storage";
 import type { WikiPage } from "../../src/wiki/types";
 import { type TestDir, createTestDir } from "../helpers/tmp";
 
@@ -112,5 +117,61 @@ describe("wiki/storage frontmatter (ADR-0054 R4)", () => {
     expect(loaded).not.toBeNull();
     // 0.55 → "medium" bucket.
     expect(loaded!.confidence).toBe("medium");
+  });
+});
+
+// ADR-0054 R4 read surface: getSupersedeInfo turns the supersedes /
+// superseded_by frontmatter fields (previously serialize+parse-only) into a
+// reportable relationship, so they are no longer write-then-parse dead weight.
+describe("wiki/storage getSupersedeInfo (ADR-0054 R4 read surface)", () => {
+  let tmp: TestDir;
+  let wikiDir: string;
+
+  beforeEach(async () => {
+    tmp = await createTestDir("wiki-supersede-");
+    wikiDir = join(tmp.path, "wiki");
+  });
+
+  afterEach(async () => {
+    await tmp.cleanup();
+  });
+
+  test("returns null when neither supersede field is set (the common case)", () => {
+    expect(getSupersedeInfo(makePage({ slug: "plain" }))).toBeNull();
+  });
+
+  test("reports 'superseded by X' when the page is shadowed", () => {
+    const info = getSupersedeInfo(makePage({ slug: "stale", superseded_by: "fresh" }));
+    expect(info).not.toBeNull();
+    expect(info!.supersededBy).toBe("fresh");
+    expect(info!.supersedes).toBeNull();
+    expect(info!.label).toBe("superseded by fresh");
+  });
+
+  test("reports 'supersedes Y' when the page replaces an older one", () => {
+    const info = getSupersedeInfo(makePage({ slug: "fresh", supersedes: "stale" }));
+    expect(info).not.toBeNull();
+    expect(info!.supersedes).toBe("stale");
+    expect(info!.supersededBy).toBeNull();
+    expect(info!.label).toBe("supersedes stale");
+  });
+
+  test("reports both relationships, superseded-by first (more actionable)", () => {
+    const info = getSupersedeInfo(
+      makePage({ slug: "mid", supersedes: "older", superseded_by: "newer" }),
+    );
+    expect(info).not.toBeNull();
+    expect(info!.label).toBe("superseded by newer; supersedes older");
+  });
+
+  test("surfaces the relationship for a page round-tripped through disk", async () => {
+    await writePage(
+      makePage({ slug: "on-disk", supersedes: "ancestor", superseded_by: "descendant" }),
+      { wikiDir, maintainDerived: false },
+    );
+    const loaded = await readPage("on-disk", wikiDir);
+    expect(loaded).not.toBeNull();
+    const info = getSupersedeInfo(loaded!);
+    expect(info!.label).toBe("superseded by descendant; supersedes ancestor");
   });
 });

@@ -48,7 +48,18 @@ single-binary, zero-runtime-dep tenet ([ADR-0010](0010-bunts-single-binary.md)).
 2. **Introduce a committed cross-project meta-index** (`wiki/meta-index.json`, keyed by
    entity/tag/slug → `{project, slug, confidence}[]`) plus `am wiki search --all-projects`,
    rebuilt on `am wiki sync` and on demand (never on every page write). **Fix promotion
-   to target `wiki/global/`** gated on a real `promote: true` frontmatter field.
+   to target `wiki/global/`** behind an explicit promotion gate. As built
+   (`am wiki publish`, `storage.pushToGlobal`), the gate is two-pronged:
+   - the **`--promote` flag is the explicit per-invocation gate** — without it both
+     `<slug>` and `--auto` keep the ADR-0044 per-project-mirror target, so no entry
+     reaches `wiki/global/` by accident;
+   - the **`promote: true` frontmatter field is the *discovery* gate for the batch
+     `--auto` path** — `am wiki publish --auto --promote` scans `.am-wiki/` and only
+     promotes entries that opt in via that field.
+   A named-slug promotion (`am wiki publish <slug> --promote`) does **not** require the
+   frontmatter field: passing `--promote` for one explicitly-named entry *is* the opt-in.
+   Adding a frontmatter check to the named-slug path is deferred backlog
+   (WIKI-supersede-consumer-adjacent), not a correctness gap.
 3. **Adopt Context Hub's annotation loop** as a synthesizer refinement — the
    `{id, note, updatedAt}` shape with prior agent notes treated as **untrusted input**
    (path-traversal validation on id). **Reject whole-adoption** of `@aisuite/chub`;
