@@ -79,7 +79,10 @@ describe("resolveKeyPath", () => {
     env.set("AM_KEY_PATH", undefined);
     env.set("XDG_DATA_HOME", "/custom/xdg-data");
     setPlatform("linux");
-    expect(resolveKeyPath()).toBe("/custom/xdg-data/agent-manager/key");
+    // process.platform is mocked, but node:path.join emits the HOST separator
+    // (`\` on the Windows CI host). Build the expected with the same join so the
+    // comparison is separator-agnostic.
+    expect(resolveKeyPath()).toBe(join("/custom/xdg-data", "agent-manager", "key"));
   });
 
   test("Linux: falls back to ~/.local/share when XDG_DATA_HOME unset", () => {
@@ -126,7 +129,11 @@ describe("resolveKeyPath", () => {
 
 describe("legacyKeyPath", () => {
   test("returns configDir/.agent-manager/key.txt", () => {
-    expect(legacyKeyPath("/tmp/am-config")).toBe("/tmp/am-config/.agent-manager/key.txt");
+    // legacyKeyPath builds with node:path.join, which emits the host separator
+    // (`\` on Windows). Build the expected the same way for a portable assert.
+    expect(legacyKeyPath("/tmp/am-config")).toBe(
+      join("/tmp/am-config", ".agent-manager", "key.txt"),
+    );
   });
 });
 

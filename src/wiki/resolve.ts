@@ -10,7 +10,7 @@
  */
 
 import * as fs from "node:fs";
-import { join, resolve as resolvePath } from "node:path";
+import { join, resolve as resolvePath, sep } from "node:path";
 import git from "isomorphic-git";
 import { commitAll, stageWikiFiles } from "../core/git";
 import { CONFLICT_SIDECAR, type ConflictSidecar, clearConflictSidecar } from "./sync";
@@ -25,8 +25,15 @@ import { CONFLICT_SIDECAR, type ConflictSidecar, clearConflictSidecar } from "./
 function assertPathInside(wikiDir: string, filepath: string): string {
   const absWiki = resolvePath(wikiDir);
   const abs = resolvePath(absWiki, filepath);
-  const sep = "/"; // POSIX path separator; wikiDir is always POSIX on all supported platforms per ADR-0022
-  if (abs !== absWiki && !abs.startsWith(absWiki + sep)) {
+  // Both paths come from node:path.resolve, which emits the NATIVE separator
+  // (`\` on Windows, `/` on POSIX). Use `path.sep` for the containment check —
+  // a hardcoded "/" makes `startsWith(absWiki + "/")` always false on Windows,
+  // which previously rejected every legitimate in-tree file as a traversal.
+  // When absWiki is a filesystem ROOT it already ends in sep (`/`, `C:\`), so
+  // appending another would form `//`/`C:\\` and reject every in-tree path —
+  // only add the boundary sep when it isn't already present.
+  const prefix = absWiki.endsWith(sep) ? absWiki : absWiki + sep;
+  if (abs !== absWiki && !abs.startsWith(prefix)) {
     throw new Error(`Unsafe path in sidecar rejected (traversal attempt?): "${filepath}"`);
   }
   return abs;

@@ -16,7 +16,7 @@
  *  - Trust-on-first-use prompt
  */
 import * as fs from "node:fs";
-import { join } from "node:path";
+import { isAbsolute, join } from "node:path";
 import git from "isomorphic-git";
 import http from "isomorphic-git/http/node";
 import { atomicWriteFile } from "../core/atomic-write";
@@ -87,12 +87,13 @@ function detectSource(url: string): MarketplaceSource {
   return "github";
 }
 
-/** Derive a default name from a git URL. */
+/** Derive a default name from a git URL or local path. */
 export function deriveMarketplaceName(url: string): string {
-  // Strip trailing .git and slashes
-  const cleaned = url.replace(/\.git\/?$/, "").replace(/\/+$/, "");
-  // Take the last path segment
-  const segments = cleaned.split("/");
+  // Strip trailing .git and trailing separators (either slash style).
+  const cleaned = url.replace(/\.git[/\\]?$/, "").replace(/[/\\]+$/, "");
+  // Take the last path segment. Split on BOTH separators so a Windows local
+  // path (`C:\repos\my-market`) derives `my-market`, not the whole path.
+  const segments = cleaned.split(/[/\\]/);
   return segments[segments.length - 1] || "marketplace";
 }
 
@@ -132,7 +133,9 @@ export async function addMarketplace(
   if (localPath) {
     // For local filesystem paths (no scheme), create a symlink instead of cloning.
     // These are not URL-validated (there is no scheme to check) and are not SHA-pinned.
-    const resolvedUrl = url.startsWith("/") ? url : join(process.cwd(), url);
+    // isAbsolute() is platform-native: it recognizes C:\… / UNC on Windows and
+    // /… on POSIX, so a Windows absolute path is not re-rooted under cwd.
+    const resolvedUrl = isAbsolute(url) ? url : join(process.cwd(), url);
     try {
       await fs.promises.access(resolvedUrl);
     } catch {

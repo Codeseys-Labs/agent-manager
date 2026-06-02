@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import * as fs from "node:fs";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { readAdaptersToml } from "../../src/adapters/community/loader";
 import { readConfig, writeConfig } from "../../src/core/config";
 import { initRepo } from "../../src/core/git";
@@ -98,8 +98,12 @@ describe("marketplace/installer", () => {
       expect(result.skills).toEqual(["my-skill", "other-skill"]);
       expect(config.skills?.["my-skill"]).toBeDefined();
       // `safeResolveInsidePlugin` normalises via path.resolve, which strips
-      // trailing slashes — that's semantically equivalent for fs access.
-      expect(config.skills?.["my-skill"].path).toBe("/fake/path/skill-plugin/skills/my-skill");
+      // trailing slashes and emits native separators (drive-letter + `\` on
+      // Windows). Build the expected with the same `resolve` so the assertion
+      // is separator/platform-agnostic.
+      expect(config.skills?.["my-skill"].path).toBe(
+        resolve("/fake/path/skill-plugin", "skills/my-skill"),
+      );
       expect(config.skills?.["my-skill"]._marketplace).toBeDefined();
       expect(config.skills?.["my-skill"]._marketplace?.package).toBe("skill-plugin");
     });

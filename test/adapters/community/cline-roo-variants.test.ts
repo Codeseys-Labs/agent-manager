@@ -10,6 +10,7 @@ import {
   detect as detectRoo,
   getGlobalStoragePath as getRooStorage,
 } from "@/adapters/roo-code/detect.ts";
+import { toPosix } from "../../helpers/path.ts";
 import { type TestDir, createTestDir } from "../../helpers/tmp.ts";
 
 /**
@@ -41,7 +42,10 @@ describe("cline detect() — VS Code variants", () => {
   test("getGlobalStoragePath returns stable Code path when nothing installed", () => {
     setPlatform("linux");
     const p = getClineStorage("/home/alice");
-    expect(p).toBe("/home/alice/.config/Code/User/globalStorage/saoudrizwan.claude-dev");
+    // process.platform is mocked, but node:path.join still emits the HOST
+    // separator (`\` on the Windows CI host), so normalize the actual path to
+    // POSIX before comparing against the logical (forward-slash) expectation.
+    expect(toPosix(p)).toBe("/home/alice/.config/Code/User/globalStorage/saoudrizwan.claude-dev");
   });
 
   test("detects stable Code install", async () => {
@@ -53,7 +57,7 @@ describe("cline detect() — VS Code variants", () => {
     );
     const result = detectCline(dir.path);
     expect(result.installed).toBe(true);
-    expect(result.paths.globalStorageDir).toContain("/Code/");
+    expect(toPosix(result.paths.globalStorageDir ?? "")).toContain("/Code/");
   });
 
   test("detects Insiders install", async () => {
@@ -100,7 +104,10 @@ describe("roo-code detect() — VS Code variants + casing", () => {
     setPlatform("linux");
     const p = getRooStorage("/home/alice");
     // When nothing exists we return the first candidate (stable Code, mixed case).
-    expect(p).toBe("/home/alice/.config/Code/User/globalStorage/RooVeterinaryInc.roo-cline");
+    // toPosix normalizes the host separator (the Windows CI host emits `\`).
+    expect(toPosix(p)).toBe(
+      "/home/alice/.config/Code/User/globalStorage/RooVeterinaryInc.roo-cline",
+    );
   });
 
   test("detects mixed-case dir on disk", async () => {

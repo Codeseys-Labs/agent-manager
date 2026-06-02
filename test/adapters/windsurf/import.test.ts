@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { importConfig } from "@/adapters/windsurf/import.ts";
+import { toPosix } from "../../helpers/path.ts";
 import { type TestDir, createTestDir } from "../../helpers/tmp.ts";
 
 describe("windsurf importConfig()", () => {
@@ -152,7 +153,7 @@ describe("windsurf importConfig()", () => {
     const research = result.skills.find((s) => s.name === "research");
     expect(research).toBeDefined();
     expect(research?.description).toBe("Research Skill");
-    expect(research?.path).toContain(".windsurf/skills/research");
+    expect(toPosix(research?.path ?? "")).toContain(".windsurf/skills/research");
   });
 
   test("imports standalone skill .md files", async () => {

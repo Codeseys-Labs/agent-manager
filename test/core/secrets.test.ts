@@ -69,8 +69,12 @@ describe("interpolateEnv", () => {
   });
 
   test("warns on unresolved variable (non-strict)", () => {
-    // Ensure this var is NOT set
-    process.env.AM_NONEXISTENT_VAR = undefined;
+    // Ensure this var is NOT set. `process.env.X = undefined` is unreliable —
+    // on Windows it stringifies to the literal "undefined" (a DEFINED value),
+    // so interpolateEnv would resolve it instead of warning. `delete` truly
+    // unsets it on every platform.
+    // biome-ignore lint/performance/noDelete: env var must be truly unset cross-platform
+    delete process.env.AM_NONEXISTENT_VAR;
 
     const config: Config = {
       servers: {
@@ -89,7 +93,10 @@ describe("interpolateEnv", () => {
   });
 
   test("throws on unresolved variable (strict mode)", () => {
-    process.env.AM_NONEXISTENT_VAR = undefined;
+    // See above: `delete` truly unsets the var on every platform; assigning
+    // `undefined` stringifies to "undefined" on Windows and would resolve.
+    // biome-ignore lint/performance/noDelete: env var must be truly unset cross-platform
+    delete process.env.AM_NONEXISTENT_VAR;
 
     const config: Config = {
       servers: {

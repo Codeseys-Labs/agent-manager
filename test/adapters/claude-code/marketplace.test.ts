@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { scanClaudePlugins } from "@/adapters/claude-code/marketplace.ts";
+import { toPosix } from "../../helpers/path.ts";
 import { type TestDir, createTestDir } from "../../helpers/tmp.ts";
 
 describe("scanClaudePlugins()", () => {
@@ -98,7 +99,7 @@ describe("scanClaudePlugins()", () => {
     expect(result.items[0].skills).toHaveLength(1);
     expect(result.items[0].skills[0].name).toBe("bar-skill");
     expect(result.items[0].skills[0].description).toBe("Does bar things");
-    expect(result.items[0].skills[0].path).toContain("skills/bar/SKILL.md");
+    expect(toPosix(result.items[0].skills[0].path)).toContain("skills/bar/SKILL.md");
     expect(result.items[0].servers).toHaveLength(0);
   });
 

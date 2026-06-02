@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { detect } from "@/adapters/amazon-q/detect.ts";
+import { toPosix } from "../../helpers/path.ts";
 import { type TestDir, createTestDir } from "../../helpers/tmp.ts";
 
 describe("amazon-q detect()", () => {
@@ -14,7 +15,7 @@ describe("amazon-q detect()", () => {
     await dir.write(".aws/amazonq/.keep", "");
     const result = detect(dir.path);
     expect(result.installed).toBe(true);
-    expect(result.paths.configDir).toContain(".aws/amazonq");
+    expect(toPosix(result.paths.configDir ?? "")).toContain(".aws/amazonq");
   });
 
   test("detects mcp.json", async () => {
@@ -39,7 +40,7 @@ describe("amazon-q detect()", () => {
     await dir.write("project/.amazonq/mcp.json", JSON.stringify({ mcpServers: {} }));
 
     const result = detect(dir.path, projectDir);
-    expect(result.paths.projectMcpConfig).toContain(".amazonq/mcp.json");
+    expect(toPosix(result.paths.projectMcpConfig ?? "")).toContain(".amazonq/mcp.json");
   });
 
   test("includes project .amazonq/rules/ path", async () => {
@@ -49,6 +50,6 @@ describe("amazon-q detect()", () => {
     await dir.write("project/.amazonq/rules/test.md", "# Rule");
 
     const result = detect(dir.path, projectDir);
-    expect(result.paths.rulesDir).toContain(".amazonq/rules");
+    expect(toPosix(result.paths.rulesDir ?? "")).toContain(".amazonq/rules");
   });
 });

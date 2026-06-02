@@ -3,6 +3,7 @@ import { join, relative } from "node:path";
 import { getGlobalStoragePath } from "@/adapters/roo-code/detect.ts";
 import { exportConfig } from "@/adapters/roo-code/export.ts";
 import type { ResolvedConfig, ResolvedServer } from "@/adapters/types.ts";
+import { toPosix } from "../../helpers/path.ts";
 import { type TestDir, createTestDir } from "../../helpers/tmp.ts";
 
 function settingsRel(home: string): string {
@@ -58,7 +59,7 @@ describe("roo-code exportConfig()", () => {
     const result = exportConfig(resolved, {}, dir.path);
     expect(result.warnings).toHaveLength(0);
 
-    const mcpFile = result.files.find((f) => f.path.includes("mcp_settings.json"));
+    const mcpFile = result.files.find((f) => toPosix(f.path).includes("mcp_settings.json"));
     expect(mcpFile).toBeDefined();
     expect(mcpFile?.written).toBe(true);
 
@@ -80,7 +81,7 @@ describe("roo-code exportConfig()", () => {
     });
 
     const result = exportConfig(resolved, { projectPath: projectDir }, dir.path);
-    const projectFile = result.files.find((f) => f.path.includes(".roo/mcp.json"));
+    const projectFile = result.files.find((f) => toPosix(f.path).includes(".roo/mcp.json"));
     expect(projectFile).toBeDefined();
     expect(projectFile?.written).toBe(true);
 
@@ -99,7 +100,7 @@ describe("roo-code exportConfig()", () => {
     });
 
     const result = exportConfig(resolved, {}, dir.path);
-    const mcpFile = result.files.find((f) => f.path.includes("mcp_settings.json"));
+    const mcpFile = result.files.find((f) => toPosix(f.path).includes("mcp_settings.json"));
     expect(mcpFile).toBeDefined();
     const output = JSON.parse(mcpFile!.content);
     expect(Object.keys(output.mcpServers)).toHaveLength(0);
@@ -117,7 +118,7 @@ describe("roo-code exportConfig()", () => {
     });
 
     const result = exportConfig(resolved, {}, dir.path);
-    const mcpFile = result.files.find((f) => f.path.includes("mcp_settings.json"));
+    const mcpFile = result.files.find((f) => toPosix(f.path).includes("mcp_settings.json"));
     const output = JSON.parse(mcpFile!.content);
     expect(output.mcpServers.fetch.alwaysAllow).toEqual(["fetch_url"]);
   });
@@ -141,10 +142,10 @@ describe("roo-code exportConfig()", () => {
     );
 
     const result = exportConfig(resolved, { projectPath: projectDir, dryRun: true }, dir.path);
-    const ruleFile = result.files.find((f) => f.path.endsWith("code-style.md"));
+    const ruleFile = result.files.find((f) => toPosix(f.path).endsWith("code-style.md"));
     expect(ruleFile).toBeDefined();
     expect(ruleFile!.content).toBe("Use TypeScript strict mode.\n");
-    expect(ruleFile?.path).toContain(".roo/rules/");
+    expect(ruleFile && toPosix(ruleFile.path)).toContain(".roo/rules/");
   });
 
   test("skips instructions targeted at other adapters", async () => {
@@ -166,7 +167,7 @@ describe("roo-code exportConfig()", () => {
     );
 
     const result = exportConfig(resolved, { projectPath: projectDir, dryRun: true }, dir.path);
-    const ruleFiles = result.files.filter((f) => f.path.includes(".roo/rules/"));
+    const ruleFiles = result.files.filter((f) => toPosix(f.path).includes(".roo/rules/"));
     expect(ruleFiles).toHaveLength(0);
   });
 
@@ -187,7 +188,7 @@ describe("roo-code exportConfig()", () => {
     });
 
     const result = exportConfig(resolved, {}, dir.path);
-    const mcpFile = result.files.find((f) => f.path.includes("mcp_settings.json"));
+    const mcpFile = result.files.find((f) => toPosix(f.path).includes("mcp_settings.json"));
     const output = JSON.parse(mcpFile!.content);
     expect(output.customField).toBe("preserved");
     expect(output.mcpServers.fetch.command).toBe("uvx");

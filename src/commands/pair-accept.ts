@@ -242,7 +242,11 @@ export const pairAcceptCommand = defineCommand({
       amError(err, opts);
       process.exitCode = 1;
     } finally {
-      if (prevIdentityDir === undefined) process.env.AM_AGE_IDENTITY_DIR = undefined;
+      // xplat: `process.env.X = undefined` coerces to the literal string
+      // "undefined" on Windows (POSIX bun deletes the key), which would poison
+      // subsequent in-process age operations. Reflect.deleteProperty truly
+      // unsets on every platform.
+      if (prevIdentityDir === undefined) Reflect.deleteProperty(process.env, "AM_AGE_IDENTITY_DIR");
       else process.env.AM_AGE_IDENTITY_DIR = prevIdentityDir;
     }
   },

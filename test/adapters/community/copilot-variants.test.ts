@@ -4,6 +4,7 @@ import { detect } from "@/adapters/copilot/detect.ts";
 import { exportConfig } from "@/adapters/copilot/export.ts";
 import { importConfig } from "@/adapters/copilot/import.ts";
 import type { ResolvedConfig } from "@/adapters/types.ts";
+import { toPosix } from "../../helpers/path.ts";
 import { type TestDir, createTestDir } from "../../helpers/tmp.ts";
 
 /**
@@ -74,7 +75,9 @@ describe("copilot detect() — variant + platform coverage", () => {
     );
     const result = detect(dir.path);
     expect(result.installed).toBe(true);
-    expect(result.paths.userMcpConfig).toContain("Library/Application Support/Code/User/mcp.json");
+    expect(toPosix(result.paths.userMcpConfig ?? "")).toContain(
+      "Library/Application Support/Code/User/mcp.json",
+    );
   });
 
   test("win32: respects APPDATA for user mcp.json location", async () => {
@@ -98,7 +101,7 @@ describe("copilot detect() — variant + platform coverage", () => {
     await dir.write(".config/Code/User/mcp.json", JSON.stringify({ servers: {} }));
     await dir.write(".config/Code - Insiders/User/mcp.json", JSON.stringify({ servers: {} }));
     const result = detect(dir.path);
-    expect(result.paths.userMcpConfig).toContain("/.config/Code/User/");
+    expect(toPosix(result.paths.userMcpConfig ?? "")).toContain("/.config/Code/User/");
     expect(result.paths.userMcpConfig).not.toContain("Insiders");
   });
 });
@@ -180,7 +183,7 @@ describe("copilot exportConfig() — writes to existing user-scope mcp.json", ()
     };
 
     const result = exportConfig(cfg, { dryRun: true }, dir.path);
-    const userFile = result.files.find((f) => f.path.endsWith("Code/User/mcp.json"));
+    const userFile = result.files.find((f) => toPosix(f.path).endsWith("Code/User/mcp.json"));
     expect(userFile).toBeDefined();
     const parsed = JSON.parse(userFile?.content ?? "{}");
     expect(parsed.servers["user-srv"].command).toBe("uvx");
@@ -212,7 +215,7 @@ describe("copilot exportConfig() — writes to existing user-scope mcp.json", ()
     };
 
     const result = exportConfig(cfg, { dryRun: true }, dir.path);
-    const userFile = result.files.find((f) => f.path.endsWith("Code/User/mcp.json"));
+    const userFile = result.files.find((f) => toPosix(f.path).endsWith("Code/User/mcp.json"));
     expect(userFile).toBeUndefined();
     expect(result.warnings.some((w) => w.includes("user-scope"))).toBe(true);
   });

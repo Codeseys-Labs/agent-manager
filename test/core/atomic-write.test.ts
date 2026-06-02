@@ -42,8 +42,15 @@ describe("atomicWriteFileSync", () => {
   test("preserves file mode when specified", () => {
     const target = join(dir, "secret.txt");
     atomicWriteFileSync(target, "sensitive", { mode: 0o600 });
-    const mode = statSync(target).mode & 0o777;
-    expect(mode).toBe(0o600);
+    // Windows NTFS does not honour POSIX file modes — chmod is a near-no-op, so
+    // `statSync().mode & 0o777` is not 0o600 there. Assert the exact mode only on
+    // POSIX; on Windows assert the write itself succeeded (content present).
+    if (process.platform !== "win32") {
+      const mode = statSync(target).mode & 0o777;
+      expect(mode).toBe(0o600);
+    } else {
+      expect(readFileSync(target, "utf-8")).toBe("sensitive");
+    }
   });
 
   test("does not leave tmp files after success", () => {
@@ -110,8 +117,15 @@ describe("atomicWriteFile (async)", () => {
   test("preserves file mode when specified", async () => {
     const target = join(dir, "secret.txt");
     await atomicWriteFile(target, "sensitive", { mode: 0o600 });
-    const mode = statSync(target).mode & 0o777;
-    expect(mode).toBe(0o600);
+    // Windows NTFS does not honour POSIX file modes — chmod is a near-no-op, so
+    // `statSync().mode & 0o777` is not 0o600 there. Assert the exact mode only on
+    // POSIX; on Windows assert the write itself succeeded (content present).
+    if (process.platform !== "win32") {
+      const mode = statSync(target).mode & 0o777;
+      expect(mode).toBe(0o600);
+    } else {
+      expect(readFileSync(target, "utf-8")).toBe("sensitive");
+    }
   });
 
   test("does not leave tmp files after success", async () => {

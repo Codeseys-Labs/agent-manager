@@ -18,10 +18,13 @@ import { join } from "node:path";
 
 function parseFrontmatter(path: string): Record<string, string> {
   const raw = readFileSync(path, "utf-8");
-  const match = raw.match(/^---\n([\s\S]*?)\n---/);
+  // CRLF-tolerant: git on Windows may check out ADRs with `\r\n` line endings
+  // (autocrlf), so `---\n` would never match `---\r\n`. Accept optional `\r`
+  // around the fence and split on `\r?\n` so the values aren't `\r`-suffixed.
+  const match = raw.match(/^---\r?\n([\s\S]*?)\r?\n---/);
   if (!match) throw new Error(`No frontmatter found in ${path}`);
   const map: Record<string, string> = {};
-  for (const line of match[1].split("\n")) {
+  for (const line of match[1].split(/\r?\n/)) {
     const kv = line.match(/^(\w+):\s*(.+)$/);
     if (kv) map[kv[1]] = kv[2].trim();
   }

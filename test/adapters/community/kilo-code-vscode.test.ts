@@ -4,6 +4,7 @@ import { detect, findKiloExtensionStoragePath } from "@/adapters/kilo-code/detec
 import { exportConfig } from "@/adapters/kilo-code/export.ts";
 import { importConfig } from "@/adapters/kilo-code/import.ts";
 import type { ResolvedConfig, ResolvedServer } from "@/adapters/types.ts";
+import { toPosix } from "../../helpers/path.ts";
 import { type TestDir, createTestDir } from "../../helpers/tmp.ts";
 
 /**
@@ -72,7 +73,9 @@ describe("kilo-code VS Code extension surface", () => {
     );
     const result = detect(dir.path);
     expect(result.installed).toBe(true);
-    expect(result.paths.extensionStorageDir).toContain("globalStorage/kilocode.Kilo-Code");
+    expect(toPosix(result.paths.extensionStorageDir ?? "")).toContain(
+      "globalStorage/kilocode.Kilo-Code",
+    );
     expect(result.paths.extensionMcpSettings).toContain("mcp_settings.json");
   });
 
@@ -156,7 +159,7 @@ describe("kilo-code VS Code extension surface", () => {
 
     const result = await exportConfig(cfg, { dryRun: true }, dir.path);
     const extFile = result.files.find((f) =>
-      f.path.includes("globalStorage/kilocode.Kilo-Code/settings/mcp_settings.json"),
+      toPosix(f.path).includes("globalStorage/kilocode.Kilo-Code/settings/mcp_settings.json"),
     );
     expect(extFile).toBeDefined();
     const parsed = JSON.parse(extFile?.content ?? "{}");
@@ -181,7 +184,9 @@ describe("kilo-code VS Code extension surface", () => {
     };
 
     const result = await exportConfig(cfg, { dryRun: true }, dir.path);
-    const extFile = result.files.find((f) => f.path.includes("globalStorage/kilocode.Kilo-Code"));
+    const extFile = result.files.find((f) =>
+      toPosix(f.path).includes("globalStorage/kilocode.Kilo-Code"),
+    );
     expect(extFile).toBeUndefined();
   });
 });

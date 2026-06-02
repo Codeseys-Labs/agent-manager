@@ -56,10 +56,18 @@ export class MarketplaceSecurityError extends Error {
  */
 export function isLocalPath(url: string): boolean {
   if (!url) return false;
+  // POSIX absolute / relative.
   if (url.startsWith("/")) return true;
   if (url.startsWith("./")) return true;
   if (url.startsWith("../")) return true;
   if (url === ".." || url === ".") return true;
+  // Windows: drive-letter absolute (C:\foo or C:/foo), UNC (\\server\share),
+  // and backslash-relative (.\foo, ..\foo). A bare scheme like "https://" never
+  // matches the drive-letter regex because the scheme is more than one char.
+  if (/^[a-zA-Z]:[\\/]/.test(url)) return true;
+  if (url.startsWith("\\\\")) return true;
+  if (url.startsWith(".\\")) return true;
+  if (url.startsWith("..\\")) return true;
   return false;
 }
 

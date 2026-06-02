@@ -4,10 +4,12 @@ import { bunExe } from "../helpers/bun-exe";
 import { type TestDir, createTestDir } from "../helpers/tmp";
 
 // Integration tests spawn bun subprocesses per runAM() call; the cold-start
-// cost of `bun run src/cli.ts` on CI and some dev machines is 1-3s, and these
-// tests chain 2+ calls each. The default 5s test timeout leaves no headroom —
-// bump to 30s so slow CI runners don't cause false flakes.
-setDefaultTimeout(30_000);
+// cost of `bun run src/cli.ts` is 1-3s on Linux/macOS and 3-5s on the Windows
+// runner (slower process spawn + module load). The `am apply` cases also pay
+// the 13-adapter filesystem probe (getDetectedAdapters), which is notably
+// slower under %APPDATA% / VS Code variant scanning on Windows. These tests
+// chain 2+ calls each; 60s keeps the Windows runner from false-timeout flakes.
+setDefaultTimeout(60_000);
 
 let testDir: TestDir;
 

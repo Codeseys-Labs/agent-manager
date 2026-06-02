@@ -3,11 +3,13 @@ import { join } from "node:path";
 import { bunExe } from "../helpers/bun-exe";
 import { type TestDir, createTestDir } from "../helpers/tmp";
 
-// Each test spawns `bun run src/cli.ts` — cold-start overhead is 1-3s
-// per invocation; some tests chain 5+ calls. The 5s default is too tight
-// under full-suite load. 30s gives comfortable headroom without hiding
-// real regressions (per-invocation should be well under 10s).
-setDefaultTimeout(30_000);
+// Each test spawns `bun run src/cli.ts` — cold-start overhead is 1-3s per
+// invocation on Linux/macOS and 3-5s on the Windows runner (process spawn +
+// module load is markedly slower there). The "full lifecycle" test chains 8
+// sequential subprocess calls, so on Windows a single test can approach 30s.
+// 60s gives comfortable headroom without hiding real regressions
+// (per-invocation should be well under 10s on any platform).
+setDefaultTimeout(60_000);
 
 let testDir: TestDir;
 
@@ -287,7 +289,15 @@ describe("lifecycle integration tests", () => {
     ): Promise<{ stdout: string; stderr: string; code: number }> {
       const proc = Bun.spawn([bunExe(), "run", "src/cli.ts", ...args], {
         cwd: join(import.meta.dir, "../.."),
-        env: { ...process.env, AM_CONFIG_DIR: testDir.path, HOME: fakeHome },
+        // HOME redirects homedir() on POSIX; USERPROFILE does on Windows
+        // (os.homedir() ignores HOME there). Set both so the claude-code
+        // adapter reads/writes ~/.claude.json under fakeHome on every platform.
+        env: {
+          ...process.env,
+          AM_CONFIG_DIR: testDir.path,
+          HOME: fakeHome,
+          USERPROFILE: fakeHome,
+        },
         stdout: "pipe",
         stderr: "pipe",
       });
@@ -336,7 +346,15 @@ describe("lifecycle integration tests", () => {
     ): Promise<{ stdout: string; stderr: string; code: number }> {
       const proc = Bun.spawn([bunExe(), "run", "src/cli.ts", ...args], {
         cwd: join(import.meta.dir, "../.."),
-        env: { ...process.env, AM_CONFIG_DIR: testDir.path, HOME: fakeHome },
+        // HOME redirects homedir() on POSIX; USERPROFILE does on Windows
+        // (os.homedir() ignores HOME there). Set both so the claude-code
+        // adapter reads/writes ~/.claude.json under fakeHome on every platform.
+        env: {
+          ...process.env,
+          AM_CONFIG_DIR: testDir.path,
+          HOME: fakeHome,
+          USERPROFILE: fakeHome,
+        },
         stdout: "pipe",
         stderr: "pipe",
       });
@@ -373,7 +391,15 @@ describe("lifecycle integration tests", () => {
     ): Promise<{ stdout: string; stderr: string; code: number }> {
       const proc = Bun.spawn([bunExe(), "run", "src/cli.ts", ...args], {
         cwd: join(import.meta.dir, "../.."),
-        env: { ...process.env, AM_CONFIG_DIR: testDir.path, HOME: fakeHome },
+        // HOME redirects homedir() on POSIX; USERPROFILE does on Windows
+        // (os.homedir() ignores HOME there). Set both so the claude-code
+        // adapter reads/writes ~/.claude.json under fakeHome on every platform.
+        env: {
+          ...process.env,
+          AM_CONFIG_DIR: testDir.path,
+          HOME: fakeHome,
+          USERPROFILE: fakeHome,
+        },
         stdout: "pipe",
         stderr: "pipe",
       });
@@ -419,7 +445,8 @@ describe("lifecycle integration tests", () => {
     ): Promise<{ stdout: string; stderr: string; code: number }> {
       const proc = Bun.spawn([bunExe(), "run", "src/cli.ts", ...args], {
         cwd: join(import.meta.dir, "../.."),
-        env: { ...process.env, AM_CONFIG_DIR: configDir, HOME: fakeHome },
+        // HOME (POSIX) + USERPROFILE (Windows) both redirect homedir().
+        env: { ...process.env, AM_CONFIG_DIR: configDir, HOME: fakeHome, USERPROFILE: fakeHome },
         stdout: "pipe",
         stderr: "pipe",
       });
