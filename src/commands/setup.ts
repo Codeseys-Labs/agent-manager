@@ -34,7 +34,7 @@ import { defineCommand } from "citty";
 import { getDetectedAdapters } from "../adapters/registry";
 import type { Adapter } from "../adapters/types";
 import { resolveConfigDir, tryReadConfig } from "../core/config";
-import { applyResolved, withConfig } from "../core/controller";
+import { APPLY_SAFE_DEFAULTS, applyResolved, withConfig } from "../core/controller";
 import { cloneRepo, getStatus, initRepo } from "../core/git";
 import type { Config } from "../core/schema";
 import { generateKey, loadKey, resolveKeyPath, saveKey } from "../core/secrets";
@@ -601,7 +601,10 @@ export const setupCommand = defineCommand({
         const preview = await applyResolved(configDir, {
           dryRun: true,
           profile: profileChosen,
-          diff: true,
+          // 5th apply surface (ef01): derive the fail-closed drift gate from the
+          // SHARED APPLY_SAFE_DEFAULTS so the safe posture lives in ONE place
+          // across all five surfaces (CLI / MCP / web / TUI / setup wizard).
+          diff: APPLY_SAFE_DEFAULTS.diff,
           target,
         });
         const wouldWrite = preview.results.reduce(
@@ -627,8 +630,10 @@ export const setupCommand = defineCommand({
           } else {
             const real = await applyResolved(configDir, {
               profile: profileChosen,
-              diff: true,
-              force: Boolean(args.force),
+              // ef01: shared fail-closed default; `--force` is the wizard's
+              // explicit per-run opt-in to overwrite a drifted target.
+              diff: APPLY_SAFE_DEFAULTS.diff,
+              force: args.force ? true : APPLY_SAFE_DEFAULTS.force,
               target,
             });
             applied = true;
@@ -636,11 +641,12 @@ export const setupCommand = defineCommand({
           }
         } else {
           // Non-interactive: apply directly (the run was explicitly requested
-          // via --yes / --non-interactive / --json).
+          // via --yes / --non-interactive / --json). Same SHARED
+          // APPLY_SAFE_DEFAULTS posture as the interactive path (ef01).
           const real = await applyResolved(configDir, {
             profile: profileChosen,
-            diff: true,
-            force: Boolean(args.force),
+            diff: APPLY_SAFE_DEFAULTS.diff,
+            force: args.force ? true : APPLY_SAFE_DEFAULTS.force,
             target,
           });
           applied = true;
