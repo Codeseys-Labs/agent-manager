@@ -602,3 +602,116 @@ describe("am wiki: --global threading for briefing/export (QW-followup)", () => 
     expect(payload.briefing).not.toContain("us-east-1");
   });
 });
+
+// ── WIKI-FIX-1 regression: `am wiki lint` low-confidence detection ──
+//
+// ADR-0054 R4 changed page.confidence from a raw 0.0-1.0 number to the
+// WikiConfidence enum. The old lint used a numeric `p.confidence < 0.3`
+// comparison which, against an enum string, is always false — so the
+// low_confidence count was permanently 0 and the human path called
+// `.toFixed(2)` on a string (would throw). This was uncovered, which is why it
+// slipped review. These tests pin the enum-aware behaviour on both output paths.
+
+describe("am wiki lint: low-confidence detection (WIKI-FIX-1)", () => {
+  let dir: TestDir;
+  let configDir: string;
+  let wikiDir: string;
+
+  beforeEach(async () => {
+    dir = await createTestDir("am-wiki-lint-lowconf-");
+    configDir = dir.path;
+    process.env.AM_CONFIG_DIR = configDir;
+    wikiDir = resolveWikiDir({ global: true });
+    await ensureWikiDirs(wikiDir);
+    captureConsole();
+    process.exitCode = undefined;
+  });
+
+  afterEach(async () => {
+    restoreConsole();
+    process.exitCode = undefined;
+    if (origConfigDir === undefined) {
+      // biome-ignore lint/performance/noDelete: env var cleanup
+      delete process.env.AM_CONFIG_DIR;
+    } else {
+      process.env.AM_CONFIG_DIR = origConfigDir;
+    }
+    if (dir) await dir.cleanup();
+  });
+
+  async function seedConfidence(): Promise<void> {
+    // Enum confidence (post-R4): one "low", one "high".
+    await writePage(
+      makePage({
+        slug: "shaky-fact",
+        title: "Shaky Fact",
+        content: "An unverified, low-confidence claim.",
+        confidence: "low",
+      }),
+      wikiDir,
+    );
+    await writePage(
+      makePage({
+        slug: "solid-fact",
+        title: "Solid Fact",
+        content: "A corroborated, high-confidence claim.",
+        confidence: "high",
+      }),
+      wikiDir,
+    );
+    await rebuildSearchIndex(wikiDir);
+  }
+
+  test("JSON: flags only the 'low' enum page (numeric < 0.3 used to flag none)", async () => {
+    await seedConfidence();
+    await lintSubcommand.run!({
+      args: { json: true, global: true, quiet: false, verbose: false },
+      cmd: lintSubcommand,
+      rawArgs: [],
+      data: undefined,
+    } as any);
+    const payload = JSON.parse(consoleOutput.join("\n"));
+    expect(payload.low_confidence).toBe(1);
+    expect(payload.low_confidence_slugs).toEqual(["shaky-fact"]);
+  });
+
+  test("legacy numeric confidence is normalised to the enum bucket before flagging", async () => {
+    // A pre-R4 page that stored a raw number below the low threshold (< 0.4).
+    await writePage(
+      makePage({
+        slug: "legacy-low",
+        title: "Legacy Low",
+        content: "Stored a numeric 0.2 confidence on disk (pre-R4).",
+        confidence: 0.2,
+      }),
+      wikiDir,
+    );
+    await rebuildSearchIndex(wikiDir);
+
+    await lintSubcommand.run!({
+      args: { json: true, global: true, quiet: false, verbose: false },
+      cmd: lintSubcommand,
+      rawArgs: [],
+      data: undefined,
+    } as any);
+    const payload = JSON.parse(consoleOutput.join("\n"));
+    expect(payload.low_confidence).toBe(1);
+    expect(payload.low_confidence_slugs).toEqual(["legacy-low"]);
+  });
+
+  test("human output displays the enum string (never calls .toFixed on a string)", async () => {
+    await seedConfidence();
+    await lintSubcommand.run!({
+      args: { json: false, global: true, quiet: false, verbose: false },
+      cmd: lintSubcommand,
+      rawArgs: [],
+      data: undefined,
+    } as any);
+    const joined = consoleOutput.join("\n");
+    // The report mentions the low-confidence slug and prints the enum label,
+    // not a numeric .toFixed() value (which would have thrown).
+    expect(joined).toContain("Low confidence (1");
+    expect(joined).toContain("shaky-fact (confidence: low)");
+    expect(consoleErrors.join("\n")).not.toMatch(/toFixed|TypeError/);
+  });
+});

@@ -90,7 +90,10 @@ describe("wiki/storage", () => {
       expect(loaded!.backlinks).toEqual(page.backlinks);
       expect(loaded!.created).toBe(page.created);
       expect(loaded!.updated).toBe(page.updated);
-      expect(loaded!.confidence).toBe(page.confidence);
+      // ADR-0054 R4: confidence is now the low|medium|high enum. A legacy
+      // numeric input (0.85) is normalised to its bucket ("high") on write and
+      // reads back as the enum, never as the original number.
+      expect(loaded!.confidence).toBe("high");
     });
 
     test("roundtrip works for pages with empty arrays", async () => {

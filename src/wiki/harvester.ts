@@ -381,14 +381,30 @@ export async function harvestSession(session: Session): Promise<KnowledgeEntry[]
 /**
  * Harvest a session and write results as wiki pages (the "ingest" flow).
  * Returns the created WikiPage slugs.
+ *
+ * ADR-0054 R3: `opts.catalogEntities` carries the resolved catalog's entity
+ * names (servers/agents/skills/instructions). It is forwarded to
+ * {@link writePage}'s NER so harvested pages auto-link the real catalog the
+ * moment they are written, instead of only the static fallback vocabulary.
+ * Resolution lives in the command layer (`am wiki ingest`/`harvest`) so
+ * `src/wiki/*` stays decoupled from `src/core/*` per ADR-0010 — the harvester
+ * receives the names as a plain string list, never an import of ResolvedConfig.
  */
-export async function harvestSessionAsPages(session: Session): Promise<string[]> {
+export async function harvestSessionAsPages(
+  session: Session,
+  opts?: { catalogEntities?: Iterable<string>; wikiDir?: string },
+): Promise<string[]> {
   const entries = await harvestSession(session);
   const slugs: string[] = [];
 
   for (const entry of entries) {
     const page = entryToWikiPage(entry);
-    await writePage(page);
+    await writePage(page, {
+      ...(opts?.wikiDir !== undefined ? { wikiDir: opts.wikiDir } : {}),
+      ...(opts?.catalogEntities !== undefined
+        ? { ner: { catalogEntities: opts.catalogEntities } }
+        : {}),
+    });
     slugs.push(page.slug);
   }
 

@@ -7,7 +7,7 @@
 
 import { entityToSlug, extractEntities, generateWikilinks } from "./ner";
 import { listPages, queryEntries, searchEntries, searchPages } from "./storage";
-import type { KnowledgeEntry, WikiPage } from "./types";
+import { type KnowledgeEntry, type WikiPage, normalizeConfidence } from "./types";
 
 // ── Public API ──────────────────────────────────────────────────
 
@@ -68,8 +68,9 @@ export async function synthesizeContext(
     seen.add(page.slug);
     count++;
 
-    const confidenceLabel =
-      (page.confidence ?? 0.5) >= 0.7 ? "high" : (page.confidence ?? 0.5) >= 0.4 ? "medium" : "low";
+    // ADR-0054 R4: page.confidence is the enum (or, transitionally, a legacy
+    // number); normalizeConfidence handles both and yields the label directly.
+    const confidenceLabel = normalizeConfidence(page.confidence) ?? "medium";
     lines.push(`### ${page.title} (confidence: ${confidenceLabel})`);
     lines.push("");
     // Truncate content for context

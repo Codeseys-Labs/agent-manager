@@ -32,6 +32,13 @@ import MiniSearch from "minisearch";
 import { resolveConfigDir, resolveProjectConfig } from "../core/config";
 import { isNotFound } from "../lib/errors";
 import { sanitizePathSegment } from "../lib/safe-path";
+// ADR-0054 R1: writePage maintains the graph + wikilink edges + search index
+// on the write path. These imports form a deliberate cycle with graph.ts
+// (which imports ensureWikiDirs/resolveWikiDir from here) — safe because every
+// reference is inside a function body, never at module-evaluation time.
+import { addPageToGraph, loadGraph, removePageFromGraph, saveGraph } from "./graph";
+import { type NerOptions, generateWikilinks } from "./ner";
+import { type WikiPage, confidenceToScore, normalizeConfidence } from "./types";
 import type {
   EntityType,
   KnowledgeEntry,
@@ -39,7 +46,6 @@ import type {
   KnowledgeSource,
   Provenance,
   WikiIndex,
-  WikiPage,
   WikiPageType,
 } from "./types";
 
@@ -581,9 +587,83 @@ function quoteYamlIfNeeded(s: string): string {
 
 // ── Page CRUD ───────────────────────────────────────────────────
 
-/** Write a wiki page to disk as a markdown file with frontmatter */
-export async function writePage(page: WikiPage, wikiDir?: string): Promise<void> {
+/** Options controlling {@link writePage}'s write-path side-effects (ADR-0054 R1). */
+export interface WritePageOptions {
+  /** Wiki directory to write into (defaults to the resolved wiki dir). */
+  wikiDir?: string;
+  /**
+   * When false, skip the live graph + search-index maintenance and the
+   * wikilink auto-insertion. Used by batch paths (rebuild, materialise) that
+   * manage those artifacts themselves to avoid write amplification. Default true.
+   */
+  maintainDerived?: boolean;
+  /**
+   * Catalog entity names (servers/agents/skills/instructions) for NER-driven
+   * wikilink generation (ADR-0054 R3). Forwarded to {@link generateWikilinks}.
+   */
+  ner?: NerOptions;
+}
+
+/**
+ * Collect every existing page slug under `wikiDir` without parsing bodies.
+ * Used to seed wikilink auto-insertion so we only link to pages that exist.
+ */
+async function collectKnownSlugs(wikiDir?: string): Promise<Set<string>> {
+  const slugs = new Set<string>();
+  for (const type of Object.keys(PAGE_SUBDIRS) as WikiPageType[]) {
+    const dir = pageDir(type, wikiDir);
+    let files: string[];
+    try {
+      files = await readdir(dir);
+    } catch (err: unknown) {
+      if (isNotFound(err)) continue;
+      throw err;
+    }
+    for (const file of files) {
+      if (file.endsWith(".md")) slugs.add(file.slice(0, -3));
+    }
+  }
+  return slugs;
+}
+
+/**
+ * Write a wiki page to disk as a markdown file with frontmatter.
+ *
+ * ADR-0054 R1 — the write path is now live: before serialising, the body is
+ * run through {@link generateWikilinks} (catalog-aware via `opts.ner`) so
+ * `[[wikilinks]]` are inserted incrementally; after the atomic rename the page
+ * is folded into the knowledge graph ({@link addPageToGraph}) and the
+ * MiniSearch index ({@link updateSearchIndex}) so backlinks, wikilink edges,
+ * orphan detection, and search all stay current instead of going stale between
+ * manual rebuilds. The graph/index updates are incremental (single-page
+ * add/discard, not a full rebuild) to bound write amplification, and can be
+ * disabled with `opts.maintainDerived = false` for batch callers.
+ *
+ * Accepts either an options object or, for backward compatibility, a bare
+ * `wikiDir` string as the second argument (the historical signature).
+ */
+export async function writePage(page: WikiPage, opts?: WritePageOptions | string): Promise<void> {
+  const options: WritePageOptions = typeof opts === "string" ? { wikiDir: opts } : (opts ?? {});
+  const wikiDir = options.wikiDir;
+  const maintainDerived = options.maintainDerived !== false;
+
   await ensureWikiDirs(wikiDir);
+
+  // ADR-0054 R3/R1: auto-insert wikilinks against existing page slugs before
+  // serialising, so harvested/synthesised pages participate in the graph from
+  // the moment they are written. Skipped when derived maintenance is disabled.
+  let body = page.content;
+  if (maintainDerived) {
+    const knownSlugs = await collectKnownSlugs(wikiDir);
+    if (knownSlugs.size > 0) {
+      body = generateWikilinks(body, knownSlugs, options.ner);
+    }
+  }
+
+  // ADR-0054 R4: confidence is persisted as the canonical enum. Normalise any
+  // legacy numeric value (or numeric string) to the enum before serialising so
+  // the on-disk frontmatter is always one of low|medium|high.
+  const normalizedConfidence = normalizeConfidence(page.confidence);
 
   const metadata: Record<string, unknown> = {
     title: page.title,
@@ -595,20 +675,64 @@ export async function writePage(page: WikiPage, wikiDir?: string): Promise<void>
     created: page.created,
     updated: page.updated,
   };
-  if (page.confidence !== undefined) {
-    metadata.confidence = page.confidence;
+  if (normalizedConfidence !== undefined) {
+    metadata.confidence = normalizedConfidence;
+  }
+  // ADR-0020 frontmatter fields (ADR-0054 R4). Only serialise when present so
+  // pages that never set them stay diff-clean.
+  if (page.entities !== undefined) {
+    metadata.entities = page.entities;
+  }
+  if (page.coverage !== undefined) {
+    metadata.coverage = page.coverage;
+  }
+  if (page.supersedes !== undefined) {
+    metadata.supersedes = page.supersedes;
+  }
+  if (page.superseded_by !== undefined) {
+    metadata.superseded_by = page.superseded_by;
   }
   if (page.agent_id !== undefined) {
     metadata.agent_id = page.agent_id;
   }
 
-  const content = serializeFrontmatter(metadata, page.content);
+  const content = serializeFrontmatter(metadata, body);
   const filePath = pagePath(page.slug, page.type, wikiDir);
 
   // Atomic write
   const tmp = `${filePath}.${Date.now()}.tmp`;
   await writeFile(tmp, content, "utf-8");
   await rename(tmp, filePath);
+
+  if (!maintainDerived) return;
+
+  // ── Live derived-artifact maintenance (ADR-0054 R1) ──
+  // The page written above (with wikilinks inserted) is the source of truth for
+  // the graph and index. Build a normalised in-memory copy so callers' objects
+  // are not mutated and downstream consumers see the enum confidence.
+  const persisted: WikiPage = {
+    ...page,
+    content: body,
+    ...(normalizedConfidence !== undefined ? { confidence: normalizedConfidence } : {}),
+  };
+
+  // Knowledge graph: incremental single-page fold-in (extracts wikilink +
+  // entity-mention edges and refreshes backlinks). Best-effort — a graph write
+  // failure must not lose the page that was already durably written.
+  try {
+    const graph = await loadGraph(wikiDir);
+    await addPageToGraph(persisted, graph, options.ner);
+    await saveGraph(graph, wikiDir);
+  } catch {
+    /* derived artifact — page is already persisted; rebuild can recover */
+  }
+
+  // Search index: incremental discard+add (not a full rebuild).
+  try {
+    await updateSearchIndex(persisted, wikiDir);
+  } catch {
+    /* derived artifact — searchPages falls back to a rebuild on next load */
+  }
 }
 
 /** Read a wiki page by slug. Searches all type subdirectories. */
@@ -626,19 +750,81 @@ export async function readPage(slug: string, wikiDir?: string): Promise<WikiPage
   return null;
 }
 
-/** Delete a wiki page by slug. Returns true if found and deleted. */
-export async function deletePage(slug: string, wikiDir?: string): Promise<boolean> {
+/** Options controlling {@link deletePage}'s write-path side-effects (ADR-0054 R1). */
+export interface DeletePageOptions {
+  /** Wiki directory to delete from (defaults to the resolved wiki dir). */
+  wikiDir?: string;
+  /**
+   * When false, skip the live graph + search-index maintenance — only the `.md`
+   * file is removed. Mirrors {@link WritePageOptions.maintainDerived} so batch
+   * paths (rebuild, materialise) that manage those artifacts themselves avoid
+   * write amplification. Default true.
+   */
+  maintainDerived?: boolean;
+}
+
+/**
+ * Delete a wiki page by slug. Returns true if found and deleted.
+ *
+ * ADR-0054 R1 — the delete path is now symmetric with the write path: after the
+ * `.md` file is removed, the page's node + every incident edge are pruned from
+ * the knowledge graph ({@link removePageFromGraph}) and its document is dropped
+ * from the MiniSearch index ({@link removeFromSearchIndex}) so orphan detection,
+ * backlinks, and search never reference a slug that no longer exists. The
+ * graph/index updates are best-effort (the `.md` is already gone; a rebuild can
+ * always recover the derived artifacts) and can be disabled with
+ * `opts.maintainDerived = false` for batch callers.
+ *
+ * Accepts either an options object or, for backward compatibility, a bare
+ * `wikiDir` string as the second argument (the historical signature).
+ */
+export async function deletePage(
+  slug: string,
+  opts?: DeletePageOptions | string,
+): Promise<boolean> {
+  const options: DeletePageOptions = typeof opts === "string" ? { wikiDir: opts } : (opts ?? {});
+  const wikiDir = options.wikiDir;
+  const maintainDerived = options.maintainDerived !== false;
+
+  let deleted = false;
   for (const type of Object.keys(PAGE_SUBDIRS) as WikiPageType[]) {
     const filePath = pagePath(slug, type, wikiDir);
     try {
       await rm(filePath);
-      return true;
+      deleted = true;
+      break;
     } catch (err: unknown) {
       if (isNotFound(err)) continue;
       throw err;
     }
   }
-  return false;
+
+  if (!deleted || !maintainDerived) return deleted;
+
+  // ── Live derived-artifact maintenance (ADR-0054 R1) ──
+  // Mirror writePage's symmetry: prune the deleted slug from the graph and the
+  // search index so neither keeps referencing a page that is gone. Best-effort —
+  // the page is already removed from disk; a rebuild recovers either artifact.
+  //
+  // The graph node + the MiniSearch document are keyed on the raw `page.slug`
+  // (writePage folds in `persisted.slug` / `page.slug`, not the path-sanitized
+  // form which is only used for the filename), so prune by the raw slug here so
+  // the key matches what the write path stored.
+  try {
+    const graph = await loadGraph(wikiDir);
+    removePageFromGraph(slug, graph);
+    await saveGraph(graph, wikiDir);
+  } catch {
+    /* derived artifact — page is already deleted; rebuild can recover */
+  }
+
+  try {
+    await removeFromSearchIndex(slug, wikiDir);
+  } catch {
+    /* derived artifact — searchPages falls back to a rebuild on next load */
+  }
+
+  return deleted;
 }
 
 /** List all wiki pages, optionally filtered by type and/or tag */
@@ -691,8 +877,18 @@ function parseWikiPage(raw: string, fallbackSlug: string): WikiPage | null {
   const backlinks = Array.isArray(metadata.backlinks) ? (metadata.backlinks as string[]) : [];
   const created = (metadata.created as string) ?? new Date().toISOString();
   const updated = (metadata.updated as string) ?? created;
-  const confidence = typeof metadata.confidence === "number" ? metadata.confidence : undefined;
+  // ADR-0054 R4 one-time migration: pre-R4 pages stored a numeric confidence;
+  // normalise whatever is on disk (number, enum string, or numeric string) to
+  // the canonical enum so reads never break across the schema change.
+  const confidence = normalizeConfidence(metadata.confidence);
   const agent_id = typeof metadata.agent_id === "string" ? metadata.agent_id : undefined;
+
+  // ADR-0020 frontmatter fields (ADR-0054 R4).
+  const entities = Array.isArray(metadata.entities) ? (metadata.entities as string[]) : undefined;
+  const coverage = typeof metadata.coverage === "number" ? metadata.coverage : undefined;
+  const supersedes = typeof metadata.supersedes === "string" ? metadata.supersedes : undefined;
+  const superseded_by =
+    typeof metadata.superseded_by === "string" ? metadata.superseded_by : undefined;
 
   return {
     slug,
@@ -704,7 +900,11 @@ function parseWikiPage(raw: string, fallbackSlug: string): WikiPage | null {
     backlinks,
     created,
     updated,
-    confidence,
+    ...(confidence !== undefined ? { confidence } : {}),
+    ...(entities !== undefined ? { entities } : {}),
+    ...(coverage !== undefined ? { coverage } : {}),
+    ...(supersedes !== undefined ? { supersedes } : {}),
+    ...(superseded_by !== undefined ? { superseded_by } : {}),
     ...(agent_id ? { agent_id } : {}),
   };
 }
@@ -873,7 +1073,15 @@ function pageToEntry(page: WikiPage): KnowledgeEntry {
       timestamp: page.created,
     },
     extracted_at: page.created,
-    confidence: page.confidence ?? 0.5,
+    // KnowledgeEntry.confidence is numeric (0.0-1.0). page.confidence is now
+    // the ADR-0020 enum (ADR-0054 R4) — map it back to a representative score.
+    // Tolerate a stray legacy number too.
+    confidence:
+      typeof page.confidence === "number"
+        ? page.confidence
+        : page.confidence !== undefined
+          ? confidenceToScore(page.confidence)
+          : 0.5,
     entity_type: entityType,
     content,
     context,
@@ -892,7 +1100,7 @@ function pageToEntry(page: WikiPage): KnowledgeEntry {
 // ── Legacy CRUD (backward compatible) ───────────────────────────
 
 /** Add a knowledge entry (creates a wiki page internally) */
-export async function addEntry(entry: KnowledgeEntry): Promise<void> {
+export async function addEntry(entry: KnowledgeEntry, opts?: { ner?: NerOptions }): Promise<void> {
   // Check for duplicate
   const existing = await readPage(entry.id);
   if (existing) {
@@ -900,8 +1108,12 @@ export async function addEntry(entry: KnowledgeEntry): Promise<void> {
   }
 
   const page = entryToPage(entry);
-  await writePage(page);
-  await updateSearchIndex(page);
+  // writePage now maintains the search index + graph on the write path
+  // (ADR-0054 R1), so the previously-separate updateSearchIndex call here is
+  // redundant and would double-write the index. `opts.ner` (ADR-0054 R3) lets
+  // the command layer forward the resolved catalog so manual entries auto-link
+  // real catalog names without pulling core into src/wiki/*.
+  await writePage(page, opts?.ner ? { ner: opts.ner } : undefined);
 }
 
 /** Get a single entry by ID */
@@ -924,17 +1136,20 @@ export async function updateEntry(id: string, updates: Partial<KnowledgeEntry>):
 
   // Delete old page first (in case type changed)
   await deletePage(id);
+  // writePage maintains the search index + graph on the write path (ADR-0054
+  // R1); no separate updateSearchIndex call needed.
   await writePage(updatedPage);
-  await updateSearchIndex(updatedPage);
 }
 
 /** Delete an entry by ID */
 export async function deleteEntry(id: string): Promise<void> {
+  // deletePage now maintains the graph + search index on the delete path
+  // (ADR-0054 R1), so the previously-separate removeFromSearchIndex call here is
+  // redundant — and, unlike before, the graph node is pruned too.
   const deleted = await deletePage(id);
   if (!deleted) {
     throw new Error(`Entry "${id}" not found`);
   }
-  await removeFromSearchIndex(id);
 }
 
 /** Query entries using structured filters */

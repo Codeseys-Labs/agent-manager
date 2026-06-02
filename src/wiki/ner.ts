@@ -11,20 +11,20 @@ import type { EntityCategory, ExtractedEntity } from "./types";
 
 // ── Known tool names ────────────────────────────────────────────
 
-const KNOWN_TOOLS = [
-  "Claude Code",
-  "Codex CLI",
-  "Cursor",
-  "GitHub Copilot",
-  "Windsurf",
-  "ForgeCode",
-  "Kilo Code",
-  "Kiro",
-  "Gemini CLI",
-  "Cline",
-  "Roo Code",
-  "Amazon Q",
-  "Continue.dev",
+/**
+ * Small static fallback of generic tech terms and well-known tool names.
+ *
+ * ADR-0054 R3: the wiki should auto-link the *actual* catalog entities
+ * (server/agent/skill/instruction names) rather than a frozen literal list, so
+ * that knowledge becomes a structural peer of config. `extractEntities` now
+ * derives its tool vocabulary from the resolved catalog (passed in via
+ * {@link NerOptions.catalogEntities}) and falls back to this static set only
+ * for generic terms the catalog cannot know about (the runtime, the language,
+ * common editors). This list is intentionally minimal — catalog-specific names
+ * (e.g. a user's MCP servers) must come from the catalog, not from here.
+ */
+const STATIC_FALLBACK_ENTITIES = [
+  // Generic tech / runtime / language terms not in any catalog
   "VS Code",
   "Visual Studio Code",
   "IntelliJ",
@@ -41,7 +41,97 @@ const KNOWN_TOOLS = [
   "React",
   "Hono",
   "Silvery",
+  // Built-in IDE / agent tool display names (stable, ship in the binary)
+  "Claude Code",
+  "Codex CLI",
+  "Cursor",
+  "GitHub Copilot",
+  "Windsurf",
+  "ForgeCode",
+  "Kilo Code",
+  "Kiro",
+  "Gemini CLI",
+  "Cline",
+  "Roo Code",
+  "Amazon Q",
+  "Continue.dev",
 ];
+
+/**
+ * Options controlling entity extraction (ADR-0054 R3).
+ *
+ * `catalogEntities` is the list of real catalog entity names — server, agent,
+ * skill, and instruction names from the resolved config. When provided, these
+ * are matched as `tool_name` entities (alongside the static fallback) so the
+ * wiki auto-links the things it is supposed to be knowledge *about*.
+ */
+export interface NerOptions {
+  /** Real catalog entity names (servers/agents/skills/instructions). */
+  catalogEntities?: Iterable<string>;
+  /**
+   * When false, the static fallback vocabulary is omitted and only the
+   * catalog-derived names (plus regex patterns) are matched. Defaults to true.
+   */
+  includeFallback?: boolean;
+}
+
+/**
+ * Build the tool-name vocabulary for a single extraction pass. Catalog entities
+ * take precedence; the static fallback is appended unless disabled. Empty,
+ * whitespace-only, and duplicate names are dropped. Sorted longest-first so
+ * that multi-word names (e.g. "Claude Code") are matched before any substring
+ * (e.g. a hypothetical "Claude") during left-to-right scanning.
+ */
+function buildToolVocabulary(opts?: NerOptions): string[] {
+  const seen = new Set<string>();
+  const result: string[] = [];
+
+  const add = (name: string) => {
+    const trimmed = name.trim();
+    if (!trimmed) return;
+    const key = trimmed.toLowerCase();
+    if (seen.has(key)) return;
+    seen.add(key);
+    result.push(trimmed);
+  };
+
+  if (opts?.catalogEntities) {
+    for (const name of opts.catalogEntities) add(name);
+  }
+  if (opts?.includeFallback !== false) {
+    for (const name of STATIC_FALLBACK_ENTITIES) add(name);
+  }
+
+  // Longest names first so multi-word / longer matches win the scan.
+  result.sort((a, b) => b.length - a.length);
+  return result;
+}
+
+/**
+ * Convenience helper: derive the catalog entity-name list from a resolved
+ * config (or any shape exposing record-keyed server/agent/skill/instruction
+ * maps). Returns display-friendly names suitable for {@link NerOptions}.
+ *
+ * Kept dependency-light (a structural type, not an import of ResolvedConfig)
+ * so `wiki/` stays decoupled from `core/` per the layered architecture.
+ */
+export function catalogEntityNames(config?: {
+  servers?: Record<string, unknown>;
+  agents?: Record<string, unknown>;
+  skills?: Record<string, unknown>;
+  instructions?: Record<string, unknown>;
+}): string[] {
+  if (!config) return [];
+  const names = new Set<string>();
+  for (const group of [config.servers, config.agents, config.skills, config.instructions]) {
+    if (!group) continue;
+    for (const key of Object.keys(group)) {
+      const trimmed = key.trim();
+      if (trimmed) names.add(trimmed);
+    }
+  }
+  return Array.from(names);
+}
 
 // ── Pattern definitions ─────────────────────────────────────────
 
@@ -138,12 +228,20 @@ const PATTERNS: EntityPattern[] = [
 /**
  * Extract structured entities from text using rule-based patterns.
  * Returns deduplicated entities sorted by span position.
+ *
+ * ADR-0054 R3: when `opts.catalogEntities` is supplied, those real catalog
+ * names (servers/agents/skills/instructions) are matched as `tool_name`
+ * entities in addition to the static fallback vocabulary, so the wiki
+ * auto-links the actual catalog. Called with no options (the common path used
+ * by the graph builder and harvester) it behaves exactly as before, matching
+ * only the static fallback set.
  */
-export function extractEntities(text: string): ExtractedEntity[] {
+export function extractEntities(text: string, opts?: NerOptions): ExtractedEntity[] {
   const entities: ExtractedEntity[] = [];
+  const vocabulary = buildToolVocabulary(opts);
 
   // Extract tool names first (exact string matching)
-  for (const tool of KNOWN_TOOLS) {
+  for (const tool of vocabulary) {
     let startIdx = 0;
     while (true) {
       const idx = text.indexOf(tool, startIdx);
@@ -241,11 +339,18 @@ function deduplicateEntities(entities: ExtractedEntity[]): ExtractedEntity[] {
 /**
  * Generate [[wikilinks]] from extracted entities against known page slugs.
  * Only links the first occurrence of each entity per document.
+ *
+ * ADR-0054 R3: pass `opts.catalogEntities` so catalog names that have a wiki
+ * page (their slug is in `knownSlugs`) get auto-linked too.
  */
-export function generateWikilinks(text: string, knownSlugs: Set<string>): string {
+export function generateWikilinks(
+  text: string,
+  knownSlugs: Set<string>,
+  opts?: NerOptions,
+): string {
   if (knownSlugs.size === 0) return text;
 
-  const entities = extractEntities(text);
+  const entities = extractEntities(text, opts);
   const linked = new Set<string>();
   let result = text;
   let offset = 0;

@@ -7,6 +7,17 @@
 
 // ── Wiki Page (Karpathy llm-wiki pattern) ───────────────────────
 
+/**
+ * Page confidence as the ADR-0020-specified enum. Replaces the previous raw
+ * `number` (0.0-1.0) representation (ADR-0054 R4). Legacy numeric values are
+ * normalised on read via {@link normalizeConfidence} / scoreToConfidence —
+ * never stored as numbers again.
+ *
+ * Buckets (matches scoreToConfidence): score >= 0.7 → "high",
+ * score >= 0.4 → "medium", otherwise → "low".
+ */
+export type WikiConfidence = "low" | "medium" | "high";
+
 /** Wiki page with YAML frontmatter (Karpathy llm-wiki pattern) */
 export interface WikiPage {
   slug: string; // filename without .md extension
@@ -18,11 +29,87 @@ export interface WikiPage {
   backlinks: string[]; // slugs of pages linking to this one
   created: string; // ISO8601
   updated: string; // ISO8601
-  confidence?: number; // 0.0-1.0 for auto-generated pages
+  // ADR-0020 frontmatter schema. The canonical representation is the
+  // {@link WikiConfidence} enum (ADR-0054 R4 changed this from a raw 0.0-1.0
+  // `number`). `writePage` always serialises the enum and `parseWikiPage`
+  // always normalises reads to it (via {@link normalizeConfidence}), so on disk
+  // and on every read path this is the enum. The `number` arm is retained ONLY
+  // as a transitional input type so pre-R4 producers (the legacy
+  // `KnowledgeEntry` CRUD layer, numeric callers) keep compiling — it is
+  // normalised away the moment a page is written or read. Prefer the enum.
+  confidence?: WikiConfidence | number;
+  // ── ADR-0020 §"Frontmatter Schema" fields (added in ADR-0054 R4) ──
+  // Cross-reference slugs auto-derived from NER + harvest. Enables the
+  // contradiction-handling and entity-index features ADR-0020 specs.
+  entities?: string[];
+  // Count of corroborating sessions (coverage). Higher → more trustworthy.
+  coverage?: number;
+  // Slug of the page this one replaces (newer fact supersedes older).
+  supersedes?: string;
+  // Slug of the page that replaced this one. Set on the stale page so reads
+  // can surface "this was superseded by X" instead of deleting history.
+  superseded_by?: string;
   // Persisted in frontmatter so agent-scoped queries (queryEntries
   // filter.agent_id, synthesizeContext agentId) survive the page round-trip.
   // Absent for manually-authored pages. (Added 2026-05-01 for task #31.)
   agent_id?: string;
+}
+
+// ── Confidence normalisation (ADR-0054 R4 one-time migration) ───
+
+/** Confidence bucket thresholds, shared by score↔enum conversions. */
+const CONFIDENCE_HIGH_THRESHOLD = 0.7;
+const CONFIDENCE_MEDIUM_THRESHOLD = 0.4;
+
+/**
+ * Map a legacy numeric confidence (0.0-1.0) onto the ADR-0020 enum bucket.
+ * Out-of-range numbers are clamped by the threshold comparisons.
+ */
+export function scoreToConfidence(score: number): WikiConfidence {
+  if (score >= CONFIDENCE_HIGH_THRESHOLD) return "high";
+  if (score >= CONFIDENCE_MEDIUM_THRESHOLD) return "medium";
+  return "low";
+}
+
+/**
+ * Map the ADR-0020 confidence enum back to a representative numeric score, for
+ * the legacy `KnowledgeEntry` CRUD layer (which still uses 0.0-1.0) and any
+ * numeric ranking. Bucket midpoints, so a round-trip is stable.
+ */
+export function confidenceToScore(confidence: WikiConfidence): number {
+  switch (confidence) {
+    case "high":
+      return 0.85;
+    case "medium":
+      return 0.55;
+    default:
+      return 0.2;
+  }
+}
+
+/**
+ * One-time read-path normalisation for the ADR-0054 R4 schema change. Accepts
+ * whatever a page's `confidence` frontmatter currently holds — a number (pre-R4
+ * pages), one of the enum strings (post-R4 pages), or undefined — and returns
+ * the canonical enum value (or undefined when absent/unrecognised). This keeps
+ * existing pages readable without a destructive migration pass.
+ */
+export function normalizeConfidence(value: unknown): WikiConfidence | undefined {
+  if (value === undefined || value === null) return undefined;
+  if (typeof value === "number") {
+    if (Number.isNaN(value)) return undefined;
+    return scoreToConfidence(value);
+  }
+  if (typeof value === "string") {
+    const lower = value.trim().toLowerCase();
+    if (lower === "high" || lower === "medium" || lower === "low") {
+      return lower as WikiConfidence;
+    }
+    // Tolerate a numeric string that slipped into frontmatter.
+    const parsed = Number.parseFloat(lower);
+    if (!Number.isNaN(parsed)) return scoreToConfidence(parsed);
+  }
+  return undefined;
 }
 
 export type WikiPageType = "entity" | "concept" | "summary" | "synthesis" | "decision";
