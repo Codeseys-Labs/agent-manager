@@ -60,9 +60,11 @@ import {
   detectLegacyWikiLayout,
   ensureWikiDirs,
   getAllEntries,
+  getCoverageInfo,
   getEntry,
   getIndex,
   getProjectWikiDir,
+  getSupersedeInfo,
   listPages,
   materialiseProject,
   parseFrontmatter,
@@ -351,6 +353,20 @@ export const showSubcommand = defineCommand({
       }
       if (page.backlinks.length > 0) {
         info(`Backlinks:  ${page.backlinks.join(", ")}`, opts);
+      }
+      // ADR-0020 read surfaces: corroboration coverage + supersession pointers
+      // were serialize+parse-only until now — report them so contradiction
+      // history ("invalidate, don't delete") and trust signal are visible.
+      const coverage = getCoverageInfo(page);
+      if (coverage !== undefined) {
+        info(`Coverage:   ${coverage}`, opts);
+      }
+      const supersede = getSupersedeInfo(page);
+      if (supersede.supersedes !== undefined) {
+        info(`Supersedes: ${supersede.supersedes}`, opts);
+      }
+      if (supersede.superseded_by !== undefined) {
+        info(`Superseded by: ${supersede.superseded_by}`, opts);
       }
       info("", opts);
       info("Content:", opts);

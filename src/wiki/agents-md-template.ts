@@ -27,9 +27,8 @@ This is the project-local wiki, materialised from the global agent-manager
 wiki store via \`am wiki init\` or \`am wiki pull\`. Each subdirectory groups
 entries by type (entities, concepts, decisions, summaries, synthesis). Entries are
 markdown files with YAML frontmatter (slug, title, tags, etc.). Entries with
-\`promote: true\` in frontmatter are intended for promotion to the global
-wiki via \`am wiki publish <slug>\`. Local edits are kept local until
-explicitly promoted.
+\`promote: true\` in frontmatter are discovered by \`am wiki publish --auto\`
+and pushed up a tier. Local edits are kept local until you explicitly publish.
 
 ## How to read entries
 
@@ -42,12 +41,17 @@ in the global store and queried via \`am wiki search\`.
 
 ## How to add entries
 
-The easiest way is to ask am: \`am wiki add <type> <slug>\` scaffolds an
-entry with the correct frontmatter. To add one manually, drop a \`.md\`
-file with proper frontmatter under the correct subdirectory. To promote a
-local entry to the global wiki, set \`promote: true\` in the entry's
-frontmatter and run \`am wiki publish <slug>\`. You can also run
-\`am wiki publish <slug>\` directly without the frontmatter flag.
+The easiest way is to ask am: \`am wiki add\` creates an entry with the
+correct frontmatter. To add one manually, drop a \`.md\` file with proper
+frontmatter under the correct subdirectory.
+
+To publish a local entry, run \`am wiki publish <slug>\`. By default this
+pushes the entry up to your per-project store. Add \`--promote\` to push it
+all the way to the cross-project global wiki:
+\`am wiki publish <slug> --promote\`. To publish every entry tagged
+\`promote: true\` in frontmatter, run \`am wiki publish --auto\` (add
+\`--promote\` to send them to the global wiki). A target that already holds a
+differing entry reports a conflict; re-run with \`--force\` to overwrite.
 
 ## Schema version
 

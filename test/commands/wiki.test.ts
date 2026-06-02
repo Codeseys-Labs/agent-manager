@@ -756,3 +756,115 @@ describe("am wiki lint: low-confidence detection (WIKI-FIX-1)", () => {
     expect(consoleErrors.join("\n")).not.toMatch(/toFixed|TypeError/);
   });
 });
+
+// ── WAVE G-WIKIREAD: `am wiki show` surfaces supersession + coverage ──
+//
+// supersedes / superseded_by / coverage round-trip through writePage +
+// parseWikiPage (ADR-0054 R4) but were serialize+parse-only — nothing reported
+// them. These tests pin that `am wiki show <slug>` prints "Supersedes Y",
+// "Superseded by X", and "Coverage N" in text mode (and carries them in --json,
+// which dumps the full page), and that a page WITHOUT those fields omits the
+// lines entirely (diff-clean read surface).
+
+describe("am wiki show: supersession + coverage read surfaces (WAVE G-WIKIREAD)", () => {
+  let dir: TestDir;
+  let configDir: string;
+  let wikiDir: string;
+
+  beforeEach(async () => {
+    dir = await createTestDir("am-wiki-show-supersede-");
+    configDir = dir.path;
+    process.env.AM_CONFIG_DIR = configDir;
+    wikiDir = resolveWikiDir({ global: true });
+    await ensureWikiDirs(wikiDir);
+    captureConsole();
+    process.exitCode = undefined;
+  });
+
+  afterEach(async () => {
+    restoreConsole();
+    process.exitCode = undefined;
+    if (origConfigDir === undefined) {
+      // biome-ignore lint/performance/noDelete: env var cleanup
+      delete process.env.AM_CONFIG_DIR;
+    } else {
+      process.env.AM_CONFIG_DIR = origConfigDir;
+    }
+    if (dir) await dir.cleanup();
+  });
+
+  async function showSlug(slug: string, json: boolean): Promise<void> {
+    await showSubcommand.run!({
+      args: { slug, json, global: true, quiet: false, verbose: false },
+      cmd: showSubcommand,
+      rawArgs: [],
+      data: undefined,
+    } as any);
+  }
+
+  test("text mode prints 'Supersedes', 'Superseded by', and 'Coverage' when set", async () => {
+    await writePage(
+      makePage({
+        slug: "newer-claim",
+        title: "Newer Claim",
+        content: "Replaces the old claim.",
+        supersedes: "older-claim",
+        superseded_by: "even-newer-claim",
+        coverage: 4,
+      }),
+      wikiDir,
+    );
+    await showSlug("newer-claim", false);
+    const joined = consoleOutput.join("\n");
+    expect(joined).toContain("Supersedes: older-claim");
+    expect(joined).toContain("Superseded by: even-newer-claim");
+    expect(joined).toContain("Coverage:   4");
+  });
+
+  test("a page without supersession/coverage omits those lines (diff-clean)", async () => {
+    await writePage(
+      makePage({ slug: "plain-page", title: "Plain Page", content: "Nothing special." }),
+      wikiDir,
+    );
+    await showSlug("plain-page", false);
+    const joined = consoleOutput.join("\n");
+    expect(joined).not.toContain("Supersedes:");
+    expect(joined).not.toContain("Superseded by:");
+    expect(joined).not.toContain("Coverage:");
+  });
+
+  test("--json carries supersedes / superseded_by / coverage on the page payload", async () => {
+    await writePage(
+      makePage({
+        slug: "json-supersede",
+        title: "JSON Supersede",
+        content: "Carries supersession in JSON.",
+        supersedes: "old-json",
+        superseded_by: "new-json",
+        coverage: 2,
+      }),
+      wikiDir,
+    );
+    await showSlug("json-supersede", true);
+    const payload = JSON.parse(consoleOutput.join("\n"));
+    expect(payload.supersedes).toBe("old-json");
+    expect(payload.superseded_by).toBe("new-json");
+    expect(payload.coverage).toBe(2);
+  });
+
+  test("text mode prints only the pointer that is set (supersedes only)", async () => {
+    await writePage(
+      makePage({
+        slug: "head-of-chain",
+        title: "Head of Chain",
+        content: "Supersedes an older page but is not itself superseded.",
+        supersedes: "ancestor-page",
+      }),
+      wikiDir,
+    );
+    await showSlug("head-of-chain", false);
+    const joined = consoleOutput.join("\n");
+    expect(joined).toContain("Supersedes: ancestor-page");
+    expect(joined).not.toContain("Superseded by:");
+  });
+});
