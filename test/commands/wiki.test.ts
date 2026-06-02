@@ -2,6 +2,8 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import {
+  briefingSubcommand,
+  exportSubcommand,
   graphSubcommand,
   lintSubcommand,
   listSubcommand,
@@ -474,5 +476,129 @@ describe("am wiki: --global threading for lint/graph (BUG-1 regression)", () => 
     } as any);
     const payload = JSON.parse(consoleOutput.join("\n"));
     expect(payload.nodes.length).toBe(0);
+  });
+});
+
+// ── QW-followup: extend --global threading to briefing/export ──────────
+//
+// `briefing` and `export` read entries via getAllEntries()/getIndex(), both of
+// which accept a wikiDir. Before this fix they were called with no wikiDir, so
+// the declared `--global` flag was silently ignored — exactly the BUG-1 shape
+// already fixed for lint/graph. Same regression harness: seed pages ONLY in the
+// global store while cwd is a project with an EMPTY .am-wiki/, then assert that
+// --global reads the global content and the un-flagged call sees the empty
+// project wiki.
+//
+// NOTE: `synthesize`, `add`, `import`, `ingest`, and `harvest` also declare
+// `--global` but cannot be threaded here without a change to src/wiki/* —
+// their storage entry points (synthesizeContext, addEntry, harvestSessionAsPages)
+// do not yet accept a wikiDir. Those are out of scope for this wave (storage
+// layer is owned elsewhere); only the fully-threadable subcommands are wired.
+
+describe("am wiki: --global threading for briefing/export (QW-followup)", () => {
+  let dir: TestDir;
+  let configDir: string;
+  let globalWikiDir: string;
+  let projectDir: string;
+  const origCwd = process.cwd();
+
+  beforeEach(async () => {
+    dir = await createTestDir("am-wiki-global-be-");
+    configDir = dir.path;
+    process.env.AM_CONFIG_DIR = configDir;
+
+    globalWikiDir = resolveWikiDir({ global: true });
+    await ensureWikiDirs(globalWikiDir);
+
+    projectDir = join(dir.path, "proj");
+    mkdirSync(projectDir, { recursive: true });
+    writeFileSync(join(projectDir, ".agent-manager.toml"), "[settings]\n", "utf-8");
+    const projectWiki = join(projectDir, WIKI_PROJECT_DIRNAME);
+    await ensureWikiDirs(projectWiki);
+    process.chdir(projectDir);
+
+    captureConsole();
+    process.exitCode = undefined;
+  });
+
+  afterEach(async () => {
+    restoreConsole();
+    process.chdir(origCwd);
+    process.exitCode = undefined;
+    if (origConfigDir === undefined) {
+      // biome-ignore lint/performance/noDelete: env var cleanup
+      delete process.env.AM_CONFIG_DIR;
+    } else {
+      process.env.AM_CONFIG_DIR = origConfigDir;
+    }
+    if (dir) await dir.cleanup();
+  });
+
+  async function seedGlobalEntry(): Promise<void> {
+    // entryToPage stores the entity_type as a tag, so an "entity"-type page
+    // tagged "fact" round-trips back to a fact KnowledgeEntry for the agent
+    // briefing / export readers. agent_id steers buildAgentBriefing.
+    await writePage(
+      makePage({
+        slug: "global-fact",
+        type: "entity",
+        title: "A global fact",
+        content: "The deployment target is us-east-1.",
+        tags: ["fact", "infra"],
+        agent_id: "researcher",
+      }),
+      globalWikiDir,
+    );
+  }
+
+  test("export --global reports the global index entry_count, not the empty project wiki", async () => {
+    await seedGlobalEntry();
+    await exportSubcommand.run!({
+      args: { json: true, global: true, quiet: false, verbose: false, format: "json" },
+      cmd: exportSubcommand,
+      rawArgs: [],
+      data: undefined,
+    } as any);
+    const payload = JSON.parse(consoleOutput.join("\n"));
+    expect(payload.index.entry_count).toBe(1);
+    expect(payload.entries.length).toBe(1);
+  });
+
+  test("export without --global sees the empty project wiki (proves the flag matters)", async () => {
+    await seedGlobalEntry();
+    await exportSubcommand.run!({
+      args: { json: true, global: false, quiet: false, verbose: false, format: "json" },
+      cmd: exportSubcommand,
+      rawArgs: [],
+      data: undefined,
+    } as any);
+    const payload = JSON.parse(consoleOutput.join("\n"));
+    expect(payload.index.entry_count).toBe(0);
+    expect(payload.entries.length).toBe(0);
+  });
+
+  test("briefing --global includes the global agent entry, not the empty project wiki", async () => {
+    await seedGlobalEntry();
+    await briefingSubcommand.run!({
+      args: { "agent-id": "researcher", json: true, global: true, quiet: false, verbose: false },
+      cmd: briefingSubcommand,
+      rawArgs: [],
+      data: undefined,
+    } as any);
+    const payload = JSON.parse(consoleOutput.join("\n"));
+    expect(payload.agent_id).toBe("researcher");
+    expect(payload.briefing).toContain("us-east-1");
+  });
+
+  test("briefing without --global sees the empty project wiki (proves the flag matters)", async () => {
+    await seedGlobalEntry();
+    await briefingSubcommand.run!({
+      args: { "agent-id": "researcher", json: true, global: false, quiet: false, verbose: false },
+      cmd: briefingSubcommand,
+      rawArgs: [],
+      data: undefined,
+    } as any);
+    const payload = JSON.parse(consoleOutput.join("\n"));
+    expect(payload.briefing).not.toContain("us-east-1");
   });
 });
