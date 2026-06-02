@@ -90,6 +90,32 @@
     button:disabled { opacity: 0.5; cursor: not-allowed; }
     button.primary { background: var(--accent); color: #fff; border-color: var(--accent); }
     button.primary:hover { opacity: 0.9; }
+    button.danger { background: var(--red); color: #fff; border-color: var(--red); }
+    button.danger:hover { opacity: 0.9; }
+    /* SEC-4b: skipped-adapter feedback panel */
+    .skipped-panel {
+      margin-top: 1rem;
+      padding: 0.75rem 1rem;
+      border: 1px solid var(--yellow);
+      border-radius: var(--radius);
+      background: color-mix(in srgb, var(--yellow) 12%, transparent);
+    }
+    .skipped-title { font-size: 0.9rem; margin-bottom: 0.25rem; color: var(--yellow); }
+    .skipped-desc { font-size: 0.8rem; color: var(--fg2); margin-bottom: 0.5rem; }
+    .skipped-list { list-style: none; margin: 0 0 0.5rem; padding: 0; font-size: 0.85rem; }
+    .skipped-list li { padding: 0.25rem 0; border-bottom: 1px solid var(--border); }
+    .skipped-list li:last-child { border-bottom: none; }
+    .skipped-list .skipped-name { font-weight: 600; }
+    .skipped-reason {
+      display: inline-block;
+      margin-left: 0.5rem;
+      padding: 0.05rem 0.45rem;
+      border-radius: 9999px;
+      font-size: 0.68rem;
+      font-weight: 600;
+    }
+    .skipped-reason.drift-detected { background: var(--yellow); color: #000; }
+    .skipped-reason.drift-check-failed { background: var(--red); color: #fff; }
     .toast {
       position: fixed;
       bottom: 1rem;
@@ -388,6 +414,22 @@
         <button id="btn-push">Git Push</button>
       </div>
       <p id="git-info" style="margin-top: 0.75rem;"></p>
+
+      <!-- SEC-4b: surface adapters the fail-closed drift gate SKIPPED so the
+           user gets feedback that some targets were not written for safety,
+           plus a Force re-apply control that re-POSTs with {force:true}. -->
+      <div id="apply-skipped" class="skipped-panel" style="display:none;">
+        <h3 class="skipped-title">Skipped for safety</h3>
+        <p class="skipped-desc">
+          These targets were <strong>not</strong> written because their on-disk
+          config differs from agent-manager (drift) or the drift check could not
+          run. Forcing will <strong>overwrite</strong> them.
+        </p>
+        <ul id="apply-skipped-list" class="skipped-list"></ul>
+        <div class="actions">
+          <button id="btn-force-apply" class="danger">Force re-apply (overwrite)</button>
+        </div>
+      </div>
     </div>
   </div>
 
@@ -597,20 +639,95 @@
       }
     });
 
-    $("#btn-apply").addEventListener("click", async () => {
-      const btn = $("#btn-apply");
-      btn.disabled = true;
-      btn.textContent = "Applying...";
-      const data = await api("/api/apply", { method: "POST" });
-      btn.disabled = false;
-      btn.textContent = "Apply Config";
+    // SEC-4b: classify why an adapter was skipped by the fail-closed gate.
+    // The server returns skipped[] (adapter names) and a parallel results[]
+    // entry whose warnings[] carry the human-readable reason. A diff() that
+    // threw yields "drift check failed ..."; a detected delta yields
+    // "drift detected ...". We map to a stable reason token for the UI.
+    function skippedReason(name, results) {
+      const entry = (results || []).find(r => r.adapter === name);
+      const warning = ((entry && entry.warnings) || []).join(" ").toLowerCase();
+      if (warning.includes("drift check failed")) {
+        return { token: "drift-check-failed", label: "drift check failed" };
+      }
+      return { token: "drift-detected", label: "drift detected" };
+    }
+
+    // Render (or clear) the skipped-adapter feedback panel after an apply.
+    function renderSkipped(data) {
+      const panel = $("#apply-skipped");
+      const list = $("#apply-skipped-list");
+      list.replaceChildren();
+      const skipped = (data && Array.isArray(data.skipped)) ? data.skipped : [];
+      if (skipped.length === 0) {
+        panel.style.display = "none";
+        return;
+      }
+      for (const name of skipped) {
+        const reason = skippedReason(name, data.results);
+        const li = document.createElement("li");
+        const nameEl = document.createElement("span");
+        nameEl.className = "skipped-name";
+        nameEl.textContent = name;
+        li.appendChild(nameEl);
+        const reasonEl = document.createElement("span");
+        reasonEl.className = "skipped-reason " + reason.token;
+        reasonEl.textContent = reason.label;
+        li.appendChild(reasonEl);
+        list.appendChild(li);
+      }
+      panel.style.display = "block";
+    }
+
+    // Shared apply runner. force=false is the fail-closed default; force=true
+    // re-POSTs with {force:true} to override the drift gate, mirroring the CLI
+    // `am apply --force` and the MCP force semantics.
+    async function runApply(force) {
+      const applyBtn = $("#btn-apply");
+      const forceBtn = $("#btn-force-apply");
+      applyBtn.disabled = true;
+      forceBtn.disabled = true;
+      applyBtn.textContent = force ? "Forcing..." : "Applying...";
+      const data = await api("/api/apply", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ force: !!force }),
+      });
+      applyBtn.disabled = false;
+      forceBtn.disabled = false;
+      applyBtn.textContent = "Apply Config";
       if (data?.results) {
         const total = data.results.reduce((n, r) => n + r.files.filter(f => f.written).length, 0);
-        toast("Applied: " + total + " file(s) written");
+        const skippedCount = Array.isArray(data.skipped) ? data.skipped.length : 0;
+        renderSkipped(data);
+        if (skippedCount > 0) {
+          toast(
+            "Applied: " + total + " file(s) written, " + skippedCount + " skipped for safety",
+            "error",
+          );
+        } else {
+          toast("Applied: " + total + " file(s) written");
+        }
         loadStatus();
       } else {
         toast(data?.error ?? "Apply failed", "error");
       }
+    }
+
+    $("#btn-apply").addEventListener("click", () => runApply(false));
+
+    $("#btn-force-apply").addEventListener("click", () => {
+      const skippedList = $("#apply-skipped-list");
+      const names = [...skippedList.querySelectorAll(".skipped-name")].map(el => el.textContent);
+      const detail = names.length ? "\n\n" + names.join(", ") : "";
+      if (!window.confirm(
+        "Force re-apply will OVERWRITE the drifted/unreadable native config for:" +
+        detail +
+        "\n\nLocal edits to those files will be lost. Continue?"
+      )) {
+        return;
+      }
+      runApply(true);
     });
 
     $("#btn-pull").addEventListener("click", async () => {
