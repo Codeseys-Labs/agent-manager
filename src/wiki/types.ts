@@ -151,6 +151,51 @@ export interface KnowledgeGraph {
   updated: string;
 }
 
+// ── Cross-project meta-index (ADR-0054 R5) ──────────────────────
+//
+// A committed `wiki/meta-index.json` keyed by entity / tag / slug → the list
+// of `{project, slug, confidence}` pointers that carry that key, so
+// `am wiki search --all-projects` can fan a query across every known project
+// wiki plus the global store without opening every page. It is rebuilt on
+// `am wiki sync` and on demand (never on every page write — too expensive
+// across projects). Like `index.json` / `graph.json`, it is git-diffable JSON
+// (ADR-0002), so the web UI can read it the same way.
+
+/** A single pointer into a project (or the global) wiki for a meta-index key. */
+export interface MetaIndexEntry {
+  /** Project name (under `wiki/projects/<project>/`) or "global". */
+  project: string;
+  /** Page slug within that wiki tier. */
+  slug: string;
+  /** Page title, for display without opening the page. */
+  title: string;
+  /** Page type, for display / filtering. */
+  type: WikiPageType;
+  /** Normalised confidence (low|medium|high), absent when the page set none. */
+  confidence?: WikiConfidence;
+}
+
+/**
+ * Committed cross-project meta-index. Three keyed maps (slug / tag / entity)
+ * each map a normalised key → the pointers that carry it. A page contributes
+ * one pointer to its own slug, one per tag, and one per declared `entities`
+ * cross-reference. Empty maps are valid (an empty wiki).
+ */
+export interface MetaIndex {
+  /** Schema version, for forward-compat migrations. */
+  version: number;
+  /** ISO8601 timestamp of the last rebuild. */
+  updated: string;
+  /** Project names contributing to this index (sorted), excluding "global". */
+  projects: string[];
+  /** slug → pointers (a slug may exist in more than one project). */
+  bySlug: Record<string, MetaIndexEntry[]>;
+  /** tag → pointers. */
+  byTag: Record<string, MetaIndexEntry[]>;
+  /** entity cross-reference slug → pointers. */
+  byEntity: Record<string, MetaIndexEntry[]>;
+}
+
 // ── Knowledge Entry (legacy, still used by CRUD layer) ──────────
 
 export interface KnowledgeEntry {

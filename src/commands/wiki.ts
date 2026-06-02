@@ -66,9 +66,11 @@ import {
   parseFrontmatter,
   pushToGlobal,
   readPage,
+  rebuildMetaIndex,
   rebuildSearchIndex,
   resolveProjectName,
   resolveWikiDir,
+  searchAllProjects,
   searchEntries,
   searchPages,
   writePage,
@@ -123,11 +125,64 @@ export const searchSubcommand = defineCommand({
     verbose: { type: "boolean", alias: "v", default: false },
     limit: { type: "string", description: "Max results", default: "20" },
     global: { type: "boolean", description: "Use global wiki", default: false },
+    // ADR-0054 R5: aggregate across every known project wiki + the global store
+    // via the cross-project meta-index. Mutually informative with --global
+    // (which scopes to the single global tier); --all-projects wins when both
+    // are set.
+    "all-projects": {
+      type: "boolean",
+      description: "Search across all known project wikis + the global store (ADR-0054 R5)",
+      default: false,
+    },
   },
   async run({ args }) {
     const opts = { json: args.json, quiet: args.quiet, verbose: args.verbose };
     const query = args.query as string;
     const limit = parsePositiveInt(args.limit, "limit", 20);
+
+    // ── ADR-0054 R5: cross-project search ──
+    if (args["all-projects"]) {
+      const results = await searchAllProjects(query, limit);
+
+      if (args.json) {
+        output(
+          {
+            query,
+            allProjects: true,
+            results: results.map((r) => ({
+              project: r.project,
+              slug: r.page.slug,
+              title: r.page.title,
+              score: r.score,
+              type: r.page.type,
+              tags: r.page.tags,
+            })),
+            total: results.length,
+          },
+          opts,
+        );
+        return;
+      }
+
+      if (results.length === 0) {
+        info(`No pages match "${query}" across any project.`, opts);
+        return;
+      }
+
+      info(`${"Project".padEnd(20)} ${"Slug".padEnd(32)} ${"Score".padEnd(8)} ${"Title"}`, opts);
+      info(`${"─".repeat(20)} ${"─".repeat(32)} ${"─".repeat(8)} ${"─".repeat(40)}`, opts);
+      for (const { project, page, score } of results) {
+        info(
+          `${project.slice(0, 20).padEnd(20)} ${page.slug.slice(0, 32).padEnd(32)} ${score
+            .toFixed(2)
+            .padEnd(8)} ${page.title.slice(0, 50)}`,
+          opts,
+        );
+      }
+      info(`\n${results.length} result(s) for "${query}" across all projects`, opts);
+      return;
+    }
+
     const wikiDir = args.global ? resolveWikiDir({ global: true }) : undefined;
 
     const results = await searchPages(query, limit, wikiDir);
@@ -1202,6 +1257,19 @@ export const syncSubcommand = defineCommand({
         );
       }
 
+      // ADR-0054 R5: a successful (non-divergent) sync is the cheap, sanctioned
+      // point to refresh the committed cross-project meta-index so
+      // `am wiki search --all-projects` reflects newly-pulled project wikis.
+      // Skipped when divergence wrote a sidecar (the pull was rolled back).
+      // Best-effort — never fail the whole sync over the derived index.
+      if (!result.sidecarWritten) {
+        try {
+          await rebuildMetaIndex();
+        } catch {
+          /* derived artifact — search --all-projects rebuilds on demand anyway */
+        }
+      }
+
       if (args.json) {
         output(
           {
@@ -1729,10 +1797,21 @@ const migrateSubcommand = defineCommand({
 });
 
 /**
- * ADR-0044 task 7 — promote a project-local `.am-wiki/` entry to the
- * global project store. Thin wrapper around `pushToGlobal`, with
- * `--auto` discovery (scans frontmatter for `promote: true`) and
- * `--force` passthrough for conflict resolution.
+ * ADR-0044 task 7 / ADR-0054 R6 — promote a project-local `.am-wiki/` entry
+ * either to the per-project mirror (`wiki/projects/<name>/`, the default) or
+ * to the cross-project GLOBAL store (`wiki/global/`, with `--promote`). Thin
+ * wrapper around `pushToGlobal`, with `--auto` discovery (scans frontmatter
+ * for `promote: true`) and `--force` passthrough for conflict resolution.
+ *
+ * ADR-0054 R6 semantics — `--promote` is the gate that makes a push reach the
+ * cross-project global store (`wiki/global/`). The audit found that promotion
+ * never actually crossed projects; `--promote` is the fix:
+ *   - `<slug> --promote`      → promote one named entry to the GLOBAL store.
+ *   - `--auto --promote`      → promote every `promote: true` entry to GLOBAL.
+ *   - `<slug>` / `--auto`     → keep the ADR-0044 per-project mirror behaviour
+ *                               (unchanged, so existing flows stay green).
+ * Conflicts on the chosen target surface as `conflict` (non-zero exit) and are
+ * resolved with `--force`, mirroring the `am wiki resolve` conflict surface.
  */
 const publishSubcommand = defineCommand({
   meta: { name: "publish", description: "Publish a local .am-wiki/ entry to the global store" },
@@ -1743,9 +1822,14 @@ const publishSubcommand = defineCommand({
       description: "Scan .am-wiki/ for entries with `promote: true` in frontmatter",
       default: false,
     },
+    promote: {
+      type: "boolean",
+      description: "Promote to the cross-project global store (wiki/global/) — ADR-0054 R6",
+      default: false,
+    },
     force: {
       type: "boolean",
-      description: "Overwrite a differing global entry",
+      description: "Overwrite a differing target entry",
       default: false,
     },
     json: { type: "boolean", default: false },
@@ -1787,7 +1871,7 @@ const publishSubcommand = defineCommand({
       targets = discoverPromoteSlugs(amWikiDir);
       if (targets.length === 0) {
         if (args.json) {
-          output({ action: "publish", published: [], conflicts: [] }, opts);
+          output({ action: "publish", promote: true, published: [], conflicts: [] }, opts);
         } else {
           info("No entries with `promote: true` found.", opts);
         }
@@ -1797,11 +1881,20 @@ const publishSubcommand = defineCommand({
       targets = [slugArg!];
     }
 
+    // ADR-0054 R6: `--promote` is the explicit gate to the cross-project global
+    // store. Without it, both `<slug>` and `--auto` keep the ADR-0044
+    // per-project mirror behaviour (so pre-R6 flows are unchanged).
+    const promoteToGlobal = args.promote as boolean;
+    const target = promoteToGlobal ? "global store" : "project store";
+
     const published: string[] = [];
     const conflicts: string[] = [];
     for (const slug of targets) {
       try {
-        const result = await pushToGlobal(projectDir, slug, { force: args.force });
+        const result = await pushToGlobal(projectDir, slug, {
+          force: args.force,
+          promote: promoteToGlobal,
+        });
         if (result.conflict) {
           conflicts.push(slug);
         } else {
@@ -1815,14 +1908,14 @@ const publishSubcommand = defineCommand({
     }
 
     if (args.json) {
-      output({ action: "publish", published, conflicts }, opts);
+      output({ action: "publish", promote: promoteToGlobal, published, conflicts }, opts);
     } else {
       for (const slug of published) {
-        info(`Published: ${slug}`, opts);
+        info(`Published to ${target}: ${slug}`, opts);
       }
       for (const slug of conflicts) {
         error(
-          `Conflict: ${slug} exists in global store with different content. Re-run with --force to overwrite.`,
+          `Conflict: ${slug} exists in the ${target} with different content. Re-run with --force to overwrite.`,
           opts,
         );
       }
