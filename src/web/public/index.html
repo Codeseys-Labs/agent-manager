@@ -116,6 +116,7 @@
     }
     .skipped-reason.drift-detected { background: var(--yellow); color: #000; }
     .skipped-reason.drift-check-failed { background: var(--red); color: #fff; }
+    .skipped-reason.unknown { background: var(--muted, #888); color: #fff; }
     .toast {
       position: fixed;
       bottom: 1rem;
@@ -650,7 +651,13 @@
       if (warning.includes("drift check failed")) {
         return { token: "drift-check-failed", label: "drift check failed" };
       }
-      return { token: "drift-detected", label: "drift detected" };
+      if (warning.includes("drift")) {
+        return { token: "drift-detected", label: "drift detected" };
+      }
+      // No matching results entry / no drift warning: the adapter was skipped
+      // for a reason the response did not annotate. Surface it honestly rather
+      // than mislabeling it as confirmed drift.
+      return { token: "unknown", label: "skipped (reason unavailable)" };
     }
 
     // Render (or clear) the skipped-adapter feedback panel after an apply.
@@ -710,6 +717,9 @@
         }
         loadStatus();
       } else {
+        // Apply failed outright — clear any stale skipped panel from a prior
+        // run so it doesn't linger as misleading feedback alongside the error.
+        renderSkipped(null);
         toast(data?.error ?? "Apply failed", "error");
       }
     }
