@@ -297,7 +297,6 @@ describe("am setup — interactive path with injected clack (nit b)", () => {
 
 function restoreEnv(name: string, value: string | undefined): void {
   if (value === undefined) {
-    // biome-ignore lint/performance/noDelete: env var cleanup
     delete process.env[name];
   } else {
     process.env[name] = value;

@@ -60,7 +60,6 @@ function capture(): void {
     err.push(a.map(String).join(" "));
   };
   // completion subcommands write directly to stdout.
-  // biome-ignore lint/suspicious/noExplicitAny: stdout.write overload
   (process.stdout as any).write = (chunk: any) => {
     out.push(String(chunk));
     return true;
@@ -81,16 +80,12 @@ function json(): any {
  * generic, so the concrete `CommandDef<{…}>` exports are not assignable to the
  * bare `CommandDef`.
  */
-// biome-ignore lint/suspicious/noExplicitAny: citty CommandDef args generic is invariant
 async function run(cmd: CommandDef<any>, args: Record<string, unknown>): Promise<void> {
-  // biome-ignore lint/suspicious/noExplicitAny: citty CommandContext is over-strict for tests
   await (cmd as any).run({ args, cmd, rawArgs: [], data: undefined });
 }
 
 /** Resolve a subcommand from a parent's `subCommands` map (handles () => Promise and direct refs). */
-// biome-ignore lint/suspicious/noExplicitAny: citty CommandDef args generic is invariant
 async function sub(parent: CommandDef<any>, name: string): Promise<CommandDef<any>> {
-  // biome-ignore lint/suspicious/noExplicitAny: subCommands resolver shape
   const map = (parent as any).subCommands as Record<string, unknown>;
   const entry = map[name];
   const resolved = typeof entry === "function" ? await (entry as () => unknown)() : entry;
@@ -219,7 +214,6 @@ describe("CLI handler-run followups (TEST-1 / keeps TEST-2 green)", () => {
     // per-child behavior is covered in secrets-rotate/revoke/*.test.ts.
     for (const name of ["migrate", "rewrap", "rotate", "revoke"]) {
       const child = await sub(secretsCommand, name);
-      // biome-ignore lint/suspicious/noExplicitAny: citty command shape
       expect(typeof (child as any).run).toBe("function");
     }
   });
@@ -227,7 +221,6 @@ describe("CLI handler-run followups (TEST-1 / keeps TEST-2 green)", () => {
 
 function restoreEnv(name: string, value: string | undefined): void {
   if (value === undefined) {
-    // biome-ignore lint/performance/noDelete: env var cleanup
     delete process.env[name];
   } else {
     process.env[name] = value;
