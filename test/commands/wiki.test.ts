@@ -699,6 +699,47 @@ describe("am wiki lint: low-confidence detection (WIKI-FIX-1)", () => {
     expect(payload.low_confidence_slugs).toEqual(["legacy-low"]);
   });
 
+  test("a literal numeric `confidence` ON DISK is read-path normalised to the 'low' bucket", async () => {
+    // The sibling `legacy-low` test seeds via writePage(), which normalises the
+    // numeric to the enum *before* serialising — so the bytes that hit disk are
+    // already `confidence: low`, never a bare number. That path therefore can't
+    // exercise parseWikiPage()'s read-path migration (normalizeConfidence at
+    // src/wiki/storage.ts parseWikiPage). Here we hand-author the .md frontmatter
+    // with a literal `confidence: 0.2` (a bare YAML number, the pre-R4 on-disk
+    // shape) and write it directly with fs — bypassing writePage entirely — to
+    // lock the contract that a literal on-disk numeric below the 0.4 medium
+    // threshold is bucketed to "low" on read and flagged by lint.
+    const rawFrontmatter = [
+      "---",
+      "title: On-Disk Numeric",
+      "type: entity",
+      "slug: ondisk-numeric",
+      "tags: []",
+      "sources: []",
+      "backlinks: []",
+      "created: 2026-04-01T00:00:00.000Z",
+      "updated: 2026-04-01T00:00:00.000Z",
+      "confidence: 0.2",
+      "---",
+      "A pre-R4 page whose frontmatter stores a bare numeric confidence.",
+      "",
+    ].join("\n");
+    // Entity pages live under the `entities/` subdir (PAGE_SUBDIRS). Write the
+    // file directly so the on-disk bytes literally contain `confidence: 0.2`.
+    writeFileSync(join(wikiDir, "entities", "ondisk-numeric.md"), rawFrontmatter, "utf-8");
+    await rebuildSearchIndex(wikiDir);
+
+    await lintSubcommand.run!({
+      args: { json: true, global: true, quiet: false, verbose: false },
+      cmd: lintSubcommand,
+      rawArgs: [],
+      data: undefined,
+    } as any);
+    const payload = JSON.parse(consoleOutput.join("\n"));
+    expect(payload.low_confidence).toBe(1);
+    expect(payload.low_confidence_slugs).toEqual(["ondisk-numeric"]);
+  });
+
   test("human output displays the enum string (never calls .toFixed on a string)", async () => {
     await seedConfidence();
     await lintSubcommand.run!({
