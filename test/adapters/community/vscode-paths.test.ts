@@ -38,7 +38,7 @@ function setPlatform(platform: NodeJS.Platform) {
 
 function restorePlatform() {
   Object.defineProperty(process, "platform", { value: origPlatform });
-  if (origAppData === undefined) process.env.APPDATA = undefined;
+  if (origAppData === undefined) Reflect.deleteProperty(process.env, "APPDATA");
   else process.env.APPDATA = origAppData;
 }
 
@@ -129,7 +129,7 @@ describe("VS Code paths helper", () => {
 
     test("win32: falls back to home/AppData/Roaming when APPDATA unset", () => {
       setPlatform("win32");
-      process.env.APPDATA = undefined;
+      Reflect.deleteProperty(process.env, "APPDATA");
       const stable = resolveVSCodeUserDir(
         { displayName: "VS Code", dirName: "Code" },
         "C:\\Users\\alice",

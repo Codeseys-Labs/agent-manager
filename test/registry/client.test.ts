@@ -49,7 +49,7 @@ describe("registry/client", () => {
 
   afterEach(() => {
     globalThis.fetch = originalFetch;
-    process.env.AM_REGISTRY_URL = undefined;
+    Reflect.deleteProperty(process.env, "AM_REGISTRY_URL");
   });
 
   // ── search ──────────────────────────────────────────────────

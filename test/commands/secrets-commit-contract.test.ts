@@ -125,7 +125,7 @@ function activate(fx: Fixture): void {
   process.env.AM_CONFIG_DIR = fx.dir.path;
   process.env.AM_AGE_IDENTITY_DIR = fx.identityDir;
   process.env.AM_AGE_PASSPHRASE = fx.passphrase;
-  process.env.AM_AGE_NEW_PASSPHRASE = undefined;
+  Reflect.deleteProperty(process.env, "AM_AGE_NEW_PASSPHRASE");
   process.env.AM_SECRETS_BACKEND = "age";
   process.exitCode = 0;
 }

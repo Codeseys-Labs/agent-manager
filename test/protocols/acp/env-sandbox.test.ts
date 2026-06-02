@@ -113,7 +113,7 @@ describe("sandboxEnv — allow-list and deny-regex", () => {
       const env = sandboxEnv();
       expect(env.NODE_OPTIONS).toBeUndefined();
     } finally {
-      process.env.NODE_OPTIONS = undefined;
+      Reflect.deleteProperty(process.env, "NODE_OPTIONS");
     }
   });
 
@@ -125,7 +125,7 @@ describe("sandboxEnv — allow-list and deny-regex", () => {
       const env = sandboxEnv({ NODE_OPTIONS: "--max-old-space-size=4096" });
       expect(env.NODE_OPTIONS).toBe("--max-old-space-size=4096");
     } finally {
-      process.env.NODE_OPTIONS = undefined;
+      Reflect.deleteProperty(process.env, "NODE_OPTIONS");
     }
   });
 
@@ -192,7 +192,7 @@ describe("live env-leak probe — AmAcpClient.connect via /bin/bash", () => {
         // Expected output is "ENV=\n" because AM_CANARY is scrubbed.
         expect(stdout.trim()).toBe("ENV=");
       } finally {
-        if (originalCanary === undefined) process.env.AM_CANARY = undefined;
+        if (originalCanary === undefined) Reflect.deleteProperty(process.env, "AM_CANARY");
         else process.env.AM_CANARY = originalCanary;
       }
     },
@@ -281,9 +281,9 @@ exit 1
         // Sanity: allow-listed vars should still be there.
         expect(childEnv).toContain("PATH=");
       } finally {
-        if (originalCanary === undefined) process.env.AM_CANARY = undefined;
+        if (originalCanary === undefined) Reflect.deleteProperty(process.env, "AM_CANARY");
         else process.env.AM_CANARY = originalCanary;
-        if (originalToken === undefined) process.env.AM_MCP_TOKEN = undefined;
+        if (originalToken === undefined) Reflect.deleteProperty(process.env, "AM_MCP_TOKEN");
         else process.env.AM_MCP_TOKEN = originalToken;
         try {
           await unlink(envFile);

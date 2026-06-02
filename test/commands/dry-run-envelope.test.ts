@@ -196,7 +196,7 @@ enabled = true
     restoreConsole();
     process.exitCode = 0;
     if (originalConfigDir) process.env.AM_CONFIG_DIR = originalConfigDir;
-    else process.env.AM_CONFIG_DIR = undefined;
+    else Reflect.deleteProperty(process.env, "AM_CONFIG_DIR");
     if (dir) await dir.cleanup();
   });
 

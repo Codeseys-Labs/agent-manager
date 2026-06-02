@@ -26,7 +26,7 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
-  process.env.AM_KEY_PATH = undefined;
+  Reflect.deleteProperty(process.env, "AM_KEY_PATH");
   await rm(cfgDir, { recursive: true, force: true });
   await rm(keyDir, { recursive: true, force: true });
 });

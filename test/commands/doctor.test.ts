@@ -97,7 +97,7 @@ describe("am doctor", () => {
       await fs.promises.writeFile(keyPath, "test-key");
       expect(fs.existsSync(keyPath)).toBe(true);
     } finally {
-      if (origKeyPath === undefined) process.env.AM_KEY_PATH = undefined;
+      if (origKeyPath === undefined) Reflect.deleteProperty(process.env, "AM_KEY_PATH");
       else process.env.AM_KEY_PATH = origKeyPath;
     }
   });

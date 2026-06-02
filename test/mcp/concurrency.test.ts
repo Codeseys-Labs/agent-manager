@@ -54,7 +54,7 @@ describe("MCP concurrency safety (Wave B)", () => {
     if (originalEnv) {
       process.env.AM_CONFIG_DIR = originalEnv;
     } else {
-      process.env.AM_CONFIG_DIR = undefined;
+      Reflect.deleteProperty(process.env, "AM_CONFIG_DIR");
     }
     // Always clear the adapter-resolution seam so it never leaks into other
     // test files (Bun runs all files in one process).

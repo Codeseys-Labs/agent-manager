@@ -91,7 +91,7 @@ describe("copilot detect() — variant + platform coverage", () => {
       expect(result.installed).toBe(true);
       expect(result.paths.userMcpConfig).toContain("Code");
     } finally {
-      process.env.APPDATA = undefined;
+      Reflect.deleteProperty(process.env, "APPDATA");
     }
   });
 

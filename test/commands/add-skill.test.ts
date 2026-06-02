@@ -66,7 +66,7 @@ describe("am add skill", () => {
     restoreConsole();
     if (dir) await dir.cleanup();
     if (workspace) await workspace.cleanup();
-    process.env.AM_CONFIG_DIR = undefined;
+    Reflect.deleteProperty(process.env, "AM_CONFIG_DIR");
   });
 
   test("happy path — adds skill entry with --path, auto-commits", async () => {

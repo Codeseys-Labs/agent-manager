@@ -60,7 +60,7 @@ describe("am agent enable-shim", () => {
   afterEach(async () => {
     restoreConsole();
     if (dir) await dir.cleanup();
-    process.env.AM_CONFIG_DIR = undefined;
+    Reflect.deleteProperty(process.env, "AM_CONFIG_DIR");
     // Reset exit code so a --yes-required failure in one test doesn't leak.
     process.exitCode = 0;
   });

@@ -86,7 +86,7 @@ describe("applyResolved — diff() throws → fail closed (SEC-4)", () => {
   afterEach(async () => {
     // Always clear the seam so other test files see the real registry.
     __setAdapterResolverForTests(null);
-    if (originalEnv === undefined) process.env.AM_CONFIG_DIR = undefined;
+    if (originalEnv === undefined) Reflect.deleteProperty(process.env, "AM_CONFIG_DIR");
     else process.env.AM_CONFIG_DIR = originalEnv;
     if (dir) await dir.cleanup();
     dir = undefined;

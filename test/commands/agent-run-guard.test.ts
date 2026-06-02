@@ -65,7 +65,7 @@ describe("am run — tier-3 catalog-only guard (ADR-0033)", () => {
     restoreConsole();
     process.exitCode = undefined;
     if (originalEnv) process.env.AM_CONFIG_DIR = originalEnv;
-    else process.env.AM_CONFIG_DIR = undefined;
+    else Reflect.deleteProperty(process.env, "AM_CONFIG_DIR");
     if (dir) await dir.cleanup();
   });
 

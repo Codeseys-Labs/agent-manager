@@ -259,7 +259,7 @@ describe("ADR-0051 `am secrets rotate` — Phase 1 verification gates", () => {
     process.env.AM_AGE_IDENTITY_DIR = fx.identityDir;
     process.env.AM_AGE_PASSPHRASE = fx.oldPassphrase;
     process.env.AM_SECRETS_BACKEND = "age";
-    process.env.AM_AGE_NEW_PASSPHRASE = undefined;
+    Reflect.deleteProperty(process.env, "AM_AGE_NEW_PASSPHRASE");
     captureConsole();
     process.exitCode = 0;
   });
@@ -539,7 +539,7 @@ describe("ADR-0051 `am secrets rotate --finalize` — safe ordering (gpt-5.5 mus
     process.env.AM_AGE_IDENTITY_DIR = fx.identityDir;
     process.env.AM_AGE_PASSPHRASE = fx.oldPassphrase;
     process.env.AM_SECRETS_BACKEND = "age";
-    process.env.AM_AGE_NEW_PASSPHRASE = undefined;
+    Reflect.deleteProperty(process.env, "AM_AGE_NEW_PASSPHRASE");
     captureConsole();
     process.exitCode = 0;
   });

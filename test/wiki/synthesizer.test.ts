@@ -474,7 +474,7 @@ describe("synthesizeContext — I/O path through MiniSearch", () => {
 
   afterEach(async () => {
     const { rm } = await import("node:fs/promises");
-    if (originalEnv === undefined) process.env.AM_CONFIG_DIR = undefined;
+    if (originalEnv === undefined) Reflect.deleteProperty(process.env, "AM_CONFIG_DIR");
     else process.env.AM_CONFIG_DIR = originalEnv;
     try {
       await rm(tmpDir, { recursive: true, force: true });

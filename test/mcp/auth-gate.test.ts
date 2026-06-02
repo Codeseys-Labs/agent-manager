@@ -34,7 +34,7 @@ describe("MCP auth gate", () => {
     if (originalEnv) {
       process.env.AM_CONFIG_DIR = originalEnv;
     } else {
-      process.env.AM_CONFIG_DIR = undefined;
+      Reflect.deleteProperty(process.env, "AM_CONFIG_DIR");
     }
     if (dir) await dir.cleanup();
   });
