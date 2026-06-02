@@ -19,8 +19,11 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import * as fs from "node:fs";
 import { join } from "node:path";
 import git from "isomorphic-git";
+import type { Adapter } from "../../src/adapters/types";
 import {
+  type WizardImportArgs,
   __setDetectedAdaptersForTests,
+  __setImporterForTests,
   guessRepoUrl,
   secretsBackendOptions,
   setupCommand,
@@ -28,6 +31,16 @@ import {
 import { readConfig } from "../../src/core/config";
 import { __setAdapterResolverForTests } from "../../src/core/controller";
 import { type TestDir, createTestDir } from "../helpers/tmp";
+
+/**
+ * A minimal detected-adapter double so `state.detectedAdapterNames.length > 0`
+ * and the wizard's brownfield-import gate opens. The wizard only reads
+ * `meta.name` / `meta.displayName` for the import step, so the rest of the
+ * Adapter surface is irrelevant here and cast away.
+ */
+function fakeAdapter(name: string, displayName: string): Adapter {
+  return { meta: { name, displayName } } as unknown as Adapter;
+}
 
 let consoleOutput: string[] = [];
 let consoleErrors: string[] = [];
@@ -122,6 +135,7 @@ describe("am setup", () => {
     restoreConsole();
     __setDetectedAdaptersForTests(null);
     __setAdapterResolverForTests(null);
+    __setImporterForTests(null);
     process.exitCode = 0;
     if (origConfigDir === undefined) {
       // biome-ignore lint/performance/noDelete: env var cleanup
@@ -225,6 +239,97 @@ describe("am setup", () => {
     expect(labels).not.toContain("age");
     // The recommended choice explicitly names the AES backend.
     expect(labels).toContain("aes");
+  });
+
+  test("wizard invokes the brownfield-import engine when tools are detected (--yes)", async () => {
+    // The doc-honesty fix (PHASE-8 P0-4): `am setup` claims to "import existing
+    // configs", so it MUST actually drive the import engine. Force a non-empty
+    // detected set and capture the import invocation via the seam.
+    __setDetectedAdaptersForTests(async () => [fakeAdapter("claude-code", "Claude Code")]);
+    const importCalls: WizardImportArgs[] = [];
+    __setImporterForTests(async (args) => {
+      importCalls.push(args);
+    });
+
+    await handler.run({ args: makeArgs({ yes: true, "no-apply": true }) });
+
+    // The wizard reached the import path exactly once, driving the existing
+    // engine with source="auto" + auto-resolve (the deterministic contract).
+    expect(importCalls.length).toBe(1);
+    expect(importCalls[0].source).toBe("auto");
+    expect(importCalls[0].auto).toBe(true);
+    expect(importCalls[0].report).toBe(false);
+    // --json mode owns the wizard's single payload, so the import engine must
+    // be told json:false; here we are not in json mode but the contract holds.
+    expect(importCalls[0].json).toBe(false);
+    expect(process.exitCode).toBe(0);
+  });
+
+  test("--no-import skips the brownfield-import engine entirely", async () => {
+    __setDetectedAdaptersForTests(async () => [fakeAdapter("claude-code", "Claude Code")]);
+    let invoked = false;
+    __setImporterForTests(async () => {
+      invoked = true;
+    });
+
+    await handler.run({
+      args: makeArgs({ yes: true, "no-apply": true, "no-import": true }),
+    });
+
+    expect(invoked).toBe(false);
+    expect(consoleOutput.join("\n")).toContain("Brownfield import skipped (--no-import)");
+    expect(process.exitCode).toBe(0);
+  });
+
+  test("import is skipped when no tools are detected (nothing to import)", async () => {
+    // Default detection seam in beforeEach returns []. The gate must stay shut
+    // so a stranger with no installed tools never sees a no-op import run.
+    let invoked = false;
+    __setImporterForTests(async () => {
+      invoked = true;
+    });
+
+    await handler.run({ args: makeArgs({ yes: true, "no-apply": true }) });
+
+    expect(invoked).toBe(false);
+    expect(process.exitCode).toBe(0);
+  });
+
+  test("--from clone skips brownfield import (cloned catalog is authoritative)", async () => {
+    // A freshly cloned catalog already carries its curated servers; importing
+    // the local machine's native configs into it would pollute the catalog the
+    // user explicitly cloned, so the wizard skips import after a clone.
+    const barePath = join(dir.path, "remote.git");
+    await seedBareCatalog(dir.path, barePath);
+    __setDetectedAdaptersForTests(async () => [fakeAdapter("claude-code", "Claude Code")]);
+    let invoked = false;
+    __setImporterForTests(async () => {
+      invoked = true;
+    });
+
+    await handler.run({
+      args: makeArgs({ yes: true, json: true, "no-apply": true, from: barePath }),
+    });
+
+    expect(invoked).toBe(false);
+    const payload = JSON.parse(consoleOutput.join("\n"));
+    expect(payload.cloned).toBe(true);
+    expect(payload.imported).toBe(false);
+  });
+
+  test("--json payload surfaces the imported flag (true when import ran)", async () => {
+    __setDetectedAdaptersForTests(async () => [fakeAdapter("claude-code", "Claude Code")]);
+    __setImporterForTests(async () => {
+      // No-op import double — the wizard's `imported` flag flips on invocation.
+    });
+
+    await handler.run({ args: makeArgs({ yes: true, json: true, "no-apply": true }) });
+
+    const payload = JSON.parse(consoleOutput.join("\n"));
+    expect(payload.imported).toBe(true);
+    // And the import double was told json:false so it could not corrupt the
+    // wizard's single stdout payload (which parsed cleanly above).
+    expect(payload.action).toBe("setup");
   });
 });
 

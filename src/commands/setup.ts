@@ -14,6 +14,7 @@
  *   - fresh config      → withConfig + initRepo (controller + core/git, mirrors init.ts)
  *   - clone-from-remote → cloneRepo (core/git)
  *   - secrets (AES)     → generateKey / saveKey / loadKey (core/secrets)
+ *   - brownfield import → importCommand (commands/import, source="auto", ADR-0028)
  *   - apply             → applyResolved + ADR-0038 dry-run envelope (controller)
  *
  * Mode resolution (ADR-0053 step 0):
@@ -38,6 +39,7 @@ import { cloneRepo, getStatus, initRepo } from "../core/git";
 import type { Config } from "../core/schema";
 import { generateKey, loadKey, resolveKeyPath, saveKey } from "../core/secrets";
 import { collectDoctorChecks } from "./doctor";
+import { importCommand } from "./import";
 
 /**
  * Test-only adapter-detection seam (mirrors `__setAdapterResolverForTests`
@@ -93,6 +95,57 @@ export function __setClackForTests(impl: ClackLike | null): void {
 /** Resolve the clack implementation (real module, or a test-injected double). */
 function getClack(): ClackLike {
   return clackOverride ?? clack;
+}
+
+/**
+ * The arg-shape the wizard hands the brownfield-import engine. It mirrors the
+ * subset of `importCommand`'s args the wizard drives: always `source: "auto"`
+ * (import from every detected tool), `auto: true` (non-interactive conflict
+ * resolution — the wizard has no separate conflict-prompt step and a `--yes`
+ * run must never hang), and the surface's own output flags forwarded through.
+ */
+export interface WizardImportArgs {
+  source: "auto";
+  auto: true;
+  report: false;
+  marketplace: false;
+  "no-encrypt": false;
+  json: boolean;
+  quiet: boolean;
+  verbose: boolean;
+}
+
+/**
+ * Test-only import seam. The wizard wires the EXISTING `am import` engine
+ * (commands/import.ts) rather than reimplementing detection or merge — it
+ * invokes `importCommand.run({ args })` exactly the way it invokes
+ * `applyResolved` / `collectDoctorChecks` as library calls. This seam lets a
+ * command-level test assert that the wizard reaches the import path (and that
+ * `--no-import` skips it) WITHOUT running real adapter detection against the
+ * test machine. Mirrors `__setDetectedAdaptersForTests` / `__setClackForTests`.
+ * Never set in prod.
+ */
+let importerOverride: ((args: WizardImportArgs) => Promise<void>) | null = null;
+
+/** @internal test seam — see `importerOverride`. */
+export function __setImporterForTests(
+  fn: ((args: WizardImportArgs) => Promise<void>) | null,
+): void {
+  importerOverride = fn;
+}
+
+/**
+ * Resolve the brownfield-import runner: the test double when set, otherwise the
+ * real `am import` command. Calling the citty command's `run` keeps the wizard
+ * a thin orchestrator over the existing, separately-tested engine (ADR-0028,
+ * ADR-0053 step 2/4) — no detection/merge logic is duplicated here.
+ */
+async function runImport(args: WizardImportArgs): Promise<void> {
+  if (importerOverride) return importerOverride(args);
+  const handler = importCommand as unknown as {
+    run: (ctx: { args: WizardImportArgs }) => Promise<void>;
+  };
+  await handler.run({ args });
 }
 
 /**
@@ -163,7 +216,8 @@ function renderChecks(checks: Awaited<ReturnType<typeof collectDoctorChecks>>): 
 export const setupCommand = defineCommand({
   meta: {
     name: "setup",
-    description: "Guided first-run setup: detect tools, import, configure secrets, apply",
+    description:
+      "Guided first-run setup: detect tools, import existing configs, configure secrets, apply",
   },
   args: {
     from: {
@@ -172,6 +226,12 @@ export const setupCommand = defineCommand({
     },
     ssh: { type: "boolean", description: "Use SSH for the --from shorthand clone", default: false },
     tools: { type: "string", description: "Comma-separated adapter names to target on apply" },
+    "no-import": {
+      type: "boolean",
+      description:
+        "Skip the brownfield-import step (do not pull detected tools' native configs into the catalog)",
+      default: false,
+    },
     profile: { type: "string", description: "Profile to create / select (default: 'default')" },
     "no-apply": {
       type: "boolean",
@@ -428,6 +488,66 @@ export const setupCommand = defineCommand({
         selectedTools = picked as string[];
       }
 
+      // ── Step 4b: brownfield import ─────────────────────────────────
+      // Pull the detected tools' native configs INTO the catalog via the
+      // existing `am import` engine (source="auto", ADR-0028) so a stranger's
+      // pre-existing MCP servers survive the round-trip instead of being
+      // clobbered by the subsequent apply. Gated for a deterministic
+      // non-interactive contract:
+      //   - --no-import always skips (explicit opt-out).
+      //   - nothing detected → nothing to import (silent skip, no noise).
+      //   - a fresh clone already carries its curated catalog; importing the
+      //     local machine's native configs would pollute it, so we skip after a
+      //     clone (mirrors the secrets step's `cloned` guard).
+      // Default: import runs (interactive confirms first, default yes;
+      // non-interactive imports directly — the run was explicitly requested).
+      let imported = false;
+      const canImport = !args["no-import"] && !cloned && state.detectedAdapterNames.length > 0;
+      if (canImport) {
+        let doImport = true;
+        if (interactive) {
+          const go = await c.confirm({
+            message: `Import existing configs from ${state.detectedNames.join(", ")} into your catalog?`,
+            initialValue: true,
+          });
+          if (c.isCancel(go)) return cancel(interactive);
+          doImport = Boolean(go);
+        }
+        if (doImport) {
+          // The wizard owns its output contract: in --json mode it emits ONE
+          // authoritative payload (below), so the import engine must stay
+          // silent — never pass json:true (its own JSON would corrupt ours).
+          // Likewise suppress its console chatter in interactive and quiet
+          // runs; only a plain non-interactive run lets its summary through.
+          await runImport({
+            source: "auto",
+            auto: true,
+            report: false,
+            marketplace: false,
+            "no-encrypt": false,
+            json: false,
+            quiet: quiet || interactive || json,
+            verbose: Boolean(args.verbose),
+          });
+          imported = true;
+          // The import seam-default writes its own config under withConfig; the
+          // key may have been auto-generated by import's secret-encryption path.
+          const afterImport = await loadKey(configDir);
+          if (afterImport && !state.hasKey) state.hasKey = true;
+          if (interactive) {
+            c.log.success(`Imported existing configs from ${state.detectedNames.join(", ")}.`);
+          } else {
+            log(
+              `Imported existing configs from detected tools (${state.detectedNames.join(", ")}).`,
+            );
+          }
+        } else {
+          log("Import skipped by user. Run `am import auto` later to adopt existing configs.");
+        }
+      } else if (args["no-import"]) {
+        log("Brownfield import skipped (--no-import).");
+      }
+
       // ── Step 5: profile bootstrap ──────────────────────────────────
       const profileName = resolveProfileName(args, state, interactive);
       let profileChosen = profileName;
@@ -544,6 +664,7 @@ export const setupCommand = defineCommand({
               action: "setup",
               configDir,
               cloned,
+              imported,
               keyGenerated,
               profile: profileChosen,
               tools: selectedTools,
