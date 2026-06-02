@@ -181,7 +181,7 @@ install.sh                  # curl-based installer (repo root, not scripts/)
 
 | Command | Description |
 |---------|-------------|
-| `am init` | First-time setup: detect tools, import configs, init git |
+| `am init` | First-time setup: detect tools, init git (run `am import auto` to import existing configs) |
 | `am add server <name>` | Add an MCP server (auto-commits) |
 | `am list servers` | List all servers (`--active`, `--json`) |
 | `am use <profile>` | Switch active profile |
