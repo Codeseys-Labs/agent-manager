@@ -1,9 +1,18 @@
 ---
-status: proposed
+status: accepted
 date: 2026-05-31
 ---
 
 # ADR-0053: `am setup` — first-run setup wizard
+
+> **Status note (accepted):** The wizard shipped in #19 (`src/commands/setup.ts`,
+> `test/commands/setup*.test.ts`). The brownfield-import step (step 4b below) was
+> wired in a follow-up: the wizard now invokes the existing `am import auto`
+> engine (ADR-0028) via a `runImport` orchestration call rather than
+> reimplementing detection/merge, gated by `--import`/`--no-import` for a
+> deterministic non-interactive contract, and skipped after a `--from` clone (the
+> cloned catalog is authoritative). The age secrets backend remains fenced to AES
+> per the Wave 2 / ADR-0042 fence.
 
 ## Context
 
@@ -51,6 +60,15 @@ end-to-end. It does NOT replace the granular commands (`am init`, `am import`,
    (ADR-0042) is fenced until its apply-path runtime is fixed and integration-tested
    (Wave 2 / ADR-0042 status). Offer generate-key / enter-passphrase / skip.
 4. **Tool selection.** `multiselect` preselected with detected adapters.
+4b. **Brownfield import.** Run the existing `am import auto` engine (ADR-0028) to
+   pull the detected tools' native configs INTO the catalog so a stranger's
+   pre-existing MCP servers survive the round-trip instead of being clobbered by
+   the subsequent apply. Interactive: confirm first (default yes). Non-interactive:
+   import by default; `--no-import` opts out. Skipped when no tools are detected
+   (nothing to import) and after a `--from` clone (the cloned catalog is
+   authoritative — importing the local machine's configs would pollute it). The
+   wizard invokes the import command's `run` as a library call; it does NOT
+   duplicate detection or merge logic.
 5. **Profile.** Create an explicit default profile (defuses the default-passthrough
    surprise where an absent profile exports the whole catalog to every tool).
 6. **Apply.** Dry-run preview (ADR-0038 envelope) → confirm → `applyResolved`;
@@ -59,9 +77,11 @@ end-to-end. It does NOT replace the granular commands (`am init`, `am import`,
    or per-check `log.error` + non-zero exit (failure).
 
 **Non-interactive contract:** `--yes`, `--non-interactive`, `--json`, `--from`,
-`--tools`, `--profile`, `--no-apply`, `--force`. Precedence flag > env > existing
-config > default (matches ADR-0003). `--json` emits the doctor `Check[]` result and
-the exit code reflects health.
+`--tools`, `--profile`, `--no-import`, `--no-apply`, `--force`. Precedence
+flag > env > existing config > default (matches ADR-0003). `--json` emits the
+doctor `Check[]` result plus `cloned`/`imported`/`keyGenerated`/`applied` flags,
+and the exit code reflects health. In `--json` mode the embedded import call runs
+silently (json=false, quiet=true) so the wizard emits one authoritative payload.
 
 `am init` is retained (and may print "for a guided setup, run `am setup`"). The wizard
 is built on existing primitives; no core engine change is required beyond the Wave 1

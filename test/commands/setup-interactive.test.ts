@@ -18,15 +18,22 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import * as fs from "node:fs";
 import { join } from "node:path";
+import type { Adapter } from "../../src/adapters/types";
 import {
   type ClackLike,
   __setClackForTests,
   __setDetectedAdaptersForTests,
+  __setImporterForTests,
   setupCommand,
 } from "../../src/commands/setup";
 import { __setAdapterResolverForTests } from "../../src/core/controller";
 import { loadKey } from "../../src/core/secrets";
 import { type TestDir, createTestDir } from "../helpers/tmp";
+
+/** Minimal detected-adapter double (see setup.test.ts for the rationale). */
+function fakeAdapter(name: string, displayName: string): Adapter {
+  return { meta: { name, displayName } } as unknown as Adapter;
+}
 
 const origConfigDir = process.env.AM_CONFIG_DIR;
 const origKeyPath = process.env.AM_KEY_PATH;
@@ -135,6 +142,7 @@ describe("am setup — non-interactive key consent (nit a)", () => {
     __setDetectedAdaptersForTests(null);
     __setAdapterResolverForTests(null);
     __setClackForTests(null);
+    __setImporterForTests(null);
     process.exitCode = 0;
     restoreEnv("AM_CONFIG_DIR", origConfigDir);
     restoreEnv("AM_KEY_PATH", origKeyPath);
@@ -226,6 +234,7 @@ describe("am setup — interactive path with injected clack (nit b)", () => {
     __setDetectedAdaptersForTests(null);
     __setAdapterResolverForTests(null);
     __setClackForTests(null);
+    __setImporterForTests(null);
     process.stdin.isTTY = origTTY;
     restoreEnv("CI", origCI);
     restoreEnv("AM_CONFIG_DIR", origConfigDir);
@@ -292,6 +301,55 @@ describe("am setup — interactive path with injected clack (nit b)", () => {
 
     expect(calls.some((c) => c.startsWith("cancel:"))).toBe(true);
     expect(process.exitCode).toBe(1);
+  });
+
+  test("interactive run confirms before importing detected tools' configs", async () => {
+    // Detected tools open the import gate; the wizard must PROMPT (not silently
+    // import) and only drive the engine when the user confirms. A confirm queue
+    // declines the clone (first confirm) then accepts the import (second).
+    __setDetectedAdaptersForTests(async () => [fakeAdapter("claude-code", "Claude Code")]);
+    __setAdapterResolverForTests(async () => []);
+    let importInvoked = false;
+    __setImporterForTests(async () => {
+      importInvoked = true;
+    });
+
+    const confirmAnswers = [false /* clone? no */, true /* import? yes */];
+    let confirmIdx = 0;
+    const calls: string[] = [];
+    const clack = {
+      ...makeClackDouble({ select: "skip", text: "default" }).clack,
+      confirm: async () => {
+        calls.push("confirm");
+        return confirmAnswers[confirmIdx++] ?? true;
+      },
+    } as unknown as ClackLike;
+    __setClackForTests(clack);
+
+    await handler.run({ args: makeArgs() });
+
+    // Two confirms fired (clone + import) and the import engine ran on consent.
+    expect(calls.filter((c) => c === "confirm").length).toBeGreaterThanOrEqual(2);
+    expect(importInvoked).toBe(true);
+    expect(process.exitCode).toBe(0);
+  });
+
+  test("declining the interactive import prompt skips the engine", async () => {
+    __setDetectedAdaptersForTests(async () => [fakeAdapter("claude-code", "Claude Code")]);
+    __setAdapterResolverForTests(async () => []);
+    let importInvoked = false;
+    __setImporterForTests(async () => {
+      importInvoked = true;
+    });
+
+    // Decline EVERY confirm: clone=no, import=no. The engine must not run.
+    const { clack } = makeClackDouble({ confirm: false, select: "skip", text: "default" });
+    __setClackForTests(clack);
+
+    await handler.run({ args: makeArgs() });
+
+    expect(importInvoked).toBe(false);
+    expect(process.exitCode).toBe(0);
   });
 });
 

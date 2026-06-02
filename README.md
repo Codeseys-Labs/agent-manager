@@ -14,7 +14,8 @@ terminal, local web, or cloud.
 [![Bun](https://img.shields.io/badge/runtime-Bun-f9f1e1.svg)](https://bun.sh)
 
 ```bash
-am init                    # detect installed tools, import existing configs
+am setup                   # guided first run: detect tools, import existing configs,
+                           # key + profile, apply, ending on a green health check
 am add server tavily \
   --command "bunx tavily-mcp@latest" \
   --tags search,web        # add an MCP server (secrets auto-detected)
@@ -127,16 +128,22 @@ cd agent-manager && bun install && bun run build
 ### First-Time Setup
 
 ```bash
-am setup                   # guided wizard: detect tools → import configs → set up
-                           # an encryption key → create a profile → apply →
-                           # ends on a green `am doctor` health check
+am setup                   # guided wizard: detect tools → import their existing
+                           # configs into your catalog → set up an encryption key →
+                           # create a profile → apply → ends on a green `am doctor`
+                           # health check
 ```
 
 `am setup` is idempotent (safe to re-run — it resumes/repairs rather than
 clobbering) and fully scriptable: `--yes`/`--json`/`--non-interactive` for CI,
-`--from <git-url>` to clone an existing catalog onto a new machine, `--no-apply`
-to stop short of writing native configs. The individual steps remain available
-standalone (`am init`, `am import auto`, `am secret scan --fix`, `am apply`).
+`--from <git-url>` to clone an existing catalog onto a new machine, `--no-import`
+to skip pulling native configs into the catalog, `--no-apply` to stop short of
+writing native configs. The brownfield import runs the same `am import auto`
+engine (ADR-0028): in an interactive run it asks first; non-interactively it
+imports by default (opt out with `--no-import`), and is skipped after a `--from`
+clone (the cloned catalog is authoritative). The individual steps remain
+available standalone (`am init`, `am import auto`, `am secret scan --fix`,
+`am apply`).
 
 ### Daily Usage
 
@@ -153,14 +160,22 @@ am push                    # sync to remote
 ### New Machine
 
 ```bash
-# Clone your existing config catalog into the agent-manager config dir, then apply:
-git clone <your-config-remote> ~/.config/agent-manager
-am apply                   # instant parity with your other machines
+# One command clones your existing catalog into the config dir and applies it:
+am setup --from <your-config-remote>   # full git URL, or a user/repo shorthand
+am setup --from alice/dotfiles --ssh   # shorthand → git@github.com:alice/dotfiles.git
 ```
 
-> A one-command `am setup --from <remote>` that clones + applies is on the
-> roadmap; until then, clone the config repo into `~/.config/agent-manager`
-> (or `$AM_CONFIG_DIR`) manually as shown above.
+`--from` accepts a full git URL, an scp-style `git@host:org/repo`, a local path,
+or a chezmoi-style `user/repo` (default host `github.com`) / `host/user/repo`
+shorthand; `--ssh` selects the SSH remote form. The clone lands in
+`~/.config/agent-manager` (or `$AM_CONFIG_DIR`), then `am setup` runs the rest of
+the wizard (profile → apply → health check) for instant parity with your other
+machines. The manual equivalent still works if you prefer it:
+
+```bash
+git clone <your-config-remote> ~/.config/agent-manager
+am apply
+```
 
 ### MCP Registry
 
