@@ -45,3 +45,14 @@ The loop ran the full investigate→plan→execute→review→reconcile cycle to
 **Documented v-next deferrals (ADR-backed, NOT v1 gaps):** WIKI-opt chub-mcp (ADR-0054: optional-external-only, never embed); WIKI-supersede-consumer invalidate-don't-delete contradiction handling (ADR-0054 R4: fields are forward-compat scaffolding, auto-flow is v-next); marketplace pillar (ADR-0031/0052: v2 web-platform era).
 
 Key durable lessons (Mulch): real multi-OS CI is irreplaceable (Linux-only "correct-by-construction" missed shared-process env pollution, macOS symlink/APFS-mtime, R7/R8 dead-code wiring gaps); file-ownership partitioning keeps parallel waves conflict-free but defers cross-boundary wiring (needs an integration pass); don't launch a follow-up wave touching files an in-flight wave still owns (Wave G/F copilot collision); the independent final review catches what per-wave reviews rationalize past.
+
+## Checkpoint 11 — 2026-06-02 (TRUE ZERO: optional nits closed too)
+
+PHASE-8 re-review signed off with 2 OPTIONAL low items classed non-blocking; implemented them anyway for a genuine empty backlog:
+- Wizard apply-failclosed test (proves setup = 5th surface honors APPLY_SAFE_DEFAULTS; distinguishes live write from dry-run preview).
+- Copilot glob-only test (pins the by-design edge: glob-scoped-only instructions → no canonical file → no wiki injection).
+(#41; also fixed a CI-vs-local biome line-width mismatch on the new test.)
+
+**FINAL: 19 PRs merged (#23–#41). v1 Seeds backlog = 0 open / 0 in_progress / all closed. Full suite 3490 pass / 0 fail. tsc first-party clean, lint 0 warnings. main CI green across ubuntu/windows-2025/macOS + integration + integration-windows. Both execution and review teams confirm zero remaining v1 work. Documented v-next deferrals: WIKI-opt chub-mcp, WIKI-supersede-consumer contradiction-handling, marketplace pillar — all ADR-backed.**
+
+Loop closed.
