@@ -22,7 +22,7 @@ import {
   tryReadConfig,
   writeConfig,
 } from "../core/config";
-import { applyResolved, withConfig } from "../core/controller";
+import { APPLY_SAFE_DEFAULTS, applyResolved, withConfig } from "../core/controller";
 import { commitAll, getStatus, log as gitLog, pull, push, revertHead } from "../core/git";
 import type { Config, McpToolGroup, Settings } from "../core/schema";
 import { interpolateEnvAsync, legacyKeyPath, loadKey, resolveKeyPath } from "../core/secrets";
@@ -1750,11 +1750,15 @@ function defineTools(): ToolEntry[] {
         // drifted (or whose drift state cannot be read because diff() threw).
         // `force: true` is the explicit opt-in to overwrite, matching the CLI's
         // `--force`. dryRun previews regardless and is never gated.
-        const force = !!args.force;
+        // Derive diff/force from the SHARED APPLY_SAFE_DEFAULTS so the
+        // fail-closed posture lives in ONE place across all four surfaces
+        // (CLI / MCP / web / TUI). `force=true` is the explicit per-call opt-in
+        // to overwrite, matching the CLI's `--force`.
+        const force = args.force === true ? true : APPLY_SAFE_DEFAULTS.force;
         const applyResult = await applyResolved(configDir, {
           dryRun: !!args.dryRun,
           target: args.target as string | undefined,
-          diff: true,
+          diff: APPLY_SAFE_DEFAULTS.diff,
           force,
         });
         // Shape the response to the existing MCP contract (files count, not

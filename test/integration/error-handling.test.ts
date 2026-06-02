@@ -78,8 +78,32 @@ describe("error handling — commands that gracefully handle missing config", ()
   });
 
   test("am apply before init works with empty state", async () => {
-    const { code } = await runAM("apply");
+    // Isolate HOME to an empty dir so adapter detection (pure file-presence,
+    // over-reports) finds NO host tools. Without this the test is
+    // host-dependent: any IDE config on the dev/CI machine that has drifted
+    // from the (empty) catalog is now correctly SKIPPED by the fail-closed
+    // drift gate (Wave B apply-follow: bare `am apply` defaults diff:true),
+    // which exits 1 — the safe refusal, not a crash. The point of this test is
+    // that a missing config is handled gracefully (no unhandled error), which
+    // we pin deterministically by detecting zero tools.
+    const emptyHome = join(testDir.path, "empty-home");
+    const fs = require("node:fs");
+    fs.mkdirSync(emptyHome, { recursive: true });
+    const proc = Bun.spawn([bunExe(), "run", "src/cli.ts", "apply"], {
+      cwd: join(import.meta.dir, "../.."),
+      env: { ...process.env, AM_CONFIG_DIR: testDir.path, HOME: emptyHome, USERPROFILE: emptyHome },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr] = await Promise.all([
+      new Response(proc.stdout).text(),
+      new Response(proc.stderr).text(),
+    ]);
+    const code = await proc.exited;
+    // Missing config is handled gracefully — no unhandled error, no crash.
     expect(code).toBe(0);
+    expect(stderr).not.toContain("CONFIG_NOT_FOUND");
+    expect(stdout + stderr).not.toContain("invalid characters");
   });
 });
 

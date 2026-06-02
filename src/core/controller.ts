@@ -179,6 +179,30 @@ export async function withConfig<T>(
 
 // ── applyResolved ────────────────────────────────────────────────
 
+/**
+ * CLI-default decision (Wave B apply-follow, LOW): the single source of truth
+ * for the fail-closed apply posture shared by ALL FOUR write-local surfaces —
+ * CLI (`am apply`), MCP (`am_apply`), web (`POST /api/apply`), and TUI (apply
+ * button). Each surface derives its drift-gate behavior from this const rather
+ * than hard-coding `diff: true` independently, so the safe posture cannot drift
+ * apart across surfaces.
+ *
+ * `diff: true` makes a LIVE apply run `adapter.diff()` first and SKIP (not
+ * overwrite) any adapter whose native config has drifted out of band, or whose
+ * drift state cannot even be read (diff() threw). `force: false` means the
+ * caller has NOT opted into overwriting — each surface exposes its own opt-in
+ * (CLI `--force`, MCP `force=true`, web/TUI `{ force: true }`).
+ *
+ * Rationale for fail-closed-by-default (SEC-4b lineage, the 2026-04-15
+ * `~/.claude.json` wipe class): the most common human invocation is a bare
+ * `am apply`, and previously that blindly overwrote a hand-edited native config.
+ * A first apply (no native file yet) reports `unmanaged`/`in-sync` — NOT
+ * `drifted` — so fresh-init and round-trip UX are unaffected; only a genuinely
+ * drifted target is gated. `AM_APPLY_BACKUP` remains the recovery path, and
+ * `--force` is always one flag away.
+ */
+export const APPLY_SAFE_DEFAULTS = { diff: true, force: false } as const;
+
 export interface ApplyResolvedOptions {
   dryRun?: boolean;
   /** Restrict to a single adapter by name. */

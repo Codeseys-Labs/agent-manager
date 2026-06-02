@@ -18,7 +18,10 @@ interface Props {
   initialData: TuiData;
   onProfileSwitch: (profile: string) => Promise<void>;
   onSync: () => Promise<void>;
-  onApply: () => Promise<void>;
+  // SEC-4c: apply now returns a human-readable summary (which tools were
+  // written, which were SKIPPED by the fail-closed drift gate) and accepts an
+  // explicit `force` to overwrite a drifted target on purpose.
+  onApply: (force?: boolean) => Promise<string>;
   onPush: () => Promise<string>;
   onAddServer: () => Promise<string>;
   onRemoveServer: (serverName: string) => Promise<string>;
@@ -55,15 +58,21 @@ export function App({
     }
   }, [onSync, showMessage]);
 
-  const handleApply = useCallback(async () => {
-    showMessage("Applying...");
-    try {
-      await onApply();
-      showMessage("Apply complete");
-    } catch (err: any) {
-      showMessage(`Apply failed: ${err.message}`);
-    }
-  }, [onApply, showMessage]);
+  const handleApply = useCallback(
+    async (force = false) => {
+      showMessage(force ? "Force-applying..." : "Applying...");
+      try {
+        // SEC-4c: surface the apply summary verbatim — when the fail-closed
+        // drift gate skips a tool, the message names it and prompts [F] to
+        // force-overwrite. Default (`a`) is the SAFE, gated apply.
+        const result = await onApply(force);
+        showMessage(result);
+      } catch (err: any) {
+        showMessage(`Apply failed: ${err.message}`);
+      }
+    },
+    [onApply, showMessage],
+  );
 
   const handlePush = useCallback(async () => {
     showMessage("Pushing...");
@@ -141,7 +150,14 @@ export function App({
         return;
       }
       if (input === "a") {
-        handleApply();
+        handleApply(false);
+        return;
+      }
+      // SEC-4c: explicit force-overwrite path, consistent with the CLI's
+      // `--force`. `a` is the safe (drift-gated) apply; `F` overwrites a
+      // drifted native config on purpose after the gate flagged it.
+      if (input === "F") {
+        handleApply(true);
         return;
       }
       if (input === "P") {

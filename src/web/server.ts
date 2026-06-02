@@ -14,7 +14,7 @@ import {
   resolveProjectConfig,
   writeConfig,
 } from "../core/config";
-import { applyResolved, withConfig } from "../core/controller";
+import { APPLY_SAFE_DEFAULTS, applyResolved, withConfig } from "../core/controller";
 import { commitAll, getStatus, pull as gitPull, push as gitPush } from "../core/git";
 import {
   encryptValue,
@@ -535,16 +535,18 @@ export async function createApp(options?: CreateAppOptions) {
       // The caller opts into overwriting with `{ "force": true }` in the body,
       // mirroring the CLI `--force`. The body is optional — a bodiless POST
       // keeps the safe (force=false) default.
-      let force = false;
+      // Derive the safe posture from the SHARED APPLY_SAFE_DEFAULTS so the
+      // fail-closed gate lives in ONE place across all four surfaces.
+      let force: boolean = APPLY_SAFE_DEFAULTS.force;
       try {
         const body = (await c.req.json()) as { force?: unknown } | null;
-        force = body?.force === true;
+        if (body?.force === true) force = true;
       } catch {
         // No / invalid JSON body — keep the safe default (force=false).
       }
       const applyResult = await applyResolved(resolveConfigDir(), {
         dryRun: false,
-        diff: true,
+        diff: APPLY_SAFE_DEFAULTS.diff,
         force,
       });
       return c.json({
