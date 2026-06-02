@@ -7,7 +7,7 @@
  */
 
 import type { Message, Session, ToolCall } from "../core/session";
-import { entityToSlug, extractEntities } from "./ner";
+import { type NerOptions, entityToSlug, extractEntities } from "./ner";
 import { getAllEntries, listPages, readPage, writePage } from "./storage";
 import type { EntityType, KnowledgeEntry, KnowledgeSource, Provenance, WikiPage } from "./types";
 
@@ -86,8 +86,23 @@ function makeEntry(
 
 /**
  * Convert a KnowledgeEntry to a WikiPage for markdown-file storage.
+ *
+ * ADR-0054 R2: the "Related entities" section now emits `[[wikilink]]`
+ * references instead of a backtick-wrapped bullet list. The old bullet form
+ * (`` - `Text` (type) ``) was inert: {@link generateWikilinks} explicitly skips
+ * text immediately preceded by a backtick (ner.ts), and {@link addPageToGraph}
+ * only mines `[[...]]` patterns — so harvested pages never produced graph edges
+ * and stayed orphaned. Emitting `[[entity]]` makes harvested knowledge a
+ * structural peer of authored pages: the entries feed wikilink edges, backlinks,
+ * and orphan detection from the moment they are written. The `entities`
+ * frontmatter field is populated with the same slugs so the ADR-0020 entity
+ * index can consume them without re-parsing the body.
+ *
+ * `opts.ner` carries the resolved catalog entity names (ADR-0054 R3) so the
+ * harvested page links the real servers/agents/skills/instructions, not just
+ * the static fallback vocabulary.
  */
-function entryToWikiPage(entry: KnowledgeEntry): WikiPage {
+function entryToWikiPage(entry: KnowledgeEntry, opts?: { ner?: NerOptions }): WikiPage {
   const now = new Date().toISOString();
 
   // Build markdown content
@@ -98,15 +113,29 @@ function entryToWikiPage(entry: KnowledgeEntry): WikiPage {
     lines.push(`> Context: ${entry.context}`);
   }
 
-  // Extract entities from content for auto-linking
-  const entities = extractEntities(entry.content);
-  if (entities.length > 0) {
+  // Extract entities from content for auto-linking. Catalog-aware so harvested
+  // pages reference the real catalog (ADR-0054 R3), de-duplicated by slug.
+  const entities = extractEntities(entry.content, opts?.ner);
+  const entitySlugs: string[] = [];
+  const seenSlugs = new Set<string>();
+  const linkLines: string[] = [];
+  for (const ent of entities) {
+    const slug = entityToSlug(ent.text);
+    // Skip self-references and empty slugs; an entity equal to this page's own
+    // slug would create a degenerate self-edge in the graph.
+    if (!slug || slug === entry.id || seenSlugs.has(slug)) continue;
+    seenSlugs.add(slug);
+    entitySlugs.push(slug);
+    // ADR-0054 R2: emit a real wikilink (NOT a backtick-wrapped bullet) so the
+    // graph builder mines it as a wikilink edge.
+    linkLines.push(`- [[${ent.text}]] (${ent.type})`);
+  }
+
+  if (linkLines.length > 0) {
     lines.push("");
-    lines.push("## Extracted Entities");
+    lines.push("## Related Entities");
     lines.push("");
-    for (const ent of entities) {
-      lines.push(`- \`${ent.text}\` (${ent.type})`);
-    }
+    lines.push(...linkLines);
   }
 
   return {
@@ -120,6 +149,7 @@ function entryToWikiPage(entry: KnowledgeEntry): WikiPage {
     created: entry.extracted_at,
     updated: now,
     confidence: entry.confidence,
+    ...(entitySlugs.length > 0 ? { entities: entitySlugs } : {}),
   };
 }
 
@@ -349,14 +379,81 @@ async function deduplicateEntries(newEntries: KnowledgeEntry[]): Promise<{
   return { unique, merged };
 }
 
+// ── Optional LLM extraction hook (ADR-0054 R8) ──────────────────
+
+/**
+ * Optional, GATED LLM-extraction stage (ADR-0054 R8 / ADR-0010).
+ *
+ * The regex/pattern extractors above yield shallow knowledge. ADR-0020's
+ * Karpathy "LLM-wiki" pattern wants an LLM-synthesis pass on top — but
+ * ADR-0010 forbids a required runtime LLM dependency in the single binary. The
+ * resolution: this is an *interface*, not an embedded client. agent-manager
+ * ships NO implementation; a host that has an LLM configured may inject one.
+ *
+ * Contract:
+ * - It receives the session and the heuristic entries already extracted.
+ * - It returns ADDITIONAL `KnowledgeEntry` objects (it must not mutate the
+ *   inputs). An empty array is the correct no-op result.
+ * - It must be safe to call without network/credentials in the degraded case;
+ *   the harvester treats a throw as "no LLM available" and continues with the
+ *   heuristic entries (graceful degradation).
+ */
+export interface LlmExtractor {
+  extract(input: {
+    session: Session;
+    source: KnowledgeSource;
+    heuristicEntries: readonly KnowledgeEntry[];
+  }): Promise<KnowledgeEntry[]> | KnowledgeEntry[];
+}
+
+/**
+ * The default extractor: a pure no-op heuristic (ADR-0010 zero-dep default).
+ *
+ * This is what runs when nobody injects an LLM. It returns no extra entries, so
+ * `am wiki harvest` behaves EXACTLY as the pattern-only path did before R8. It
+ * exists as a named export so callers/tests can assert the default-off contract
+ * and so the gating logic always has a concrete extractor to call.
+ */
+export const noopLlmExtractor: LlmExtractor = {
+  extract() {
+    return [];
+  },
+};
+
+/** Options for {@link harvestSession} (ADR-0054 R8). */
+export interface HarvestOptions {
+  /**
+   * Enable the optional LLM-extraction stage. OFF by default — the heuristic
+   * pattern extractors are the only thing that runs unless this is explicitly
+   * set true AND an `llmExtractor` is supplied. With no extractor, enabling this
+   * is a graceful no-op (it falls back to {@link noopLlmExtractor}).
+   */
+  llmExtraction?: boolean;
+  /**
+   * The injected extractor implementation. Absent ⇒ {@link noopLlmExtractor}.
+   * Never an embedded client — agent-manager ships no LLM (ADR-0010).
+   */
+  llmExtractor?: LlmExtractor;
+}
+
 // ── Main Harvester ──────────────────────────────────────────────
 
 /**
  * Harvest knowledge entries from a session.
  * Runs all pattern extractors, applies confidence scoring, and deduplicates.
  * Returns KnowledgeEntry objects (the caller writes them via addEntry/writePage).
+ *
+ * ADR-0054 R8: when `opts.llmExtraction` is explicitly enabled AND an
+ * `opts.llmExtractor` is supplied, its additional entries are merged in and
+ * de-duplicated alongside the heuristic ones. The default (no opts, or
+ * `llmExtraction` unset/false, or no extractor) is unchanged pattern-only
+ * behaviour — the local-first/zero-dep default the ADR mandates. A throwing or
+ * missing extractor degrades gracefully to the heuristic entries.
  */
-export async function harvestSession(session: Session): Promise<KnowledgeEntry[]> {
+export async function harvestSession(
+  session: Session,
+  opts?: HarvestOptions,
+): Promise<KnowledgeEntry[]> {
   const source: KnowledgeSource = {
     type: "session_harvest",
     session_id: `${session.adapter}:${session.id}`,
@@ -371,6 +468,23 @@ export async function harvestSession(session: Session): Promise<KnowledgeEntry[]
     ...extractCapabilities(session.messages, source),
     ...extractFacts(session.messages, source),
   ];
+
+  // ADR-0054 R8: gated, opt-in LLM extraction. Off unless explicitly enabled.
+  if (opts?.llmExtraction === true) {
+    const extractor = opts.llmExtractor ?? noopLlmExtractor;
+    try {
+      const extra = await extractor.extract({
+        session,
+        source,
+        heuristicEntries: rawEntries,
+      });
+      if (Array.isArray(extra) && extra.length > 0) {
+        rawEntries.push(...extra);
+      }
+    } catch {
+      // Graceful degradation (ADR-0010): no LLM / failed call ⇒ heuristic only.
+    }
+  }
 
   const withRepetitionBonus = applyRepetitionBonus(rawEntries);
   const { unique } = await deduplicateEntries(withRepetitionBonus);
@@ -389,21 +503,31 @@ export async function harvestSession(session: Session): Promise<KnowledgeEntry[]
  * Resolution lives in the command layer (`am wiki ingest`/`harvest`) so
  * `src/wiki/*` stays decoupled from `src/core/*` per ADR-0010 — the harvester
  * receives the names as a plain string list, never an import of ResolvedConfig.
+ *
+ * ADR-0054 R8: `opts.llmExtraction` / `opts.llmExtractor` are forwarded to
+ * {@link harvestSession}. They are off by default and degrade gracefully — see
+ * {@link HarvestOptions}.
  */
 export async function harvestSessionAsPages(
   session: Session,
-  opts?: { catalogEntities?: Iterable<string>; wikiDir?: string },
+  opts?: { catalogEntities?: Iterable<string>; wikiDir?: string } & HarvestOptions,
 ): Promise<string[]> {
-  const entries = await harvestSession(session);
+  const entries = await harvestSession(session, {
+    ...(opts?.llmExtraction !== undefined ? { llmExtraction: opts.llmExtraction } : {}),
+    ...(opts?.llmExtractor !== undefined ? { llmExtractor: opts.llmExtractor } : {}),
+  });
   const slugs: string[] = [];
 
+  const ner: NerOptions | undefined =
+    opts?.catalogEntities !== undefined ? { catalogEntities: opts.catalogEntities } : undefined;
+
   for (const entry of entries) {
-    const page = entryToWikiPage(entry);
+    // ADR-0054 R2/R3: render the page's "Related Entities" section as catalog-aware
+    // [[wikilinks]] so harvested knowledge participates in the graph from creation.
+    const page = entryToWikiPage(entry, ner ? { ner } : undefined);
     await writePage(page, {
       ...(opts?.wikiDir !== undefined ? { wikiDir: opts.wikiDir } : {}),
-      ...(opts?.catalogEntities !== undefined
-        ? { ner: { catalogEntities: opts.catalogEntities } }
-        : {}),
+      ...(ner ? { ner } : {}),
     });
     slugs.push(page.slug);
   }
