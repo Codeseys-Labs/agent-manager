@@ -1,0 +1,30 @@
+X ci/xplat-sweep CI #23 · 26753764491
+X build-verify (blacksmith-2vcpu-windows-2025) in 2m55s (ID 78848150774)
+  X Run tests
+X Expected: 0
+Received: 1
+build-verify (blacksmith-2vcpu-windows-2025): test\integration\lifecycle.test.ts#138
+X Expected to contain: "claude-code"
+Received: "Run `am init` to initialize agent-manager"
+build-verify (blacksmith-2vcpu-windows-2025): test\integration\error-handling.test.ts#135
+X Expected to contain: "claude-code"
+Received: "error: Config not found\n  suggestion: Run `am init` to initialize agent-manager\n"
+build-verify (blacksmith-2vcpu-windows-2025): test\integration\error-handling.test.ts#126
+X Expected: 0
+Received: 1
+build-verify (blacksmith-2vcpu-windows-2025): test\integration\error-handling.test.ts#82
+X Expected: true
+Received: false
+build-verify (blacksmith-2vcpu-windows-2025): test\core\secrets-backend-selection.test.ts#265
+X Expected pattern: /no encryption key/i
+Received message: "The string contains invalid characters."
+build-verify (blacksmith-2vcpu-windows-2025): test\core\secrets-backend-selection.test.ts#145
+X 
+X Expected to end with: "/.config/agent-manager"
+Received: "undefined"
+build-verify (blacksmith-2vcpu-windows-2025): test\core\config.test.ts#42
+X 
+build-verify (blacksmith-2vcpu-windows-2025): test\core\adr-frontmatter.test.ts#22
+X Expected to contain: "C:/Users/RUNNER~1/AppData/Local/Temp/am-pair-finalize-BIpLOo/identities/recipients/laptop-2.pub"
+Received: "{\"error\":\"Invalid recipient file at C://Users//RUNNER~1//AppData//Local//Temp//am-pair-finalize-BIpLOo//identities//recipients//laptop-2.pub: expected an /\"age1.../\" line, found /\"not-an-age-key/\".\"}"
+build-verify (blacksmith-2vcpu-windows-2025): test\commands\pair-finalize.test.ts#361

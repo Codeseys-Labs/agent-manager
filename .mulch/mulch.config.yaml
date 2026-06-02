@@ -14,6 +14,8 @@ domains:
   typescript: {}
   cursor-adapter: {}
   adr-management: {}
+  cross-platform: {}
+  apply: {}
 governance:
   max_entries: 100
   warn_entries: 150
