@@ -77,16 +77,12 @@ function json(): any {
  * assignable to the bare `CommandDef`. `any` here only widens the input — the
  * handler call is already cast.
  */
-// biome-ignore lint/suspicious/noExplicitAny: citty CommandDef args generic is invariant
 async function run(cmd: CommandDef<any>, args: Record<string, unknown>): Promise<void> {
-  // biome-ignore lint/suspicious/noExplicitAny: citty CommandContext is over-strict for tests
   await (cmd as any).run({ args, cmd, rawArgs: [], data: undefined });
 }
 
 /** Resolve a subcommand from a parent's `subCommands` map. */
-// biome-ignore lint/suspicious/noExplicitAny: citty CommandDef args generic is invariant
 async function sub(parent: CommandDef<any>, name: string): Promise<CommandDef<any>> {
-  // biome-ignore lint/suspicious/noExplicitAny: subCommands resolver shape
   const map = (parent as any).subCommands as Record<string, () => Promise<CommandDef<any>>>;
   return map[name]();
 }
