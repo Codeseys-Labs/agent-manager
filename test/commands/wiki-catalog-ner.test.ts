@@ -19,7 +19,7 @@
  */
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, realpathSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { wikiCommand } from "../../src/commands/wiki";
 import {
@@ -131,7 +131,12 @@ describe("am wiki: catalog-derived NER auto-linking (WIKI-FIX-2 / ADR-0054 R3)",
 
   test("resolveWikiDir picks the project wiki under the project dir", () => {
     // Sanity: confirms the add command writes into projectWiki, where we seed.
-    expect(resolveWikiDir()).toBe(projectWiki);
+    // Canonicalize both sides: on macOS the temp dir lives under /var which is a
+    // symlink to /private/var, and resolveWikiDir() (via process.cwd() after
+    // chdir) returns the resolved /private/var form while projectWiki was built
+    // from the unresolved mkdtemp path. realpathSync makes the comparison
+    // symlink-agnostic (no-op on Linux/Windows where no such symlink exists).
+    expect(realpathSync(resolveWikiDir())).toBe(realpathSync(projectWiki));
   });
 
   test("am wiki add: a real catalog server name auto-links on write", async () => {
