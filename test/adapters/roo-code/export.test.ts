@@ -145,7 +145,7 @@ describe("roo-code exportConfig()", () => {
     const ruleFile = result.files.find((f) => toPosix(f.path).endsWith("code-style.md"));
     expect(ruleFile).toBeDefined();
     expect(ruleFile!.content).toBe("Use TypeScript strict mode.\n");
-    expect(ruleFile?.path).toContain(".roo/rules/");
+    expect(ruleFile && toPosix(ruleFile.path)).toContain(".roo/rules/");
   });
 
   test("skips instructions targeted at other adapters", async () => {

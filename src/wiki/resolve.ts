@@ -29,7 +29,11 @@ function assertPathInside(wikiDir: string, filepath: string): string {
   // (`\` on Windows, `/` on POSIX). Use `path.sep` for the containment check —
   // a hardcoded "/" makes `startsWith(absWiki + "/")` always false on Windows,
   // which previously rejected every legitimate in-tree file as a traversal.
-  if (abs !== absWiki && !abs.startsWith(absWiki + sep)) {
+  // When absWiki is a filesystem ROOT it already ends in sep (`/`, `C:\`), so
+  // appending another would form `//`/`C:\\` and reject every in-tree path —
+  // only add the boundary sep when it isn't already present.
+  const prefix = absWiki.endsWith(sep) ? absWiki : absWiki + sep;
+  if (abs !== absWiki && !abs.startsWith(prefix)) {
     throw new Error(`Unsafe path in sidecar rejected (traversal attempt?): "${filepath}"`);
   }
   return abs;

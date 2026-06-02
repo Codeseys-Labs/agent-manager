@@ -49,6 +49,17 @@ describe("marketplace/client", () => {
     test("returns 'marketplace' for empty path", () => {
       expect(deriveMarketplaceName("")).toBe("marketplace");
     });
+
+    test("derives last segment from a Windows local path (backslash separators)", () => {
+      // Local-path marketplaces on Windows use `\`; splitting only on `/` would
+      // return the whole path as the name. (CodeRabbit #23 / xplat.)
+      expect(deriveMarketplaceName("C:\\repos\\my-market")).toBe("my-market");
+      expect(deriveMarketplaceName("C:\\repos\\my-market\\")).toBe("my-market");
+    });
+
+    test("derives last segment from a POSIX local path", () => {
+      expect(deriveMarketplaceName("/home/user/repos/my-market")).toBe("my-market");
+    });
   });
 
   // ── readMarketplacesFile ───────────────────────────────────────

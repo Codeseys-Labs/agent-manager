@@ -87,12 +87,13 @@ function detectSource(url: string): MarketplaceSource {
   return "github";
 }
 
-/** Derive a default name from a git URL. */
+/** Derive a default name from a git URL or local path. */
 export function deriveMarketplaceName(url: string): string {
-  // Strip trailing .git and slashes
-  const cleaned = url.replace(/\.git\/?$/, "").replace(/\/+$/, "");
-  // Take the last path segment
-  const segments = cleaned.split("/");
+  // Strip trailing .git and trailing separators (either slash style).
+  const cleaned = url.replace(/\.git[/\\]?$/, "").replace(/[/\\]+$/, "");
+  // Take the last path segment. Split on BOTH separators so a Windows local
+  // path (`C:\repos\my-market`) derives `my-market`, not the whole path.
+  const segments = cleaned.split(/[/\\]/);
   return segments[segments.length - 1] || "marketplace";
 }
 
