@@ -8,7 +8,11 @@
 import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { generateCopilotInstruction } from "../../core/instructions.ts";
+import {
+  generateCopilotInstruction,
+  generateWikiContext,
+  spliceWikiBlock,
+} from "../../core/instructions.ts";
 import { sanitizePathSegment } from "../../lib/safe-path.ts";
 import { writeExportFiles } from "../shared/export-utils.ts";
 import { resolveVSCodeUserMcpJson } from "../shared/vscode-paths.ts";
@@ -23,11 +27,11 @@ import type {
 /**
  * Export resolved config to Copilot native files.
  */
-export function exportConfig(
+export async function exportConfig(
   config: ResolvedConfig,
   options: ExportOptions = {},
   homeDir?: string,
-): ExportResult {
+): Promise<ExportResult> {
   const home = homeDir ?? homedir();
   const files: WrittenFile[] = [];
   const warnings: string[] = [];
@@ -63,11 +67,19 @@ export function exportConfig(
     const mcpContent = generateMcpJson({ ...config, servers: projectServers }, mcpPath, warnings);
     files.push({ path: mcpPath, content: mcpContent, written: false });
 
-    // 3. Generate .github/copilot-instructions.md (always-scoped instructions)
+    // 3. Generate .github/copilot-instructions.md (always-scoped instructions
+    //    + optional wiki context). This is Copilot's single canonical
+    //    instruction file, so it is where apply-time wiki knowledge lands
+    //    (ADR-0054 R7), mirroring CLAUDE.md/AGENTS.md in the reference adapters.
     const globalInstr = generateGlobalInstructions(config);
     if (globalInstr) {
+      let instrContent = globalInstr;
+      const wikiBlock = await generateWikiContext(options.projectPath, config.settings);
+      if (wikiBlock) {
+        instrContent = spliceWikiBlock(wikiBlock, instrContent);
+      }
       const instrPath = join(options.projectPath, ".github", "copilot-instructions.md");
-      files.push({ path: instrPath, content: globalInstr, written: false });
+      files.push({ path: instrPath, content: instrContent, written: false });
     }
 
     // 4. Generate .github/instructions/*.instructions.md (glob-scoped)

@@ -8,7 +8,7 @@
 
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { generateKiroSteering } from "../../core/instructions.ts";
+import { generateKiroSteering, generateWikiContext } from "../../core/instructions.ts";
 import { sanitizePathSegment } from "../../lib/safe-path.ts";
 import { buildMcpServersJson, writeExportFiles } from "../shared/export-utils.ts";
 import type {
@@ -22,11 +22,11 @@ import type {
 /**
  * Export resolved config to Kiro native files.
  */
-export function exportConfig(
+export async function exportConfig(
   config: ResolvedConfig,
   options: ExportOptions = {},
   homeDir?: string,
-): ExportResult {
+): Promise<ExportResult> {
   const home = homeDir ?? homedir();
   const files: WrittenFile[] = [];
   const warnings: string[] = [];
@@ -69,6 +69,22 @@ export function exportConfig(
   if (options.projectPath) {
     const steeringFiles = generateSteeringFiles(config, options.projectPath);
     files.push(...steeringFiles);
+
+    // 4. Inject apply-time wiki context (ADR-0054 R7). Kiro has no single
+    //    canonical instruction file (it uses the per-rule `.kiro/steering/`
+    //    directory), so the wiki block lands in a dedicated managed steering
+    //    file `.kiro/steering/am-wiki.md` with `inclusion: always`. It augments
+    //    an existing instruction surface, so we only emit it when this target
+    //    actually has steering files — mirroring the reference adapters that
+    //    splice wiki only alongside an instruction file.
+    if (steeringFiles.length > 0) {
+      const wikiBlock = await generateWikiContext(options.projectPath, config.settings);
+      if (wikiBlock) {
+        const wikiContent = `---\ninclusion: always\ndescription: "Agent knowledge (managed by agent-manager)"\n---\n\n${wikiBlock}\n`;
+        const wikiPath = join(options.projectPath, ".kiro", "steering", "am-wiki.md");
+        files.push({ path: wikiPath, content: wikiContent, written: false });
+      }
+    }
   }
 
   writeExportFiles(files, warnings, { dryRun: options.dryRun });

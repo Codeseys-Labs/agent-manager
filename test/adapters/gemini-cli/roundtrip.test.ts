@@ -64,7 +64,7 @@ describe("Gemini CLI adapter roundtrip", () => {
     };
 
     // 4. Export (writes to disk)
-    const exported = exportConfig(resolved, {}, dir.path);
+    const exported = await exportConfig(resolved, {}, dir.path);
     expect(exported.warnings).toHaveLength(0);
     const globalFile = exported.files.find((f) => f.path.endsWith("settings.json"));
     expect(globalFile).toBeDefined();
@@ -170,7 +170,7 @@ describe("Gemini CLI adapter roundtrip", () => {
     };
 
     // Export
-    const exported = exportConfig(resolved, {}, dir.path);
+    const exported = await exportConfig(resolved, {}, dir.path);
     const globalFile = exported.files.find((f) => f.path.endsWith("settings.json"));
     const parsed = JSON.parse(globalFile!.content);
     expect(parsed.mcpServers.trusted.trust).toBe(true);

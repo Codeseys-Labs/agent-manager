@@ -213,7 +213,7 @@ describe("continue exportConfig() — YAML first", () => {
       },
     });
 
-    const result = exportConfig(cfg, {}, dir.path);
+    const result = await exportConfig(cfg, {}, dir.path);
     const yamlFile = result.files.find((f) => f.path.endsWith("config.yaml"));
     expect(yamlFile).toBeDefined();
     expect(yamlFile?.written).toBe(true);
@@ -240,7 +240,7 @@ describe("continue exportConfig() — YAML first", () => {
       },
     });
 
-    const result = exportConfig(cfg, { dryRun: true }, dir.path);
+    const result = await exportConfig(cfg, { dryRun: true }, dir.path);
     const jsonFile = result.files.find((f) => f.path.endsWith("config.json"));
     expect(jsonFile).toBeDefined();
 
@@ -275,7 +275,7 @@ describe("continue exportConfig() — YAML first", () => {
       },
     });
 
-    const result = exportConfig(cfg, {}, dir.path);
+    const result = await exportConfig(cfg, {}, dir.path);
     const yamlFile = result.files.find((f) => f.path.endsWith("config.yaml"));
     expect(yamlFile?.content).toContain("name: my-assistant");
     expect(yamlFile?.content).toContain("version: 2.3.4");
@@ -339,7 +339,7 @@ describe("continue roundtrip — YAML read → YAML write", () => {
       agents: {},
     };
 
-    const exported = exportConfig(resolved, {}, dir.path);
+    const exported = await exportConfig(resolved, {}, dir.path);
     const yamlFile = exported.files.find((f) => f.path.endsWith("config.yaml"));
     expect(yamlFile?.written).toBe(true);
 
@@ -384,7 +384,7 @@ describe("continue roundtrip — YAML read → YAML write", () => {
       agents: {},
     };
 
-    const exported = exportConfig(resolved, {}, dir.path);
+    const exported = await exportConfig(resolved, {}, dir.path);
     const jsonFile = exported.files.find((f) => f.path.endsWith("config.json"));
     expect(jsonFile).toBeDefined();
     expect(exported.warnings.some((w) => w.includes("deprecated"))).toBe(true);

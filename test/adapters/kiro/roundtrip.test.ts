@@ -63,7 +63,7 @@ describe("Kiro adapter roundtrip", () => {
     };
 
     // 4. Export (writes to disk)
-    const exported = exportConfig(resolved, {}, dir.path);
+    const exported = await exportConfig(resolved, {}, dir.path);
     expect(exported.warnings).toHaveLength(0);
     const globalFile = exported.files.find((f) =>
       toPosix(f.path).includes(".kiro/settings/mcp.json"),
@@ -158,7 +158,7 @@ Prefer const over let.`,
     };
 
     // Export
-    const exported = exportConfig(
+    const exported = await exportConfig(
       resolved,
       {
         projectPath: projectDir,

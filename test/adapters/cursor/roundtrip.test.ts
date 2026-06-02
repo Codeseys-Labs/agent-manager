@@ -63,7 +63,7 @@ describe("Cursor adapter roundtrip", () => {
     };
 
     // 4. Export (writes to disk)
-    const exported = exportConfig(resolved, {}, dir.path);
+    const exported = await exportConfig(resolved, {}, dir.path);
     expect(exported.warnings).toHaveLength(0);
     const globalFile = exported.files.find((f) => toPosix(f.path).includes(".cursor/mcp.json"));
     expect(globalFile).toBeDefined();
@@ -150,7 +150,11 @@ Use strict TypeScript.`,
     };
 
     // Export
-    const exported = exportConfig(resolved, { projectPath: projectDir, dryRun: true }, dir.path);
+    const exported = await exportConfig(
+      resolved,
+      { projectPath: projectDir, dryRun: true },
+      dir.path,
+    );
     const mdcFile = exported.files.find((f) => f.path.endsWith(".mdc"));
     expect(mdcFile).toBeDefined();
     expect(mdcFile!.content).toContain('description: "TypeScript rules"');

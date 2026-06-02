@@ -182,7 +182,7 @@ describe("copilot exportConfig() — writes to existing user-scope mcp.json", ()
       agents: {},
     };
 
-    const result = exportConfig(cfg, { dryRun: true }, dir.path);
+    const result = await exportConfig(cfg, { dryRun: true }, dir.path);
     const userFile = result.files.find((f) => toPosix(f.path).endsWith("Code/User/mcp.json"));
     expect(userFile).toBeDefined();
     const parsed = JSON.parse(userFile?.content ?? "{}");
@@ -214,7 +214,7 @@ describe("copilot exportConfig() — writes to existing user-scope mcp.json", ()
       agents: {},
     };
 
-    const result = exportConfig(cfg, { dryRun: true }, dir.path);
+    const result = await exportConfig(cfg, { dryRun: true }, dir.path);
     const userFile = result.files.find((f) => toPosix(f.path).endsWith("Code/User/mcp.json"));
     expect(userFile).toBeUndefined();
     expect(result.warnings.some((w) => w.includes("user-scope"))).toBe(true);

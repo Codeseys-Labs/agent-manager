@@ -62,7 +62,7 @@ describe("cline exportConfig()", () => {
       },
     });
 
-    const result = exportConfig(cfg, { dryRun: true }, dir.path);
+    const result = await exportConfig(cfg, { dryRun: true }, dir.path);
     expect(result.files.length).toBeGreaterThanOrEqual(1);
 
     const settingsFile = result.files.find((f) => f.path.endsWith("cline_mcp_settings.json"));
@@ -88,7 +88,7 @@ describe("cline exportConfig()", () => {
       },
     });
 
-    const result = exportConfig(cfg, { dryRun: true }, dir.path);
+    const result = await exportConfig(cfg, { dryRun: true }, dir.path);
     const settingsFile = result.files.find((f) => f.path.endsWith("cline_mcp_settings.json"));
     const parsed = JSON.parse(settingsFile!.content) as Record<string, unknown>;
     const mcpServers = parsed.mcpServers as Record<string, Record<string, unknown>>;
@@ -108,7 +108,7 @@ describe("cline exportConfig()", () => {
       },
     });
 
-    const result = exportConfig(cfg, { dryRun: true }, dir.path);
+    const result = await exportConfig(cfg, { dryRun: true }, dir.path);
     const settingsFile = result.files.find((f) => f.path.endsWith("cline_mcp_settings.json"));
     const parsed = JSON.parse(settingsFile!.content) as Record<string, unknown>;
     const mcpServers = parsed.mcpServers as Record<string, unknown>;
@@ -133,7 +133,7 @@ describe("cline exportConfig()", () => {
       },
     });
 
-    const result = exportConfig(cfg, { projectPath: projectDir, dryRun: true }, dir.path);
+    const result = await exportConfig(cfg, { projectPath: projectDir, dryRun: true }, dir.path);
     const ruleFile = result.files.find((f) => f.path.endsWith("ts-rules.md"));
     expect(ruleFile).toBeDefined();
     expect(ruleFile!.content).toContain("Use strict TypeScript.");
@@ -166,7 +166,7 @@ describe("cline exportConfig()", () => {
       },
     });
 
-    const result = exportConfig(cfg, { projectPath: projectDir, dryRun: true }, dir.path);
+    const result = await exportConfig(cfg, { projectPath: projectDir, dryRun: true }, dir.path);
     const ruleFiles = result.files.filter((f) => f.path.includes(".clinerules"));
     expect(ruleFiles).toHaveLength(1);
     expect(ruleFiles[0].path).toContain("cline-rule");
@@ -189,7 +189,7 @@ describe("cline exportConfig()", () => {
       },
     });
 
-    const result = exportConfig(cfg, { projectPath: projectDir, dryRun: true }, dir.path);
+    const result = await exportConfig(cfg, { projectPath: projectDir, dryRun: true }, dir.path);
     const ruleFiles = result.files.filter((f) => f.path.includes(".clinerules"));
     expect(ruleFiles).toHaveLength(1);
   });
@@ -202,7 +202,7 @@ describe("cline exportConfig()", () => {
       },
     });
 
-    const result = exportConfig(cfg, { dryRun: true }, dir.path);
+    const result = await exportConfig(cfg, { dryRun: true }, dir.path);
     for (const file of result.files) {
       expect(file.written).toBe(false);
     }
@@ -216,7 +216,7 @@ describe("cline exportConfig()", () => {
       },
     });
 
-    const result = exportConfig(cfg, {}, dir.path);
+    const result = await exportConfig(cfg, {}, dir.path);
     const settingsFile = result.files.find((f) => f.path.endsWith("cline_mcp_settings.json"));
     expect(settingsFile?.written).toBe(true);
     expect(await dir.exists(settingsRel(dir.path))).toBe(true);
@@ -240,7 +240,7 @@ describe("cline exportConfig()", () => {
       },
     });
 
-    const result = exportConfig(cfg, {}, dir.path);
+    const result = await exportConfig(cfg, {}, dir.path);
     const settingsFile = result.files.find((f) => f.path.endsWith("cline_mcp_settings.json"));
     const parsed = JSON.parse(settingsFile!.content) as Record<string, unknown>;
     expect(parsed.customField).toBe("preserved");

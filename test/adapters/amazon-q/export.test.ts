@@ -54,7 +54,7 @@ describe("amazon-q exportConfig()", () => {
       },
     });
 
-    const result = exportConfig(cfg, { dryRun: true }, dir.path);
+    const result = await exportConfig(cfg, { dryRun: true }, dir.path);
     expect(result.files.length).toBeGreaterThanOrEqual(1);
 
     const mcpFile = result.files.find((f) => f.path.endsWith("mcp.json"));
@@ -83,7 +83,7 @@ describe("amazon-q exportConfig()", () => {
       },
     });
 
-    const result = exportConfig(cfg, { projectPath: projectDir, dryRun: true }, dir.path);
+    const result = await exportConfig(cfg, { projectPath: projectDir, dryRun: true }, dir.path);
     const ruleFile = result.files.find((f) => f.path.endsWith("ts-rules.md"));
     expect(ruleFile).toBeDefined();
     expect(ruleFile!.content).toBe("Use strict TypeScript.\n");
@@ -106,7 +106,7 @@ describe("amazon-q exportConfig()", () => {
       },
     });
 
-    const result = exportConfig(cfg, { projectPath: projectDir, dryRun: true }, dir.path);
+    const result = await exportConfig(cfg, { projectPath: projectDir, dryRun: true }, dir.path);
     const ruleFile = result.files.find((f) => f.path.endsWith("testing.md"));
     expect(ruleFile).toBeDefined();
     // No frontmatter, just content
@@ -127,7 +127,7 @@ describe("amazon-q exportConfig()", () => {
       },
     });
 
-    const result = exportConfig(cfg, { dryRun: true }, dir.path);
+    const result = await exportConfig(cfg, { dryRun: true }, dir.path);
     const mcpFile = result.files.find((f) => f.path.endsWith("mcp.json"));
     const parsed = JSON.parse(mcpFile!.content);
     expect(parsed.mcpServers.enabled_one).toBeDefined();
@@ -151,7 +151,7 @@ describe("amazon-q exportConfig()", () => {
       },
     });
 
-    const result = exportConfig(cfg, { projectPath: projectDir, dryRun: true }, dir.path);
+    const result = await exportConfig(cfg, { projectPath: projectDir, dryRun: true }, dir.path);
     const ruleFiles = result.files.filter((f) => f.path.includes(".amazonq/rules"));
     expect(ruleFiles).toHaveLength(0);
   });
@@ -168,7 +168,7 @@ describe("amazon-q exportConfig()", () => {
       },
     });
 
-    const result = exportConfig(cfg, { dryRun: true }, dir.path);
+    const result = await exportConfig(cfg, { dryRun: true }, dir.path);
     for (const file of result.files) {
       expect(file.written).toBe(false);
     }
@@ -186,7 +186,7 @@ describe("amazon-q exportConfig()", () => {
       },
     });
 
-    const result = exportConfig(cfg, {}, dir.path);
+    const result = await exportConfig(cfg, {}, dir.path);
     const mcpFile = result.files.find((f) => f.path.endsWith("mcp.json"));
     expect(mcpFile?.written).toBe(true);
     const content = JSON.parse(await dir.read(".aws/amazonq/mcp.json"));
@@ -213,7 +213,7 @@ describe("amazon-q exportConfig()", () => {
       },
     });
 
-    const result = exportConfig(cfg, {}, dir.path);
+    const result = await exportConfig(cfg, {}, dir.path);
     const mcpFile = result.files.find((f) => f.path.endsWith("mcp.json"));
     const parsed = JSON.parse(mcpFile!.content);
     expect(parsed.useLegacyMcpJson).toBe(true);
@@ -234,7 +234,7 @@ describe("amazon-q exportConfig()", () => {
       },
     });
 
-    const result = exportConfig(cfg, { dryRun: true }, dir.path);
+    const result = await exportConfig(cfg, { dryRun: true }, dir.path);
     const mcpFile = result.files.find((f) => f.path.endsWith("mcp.json"));
     const parsed = JSON.parse(mcpFile!.content);
     expect(parsed.mcpServers.slow.timeout).toBe(60);

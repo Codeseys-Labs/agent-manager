@@ -8,7 +8,12 @@
 
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { filterByTarget, generateGeminiMd } from "../../core/instructions.ts";
+import {
+  filterByTarget,
+  generateGeminiMd,
+  generateWikiContext,
+  spliceWikiBlock,
+} from "../../core/instructions.ts";
 import { buildMcpServersJson, writeExportFiles } from "../shared/export-utils.ts";
 import type {
   ExportOptions,
@@ -21,11 +26,11 @@ import type {
 /**
  * Export resolved config to Gemini CLI native files.
  */
-export function exportConfig(
+export async function exportConfig(
   config: ResolvedConfig,
   options: ExportOptions = {},
   homeDir?: string,
-): ExportResult {
+): Promise<ExportResult> {
   const home = homeDir ?? homedir();
   const files: WrittenFile[] = [];
   const warnings: string[] = [];
@@ -70,7 +75,7 @@ export function exportConfig(
     });
   }
 
-  // 3. Generate GEMINI.md (instructions)
+  // 3. Generate GEMINI.md (instructions + optional wiki context)
   if (options.projectPath) {
     const targeted = filterByTarget(config.instructions, "gemini-cli");
     if (Object.keys(targeted).length > 0) {
@@ -82,7 +87,15 @@ export function exportConfig(
       } catch {
         // No existing file
       }
-      const geminiMdContent = generateGeminiMd(targeted, existingContent);
+      let geminiMdContent = generateGeminiMd(targeted, existingContent);
+
+      // Inject wiki context if enabled (ADR-0054 R7)
+      const configDir = options.projectPath;
+      const wikiBlock = await generateWikiContext(configDir, config.settings);
+      if (wikiBlock) {
+        geminiMdContent = spliceWikiBlock(wikiBlock, geminiMdContent);
+      }
+
       files.push({
         path: geminiMdPath,
         content: geminiMdContent,

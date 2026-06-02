@@ -72,7 +72,7 @@ describe("Roo Code adapter roundtrip", () => {
     };
 
     // 4. Export (writes to disk)
-    const exported = exportConfig(resolved, {}, dir.path);
+    const exported = await exportConfig(resolved, {}, dir.path);
     expect(exported.warnings).toHaveLength(0);
     const mcpFile = exported.files.find((f) => f.path.includes("mcp_settings.json"));
     expect(mcpFile).toBeDefined();
@@ -140,7 +140,7 @@ describe("Roo Code adapter roundtrip", () => {
     };
 
     // Export
-    const exported = exportConfig(resolved, { projectPath: projectDir }, dir.path);
+    const exported = await exportConfig(resolved, { projectPath: projectDir }, dir.path);
     const projectMcpFile = exported.files.find((f) => toPosix(f.path).includes(".roo/mcp.json"));
     expect(projectMcpFile).toBeDefined();
     const output = JSON.parse(projectMcpFile!.content);
@@ -186,7 +186,11 @@ describe("Roo Code adapter roundtrip", () => {
     };
 
     // Export (dry run)
-    const exported = exportConfig(resolved, { projectPath: projectDir, dryRun: true }, dir.path);
+    const exported = await exportConfig(
+      resolved,
+      { projectPath: projectDir, dryRun: true },
+      dir.path,
+    );
     const ruleFile = exported.files.find(
       (f) => f.path.endsWith(".md") && toPosix(f.path).includes(".roo/rules/"),
     );

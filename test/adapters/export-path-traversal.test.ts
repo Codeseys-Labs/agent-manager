@@ -62,8 +62,8 @@ function config(overrides: Partial<ResolvedConfig> = {}): ResolvedConfig {
 }
 
 describe("SEC-1: adapter export path traversal containment", () => {
-  test("amazon-q rule name cannot escape the rules directory", () => {
-    const result = amazonQExport(
+  test("amazon-q rule name cannot escape the rules directory", async () => {
+    const result = await amazonQExport(
       config({ instructions: { [EVIL]: instruction(EVIL) } }),
       { dryRun: true, projectPath: PROJECT },
       "/tmp/home",
@@ -74,8 +74,8 @@ describe("SEC-1: adapter export path traversal containment", () => {
     expect(ruleFile!.path).toContain(`${sep}.amazonq${sep}rules${sep}`);
   });
 
-  test("cline rule name cannot escape .clinerules", () => {
-    const result = clineExport(
+  test("cline rule name cannot escape .clinerules", async () => {
+    const result = await clineExport(
       config({ instructions: { [EVIL]: instruction(EVIL) } }),
       { dryRun: true, projectPath: PROJECT },
       "/tmp/home",
@@ -85,8 +85,8 @@ describe("SEC-1: adapter export path traversal containment", () => {
     expect(ruleFile!.path.includes("..")).toBe(false);
   });
 
-  test("continue rule name cannot escape .continue/rules", () => {
-    const result = continueExport(
+  test("continue rule name cannot escape .continue/rules", async () => {
+    const result = await continueExport(
       config({ instructions: { [EVIL]: instruction(EVIL, { targets: ["continue"] }) } }),
       { dryRun: true, projectPath: PROJECT },
       "/tmp/home",
@@ -96,8 +96,8 @@ describe("SEC-1: adapter export path traversal containment", () => {
     expect(ruleFile!.path.includes("..")).toBe(false);
   });
 
-  test("copilot instruction name cannot escape .github/instructions", () => {
-    const result = copilotExport(
+  test("copilot instruction name cannot escape .github/instructions", async () => {
+    const result = await copilotExport(
       config({ instructions: { [EVIL]: instruction(EVIL) } }),
       { dryRun: true, projectPath: PROJECT },
       "/tmp/home",
@@ -107,8 +107,8 @@ describe("SEC-1: adapter export path traversal containment", () => {
     expect(ruleFile!.path.includes("..")).toBe(false);
   });
 
-  test("cursor rule and agent names cannot escape .cursor", () => {
-    const result = cursorExport(
+  test("cursor rule and agent names cannot escape .cursor", async () => {
+    const result = await cursorExport(
       config({ instructions: { [EVIL]: instruction(EVIL) } }),
       { dryRun: true, projectPath: PROJECT },
       "/tmp/home",
@@ -118,8 +118,8 @@ describe("SEC-1: adapter export path traversal containment", () => {
     expect(ruleFile!.path.includes("..")).toBe(false);
   });
 
-  test("kiro steering name cannot escape .kiro/steering", () => {
-    const result = kiroExport(
+  test("kiro steering name cannot escape .kiro/steering", async () => {
+    const result = await kiroExport(
       config({ instructions: { [EVIL]: instruction(EVIL, { targets: ["kiro"] }) } }),
       { dryRun: true, projectPath: PROJECT },
       "/tmp/home",
@@ -129,8 +129,8 @@ describe("SEC-1: adapter export path traversal containment", () => {
     expect(ruleFile!.path.includes("..")).toBe(false);
   });
 
-  test("roo-code rule name cannot escape .roo/rules", () => {
-    const result = rooCodeExport(
+  test("roo-code rule name cannot escape .roo/rules", async () => {
+    const result = await rooCodeExport(
       config({ instructions: { [EVIL]: instruction(EVIL, { targets: ["roo-code"] }) } }),
       { dryRun: true, projectPath: PROJECT },
       "/tmp/home",
