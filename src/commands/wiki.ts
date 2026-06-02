@@ -35,13 +35,14 @@ import { readFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { defineCommand } from "citty";
 import { getAdapter, listAdapters } from "../adapters/registry";
-import { resolveProjectConfig } from "../core/config";
+import { loadResolvedConfig, resolveProjectConfig } from "../core/config";
 import { getStatus } from "../core/git";
 import { errorCode, errorMessage } from "../lib/errors";
 import { error, info, output, parsePositiveInt, warn } from "../lib/output";
 import { WIKI_AGENTS_MD_TEMPLATE } from "../wiki/agents-md-template";
 import { exportGraphForViz, findOrphans, loadGraph } from "../wiki/graph";
 import { harvestSession, harvestSessionAsPages } from "../wiki/harvester";
+import { catalogEntityNames } from "../wiki/ner";
 import {
   type ResolveChoice,
   type ResolveIo,
@@ -84,6 +85,32 @@ import type {
 // ADR-0054 R4: page confidence is now the low|medium|high enum. normalizeConfidence
 // tolerates both the enum and any transitional legacy numeric value.
 import { normalizeConfidence } from "../wiki/types";
+
+// ── Catalog-derived NER (ADR-0054 R3) ───────────────────────────
+//
+// The wiki should auto-link the *actual* catalog entities (server / agent /
+// skill / instruction names) rather than only a frozen literal vocabulary, so
+// knowledge becomes a structural peer of config. Resolution lives here in the
+// command layer — which already imports `core/config` — and the resolved names
+// are threaded into the wiki write path as a plain string list, so `src/wiki/*`
+// stays decoupled from `src/core/*` per ADR-0010 (`catalogEntityNames` takes a
+// structural type, never a ResolvedConfig import).
+
+/**
+ * Resolve the catalog's entity names for NER-driven wikilink generation.
+ * Best-effort: a missing/unreadable config simply yields no extra names (the
+ * static fallback vocabulary still applies), so wiki writes never fail just
+ * because the catalog could not be resolved.
+ */
+async function resolveCatalogEntities(): Promise<string[]> {
+  try {
+    const projectFile = resolveProjectConfig(process.cwd());
+    const config = await loadResolvedConfig({ projectFile });
+    return catalogEntityNames(config);
+  } catch {
+    return [];
+  }
+}
 
 // ── Subcommands ─────────────────────────────────────────────────
 
@@ -218,7 +245,10 @@ const addSubcommand = defineCommand({
       provenance,
     };
 
-    await addEntry(entry);
+    // ADR-0054 R3: forward the resolved catalog so the new page auto-links real
+    // server/agent/skill/instruction names on write.
+    const catalogEntities = await resolveCatalogEntities();
+    await addEntry(entry, catalogEntities.length > 0 ? { ner: { catalogEntities } } : undefined);
 
     if (args.json) {
       output({ action: "add", entry }, opts);
@@ -381,6 +411,12 @@ const ingestSubcommand = defineCommand({
     const opts = { json: args.json, quiet: args.quiet, verbose: args.verbose };
     const maxSessions = parsePositiveInt(args.limit, "limit", 10);
 
+    // ADR-0054 R3: resolve the catalog once so every harvested page auto-links
+    // real server/agent/skill/instruction names on write.
+    const catalogEntities = await resolveCatalogEntities();
+    const harvestOpts: { catalogEntities?: string[] } | undefined =
+      catalogEntities.length > 0 ? { catalogEntities } : undefined;
+
     if (args.session) {
       const colonIdx = (args.session as string).indexOf(":");
       if (colonIdx < 1) {
@@ -405,7 +441,7 @@ const ingestSubcommand = defineCommand({
         return;
       }
 
-      const slugs = await harvestSessionAsPages(session);
+      const slugs = await harvestSessionAsPages(session, harvestOpts);
       await rebuildSearchIndex();
 
       if (args.json) {
@@ -450,7 +486,7 @@ const ingestSubcommand = defineCommand({
         }
         if (!session) continue;
 
-        const slugs = await harvestSessionAsPages(session);
+        const slugs = await harvestSessionAsPages(session, harvestOpts);
         totalPages += slugs.length;
         totalSessions++;
 
@@ -491,6 +527,12 @@ const harvestSubcommand = defineCommand({
     const opts = { json: args.json, quiet: args.quiet, verbose: args.verbose };
     const maxSessions = parsePositiveInt(args.limit, "limit", 10);
 
+    // ADR-0054 R3: resolve the catalog once so every harvested entry auto-links
+    // real server/agent/skill/instruction names on write.
+    const catalogEntities = await resolveCatalogEntities();
+    const addOpts: { ner: { catalogEntities: string[] } } | undefined =
+      catalogEntities.length > 0 ? { ner: { catalogEntities } } : undefined;
+
     if (args.session) {
       const colonIdx = (args.session as string).indexOf(":");
       if (colonIdx < 1) {
@@ -517,7 +559,7 @@ const harvestSubcommand = defineCommand({
 
       const entries = await harvestSession(session);
       for (const entry of entries) {
-        await addEntry(entry);
+        await addEntry(entry, addOpts);
       }
 
       if (args.json) {
@@ -561,7 +603,7 @@ const harvestSubcommand = defineCommand({
         const entries = await harvestSession(session);
         for (const entry of entries) {
           try {
-            await addEntry(entry);
+            await addEntry(entry, addOpts);
             totalEntries++;
           } catch {
             // Skip duplicate entries
@@ -809,8 +851,11 @@ export const lintSubcommand = defineCommand({
       }
     }
 
-    // Find pages with low confidence
-    const lowConfidence = pages.filter((p) => p.confidence !== undefined && p.confidence < 0.3);
+    // Find pages with low confidence. ADR-0054 R4 changed page.confidence from a
+    // raw 0.0-1.0 number to the WikiConfidence enum, so the old numeric `< 0.3`
+    // comparison silently matched nothing. Normalise (tolerating any
+    // transitional numeric value) and flag pages bucketed as "low".
+    const lowConfidence = pages.filter((p) => normalizeConfidence(p.confidence) === "low");
 
     const issues = {
       orphans: orphans.length,
@@ -862,9 +907,11 @@ export const lintSubcommand = defineCommand({
     }
 
     if (lowConfidence.length > 0) {
-      info(`\nLow confidence (${lowConfidence.length}, <0.3):`, opts);
+      info(`\nLow confidence (${lowConfidence.length}, "low"):`, opts);
       for (const page of lowConfidence.slice(0, 10)) {
-        info(`  - ${page.slug} (confidence: ${page.confidence?.toFixed(2)})`, opts);
+        // ADR-0054 R4: confidence is the enum string — display it directly
+        // (no .toFixed, which only exists on the retired numeric form).
+        info(`  - ${page.slug} (confidence: ${normalizeConfidence(page.confidence)})`, opts);
       }
       if (lowConfidence.length > 10) info(`  ... and ${lowConfidence.length - 10} more`, opts);
     }

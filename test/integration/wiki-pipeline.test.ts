@@ -28,7 +28,7 @@ import {
   writePage,
 } from "../../src/wiki/storage";
 import { buildAgentBriefing } from "../../src/wiki/synthesizer";
-import type { KnowledgeEntry, WikiPage } from "../../src/wiki/types";
+import { type KnowledgeEntry, type WikiPage, scoreToConfidence } from "../../src/wiki/types";
 import { type TestDir, createTestDir } from "../helpers/tmp";
 
 // ── Test Session Fixtures ──────────────────────────────────────
@@ -261,7 +261,10 @@ describe("wiki pipeline integration", () => {
       expect(read!.content).toContain(entry.content);
       expect(read!.tags).toContain(entry.entity_type);
       if (entry.confidence !== undefined) {
-        expect(read!.confidence).toBe(entry.confidence);
+        // ADR-0054 R4: page confidence is persisted/read as the WikiConfidence
+        // enum, not the raw 0.0-1.0 number. The on-disk value is the bucket the
+        // numeric entry confidence maps to.
+        expect(read!.confidence).toBe(scoreToConfidence(entry.confidence));
       }
     });
 

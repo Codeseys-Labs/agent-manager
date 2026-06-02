@@ -36,7 +36,7 @@ import { sanitizePathSegment } from "../lib/safe-path";
 // on the write path. These imports form a deliberate cycle with graph.ts
 // (which imports ensureWikiDirs/resolveWikiDir from here) — safe because every
 // reference is inside a function body, never at module-evaluation time.
-import { addPageToGraph, loadGraph, saveGraph } from "./graph";
+import { addPageToGraph, loadGraph, removePageFromGraph, saveGraph } from "./graph";
 import { type NerOptions, generateWikilinks } from "./ner";
 import { type WikiPage, confidenceToScore, normalizeConfidence } from "./types";
 import type {
@@ -750,19 +750,81 @@ export async function readPage(slug: string, wikiDir?: string): Promise<WikiPage
   return null;
 }
 
-/** Delete a wiki page by slug. Returns true if found and deleted. */
-export async function deletePage(slug: string, wikiDir?: string): Promise<boolean> {
+/** Options controlling {@link deletePage}'s write-path side-effects (ADR-0054 R1). */
+export interface DeletePageOptions {
+  /** Wiki directory to delete from (defaults to the resolved wiki dir). */
+  wikiDir?: string;
+  /**
+   * When false, skip the live graph + search-index maintenance — only the `.md`
+   * file is removed. Mirrors {@link WritePageOptions.maintainDerived} so batch
+   * paths (rebuild, materialise) that manage those artifacts themselves avoid
+   * write amplification. Default true.
+   */
+  maintainDerived?: boolean;
+}
+
+/**
+ * Delete a wiki page by slug. Returns true if found and deleted.
+ *
+ * ADR-0054 R1 — the delete path is now symmetric with the write path: after the
+ * `.md` file is removed, the page's node + every incident edge are pruned from
+ * the knowledge graph ({@link removePageFromGraph}) and its document is dropped
+ * from the MiniSearch index ({@link removeFromSearchIndex}) so orphan detection,
+ * backlinks, and search never reference a slug that no longer exists. The
+ * graph/index updates are best-effort (the `.md` is already gone; a rebuild can
+ * always recover the derived artifacts) and can be disabled with
+ * `opts.maintainDerived = false` for batch callers.
+ *
+ * Accepts either an options object or, for backward compatibility, a bare
+ * `wikiDir` string as the second argument (the historical signature).
+ */
+export async function deletePage(
+  slug: string,
+  opts?: DeletePageOptions | string,
+): Promise<boolean> {
+  const options: DeletePageOptions = typeof opts === "string" ? { wikiDir: opts } : (opts ?? {});
+  const wikiDir = options.wikiDir;
+  const maintainDerived = options.maintainDerived !== false;
+
+  let deleted = false;
   for (const type of Object.keys(PAGE_SUBDIRS) as WikiPageType[]) {
     const filePath = pagePath(slug, type, wikiDir);
     try {
       await rm(filePath);
-      return true;
+      deleted = true;
+      break;
     } catch (err: unknown) {
       if (isNotFound(err)) continue;
       throw err;
     }
   }
-  return false;
+
+  if (!deleted || !maintainDerived) return deleted;
+
+  // ── Live derived-artifact maintenance (ADR-0054 R1) ──
+  // Mirror writePage's symmetry: prune the deleted slug from the graph and the
+  // search index so neither keeps referencing a page that is gone. Best-effort —
+  // the page is already removed from disk; a rebuild recovers either artifact.
+  //
+  // The graph node + the MiniSearch document are keyed on the raw `page.slug`
+  // (writePage folds in `persisted.slug` / `page.slug`, not the path-sanitized
+  // form which is only used for the filename), so prune by the raw slug here so
+  // the key matches what the write path stored.
+  try {
+    const graph = await loadGraph(wikiDir);
+    removePageFromGraph(slug, graph);
+    await saveGraph(graph, wikiDir);
+  } catch {
+    /* derived artifact — page is already deleted; rebuild can recover */
+  }
+
+  try {
+    await removeFromSearchIndex(slug, wikiDir);
+  } catch {
+    /* derived artifact — searchPages falls back to a rebuild on next load */
+  }
+
+  return deleted;
 }
 
 /** List all wiki pages, optionally filtered by type and/or tag */
@@ -1038,7 +1100,7 @@ function pageToEntry(page: WikiPage): KnowledgeEntry {
 // ── Legacy CRUD (backward compatible) ───────────────────────────
 
 /** Add a knowledge entry (creates a wiki page internally) */
-export async function addEntry(entry: KnowledgeEntry): Promise<void> {
+export async function addEntry(entry: KnowledgeEntry, opts?: { ner?: NerOptions }): Promise<void> {
   // Check for duplicate
   const existing = await readPage(entry.id);
   if (existing) {
@@ -1048,8 +1110,10 @@ export async function addEntry(entry: KnowledgeEntry): Promise<void> {
   const page = entryToPage(entry);
   // writePage now maintains the search index + graph on the write path
   // (ADR-0054 R1), so the previously-separate updateSearchIndex call here is
-  // redundant and would double-write the index.
-  await writePage(page);
+  // redundant and would double-write the index. `opts.ner` (ADR-0054 R3) lets
+  // the command layer forward the resolved catalog so manual entries auto-link
+  // real catalog names without pulling core into src/wiki/*.
+  await writePage(page, opts?.ner ? { ner: opts.ner } : undefined);
 }
 
 /** Get a single entry by ID */
@@ -1079,11 +1143,13 @@ export async function updateEntry(id: string, updates: Partial<KnowledgeEntry>):
 
 /** Delete an entry by ID */
 export async function deleteEntry(id: string): Promise<void> {
+  // deletePage now maintains the graph + search index on the delete path
+  // (ADR-0054 R1), so the previously-separate removeFromSearchIndex call here is
+  // redundant — and, unlike before, the graph node is pruned too.
   const deleted = await deletePage(id);
   if (!deleted) {
     throw new Error(`Entry "${id}" not found`);
   }
-  await removeFromSearchIndex(id);
 }
 
 /** Query entries using structured filters */
