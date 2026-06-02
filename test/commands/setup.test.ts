@@ -331,6 +331,61 @@ describe("am setup", () => {
     // wizard's single stdout payload (which parsed cleanly above).
     expect(payload.action).toBe("setup");
   });
+
+  test("wizard apply is fail-closed: a drifted target is SKIPPED, not overwritten (ef01)", async () => {
+    // The setup wizard is the 5th live-apply surface and derives its drift gate
+    // from the shared APPLY_SAFE_DEFAULTS (diff:true, force:false). Prove the
+    // gate actually fires here: inject an adapter whose diff() throws ("drift
+    // unknown"); the fail-closed controller must SKIP it (export() never runs)
+    // rather than blindly overwrite. Mirrors controller-diff-throws-failclosed
+    // but drives the REAL setupCommand.run() apply path.
+    // Flag a REAL (non-dry-run) export only. The wizard runs a dry-run preview
+    // first (which legitimately calls export with dryRun:true to compute the
+    // plan and never writes); the fail-closed skip applies to the LIVE write.
+    let liveExportCalled = false;
+    const throwingAdapter = {
+      meta: {
+        name: "throwing-fake",
+        displayName: "Throwing Fake",
+        version: "0.0.0",
+        capabilities: [],
+      },
+      detect() {
+        return { installed: true, paths: {} };
+      },
+      import() {
+        return { servers: [], instructions: [], skills: [], warnings: [] };
+      },
+      export(_resolved: unknown, options: { dryRun?: boolean }) {
+        if (!options?.dryRun) liveExportCalled = true;
+        return {
+          files: [{ path: "/tmp/throwing-fake.json", content: "{}", written: true }],
+          warnings: [],
+        };
+      },
+      diff() {
+        throw new Error("simulated diff() failure");
+      },
+    } as unknown as Adapter;
+    // Apply resolves adapters through the controller seam; detection through the
+    // wizard seam. Both must see the throwing adapter so the apply step reaches it.
+    __setDetectedAdaptersForTests(async () => [throwingAdapter]);
+    __setAdapterResolverForTests(async () => [throwingAdapter]);
+    __setImporterForTests(async () => {
+      // no-op import double so the wizard doesn't probe the real machine
+    });
+
+    await handler.run({ args: makeArgs({ yes: true, json: true }) });
+
+    // The load-bearing assertion: the fail-closed gate refused to overwrite a
+    // target whose drift state it could not confirm — the LIVE export never ran
+    // (the dry-run preview's export, with dryRun:true, does not count).
+    expect(liveExportCalled).toBe(false);
+    // The wizard still completed (apply skipping a drifted target is not a fatal
+    // error) and emitted its single JSON payload.
+    const payload = JSON.parse(consoleOutput.join("\n"));
+    expect(payload.action).toBe("setup");
+  });
 });
 
 describe("guessRepoUrl", () => {

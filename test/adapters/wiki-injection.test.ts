@@ -265,4 +265,53 @@ describe("ADR-0054 R7 — apply-time wiki injection across remaining adapters", 
     expect(configFile).toBeDefined();
     expect(configFile!.content).toContain("file://.continue/rules/am-wiki.md");
   });
+
+  test("copilot: glob-only instructions (no scope:always) → no canonical file, so no wiki injection (edge case, by design)", async () => {
+    // Copilot's wiki block splices into .github/copilot-instructions.md, which
+    // is emitted ONLY for scope:"always" instructions. A project whose copilot
+    // instructions are all glob-scoped has no canonical always-on surface, so
+    // there is nowhere correct to inject always-loaded wiki knowledge — the
+    // wiki block is intentionally NOT forced into a conditionally-loaded glob
+    // file. This test pins that behavior: no crash, no canonical file, no wiki
+    // block, but the glob .instructions.md surface still emits normally.
+    const config: ResolvedConfig = {
+      servers: {},
+      instructions: {
+        "glob-only": {
+          name: "glob-only",
+          content: "Apply these rules to TypeScript files.",
+          scope: "glob",
+          globs: ["**/*.ts"],
+          description: "",
+          targets: ["copilot"],
+          adapters: {},
+        },
+      },
+      skills: {},
+      agents: {},
+      profile: "default",
+      adapters: {},
+      settings: { wiki: { inject_on_apply: true, task: TASK } },
+    };
+    const result = await copilotExport(
+      config,
+      { projectPath: project.path, dryRun: true },
+      configHome.path,
+    );
+
+    // No canonical copilot-instructions.md was emitted (no always-scoped instr).
+    const canonical = result.files.find((f) =>
+      f.path.endsWith(join(".github", "copilot-instructions.md")),
+    );
+    expect(canonical).toBeUndefined();
+    // Therefore no wiki block leaked anywhere in the output…
+    expect(result.files.some((f) => f.content.includes(WIKI_BEGIN))).toBe(false);
+    // …yet the glob-scoped instruction surface still emitted normally (proves
+    // the absence above is the glob-only path, not a broken export).
+    const globFile = result.files.find((f) =>
+      f.path.endsWith(join(".github", "instructions", "glob-only.instructions.md")),
+    );
+    expect(globFile).toBeDefined();
+    expect(globFile!.content).toContain("Apply these rules to TypeScript files.");
+  });
 });
