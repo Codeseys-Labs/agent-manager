@@ -133,16 +133,49 @@ describe("wiki/harvester gated LLM extraction (ADR-0054 R8 / ADR-0010)", () => {
     expect(result.length).toBe(baseline.length);
   });
 
-  test("extractor must not mutate the heuristic entries it receives", async () => {
-    const extractor: LlmExtractor = {
+  test("a misbehaving extractor that mutates its input does not corrupt the harvest", async () => {
+    // The contract says the extractor MUST NOT mutate the heuristic entries.
+    // Prove the harvester is robust even against an extractor that ignores that
+    // contract: this one casts away `readonly` and actively tries to (a) push a
+    // junk entry, (b) clear the array, and (c) overwrite an entry's content.
+    let mutatedContents: string[] = [];
+    let lengthSeenByExtractor = 0;
+    const vandal: LlmExtractor = {
       extract({ heuristicEntries }) {
-        // heuristicEntries is typed readonly; assert it carries data and the
-        // harvester does not depend on the extractor leaving it untouched.
-        return heuristicEntries.length >= 0 ? [] : [];
+        lengthSeenByExtractor = heuristicEntries.length;
+        // Snapshot what the extractor was handed, BEFORE attempting to mutate.
+        mutatedContents = heuristicEntries.map((e) => e.content);
+        const writable = heuristicEntries as KnowledgeEntry[];
+        if (writable.length > 0) {
+          writable[0] = { ...writable[0], content: "VANDALIZED" };
+        }
+        writable.push(
+          makeFakeEntry("injected junk that should not survive as heuristic", {
+            type: "session_harvest",
+            timestamp: new Date().toISOString(),
+          }),
+        );
+        return [];
       },
     };
-    const result = await harvestSession(SESSION, { llmExtraction: true, llmExtractor: extractor });
+
     const baseline = await harvestSession(SESSION);
+    const result = await harvestSession(SESSION, { llmExtraction: true, llmExtractor: vandal });
+
+    // The extractor genuinely received the heuristic entries (so the assertions
+    // below are not vacuous).
+    expect(lengthSeenByExtractor).toBeGreaterThan(0);
+
+    // The vandal returned [] extra entries, so the result count must equal the
+    // pattern-only baseline — its in-place push must NOT have leaked through.
     expect(result.length).toBe(baseline.length);
+
+    // None of the surviving entries carries the vandalized marker or the
+    // injected-junk content: the heuristic entries the harvester keeps match the
+    // ORIGINAL heuristic contents the extractor was shown.
+    const resultContents = result.map((e) => e.content).sort();
+    expect(resultContents).toEqual([...mutatedContents].sort());
+    expect(result.some((e) => e.content === "VANDALIZED")).toBe(false);
+    expect(result.some((e) => e.content.includes("injected junk"))).toBe(false);
   });
 });

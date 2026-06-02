@@ -517,6 +517,20 @@ function indexPageInto(meta: MetaIndex, project: string, page: WikiPage): void {
  * @param configDir Optional config-dir override (defaults to resolveConfigDir).
  */
 export async function rebuildMetaIndex(configDir?: string): Promise<MetaIndex> {
+  return rebuildMetaIndexFromTiers(listProjectWikis(configDir), configDir);
+}
+
+/**
+ * Rebuild the meta-index from an ALREADY-ENUMERATED tier set. Split out so
+ * callers that also need the tiers for a follow-on pass (e.g.
+ * {@link searchAllProjects}, which searches each tier right after the rebuild)
+ * enumerate `wiki/projects/*` exactly ONCE instead of twice. Same contract as
+ * {@link rebuildMetaIndex} otherwise: writes the index and returns it.
+ */
+async function rebuildMetaIndexFromTiers(
+  tiers: Array<{ project: string; dir: string }>,
+  configDir?: string,
+): Promise<MetaIndex> {
   const meta: MetaIndex = {
     version: 1,
     updated: new Date().toISOString(),
@@ -526,7 +540,6 @@ export async function rebuildMetaIndex(configDir?: string): Promise<MetaIndex> {
     byEntity: {},
   };
 
-  const tiers = listProjectWikis(configDir);
   for (const { project, dir } of tiers) {
     if (project !== "global") meta.projects.push(project);
     let pages: WikiPage[];
@@ -602,11 +615,14 @@ export async function searchAllProjects(
 ): Promise<AllProjectsResult[]> {
   if (!query.trim()) return [];
 
-  // Refresh the meta-index so the tier enumeration reflects the current set of
-  // project wikis (cheap relative to the per-tier BM25 search below).
-  await rebuildMetaIndex(configDir);
-
+  // Enumerate the tiers ONCE, then reuse that same set for both the meta-index
+  // refresh and the per-tier BM25 search below. Previously this re-enumerated
+  // `wiki/projects/*` a second time (rebuildMetaIndex did it internally, then we
+  // called listProjectWikis again) — `rebuildMetaIndexFromTiers` consumes the
+  // tier set we already have so the directory walk happens exactly once.
   const tiers = listProjectWikis(configDir);
+  await rebuildMetaIndexFromTiers(tiers, configDir);
+
   const aggregated: AllProjectsResult[] = [];
   for (const { project, dir } of tiers) {
     let hits: Array<{ page: WikiPage; score: number }>;

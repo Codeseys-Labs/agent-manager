@@ -121,9 +121,10 @@ function entryToWikiPage(entry: KnowledgeEntry, opts?: { ner?: NerOptions }): Wi
   const linkLines: string[] = [];
   for (const ent of entities) {
     const slug = entityToSlug(ent.text);
-    // Skip self-references and empty slugs; an entity equal to this page's own
-    // slug would create a degenerate self-edge in the graph.
-    if (!slug || slug === entry.id || seenSlugs.has(slug)) continue;
+    // Skip empty and duplicate slugs. (No self-reference guard: the page's own
+    // slug is `entry.id`, a UUID, while these are slugified entity *names* — the
+    // two can never collide, so a `slug === entry.id` check was always dead.)
+    if (!slug || seenSlugs.has(slug)) continue;
     seenSlugs.add(slug);
     entitySlugs.push(slug);
     // ADR-0054 R2: emit a real wikilink (NOT a backtick-wrapped bullet) so the
@@ -473,10 +474,16 @@ export async function harvestSession(
   if (opts?.llmExtraction === true) {
     const extractor = opts.llmExtractor ?? noopLlmExtractor;
     try {
+      // Hand the extractor a SHALLOW COPY of the heuristic entries, not the live
+      // `rawEntries` array. The interface documents "it must not mutate the
+      // inputs"; passing a copy enforces that contract rather than trusting it,
+      // so a misbehaving extractor that push()es / splices / index-overwrites
+      // the array it is given cannot corrupt the heuristic entries we keep. Only
+      // the entries it RETURNS are merged in.
       const extra = await extractor.extract({
         session,
         source,
-        heuristicEntries: rawEntries,
+        heuristicEntries: [...rawEntries],
       });
       if (Array.isArray(extra) && extra.length > 0) {
         rawEntries.push(...extra);

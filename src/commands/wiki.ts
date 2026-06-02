@@ -34,14 +34,15 @@ import {
 import { readFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { defineCommand } from "citty";
-import { getAdapter, listAdapters } from "../adapters/registry";
+import { getAdapter } from "../adapters/registry";
 import { loadResolvedConfig, resolveProjectConfig } from "../core/config";
 import { getStatus } from "../core/git";
+import type { Session } from "../core/session";
 import { errorCode, errorMessage } from "../lib/errors";
 import { error, info, output, parsePositiveInt, warn } from "../lib/output";
 import { WIKI_AGENTS_MD_TEMPLATE } from "../wiki/agents-md-template";
 import { exportGraphForViz, findOrphans, loadGraph } from "../wiki/graph";
-import { harvestSession, harvestSessionAsPages } from "../wiki/harvester";
+import { type LlmExtractor, harvestSession, harvestSessionAsPages } from "../wiki/harvester";
 import { catalogEntityNames } from "../wiki/ner";
 import {
   type ResolveChoice,
@@ -49,6 +50,7 @@ import {
   readConflictSidecar,
   resolveConflicts,
 } from "../wiki/resolve";
+import { type AdapterSource, enumerateSessions, loadEnumeratedSession } from "../wiki/sessions";
 import {
   LEGACY_WIKI_PROJECT_DIRNAME,
   WIKI_PROJECT_DIRNAME,
@@ -451,6 +453,80 @@ const deleteSubcommand = defineCommand({
   },
 });
 
+// ── Shared multi-adapter session enumeration (ADR-0054 R8) ──────────
+//
+// `am wiki ingest` and `am wiki harvest` both sweep recent sessions across
+// the harvest adapters and feed each loaded session to a per-command sink
+// (ingest writes WikiPages; harvest adds KnowledgeEntry objects). The
+// enumeration ITSELF — which adapters, in what priority order, skipping broken
+// readers, sorting by recency, capping at --limit — is identical, so it lives
+// here once and routes through the shared {@link enumerateSessions} /
+// {@link loadEnumeratedSession} module rather than each command re-implementing
+// a `listAdapters()→getAdapter→sessionReader` loop. When no `--adapter` filter
+// is given, enumeration spans {@link TOP_HARVEST_ADAPTERS} (claude-code + the
+// top-5) instead of only claude-code — the gap ADR-0054 R8 closes.
+//
+// `onSession(adapter, session)` returns the per-session count to add to the
+// running total (pages created / entries added). It is invoked at most
+// `maxSessions` times, in adapter-priority then recency order.
+//
+// Test seam: `__sweepSourceForTests` (set via {@link __setSweepSourceForTests})
+// substitutes the injected {@link AdapterSource} for the real registry so a
+// command-level test can prove ingest/harvest enumerate across the top-6
+// adapters THROUGH the shared module — without process-global `mock.module`
+// (which leaks across Bun test files). Never set in production.
+let __sweepSourceForTests: AdapterSource | null = null;
+
+/** @internal test seam — see `__sweepSourceForTests`. */
+export function __setSweepSourceForTests(source: AdapterSource | null): void {
+  __sweepSourceForTests = source;
+}
+
+// Test seam for the `--llm-extract` gate. agent-manager ships NO LLM (ADR-0010),
+// so production never injects one — the flag only opens the gate to the no-op
+// heuristic extractor. This seam lets a test inject an extractor and assert the
+// COMMAND threads `--llm-extract` through to `harvestSession`'s gate (called
+// only when the flag is set). Never set in production.
+let __llmExtractorForTests: LlmExtractor | null = null;
+
+/** @internal test seam — see `__llmExtractorForTests`. */
+export function __setLlmExtractorForTests(extractor: LlmExtractor | null): void {
+  __llmExtractorForTests = extractor;
+}
+
+async function sweepSessions(
+  maxSessions: number,
+  adapterFilter: string | undefined,
+  onSession: (adapter: string, session: Session) => Promise<number>,
+): Promise<{ totalSessions: number; totalCount: number }> {
+  // Enumerate across the top harvest adapters (or a single --adapter filter)
+  // via the shared module. `enumerateSessions` skips readers that are absent /
+  // throw, normalises the adapter field, and preserves priority order.
+  const source = __sweepSourceForTests ?? undefined;
+  const enumerated = await enumerateSessions({
+    ...(adapterFilter ? { adapters: [adapterFilter] } : {}),
+    ...(source ? { source } : {}),
+  });
+
+  // Recency-first within the whole sweep: the pre-R8 inline loops sorted each
+  // adapter's summaries by startedAt desc, then capped. Preserve that ordering
+  // across the aggregated set so --limit favours the most recent sessions.
+  enumerated.sort((a, b) => b.summary.startedAt.getTime() - a.summary.startedAt.getTime());
+
+  let totalSessions = 0;
+  let totalCount = 0;
+  for (const item of enumerated) {
+    if (totalSessions >= maxSessions) break;
+    const session = source
+      ? await loadEnumeratedSession(item, source)
+      : await loadEnumeratedSession(item);
+    if (!session) continue;
+    totalCount += await onSession(item.adapter, session);
+    totalSessions++;
+  }
+  return { totalSessions, totalCount };
+}
+
 const ingestSubcommand = defineCommand({
   meta: { name: "ingest", description: "Create wiki pages from agent sessions" },
   args: {
@@ -460,6 +536,12 @@ const ingestSubcommand = defineCommand({
     verbose: { type: "boolean", alias: "v", default: false },
     adapter: { type: "string", description: "Filter to one adapter" },
     limit: { type: "string", description: "Max sessions to process", default: "10" },
+    "llm-extract": {
+      type: "boolean",
+      description:
+        "Enable the optional, gated LLM-extraction stage (ADR-0054 R8). agent-manager ships no LLM (ADR-0010), so this degrades to the heuristic extractor unless a host injects one.",
+      default: false,
+    },
     global: { type: "boolean", description: "Use global wiki", default: false },
   },
   async run({ args }) {
@@ -467,10 +549,25 @@ const ingestSubcommand = defineCommand({
     const maxSessions = parsePositiveInt(args.limit, "limit", 10);
 
     // ADR-0054 R3: resolve the catalog once so every harvested page auto-links
-    // real server/agent/skill/instruction names on write.
+    // real server/agent/skill/instruction names on write. ADR-0054 R8: the
+    // `--llm-extract` flag flips the gated LLM-extraction stage on. agent-manager
+    // ships no LLM (ADR-0010), so without an injected extractor this is a graceful
+    // no-op (heuristic-only); the flag merely opens the gate.
     const catalogEntities = await resolveCatalogEntities();
-    const harvestOpts: { catalogEntities?: string[] } | undefined =
-      catalogEntities.length > 0 ? { catalogEntities } : undefined;
+    const llmExtract = args["llm-extract"] as boolean;
+    // The test-only extractor is consulted ONLY when --llm-extract is set, so a
+    // test can prove the flag flips the gate (production never injects one).
+    const llmExtractor = llmExtract ? (__llmExtractorForTests ?? undefined) : undefined;
+    const harvestOpts:
+      | { catalogEntities?: string[]; llmExtraction?: boolean; llmExtractor?: LlmExtractor }
+      | undefined =
+      catalogEntities.length > 0 || llmExtract
+        ? {
+            ...(catalogEntities.length > 0 ? { catalogEntities } : {}),
+            ...(llmExtract ? { llmExtraction: true } : {}),
+            ...(llmExtractor ? { llmExtractor } : {}),
+          }
+        : undefined;
 
     if (args.session) {
       const colonIdx = (args.session as string).indexOf(":");
@@ -510,46 +607,19 @@ const ingestSubcommand = defineCommand({
       return;
     }
 
-    // Ingest from all sessions (or filtered by adapter)
-    const adapterNames = args.adapter ? [args.adapter as string] : listAdapters();
-    let totalPages = 0;
-    let totalSessions = 0;
-
-    for (const name of adapterNames) {
-      const adapter = await getAdapter(name);
-      if (!adapter?.sessionReader) continue;
-      if (!adapter.sessionReader.hasSessionStorage()) continue;
-
-      let summaries;
-      try {
-        summaries = await adapter.sessionReader.listSessions();
-      } catch {
-        continue;
-      }
-
-      summaries.sort((a, b) => b.startedAt.getTime() - a.startedAt.getTime());
-      const toProcess = summaries.slice(0, maxSessions - totalSessions);
-
-      for (const summary of toProcess) {
-        if (totalSessions >= maxSessions) break;
-
-        let session;
-        try {
-          session = await adapter.sessionReader.loadSession(summary.id);
-        } catch {
-          continue;
-        }
-        if (!session) continue;
-
+    // ADR-0054 R8: enumerate across the top harvest adapters (or one --adapter
+    // filter) via the shared sessions module — no inline listAdapters() loop.
+    const { totalSessions, totalCount: totalPages } = await sweepSessions(
+      maxSessions,
+      args.adapter as string | undefined,
+      async (name, session) => {
         const slugs = await harvestSessionAsPages(session, harvestOpts);
-        totalPages += slugs.length;
-        totalSessions++;
-
         if (!args.json && !args.quiet) {
-          info(`  ${name}:${summary.id} → ${slugs.length} pages`, opts);
+          info(`  ${name}:${session.id} → ${slugs.length} pages`, opts);
         }
-      }
-    }
+        return slugs.length;
+      },
+    );
 
     await rebuildSearchIndex();
 
@@ -564,9 +634,10 @@ const ingestSubcommand = defineCommand({
   },
 });
 
-// harvest produces legacy KnowledgeEntry objects via harvestSession(),
-// while ingest produces WikiPage objects via harvestSessionAsPages().
-// Similar arg parsing but different data pipelines — not worth extracting shared code.
+// harvest produces legacy KnowledgeEntry objects via harvestSession(), while
+// ingest produces WikiPage objects via harvestSessionAsPages(). The data
+// pipelines differ, but the multi-adapter session enumeration is identical and
+// shared via {@link sweepSessions} (ADR-0054 R8).
 const harvestSubcommand = defineCommand({
   meta: { name: "harvest", description: "Extract knowledge from sessions (alias for ingest)" },
   args: {
@@ -576,6 +647,12 @@ const harvestSubcommand = defineCommand({
     verbose: { type: "boolean", alias: "v", default: false },
     adapter: { type: "string", description: "Filter to one adapter" },
     limit: { type: "string", description: "Max sessions to process", default: "10" },
+    "llm-extract": {
+      type: "boolean",
+      description:
+        "Enable the optional, gated LLM-extraction stage (ADR-0054 R8). agent-manager ships no LLM (ADR-0010), so this degrades to the heuristic extractor unless a host injects one.",
+      default: false,
+    },
     global: { type: "boolean", description: "Use global wiki", default: false },
   },
   async run({ args }) {
@@ -587,6 +664,14 @@ const harvestSubcommand = defineCommand({
     const catalogEntities = await resolveCatalogEntities();
     const addOpts: { ner: { catalogEntities: string[] } } | undefined =
       catalogEntities.length > 0 ? { ner: { catalogEntities } } : undefined;
+
+    // ADR-0054 R8: `--llm-extract` flips the gated LLM-extraction stage on.
+    // With no injected extractor it degrades to heuristic-only (ADR-0010); the
+    // test-only extractor is consulted ONLY when the flag is set.
+    const llmExtract = args["llm-extract"] as boolean;
+    const llmExtractor = llmExtract ? (__llmExtractorForTests ?? undefined) : undefined;
+    const harvestOpts: { llmExtraction?: boolean; llmExtractor?: LlmExtractor } | undefined =
+      llmExtract ? { llmExtraction: true, ...(llmExtractor ? { llmExtractor } : {}) } : undefined;
 
     if (args.session) {
       const colonIdx = (args.session as string).indexOf(":");
@@ -612,7 +697,7 @@ const harvestSubcommand = defineCommand({
         return;
       }
 
-      const entries = await harvestSession(session);
+      const entries = await harvestSession(session, harvestOpts);
       for (const entry of entries) {
         await addEntry(entry, addOpts);
       }
@@ -625,52 +710,28 @@ const harvestSubcommand = defineCommand({
       return;
     }
 
-    const adapterNames = args.adapter ? [args.adapter as string] : listAdapters();
-    let totalEntries = 0;
-    let totalSessions = 0;
-
-    for (const name of adapterNames) {
-      const adapter = await getAdapter(name);
-      if (!adapter?.sessionReader) continue;
-      if (!adapter.sessionReader.hasSessionStorage()) continue;
-
-      let summaries;
-      try {
-        summaries = await adapter.sessionReader.listSessions();
-      } catch {
-        continue;
-      }
-
-      summaries.sort((a, b) => b.startedAt.getTime() - a.startedAt.getTime());
-      const toProcess = summaries.slice(0, maxSessions - totalSessions);
-
-      for (const summary of toProcess) {
-        if (totalSessions >= maxSessions) break;
-
-        let session;
-        try {
-          session = await adapter.sessionReader.loadSession(summary.id);
-        } catch {
-          continue;
-        }
-        if (!session) continue;
-
-        const entries = await harvestSession(session);
+    // ADR-0054 R8: enumerate across the top harvest adapters (or one --adapter
+    // filter) via the shared sessions module — no inline listAdapters() loop.
+    const { totalSessions, totalCount: totalEntries } = await sweepSessions(
+      maxSessions,
+      args.adapter as string | undefined,
+      async (name, session) => {
+        const entries = await harvestSession(session, harvestOpts);
+        let added = 0;
         for (const entry of entries) {
           try {
             await addEntry(entry, addOpts);
-            totalEntries++;
+            added++;
           } catch {
             // Skip duplicate entries
           }
         }
-        totalSessions++;
-
         if (!args.json && !args.quiet) {
-          info(`  ${name}:${summary.id} → ${entries.length} entries`, opts);
+          info(`  ${name}:${session.id} → ${entries.length} entries`, opts);
         }
-      }
-    }
+        return added;
+      },
+    );
 
     if (args.json) {
       output(
