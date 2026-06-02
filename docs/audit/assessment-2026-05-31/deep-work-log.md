@@ -13,3 +13,19 @@
 Key lessons recorded to Mulch (cross-platform domain): real multi-OS CI is irreplaceable (Linux-only "correct-by-construction" missed shared-process env pollution + macOS `/var→/private/var` symlink + APFS mtime skew). Stacked-PR rebase: when base advances, rebase dependents to re-trigger CI; cherry-pick detection auto-drops already-merged commits.
 
 **Remaining backlog → Wave C (in flight):** WIKI-R2/R5/R6/R7/R8 (5 features, partitioned by file-ownership) + lint-cleanup. WIKI-opt (chub-mcp) stays v2-deferred per ADR-0054 ("do NOT embed"). Plus 3 low-pri test/UI nits (wiki-lint-disk-test, TEST-TUI-MULTISELECT, WEB-UI-APPLY-SKIPPED).
+
+## Checkpoint 9 — 2026-06-02 (BACKLOG ZERO)
+
+All 11 PRs merged (#23–#33). main @ 6048e6c. **Backlog: 0 open / 0 in_progress / 52 closed.**
+
+Waves B/C/D/E + ACP-leak landed after the wave-A stack:
+- Wave B: wiki-core request-changes fixes (lint enum, R3 wiring, delete-path) → approve; apply follow-ups (SEC-4c TUI, silent-failure narrow, shared default) → approve. (#26, #27)
+- Wave C+D: full ADR-0054 wiki — R2 harvest-wikilinks, R5 cross-project meta-index, R6 pushToGlobal promote, R7 task-aware apply-injection, R8 multi-adapter session enumeration + gated LLM extraction. Wave C reviews caught R7/R8 as plumbing-only (zero callers); Wave D wired them into real call paths (re-review: approve with file:line evidence). Lint cleanup (12 dead biome-ignores). (#28, #29)
+- Wave E: wiki-lint disk-frontmatter migration test, apply.ts resolveApplyTargets extraction + multiselect coverage, web-UI fail-closed skipped[] rendering + Force re-apply. (#30, #31, #32)
+- ACP killSubprocess grace-timer leak (Promise.race orphaned setTimeout) — mutation-verified regression test. (#33)
+
+WIKI-opt (chub-mcp) closed-as-deferred: ADR-0054 mandates optional-external-only, never-embed; v2 web-platform scope (see Mulch wiki/decision record).
+
+Integrated main verified green across all three OS runners (ubuntu/windows-2025/macOS) + integration + integration-windows on every PR; local full suite 3451 pass / 0 fail; tsc first-party clean; lint 0 warnings.
+
+Key cross-platform lessons (Mulch cross-platform domain): `process.env.X = undefined` → string "undefined" on Windows poisons shared bun process + spawned children; macOS `/var→/private/var` symlink breaks exact-path asserts (use realpathSync); APFS mtime/clock-skew breaks debounceSeconds:0 (backdate mtimes); atomic-write prune must drive off manifest insertion-order not lexical readdir; session-reader realpath dedup must case-fold on NTFS/APFS.
