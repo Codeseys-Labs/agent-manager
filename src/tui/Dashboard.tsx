@@ -7,7 +7,10 @@ type DashboardMode = "list" | "confirm-delete" | "server-detail";
 interface Props {
   data: TuiData;
   onSync: () => void;
-  onApply: () => void;
+  // SEC-4c: App owns the apply keybindings (`a` = safe/gated, `F` = force) and
+  // surfaces the summary via showMessage; the Dashboard only renders the footer
+  // hint and never invokes apply directly, so it takes App's void-wrapper.
+  onApply: (force?: boolean) => void;
   onRemoveServer?: (serverName: string) => Promise<string>;
   onImport?: () => Promise<string>;
   showMessage?: (msg: string) => void;
@@ -269,8 +272,8 @@ export function Dashboard({ data, onSync, onApply, onRemoveServer, onImport, sho
       {/* Footer */}
       <Box marginTop={1}>
         <Text dimColor>
-          {"  "}[s]ync [a]pply [P]ush [A]dd [D]elete [E]dit [I]mport [p]rofiles [t]status [q]uit
-          [?]help
+          {"  "}[s]ync [a]pply [F]orce-apply [P]ush [A]dd [D]elete [E]dit [I]mport [p]rofiles
+          [t]status [q]uit [?]help
         </Text>
       </Box>
       {servers.length > 0 && (

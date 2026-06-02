@@ -185,7 +185,7 @@ install.sh                  # curl-based installer (repo root, not scripts/)
 | `am add server <name>` | Add an MCP server (auto-commits) |
 | `am list servers` | List all servers (`--active`, `--json`) |
 | `am use <profile>` | Switch active profile |
-| `am apply` | Generate native configs for all detected tools (`--dry-run`, `--force`) |
+| `am apply` | Generate native configs for all detected tools. Fail-closed by default (SEC-4b/4c): a live apply runs `adapter.diff()` and SKIPS any tool whose native config has drifted out of band rather than overwriting it; `--force` overwrites, `--diff` shows the per-tool drift summary, `--dry-run` previews. The same `APPLY_SAFE_DEFAULTS` posture is shared verbatim by MCP (`am_apply`), web (`POST /api/apply`), and the TUI apply button. |
 | `am status` | Drift detection + sync state across all tools |
 | `am import <adapter>` | Import native configs into core TOML (auto-commits) |
 | `am push` | Git push config to remote |

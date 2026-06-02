@@ -3,11 +3,45 @@ import { render } from "silvery";
 import { getDetectedAdapters } from "../adapters/registry.ts";
 import { writeActiveProfile } from "../commands/use.ts";
 import { resolveConfigDir } from "../core/config.ts";
-import { applyResolved, withConfig } from "../core/controller.ts";
+import { APPLY_SAFE_DEFAULTS, applyResolved, withConfig } from "../core/controller.ts";
 import { pull, push } from "../core/git.ts";
 import { errorMessage } from "../lib/errors.ts";
 import { App } from "./App.tsx";
 import { loadTuiData } from "./data.ts";
+
+/**
+ * SEC-4c (Wave B apply-follow): the TUI apply call path, extracted as a pure,
+ * testable function so the fail-closed drift gate can be exercised without
+ * rendering the React tree.
+ *
+ * The TUI apply button was STILL fail-open before this — it called
+ * `applyResolved(configDir)` with NO diff/force, so a button press silently
+ * OVERWROTE a drifted native config (the exact overwrite class SEC-4b closed on
+ * the MCP/web surfaces; the 2026-04-15 `~/.claude.json` wipe lineage). It now
+ * derives `diff` from the SHARED APPLY_SAFE_DEFAULTS so the gate fires by
+ * default: a drifted (or unreadable-drift) adapter is SKIPPED, not overwritten.
+ * The returned summary names the skipped tools and points at the `F` (force)
+ * key, matching the CLI `--force` / MCP `force=true` / web `{ force: true }`
+ * opt-in. `force=true` overwrites on purpose.
+ */
+export async function runTuiApply(configDir: string, force = false): Promise<string> {
+  const result = await applyResolved(configDir, {
+    diff: APPLY_SAFE_DEFAULTS.diff,
+    force: force || APPLY_SAFE_DEFAULTS.force,
+  });
+  const wrote = result.succeeded.length;
+  if (result.skipped.length > 0) {
+    // Fail-closed gate fired. Tell the user exactly which tools were NOT
+    // written and how to overwrite on purpose (consistent with the CLI's
+    // "rerun with --force" guidance).
+    return `Applied to ${wrote} tool(s); SKIPPED ${result.skipped.length} drifted: ${result.skipped.join(", ")}. Press [F] to force-overwrite.`;
+  }
+  if (result.failed.length > 0) {
+    const names = result.failed.map((f) => f.adapter).join(", ");
+    return `Applied to ${wrote} tool(s); ${result.failed.length} failed: ${names}.`;
+  }
+  return `Apply complete — wrote ${wrote} tool(s)${force ? " (forced)" : ""}.`;
+}
 
 export async function launchTui(): Promise<void> {
   // Workaround for Bun + Ink TTY issues: resume stdin before render
@@ -176,10 +210,9 @@ export async function launchTui(): Promise<void> {
   // button through the same controller.applyResolved() pipeline the CLI
   // (`am apply`), MCP (`am_apply`), and web (`POST /api/apply`) already
   // use. The previous TUI apply implementation duplicated ~15 lines of
-  // load→decrypt→export logic and skipped the mutex entirely.
-  const handleApply = async () => {
-    await applyResolved(configDir);
-  };
+  // load→decrypt→export logic and skipped the mutex entirely. SEC-4c (the
+  // fail-closed drift gate) lives in the extracted `runTuiApply` above.
+  const handleApply = (force = false): Promise<string> => runTuiApply(configDir, force);
 
   const instance = render(
     <App

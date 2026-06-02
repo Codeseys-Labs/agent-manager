@@ -3,7 +3,7 @@ import { defineCommand } from "citty";
 import { getDetectedAdapters } from "../adapters/registry";
 import { pruneBackups } from "../core/apply-backup";
 import { resolveConfigDir } from "../core/config";
-import { type ApplyResolvedResult, applyResolved } from "../core/controller";
+import { APPLY_SAFE_DEFAULTS, type ApplyResolvedResult, applyResolved } from "../core/controller";
 import type { DryRunEnvelope } from "../lib/dry-run-envelope";
 import { AmError, errorMessage } from "../lib/errors";
 import { amError, info, output, warn } from "../lib/output";
@@ -69,13 +69,13 @@ export const applyCommand = defineCommand({
     diff: {
       type: "boolean",
       description:
-        "Include drift summary per adapter (run adapter.diff before export). In live mode without --force, refuses to overwrite drifted adapters.",
+        "Show the drift summary line per adapter (in-sync / drifted / unmanaged + change count). The drift GATE itself is on by default (fail-closed): a live apply without --force already refuses to overwrite a drifted adapter regardless of this flag.",
       default: false,
     },
     force: {
       type: "boolean",
       description:
-        "Overwrite even if drifted (only meaningful with --diff in live mode; no-op in --dry-run).",
+        "Overwrite even if the native config has drifted from the catalog (bypasses the fail-closed drift gate). No-op in --dry-run.",
       default: false,
     },
     target: { type: "string", description: "Apply to specific adapter only" },
@@ -152,21 +152,41 @@ export const applyCommand = defineCommand({
       try {
         applyResult = await applyResolved(configDir, {
           dryRun: args["dry-run"],
-          diff: args.diff,
+          // CLI-default decision (Wave B apply-follow): the drift GATE is on by
+          // default (fail-closed) for consistency with MCP / web / TUI, derived
+          // from the shared APPLY_SAFE_DEFAULTS so the safe posture lives in ONE
+          // place. `--diff` is now only the inline drift-summary DISPLAY toggle;
+          // it no longer controls whether the gate runs (it always does in live
+          // mode). dry-run never overwrites, so the gate is moot there.
+          diff: APPLY_SAFE_DEFAULTS.diff || args.diff,
           force: args.force,
           target: args.target,
           targets: selectedTargets,
           profile: args.profile,
         });
       } catch (err) {
-        if (err instanceof Error && err.message.includes("not found")) {
+        // silent-failure fix (Wave B apply-follow): the previous catch mapped
+        // ANY non-'not found' error to CONFIG_NOT_FOUND, which masked a real
+        // Windows crypto throw ('The string contains invalid characters' from
+        // atob() on a malformed key) as a misleading 'Config not found' — costing
+        // debugging time. `loadResolvedConfig` returns an EMPTY config (not a
+        // throw) when the file is missing, so a genuine missing-config never even
+        // reaches here. Narrow the mapping: only an adapter-not-found keeps its
+        // dedicated code; everything else surfaces with its REAL message.
+        //
+        // Match the controller's exact adapter-not-found sentinel
+        // (`Adapter "<name>" not found. Available: ...`) rather than a bare
+        // "not found" substring, so an unrelated error that merely contains the
+        // words "not found" is not mislabeled as an adapter problem.
+        if (err instanceof Error && /Adapter ".*" not found/.test(err.message)) {
           // Adapter-not-found bubbles up from `applyResolved`.
           throw new AmError(err.message, err.message, "ADAPTER_NOT_FOUND");
         }
+        const realMessage = errorMessage(err) || "apply failed";
         throw new AmError(
-          "Config not found",
-          "Run `am init` to initialize agent-manager",
-          "CONFIG_NOT_FOUND",
+          `Apply failed: ${realMessage}`,
+          "Re-run with --verbose for details",
+          "APPLY_FAILED",
         );
       }
 
@@ -262,8 +282,11 @@ export const applyCommand = defineCommand({
           }
         }
         // ADR-0038 (`--diff`): surface drift summary inline next to file
-        // counts so operators see in-sync / drifted at a glance.
-        if (res.diff) {
+        // counts so operators see in-sync / drifted at a glance. The gate now
+        // runs unconditionally (fail-closed default), so `res.diff` is populated
+        // even without `--diff`; only show the inline summary when the operator
+        // explicitly asked for it, to keep the default output uncluttered.
+        if (args.diff && res.diff) {
           info(`${res.adapter}: drift=${res.diff.status} (${res.diff.changes} change(s))`, opts);
         }
         for (const w of res.warnings) {

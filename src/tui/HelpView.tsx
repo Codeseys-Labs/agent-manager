@@ -8,7 +8,8 @@ interface Props {
 const SHORTCUTS = [
   { key: "Tab / 1-3", desc: "Switch between Dashboard, Profiles, Status tabs" },
   { key: "s", desc: "Sync config from git (pull)" },
-  { key: "a", desc: "Apply config to all detected adapters" },
+  { key: "a", desc: "Apply config (fail-closed: skips drifted tools)" },
+  { key: "F (shift+f)", desc: "Force-apply: overwrite even drifted tools" },
   { key: "P (shift+p)", desc: "Push config to remote" },
   { key: "A (shift+a)", desc: "Add server (shows CLI hint)" },
   { key: "D (shift+d)", desc: "Remove selected server" },
