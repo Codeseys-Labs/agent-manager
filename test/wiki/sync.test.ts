@@ -36,6 +36,19 @@ import {
   writeConflictSidecar,
 } from "../../src/wiki/sync";
 
+/**
+ * Stomp file mtimes safely into the past so debounce-filtered collectors
+ * (collectDirtyWikiFiles) include them deterministically. Avoids the macOS
+ * flake where a file stat'd just after write reports an mtime fractionally
+ * ahead of a `Date.now()` cutoff sampled a moment earlier.
+ */
+function backdate(dir: string, ...files: string[]): void {
+  const past = Date.now() - 120_000;
+  for (const f of files) {
+    fs.utimesSync(join(dir, f), new Date(past), new Date(past));
+  }
+}
+
 describe("M5.2 scanTextForSecrets", () => {
   test("detects PEM headers", () => {
     const hits = scanTextForSecrets("a.md", "-----BEGIN RSA PRIVATE KEY-----\nabc\n");
@@ -145,6 +158,14 @@ describe("M5.2 autoCommitWikiFiles", () => {
   test("commits qualifying files with a N-page message", async () => {
     await writeFile(join(dir, "a.md"), "one");
     await writeFile(join(dir, "b.md"), "two");
+    // Backdate mtime so the files are unambiguously past the debounce cutoff.
+    // collectDirtyWikiFiles skips files whose mtime is NEWER than now - debounce;
+    // with debounceSeconds:0 the cutoff is `now`, and a file stat'd microseconds
+    // after write can report an mtime fractionally ahead of the sampled `now`
+    // (mtime resolution / clock skew on macOS APFS), intermittently excluding it.
+    // Stomping mtime to the past removes the race (matches the pattern used by
+    // the collectDirtyWikiFiles tests above).
+    backdate(dir, "a.md", "b.md");
     const res = await autoCommitWikiFiles(dir, { debounceSeconds: 0 });
     expect(res.committed).toBe(true);
     expect(res.files.sort()).toEqual(["a.md", "b.md"]);
@@ -154,6 +175,9 @@ describe("M5.2 autoCommitWikiFiles", () => {
 
   test("throws WikiSyncSecretBlockedError on tier-1 hit", async () => {
     await writeFile(join(dir, "leak.md"), "token: ghp_abcdefghijklmnopqrst123");
+    // Backdate so the file isn't debounce-skipped before the secret scan runs
+    // (else autoCommit returns committed:false instead of throwing — flaky on macOS).
+    backdate(dir, "leak.md");
     await expect(
       autoCommitWikiFiles(dir, { debounceSeconds: 0, strictSecretScan: true }),
     ).rejects.toBeInstanceOf(WikiSyncSecretBlockedError);
@@ -161,6 +185,7 @@ describe("M5.2 autoCommitWikiFiles", () => {
 
   test("does NOT commit when strict scan triggers", async () => {
     await writeFile(join(dir, "leak.md"), "token: ghp_abcdefghijklmnopqrst123");
+    backdate(dir, "leak.md");
     const logBefore = await git.log({ fs, dir, depth: 1 });
     try {
       await autoCommitWikiFiles(dir, { debounceSeconds: 0, strictSecretScan: true });
