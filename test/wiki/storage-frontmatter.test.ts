@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import {
+  getCoverageInfo,
   getSupersedeInfo,
   readPage,
   serializeFrontmatter,
@@ -120,58 +121,43 @@ describe("wiki/storage frontmatter (ADR-0054 R4)", () => {
   });
 });
 
-// ADR-0054 R4 read surface: getSupersedeInfo turns the supersedes /
-// superseded_by frontmatter fields (previously serialize+parse-only) into a
-// reportable relationship, so they are no longer write-then-parse dead weight.
-describe("wiki/storage getSupersedeInfo (ADR-0054 R4 read surface)", () => {
-  let tmp: TestDir;
-  let wikiDir: string;
+// ── WAVE G-WIKIREAD: supersession + coverage read accessors ─────────
 
-  beforeEach(async () => {
-    tmp = await createTestDir("wiki-supersede-");
-    wikiDir = join(tmp.path, "wiki");
+describe("wiki/storage getSupersedeInfo", () => {
+  test("reports both pointers + hasSupersession when set", () => {
+    const info = getSupersedeInfo({ supersedes: "old", superseded_by: "new" });
+    expect(info.supersedes).toBe("old");
+    expect(info.superseded_by).toBe("new");
+    expect(info.hasSupersession).toBe(true);
   });
 
-  afterEach(async () => {
-    await tmp.cleanup();
+  test("reports only the pointer that is set", () => {
+    const onlySupersedes = getSupersedeInfo({ supersedes: "old" });
+    expect(onlySupersedes.supersedes).toBe("old");
+    expect(onlySupersedes.superseded_by).toBeUndefined();
+    expect(onlySupersedes.hasSupersession).toBe(true);
+
+    const onlySuperseded = getSupersedeInfo({ superseded_by: "new" });
+    expect(onlySuperseded.supersedes).toBeUndefined();
+    expect(onlySuperseded.superseded_by).toBe("new");
+    expect(onlySuperseded.hasSupersession).toBe(true);
   });
 
-  test("returns null when neither supersede field is set (the common case)", () => {
-    expect(getSupersedeInfo(makePage({ slug: "plain" }))).toBeNull();
+  test("a page with neither pointer reports hasSupersession=false and omits both", () => {
+    const info = getSupersedeInfo({});
+    expect(info.supersedes).toBeUndefined();
+    expect(info.superseded_by).toBeUndefined();
+    expect(info.hasSupersession).toBe(false);
+  });
+});
+
+describe("wiki/storage getCoverageInfo", () => {
+  test("returns the coverage count when set", () => {
+    expect(getCoverageInfo({ coverage: 3 })).toBe(3);
+    expect(getCoverageInfo({ coverage: 0 })).toBe(0);
   });
 
-  test("reports 'superseded by X' when the page is shadowed", () => {
-    const info = getSupersedeInfo(makePage({ slug: "stale", superseded_by: "fresh" }));
-    expect(info).not.toBeNull();
-    expect(info!.supersededBy).toBe("fresh");
-    expect(info!.supersedes).toBeNull();
-    expect(info!.label).toBe("superseded by fresh");
-  });
-
-  test("reports 'supersedes Y' when the page replaces an older one", () => {
-    const info = getSupersedeInfo(makePage({ slug: "fresh", supersedes: "stale" }));
-    expect(info).not.toBeNull();
-    expect(info!.supersedes).toBe("stale");
-    expect(info!.supersededBy).toBeNull();
-    expect(info!.label).toBe("supersedes stale");
-  });
-
-  test("reports both relationships, superseded-by first (more actionable)", () => {
-    const info = getSupersedeInfo(
-      makePage({ slug: "mid", supersedes: "older", superseded_by: "newer" }),
-    );
-    expect(info).not.toBeNull();
-    expect(info!.label).toBe("superseded by newer; supersedes older");
-  });
-
-  test("surfaces the relationship for a page round-tripped through disk", async () => {
-    await writePage(
-      makePage({ slug: "on-disk", supersedes: "ancestor", superseded_by: "descendant" }),
-      { wikiDir, maintainDerived: false },
-    );
-    const loaded = await readPage("on-disk", wikiDir);
-    expect(loaded).not.toBeNull();
-    const info = getSupersedeInfo(loaded!);
-    expect(info!.label).toBe("superseded by descendant; supersedes ancestor");
+  test("returns undefined when the page never set coverage", () => {
+    expect(getCoverageInfo({})).toBeUndefined();
   });
 });

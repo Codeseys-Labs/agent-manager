@@ -1082,45 +1082,6 @@ export async function readPage(slug: string, wikiDir?: string): Promise<WikiPage
   return null;
 }
 
-/**
- * Human-readable supersede relationship for a page (ADR-0054 R4 read surface).
- *
- * The `supersedes` / `superseded_by` frontmatter fields (added in R4) are
- * **forward-compat scaffolding** for the v-next "invalidate, don't delete"
- * contradiction-handling flow ADR-0020 specs: when a newer fact contradicts an
- * older page we mark the old page `superseded_by: <new-slug>` and the new page
- * `supersedes: <old-slug>` instead of deleting the stale history. Until that
- * flow ships, nothing *sets* these fields automatically — but they round-trip
- * through write + read (`storage-frontmatter.test.ts`), and this helper is the
- * MINIMAL read surface so a consumer (e.g. `am wiki show <slug>` /
- * `am wiki lint`) can report the relationship instead of the fields being
- * write-then-parse dead weight.
- *
- * Returns `null` when the page sets neither field (the common case), so callers
- * can cheaply skip rendering. Otherwise returns the two slugs (each `null` when
- * its field is unset) plus a one-line human-readable label.
- *
- * The full automatic contradiction-handling consumer (detect contradiction →
- * set both fields → exclude superseded pages from retrieval) remains explicit
- * backlog — see ADR-0054 §Consequences and the WIKI-supersede-consumer seed.
- */
-export function getSupersedeInfo(page: Pick<WikiPage, "slug" | "supersedes" | "superseded_by">): {
-  supersedes: string | null;
-  supersededBy: string | null;
-  label: string;
-} | null {
-  const supersedes = page.supersedes ?? null;
-  const supersededBy = page.superseded_by ?? null;
-  if (supersedes === null && supersededBy === null) return null;
-
-  const parts: string[] = [];
-  // "superseded by X" comes first: a stale page being shadowed is the more
-  // actionable signal (the reader should prefer X over this page).
-  if (supersededBy !== null) parts.push(`superseded by ${supersededBy}`);
-  if (supersedes !== null) parts.push(`supersedes ${supersedes}`);
-  return { supersedes, supersededBy, label: parts.join("; ") };
-}
-
 /** Options controlling {@link deletePage}'s write-path side-effects (ADR-0054 R1). */
 export interface DeletePageOptions {
   /** Wiki directory to delete from (defaults to the resolved wiki dir). */
@@ -1278,6 +1239,51 @@ function parseWikiPage(raw: string, fallbackSlug: string): WikiPage | null {
     ...(superseded_by !== undefined ? { superseded_by } : {}),
     ...(agent_id ? { agent_id } : {}),
   };
+}
+
+// ── ADR-0020 supersession / coverage read accessors ─────────────
+//
+// `supersedes` / `superseded_by` / `coverage` are ADR-0020 frontmatter fields
+// that round-trip through writePage/parseWikiPage (ADR-0054 R4) but were
+// previously serialize+parse-only — nothing ever surfaced them to a reader.
+// These tiny accessors give the command layer (`am wiki show` / `am wiki lint`)
+// a stable, typed shape to report them, so a page's contradiction-resolution
+// history ("invalidate, don't delete", ADR-0020 §"Contradiction Handling") and
+// its corroboration count are actually visible to the user.
+
+/** Supersession pointers a page carries, with a convenience flag. */
+export interface SupersedeInfo {
+  /** Slug of the page this one replaces (newer fact supersedes older). */
+  supersedes?: string;
+  /** Slug of the page that replaced this one (this page is stale). */
+  superseded_by?: string;
+  /** True iff either pointer is set (the page participates in a chain). */
+  hasSupersession: boolean;
+}
+
+/**
+ * Extract a page's supersession pointers as a flat, reportable shape. Pure —
+ * reads only the two frontmatter fields. The `slug` is deliberately NOT part of
+ * the parameter type: the caller already has the page (and its slug), so taking
+ * it here was dead weight.
+ */
+export function getSupersedeInfo(
+  page: Pick<WikiPage, "supersedes" | "superseded_by">,
+): SupersedeInfo {
+  return {
+    ...(page.supersedes !== undefined ? { supersedes: page.supersedes } : {}),
+    ...(page.superseded_by !== undefined ? { superseded_by: page.superseded_by } : {}),
+    hasSupersession: page.supersedes !== undefined || page.superseded_by !== undefined,
+  };
+}
+
+/**
+ * Read a page's corroboration `coverage` (count of corroborating sessions).
+ * Returns undefined when the page never set it, so callers can skip the line
+ * for diff-clean pages.
+ */
+export function getCoverageInfo(page: Pick<WikiPage, "coverage">): number | undefined {
+  return page.coverage;
 }
 
 // ── MiniSearch BM25 ─────────────────────────────────────────────

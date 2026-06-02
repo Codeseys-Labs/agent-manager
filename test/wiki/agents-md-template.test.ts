@@ -59,4 +59,28 @@ describe("WIKI_AGENTS_MD_TEMPLATE", () => {
     const byteLength = Buffer.byteLength(WIKI_AGENTS_MD_TEMPLATE, "utf-8");
     expect(byteLength).toBeLessThan(5 * 1024);
   });
+
+  // ── WAVE G-WIKIREAD: publish / --promote accuracy (spec-vs-impl drift) ──
+  // As-built (ADR-0054 R6): `am wiki publish <slug>` pushes to the per-project
+  // store; `--promote` is the explicit gate to the cross-project GLOBAL wiki.
+  // The old template told agents `am wiki publish <slug>` alone promotes to the
+  // global wiki, which is false. These tests pin the corrected guidance.
+
+  test("documents `am wiki publish <slug> --promote` as the path to the global wiki", () => {
+    expect(WIKI_AGENTS_MD_TEMPLATE).toContain("am wiki publish <slug> --promote");
+  });
+
+  test("documents `--auto` discovery for `promote: true` entries", () => {
+    expect(WIKI_AGENTS_MD_TEMPLATE).toContain("am wiki publish --auto");
+  });
+
+  test("does NOT claim a bare `am wiki publish <slug>` promotes to the global wiki", () => {
+    // The corrected copy must not pair a plain publish with promotion to the
+    // global wiki — that was the spec-vs-impl drift. A plain publish targets the
+    // per-project store; promotion requires --promote.
+    expect(WIKI_AGENTS_MD_TEMPLATE).toContain("per-project store");
+    // The old, inaccurate sentence claimed a plain publish works "without the
+    // frontmatter flag" — its removal proves the drift is gone.
+    expect(WIKI_AGENTS_MD_TEMPLATE).not.toContain("without the frontmatter flag");
+  });
 });
