@@ -41,7 +41,7 @@ beforeEach(async () => {
 afterEach(async () => {
   await rm(cfgDir, { recursive: true, force: true });
   await rm(targetDir, { recursive: true, force: true });
-  process.env.AM_APPLY_BACKUP = undefined;
+  Reflect.deleteProperty(process.env, "AM_APPLY_BACKUP");
 });
 
 describe("atomic-write backup hook", () => {
@@ -71,7 +71,7 @@ describe("atomic-write backup hook", () => {
     try {
       await atomicWriteFile(target, "v2");
     } finally {
-      process.env.AM_APPLY_BACKUP = undefined;
+      Reflect.deleteProperty(process.env, "AM_APPLY_BACKUP");
     }
     const backups = await listBackupsForTarget(target);
     expect(backups).toHaveLength(1);

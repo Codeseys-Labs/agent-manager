@@ -35,7 +35,7 @@ describe("am uninstall", () => {
     if (origConfigDir !== undefined) {
       process.env.AM_CONFIG_DIR = origConfigDir;
     } else {
-      process.env.AM_CONFIG_DIR = undefined;
+      Reflect.deleteProperty(process.env, "AM_CONFIG_DIR");
     }
     if (dir) await dir.cleanup();
   });

@@ -188,7 +188,7 @@ describe.skipIf(process.platform === "win32")("ShimAcpServer — env leak probe"
       expect(text).not.toContain("should-not-escape-42");
       expect(text).not.toContain("AM_LEAK_TEST");
     } finally {
-      if (savedLeak === undefined) process.env.AM_LEAK_TEST = undefined;
+      if (savedLeak === undefined) Reflect.deleteProperty(process.env, "AM_LEAK_TEST");
       else process.env.AM_LEAK_TEST = savedLeak;
     }
   });

@@ -97,7 +97,7 @@ describe("TUI apply button — fail-closed drift gate (SEC-4c)", () => {
 
   afterEach(async () => {
     __setAdapterResolverForTests(null);
-    if (originalEnv === undefined) process.env.AM_CONFIG_DIR = undefined;
+    if (originalEnv === undefined) Reflect.deleteProperty(process.env, "AM_CONFIG_DIR");
     else process.env.AM_CONFIG_DIR = originalEnv;
     await rm(tmpDir, { recursive: true, force: true });
   });

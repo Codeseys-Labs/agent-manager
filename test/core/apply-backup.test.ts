@@ -71,15 +71,15 @@ async function seedTarget(target: string, entries: SeedEntry[]): Promise<string>
 beforeEach(async () => {
   cfgDir = await mkdtemp(join(tmpdir(), "am-apply-backup-test-"));
   process.env.AM_CONFIG_DIR = cfgDir;
-  process.env.AM_APPLY_BACKUP_MAX = undefined;
-  process.env.AM_APPLY_BACKUP_MAX_AGE = undefined;
+  Reflect.deleteProperty(process.env, "AM_APPLY_BACKUP_MAX");
+  Reflect.deleteProperty(process.env, "AM_APPLY_BACKUP_MAX_AGE");
 });
 
 afterEach(async () => {
   await rm(cfgDir, { recursive: true, force: true });
-  process.env.AM_CONFIG_DIR = undefined;
-  process.env.AM_APPLY_BACKUP_MAX = undefined;
-  process.env.AM_APPLY_BACKUP_MAX_AGE = undefined;
+  Reflect.deleteProperty(process.env, "AM_CONFIG_DIR");
+  Reflect.deleteProperty(process.env, "AM_APPLY_BACKUP_MAX");
+  Reflect.deleteProperty(process.env, "AM_APPLY_BACKUP_MAX_AGE");
 });
 
 describe("listAllBackups", () => {
@@ -204,7 +204,7 @@ describe("pruneBackups", () => {
       const result = await pruneBackups();
       expect(result.removed).toBe(2);
     } finally {
-      process.env.AM_APPLY_BACKUP_MAX_AGE = undefined;
+      Reflect.deleteProperty(process.env, "AM_APPLY_BACKUP_MAX_AGE");
     }
 
     const remaining = fs.readdirSync(dir).filter((f) => f.endsWith(".bak"));
@@ -228,7 +228,7 @@ describe("pruneBackups", () => {
       const result = await pruneBackups();
       expect(result.removed).toBe(1);
     } finally {
-      process.env.AM_APPLY_BACKUP_MAX_AGE = undefined;
+      Reflect.deleteProperty(process.env, "AM_APPLY_BACKUP_MAX_AGE");
     }
 
     const remaining = fs.readdirSync(dir).filter((f) => f.endsWith(".bak"));
@@ -248,7 +248,7 @@ describe("pruneBackups", () => {
       const result = await pruneBackups();
       expect(result.removed).toBe(2);
     } finally {
-      process.env.AM_APPLY_BACKUP_MAX_AGE = undefined;
+      Reflect.deleteProperty(process.env, "AM_APPLY_BACKUP_MAX_AGE");
     }
 
     const remaining = fs.readdirSync(dir).filter((f) => f.endsWith(".bak"));
@@ -271,7 +271,7 @@ describe("pruneBackups", () => {
       const result = await pruneBackups();
       expect(result.removed).toBe(2);
     } finally {
-      process.env.AM_APPLY_BACKUP_MAX = undefined;
+      Reflect.deleteProperty(process.env, "AM_APPLY_BACKUP_MAX");
     }
 
     const remaining = fs.readdirSync(dir).filter((f) => f.endsWith(".bak"));

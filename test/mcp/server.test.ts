@@ -17,7 +17,7 @@ describe("MCP server", () => {
     if (originalEnv) {
       process.env.AM_CONFIG_DIR = originalEnv;
     } else {
-      process.env.AM_CONFIG_DIR = undefined;
+      Reflect.deleteProperty(process.env, "AM_CONFIG_DIR");
     }
     if (dir) await dir.cleanup();
   });
@@ -901,7 +901,7 @@ describe("MCP error response structure", () => {
     if (originalEnv) {
       process.env.AM_CONFIG_DIR = originalEnv;
     } else {
-      process.env.AM_CONFIG_DIR = undefined;
+      Reflect.deleteProperty(process.env, "AM_CONFIG_DIR");
     }
     if (dir) await dir.cleanup();
   });
@@ -1011,7 +1011,7 @@ describe("MCP am_import passes projectPath to adapters", () => {
     if (originalEnv) {
       process.env.AM_CONFIG_DIR = originalEnv;
     } else {
-      process.env.AM_CONFIG_DIR = undefined;
+      Reflect.deleteProperty(process.env, "AM_CONFIG_DIR");
     }
     if (dir) await dir.cleanup();
   });
@@ -1078,7 +1078,7 @@ describe("MCP am_list_profiles handler", () => {
     if (originalEnv) {
       process.env.AM_CONFIG_DIR = originalEnv;
     } else {
-      process.env.AM_CONFIG_DIR = undefined;
+      Reflect.deleteProperty(process.env, "AM_CONFIG_DIR");
     }
     if (dir) await dir.cleanup();
   });
@@ -1132,7 +1132,7 @@ describe("MCP am_use_profile handler", () => {
     if (originalEnv) {
       process.env.AM_CONFIG_DIR = originalEnv;
     } else {
-      process.env.AM_CONFIG_DIR = undefined;
+      Reflect.deleteProperty(process.env, "AM_CONFIG_DIR");
     }
     if (dir) await dir.cleanup();
   });
@@ -1359,7 +1359,7 @@ describe("MCP ACP tools", () => {
     if (originalEnv) {
       process.env.AM_CONFIG_DIR = originalEnv;
     } else {
-      process.env.AM_CONFIG_DIR = undefined;
+      Reflect.deleteProperty(process.env, "AM_CONFIG_DIR");
     }
     if (dir) await dir.cleanup();
   });
@@ -1610,7 +1610,7 @@ describe("am_agent_detect — reachable compat alias (2026-05-02..v0.6)", () => 
 
   afterEach(async () => {
     if (originalEnv) process.env.AM_CONFIG_DIR = originalEnv;
-    else process.env.AM_CONFIG_DIR = undefined;
+    else Reflect.deleteProperty(process.env, "AM_CONFIG_DIR");
     if (tmp) await tmp.cleanup();
     tmp = undefined;
   });

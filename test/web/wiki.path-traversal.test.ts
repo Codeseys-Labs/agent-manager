@@ -36,7 +36,7 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
-  process.env.AM_CONFIG_DIR = undefined;
+  Reflect.deleteProperty(process.env, "AM_CONFIG_DIR");
   await rm(tmpDir, { recursive: true, force: true });
 });
 

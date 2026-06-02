@@ -41,7 +41,7 @@ describe("applyResolved — partial-failure semantics (C3 Option C)", () => {
   });
 
   afterEach(async () => {
-    if (originalEnv === undefined) process.env.AM_CONFIG_DIR = undefined;
+    if (originalEnv === undefined) Reflect.deleteProperty(process.env, "AM_CONFIG_DIR");
     else process.env.AM_CONFIG_DIR = originalEnv;
     if (dir) await dir.cleanup();
     dir = undefined;

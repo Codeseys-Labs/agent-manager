@@ -22,7 +22,7 @@ describe("resolveWikiDir", () => {
   });
 
   afterEach(async () => {
-    if (savedEnv === undefined) process.env.AM_CONFIG_DIR = undefined;
+    if (savedEnv === undefined) Reflect.deleteProperty(process.env, "AM_CONFIG_DIR");
     else process.env.AM_CONFIG_DIR = savedEnv;
     await projectDir.cleanup();
     await configHome.cleanup();

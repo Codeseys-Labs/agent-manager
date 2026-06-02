@@ -37,7 +37,7 @@ describe("AM_MCP_TIMING=1 tool-call timing log", () => {
   let cap: ReturnType<typeof installStderrCapture> | undefined;
 
   afterEach(() => {
-    if (originalFlag === undefined) process.env.AM_MCP_TIMING = undefined;
+    if (originalFlag === undefined) Reflect.deleteProperty(process.env, "AM_MCP_TIMING");
     else process.env.AM_MCP_TIMING = originalFlag;
     cap?.restore();
     cap = undefined;
@@ -68,7 +68,7 @@ describe("AM_MCP_TIMING=1 tool-call timing log", () => {
   });
 
   test("does NOT emit when AM_MCP_TIMING is unset", async () => {
-    process.env.AM_MCP_TIMING = undefined;
+    Reflect.deleteProperty(process.env, "AM_MCP_TIMING");
     cap = installStderrCapture();
 
     const server = new McpServer({
