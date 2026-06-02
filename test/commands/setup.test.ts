@@ -344,7 +344,12 @@ describe("am setup", () => {
     // plan and never writes); the fail-closed skip applies to the LIVE write.
     let liveExportCalled = false;
     const throwingAdapter = {
-      meta: { name: "throwing-fake", displayName: "Throwing Fake", version: "0.0.0", capabilities: [] },
+      meta: {
+        name: "throwing-fake",
+        displayName: "Throwing Fake",
+        version: "0.0.0",
+        capabilities: [],
+      },
       detect() {
         return { installed: true, paths: {} };
       },
@@ -353,7 +358,10 @@ describe("am setup", () => {
       },
       export(_resolved: unknown, options: { dryRun?: boolean }) {
         if (!options?.dryRun) liveExportCalled = true;
-        return { files: [{ path: "/tmp/throwing-fake.json", content: "{}", written: true }], warnings: [] };
+        return {
+          files: [{ path: "/tmp/throwing-fake.json", content: "{}", written: true }],
+          warnings: [],
+        };
       },
       diff() {
         throw new Error("simulated diff() failure");
