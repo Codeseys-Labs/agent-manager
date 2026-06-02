@@ -23,9 +23,11 @@
  *      non-interactive mode (--yes/--json/--quiet/--target/--targets/dry-run/
  *      non-TTY) bypasses the prompt and preserves fan-out-to-all.
  *   2. Handler — the real `applyCommand.run()` path under a forced TTY with the
- *      injected detection + clack double, asserting the chosen subset actually
- *      scopes the apply (surfaced via the `--json` results array) and that a
- *      cancel short-circuits.
+ *      injected detection + clack double, asserting the multiselect FIRES and
+ *      the apply proceeds, vs. a cancel that short-circuits before the
+ *      controller. The selected-subset → controller scoping itself is proven
+ *      separately by test/core/controller-apply-targets.test.ts (applyResolved
+ *      resolves exactly the named targets); together they cover the chain.
  */
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
@@ -42,6 +44,10 @@ import {
 import { __setAdapterResolverForTests } from "../../src/core/controller";
 import { type TestDir, createTestDir } from "../helpers/tmp";
 
+// `Symbol.for("clack:cancel")` is clack's actual cancel sentinel (a global
+// registry symbol, so this resolves to the SAME symbol clack uses). The double
+// below pairs it with a matching `isCancel`, so the source's injected
+// `prompt.isCancel(selection)` check is exercised exactly as in production.
 const CANCEL = Symbol.for("clack:cancel");
 
 /**
@@ -162,10 +168,12 @@ describe("resolveApplyTargets — interactive multiselect (unit)", () => {
     expect(dbl.calls).toBe(1);
   });
 
-  test("an empty selection is returned verbatim (no silent fan-out-to-all)", async () => {
+  test("an empty selection is returned as an explicit empty subset, not undefined", async () => {
     // `required: true` normally stops clack from returning [], but a double can.
-    // The decision must surface the empty subset as-is rather than collapsing it
-    // to `undefined` (which the controller treats as 'apply to all').
+    // The decision must surface the empty subset as `targets: []` rather than
+    // collapsing it to `undefined` — `undefined` is the no-targets-flag signal
+    // that the handler turns into apply-to-all, whereas `[]` is an explicit
+    // "the operator selected nothing" that the caller can distinguish.
     const dbl = makeClackDouble([]);
     const result = await resolveApplyTargets(
       baseInput(),
