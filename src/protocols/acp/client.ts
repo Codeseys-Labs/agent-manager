@@ -270,16 +270,26 @@ export class AmAcpClient {
 
     const exited = proc.exited;
     if (exited && typeof (exited as Promise<number>).then === "function") {
-      const timer = new Promise<"timeout">((resolve) =>
-        setTimeout(() => resolve("timeout"), gracePeriodMs),
-      );
-      const outcome = await Promise.race([exited.then(() => "exited" as const), timer]);
-      if (outcome === "timeout") {
-        try {
-          proc.kill("SIGKILL");
-        } catch {
-          // ignore
+      // Race the graceful exit against a timeout. CRITICAL: capture the timer
+      // handle and clear it in `finally` — Promise.race settles on the first
+      // promise, but the losing branch keeps running. If `exited` wins, an
+      // uncleared setTimeout holds the event loop open for the full grace
+      // period (delaying CLI exit / test teardown — the leak this fixes).
+      let timerHandle: ReturnType<typeof setTimeout> | undefined;
+      const timer = new Promise<"timeout">((resolve) => {
+        timerHandle = setTimeout(() => resolve("timeout"), gracePeriodMs);
+      });
+      try {
+        const outcome = await Promise.race([exited.then(() => "exited" as const), timer]);
+        if (outcome === "timeout") {
+          try {
+            proc.kill("SIGKILL");
+          } catch {
+            // ignore
+          }
         }
+      } finally {
+        if (timerHandle) clearTimeout(timerHandle);
       }
     }
   }

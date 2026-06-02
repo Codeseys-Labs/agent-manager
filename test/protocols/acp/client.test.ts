@@ -365,6 +365,59 @@ describe("AmAcpClient", () => {
       await client.disconnect();
       expect(client.connected).toBe(false);
     });
+
+    test("killSubprocess clears its grace timer when the process exits promptly (no leak)", async () => {
+      // Regression for the Promise.race timer leak: killSubprocess races the
+      // graceful `exited` against a `gracePeriodMs` setTimeout. When `exited`
+      // wins, the orphaned timer keeps the event loop alive for the full grace
+      // period unless it is explicitly cleared. The leak does NOT delay
+      // killSubprocess's *return* (race resolves on `exited`), so we assert the
+      // MECHANISM directly: clearTimeout must be called with the timer handle.
+      // This fails on the pre-fix code, which never called clearTimeout.
+      const realSetTimeout = globalThis.setTimeout;
+      const realClearTimeout = globalThis.clearTimeout;
+      const clearedHandles: unknown[] = [];
+      let createdHandle: unknown;
+      const g = globalThis as unknown as {
+        setTimeout: typeof setTimeout;
+        clearTimeout: typeof clearTimeout;
+      };
+      g.setTimeout = ((fn: (...a: unknown[]) => void, ms?: number) => {
+        createdHandle = realSetTimeout(fn, ms);
+        return createdHandle;
+      }) as unknown as typeof setTimeout;
+      g.clearTimeout = ((h: unknown) => {
+        clearedHandles.push(h);
+        return realClearTimeout(h as ReturnType<typeof setTimeout>);
+      }) as unknown as typeof clearTimeout;
+
+      try {
+        const client = new AmAcpClient();
+        let sigkilled = false;
+        const fakeProc = {
+          exited: Promise.resolve(0),
+          kill: (sig?: string) => {
+            if (sig === "SIGKILL") sigkilled = true;
+          },
+        };
+        // Reach the private subprocess field via the same typed-cast pattern
+        // used elsewhere in these tests (no production seam for a private method).
+        (client as unknown as { subprocess: typeof fakeProc }).subprocess = fakeProc;
+
+        await (
+          client as unknown as { killSubprocess: (ms?: number) => Promise<void> }
+        ).killSubprocess(5000);
+
+        // Graceful exit won the race: SIGKILL must NOT have fired, and the grace
+        // timer that was created MUST have been cleared (the leak fix).
+        expect(sigkilled).toBe(false);
+        expect(createdHandle).toBeDefined();
+        expect(clearedHandles).toContain(createdHandle);
+      } finally {
+        globalThis.setTimeout = realSetTimeout;
+        globalThis.clearTimeout = realClearTimeout;
+      }
+    });
   });
 
   describe("onSessionUpdate", () => {
