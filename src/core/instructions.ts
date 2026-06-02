@@ -138,37 +138,49 @@ const WIKI_BEGIN = "<!-- am:wiki:begin -->";
 const WIKI_END = "<!-- am:wiki:end -->";
 
 /**
- * Generate wiki context for injection into instruction files.
- * Returns a formatted markdown section, or empty string if wiki is empty
- * or inject_on_apply is not enabled.
+ * Generate wiki context for injection into instruction files (ADR-0054 R7).
+ *
+ * This is the SINGLE shared caller of {@link buildWikiContext} — every adapter
+ * that injects wiki knowledge (claude-code, codex-cli, forgecode, kilo-code)
+ * routes through here, so the opt-in gate and task derivation are enforced in
+ * ONE place rather than re-promised per adapter.
+ *
+ * Gate (opt-in, ADR-0054 R7): injection fires only when
+ * `settings.wiki.inject_on_apply` is truthy; otherwise this returns "" so a
+ * native config is never silently bloated with knowledge.
+ *
+ * When enabled it delegates to {@link buildWikiContext}, which is task-aware
+ * (the query is `settings.wiki.task` when present, else the historical
+ * "project knowledge" fallback) and multi-tier (project tier first, then the
+ * global tier, de-duped by slug with project winning). The block carries the
+ * same `am:wiki` markers {@link spliceWikiBlock} expects, so adapters splice it
+ * unchanged. Returns "" when both tiers are empty (cheap skip).
  */
 export async function generateWikiContext(
-  configDir: string,
+  _configDir: string,
   settings?: Record<string, unknown>,
 ): Promise<string> {
-  // Check if inject_on_apply is enabled
+  // Opt-in gate enforced in code (ADR-0054 R7), not just documented.
   const wikiSettings = settings?.wiki as Record<string, unknown> | undefined;
   if (!wikiSettings?.inject_on_apply) {
     return "";
   }
 
-  // Dynamically import wiki modules to avoid circular dependencies
+  // Dynamically import the wiki module to avoid a static core→wiki cycle.
   try {
-    const { listPages } = await import("../wiki/storage.ts");
-    const pages = await listPages();
+    const { buildWikiContext } = await import("../wiki/storage.ts");
 
-    if (pages.length === 0) {
-      return "";
-    }
+    // Task-aware: prefer an explicit `settings.wiki.task` query; the project
+    // wiki dir is resolved from cwd inside buildWikiContext (project XOR
+    // global), and the global tier from configDir. An `agent_id` knob biases
+    // retrieval toward that agent's pages when present.
+    const task = typeof wikiSettings.task === "string" ? wikiSettings.task : undefined;
+    const agentId = typeof wikiSettings.agent_id === "string" ? wikiSettings.agent_id : undefined;
 
-    const { synthesizeContext } = await import("../wiki/synthesizer.ts");
-    const context = await synthesizeContext("project knowledge", { topK: 5 });
-
-    if (!context || context.startsWith("No knowledge found")) {
-      return "";
-    }
-
-    return `${WIKI_BEGIN}\n## Agent Knowledge\n\n${context}\n${WIKI_END}`;
+    return await buildWikiContext({
+      ...(task ? { task } : {}),
+      ...(agentId ? { agentId } : {}),
+    });
   } catch {
     // Wiki not available (no entries, missing directory, etc.)
     return "";

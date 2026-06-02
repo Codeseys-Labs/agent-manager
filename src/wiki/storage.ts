@@ -18,9 +18,11 @@
  */
 
 import {
+  type Dirent,
   existsSync,
   lstatSync,
   readFileSync,
+  readdirSync,
   readlinkSync,
   rmSync,
   statSync,
@@ -44,6 +46,8 @@ import type {
   KnowledgeEntry,
   KnowledgeFilter,
   KnowledgeSource,
+  MetaIndex,
+  MetaIndexEntry,
   Provenance,
   WikiIndex,
   WikiPageType,
@@ -339,19 +343,31 @@ export async function materialiseProject(
 }
 
 /**
- * ADR-0044 §2 task 3 — promote a single project-local entry into the
- * global project store. Inverse of `materialiseProject` at the one-entry
- * granularity used by `am wiki publish <slug>`.
+ * ADR-0044 §2 task 3 / ADR-0054 R6 — promote a single project-local entry to
+ * either the per-project mirror (`wiki/projects/<name>/`) or, when
+ * `opts.promote === true`, the cross-project global store (`wiki/global/`).
+ * Inverse of `materialiseProject` at the one-entry granularity used by
+ * `am wiki publish <slug>`.
  *
- * Behavior:
+ * Target selection (ADR-0054 R6):
+ *   - Default (`promote` falsey): targets the per-project mirror at
+ *     `wiki/projects/<name>/<subdir>/<slug>.md` (the ADR-0044 behaviour).
+ *   - `promote: true`: targets the GLOBAL store at
+ *     `wiki/global/<subdir>/<slug>.md` so the entry becomes cross-project
+ *     knowledge. The audit (recommendation §3) found the old `pushToGlobal`
+ *     only ever reached the per-project mirror, so cross-project promotion was
+ *     effectively broken — `promote: true` is the fix.
+ *
+ * Conflict behaviour (identical for both targets):
  *   - Locates `<projectDir>/.am-wiki/<subdir>/<slug>.md` by walking every
  *     PAGE_SUBDIRS subdir. Throws if no such file exists.
- *   - If the global slot is empty → copy, return `{ pushed: slug, conflict: false }`.
- *   - If the global slot holds a byte-identical file → no-op,
+ *   - If the target slot is empty → copy, return `{ pushed: slug, conflict: false }`.
+ *   - If the target slot holds a byte-identical file → no-op,
  *     `{ pushed: slug, conflict: false }`.
- *   - If the global slot holds a different file and `opts.force !== true` →
+ *   - If the target slot holds a different file and `opts.force !== true` →
  *     return `{ pushed: null, conflict: true }` WITHOUT overwriting. Caller is
- *     expected to surface a diff and retry with `force: true`.
+ *     expected to surface a diff and retry with `force: true` (mirroring the
+ *     sync conflict-sidecar pattern).
  *   - If `opts.force === true` → overwrite, return `{ pushed: slug, conflict: false }`.
  *
  * The return shape is a discriminated pair: `pushed` is the slug only on a
@@ -359,14 +375,17 @@ export async function materialiseProject(
  * prevents callers from treating a conflict as a successful push by inspecting
  * only the `pushed` field.
  *
- * @param projectDir Absolute path to the project directory.
- * @param slug       Slug of the `.am-wiki/<subdir>/<slug>.md` entry to push.
- * @param opts.force Force overwrite even when the global slot differs.
+ * @param projectDir   Absolute path to the project directory.
+ * @param slug         Slug of the `.am-wiki/<subdir>/<slug>.md` entry to push.
+ * @param opts.force   Force overwrite even when the target slot differs.
+ * @param opts.promote Target `wiki/global/` instead of the per-project mirror
+ *                     (ADR-0054 R6). The CLI gates this on a `promote: true`
+ *                     frontmatter field.
  */
 export async function pushToGlobal(
   projectDir: string,
   slug: string,
-  opts?: { force?: boolean },
+  opts?: { force?: boolean; promote?: boolean },
 ): Promise<{ pushed: string | null; conflict: boolean }> {
   const localRoot = join(projectDir, WIKI_PROJECT_DIRNAME);
 
@@ -391,14 +410,18 @@ export async function pushToGlobal(
     throw new Error(`Entry not found: ${slug}`);
   }
 
-  const projectName = resolveProjectName(projectDir);
-  const globalSubdir = join(getProjectWikiDir(projectName), foundSubdir);
-  const globalPath = join(globalSubdir, `${safeSlug}.md`);
+  // ADR-0054 R6: `promote: true` targets the cross-project global store;
+  // otherwise we keep the ADR-0044 per-project mirror target.
+  const targetRoot = opts?.promote
+    ? join(resolveConfigDir(), "wiki", "global")
+    : getProjectWikiDir(resolveProjectName(projectDir));
+  const targetSubdir = join(targetRoot, foundSubdir);
+  const targetPath = join(targetSubdir, `${safeSlug}.md`);
 
-  await mkdir(globalSubdir, { recursive: true });
+  await mkdir(targetSubdir, { recursive: true });
 
-  if (existsSync(globalPath)) {
-    if (await filesAreIdentical(localPath, globalPath)) {
+  if (existsSync(targetPath)) {
+    if (await filesAreIdentical(localPath, targetPath)) {
       return { pushed: slug, conflict: false };
     }
     if (!opts?.force) {
@@ -406,8 +429,314 @@ export async function pushToGlobal(
     }
   }
 
-  await copyFile(localPath, globalPath);
+  await copyFile(localPath, targetPath);
   return { pushed: slug, conflict: false };
+}
+
+// ── Cross-project meta-index (ADR-0054 R5) ──────────────────────
+//
+// The meta-index lives at `<configDir>/wiki/meta-index.json` — one level above
+// `wiki/global/` and `wiki/projects/*`, so it spans every tier. It is rebuilt
+// on `am wiki sync` and on demand by `am wiki search --all-projects`; it is
+// NEVER touched on a single page write (that would be O(projects) amplification
+// per write — the recommendation §4-R5 is explicit about this).
+
+const META_INDEX_FILENAME = "meta-index.json";
+
+/** Absolute path to the committed cross-project meta-index. */
+export function metaIndexPath(configDir?: string): string {
+  return join(configDir ?? resolveConfigDir(), "wiki", META_INDEX_FILENAME);
+}
+
+/** Directory holding the per-project mirrors (`wiki/projects/`). */
+function projectsRootDir(configDir?: string): string {
+  return join(configDir ?? resolveConfigDir(), "wiki", "projects");
+}
+
+/** The global cross-project wiki directory (`wiki/global/`). */
+function globalWikiDir(configDir?: string): string {
+  return join(configDir ?? resolveConfigDir(), "wiki", "global");
+}
+
+/**
+ * Enumerate the known project wiki tiers: every directory under
+ * `wiki/projects/*` plus the `global` tier. Returns `{ project, dir }` pairs
+ * where `dir` is the absolute wiki directory for that tier. A missing
+ * `wiki/projects` directory simply yields the global tier alone.
+ */
+export function listProjectWikis(configDir?: string): Array<{ project: string; dir: string }> {
+  const out: Array<{ project: string; dir: string }> = [];
+  const projectsDir = projectsRootDir(configDir);
+  let entries: Dirent[];
+  try {
+    entries = readdirSync(projectsDir, { withFileTypes: true });
+  } catch {
+    entries = [];
+  }
+  for (const ent of entries) {
+    // Follow symlinked project dirs (legacy ADR-0022 layout) as well as plain
+    // directories.
+    const abs = join(projectsDir, ent.name);
+    if (ent.isDirectory() || (ent.isSymbolicLink() && isExistingDirectory(abs))) {
+      out.push({ project: ent.name, dir: abs });
+    }
+  }
+  out.sort((a, b) => (a.project < b.project ? -1 : a.project > b.project ? 1 : 0));
+  // The global tier is always present (even if empty on disk).
+  out.push({ project: "global", dir: globalWikiDir(configDir) });
+  return out;
+}
+
+/** Fold a single page's pointers into the three keyed maps of a meta-index. */
+function indexPageInto(meta: MetaIndex, project: string, page: WikiPage): void {
+  const entry: MetaIndexEntry = {
+    project,
+    slug: page.slug,
+    title: page.title,
+    type: page.type,
+    ...(page.confidence !== undefined ? { confidence: normalizeConfidence(page.confidence) } : {}),
+  };
+  const push = (map: Record<string, MetaIndexEntry[]>, rawKey: string) => {
+    const key = rawKey.trim().toLowerCase();
+    if (!key) return;
+    const bucket = map[key] ?? [];
+    bucket.push(entry);
+    map[key] = bucket;
+  };
+  push(meta.bySlug, page.slug);
+  for (const tag of page.tags) push(meta.byTag, tag);
+  for (const ent of page.entities ?? []) push(meta.byEntity, ent);
+}
+
+/**
+ * Rebuild the cross-project meta-index from every project wiki + the global
+ * store. Pure read of the on-disk pages — does not mutate any wiki tier. The
+ * result is written to `wiki/meta-index.json` (atomic rename) AND returned so
+ * callers (search) can use it without a second read.
+ *
+ * @param configDir Optional config-dir override (defaults to resolveConfigDir).
+ */
+export async function rebuildMetaIndex(configDir?: string): Promise<MetaIndex> {
+  return rebuildMetaIndexFromTiers(listProjectWikis(configDir), configDir);
+}
+
+/**
+ * Rebuild the meta-index from an ALREADY-ENUMERATED tier set. Split out so
+ * callers that also need the tiers for a follow-on pass (e.g.
+ * {@link searchAllProjects}, which searches each tier right after the rebuild)
+ * enumerate `wiki/projects/*` exactly ONCE instead of twice. Same contract as
+ * {@link rebuildMetaIndex} otherwise: writes the index and returns it.
+ */
+async function rebuildMetaIndexFromTiers(
+  tiers: Array<{ project: string; dir: string }>,
+  configDir?: string,
+): Promise<MetaIndex> {
+  const meta: MetaIndex = {
+    version: 1,
+    updated: new Date().toISOString(),
+    projects: [],
+    bySlug: {},
+    byTag: {},
+    byEntity: {},
+  };
+
+  for (const { project, dir } of tiers) {
+    if (project !== "global") meta.projects.push(project);
+    let pages: WikiPage[];
+    try {
+      pages = await listPages({ wikiDir: dir });
+    } catch {
+      continue; // unreadable tier — skip, never fail the whole rebuild
+    }
+    for (const page of pages) indexPageInto(meta, project, page);
+  }
+  meta.projects = Array.from(new Set(meta.projects)).sort();
+
+  await saveMetaIndex(meta, configDir);
+  return meta;
+}
+
+/** Write the meta-index to `wiki/meta-index.json` (atomic). */
+export async function saveMetaIndex(meta: MetaIndex, configDir?: string): Promise<void> {
+  const filePath = metaIndexPath(configDir);
+  await mkdir(dirname(filePath), { recursive: true });
+  const tmp = `${filePath}.${Date.now()}.tmp`;
+  await writeFile(tmp, `${JSON.stringify(meta, null, 2)}\n`, "utf-8");
+  await rename(tmp, filePath);
+}
+
+/**
+ * Load the committed meta-index, or rebuild it if missing / corrupt. The
+ * rebuild keeps `--all-projects` honest even on a wiki that has never been
+ * synced.
+ */
+export async function loadMetaIndex(configDir?: string): Promise<MetaIndex> {
+  try {
+    const raw = await readFile(metaIndexPath(configDir), "utf-8");
+    const parsed = JSON.parse(raw) as MetaIndex;
+    // Defend against a hand-edited / partial file: ensure the keyed maps exist.
+    return {
+      version: parsed.version ?? 1,
+      updated: parsed.updated ?? new Date().toISOString(),
+      projects: Array.isArray(parsed.projects) ? parsed.projects : [],
+      bySlug: parsed.bySlug ?? {},
+      byTag: parsed.byTag ?? {},
+      byEntity: parsed.byEntity ?? {},
+    };
+  } catch {
+    return rebuildMetaIndex(configDir);
+  }
+}
+
+/** A cross-project search hit: a page result tagged with its owning tier. */
+export interface AllProjectsResult {
+  project: string;
+  page: WikiPage;
+  score: number;
+}
+
+/**
+ * Search every project wiki + the global store for `query`, aggregating the
+ * per-tier BM25 results into one ranked list (highest score first). This is
+ * what `am wiki search --all-projects` calls.
+ *
+ * The meta-index is rebuilt on demand first (so the set of tiers is current),
+ * then each tier is searched with its own MiniSearch index. Per-tier failures
+ * are skipped, never fatal.
+ *
+ * @param query     BM25 query string.
+ * @param limit     Max aggregated results to return (default 20).
+ * @param configDir Optional config-dir override.
+ */
+export async function searchAllProjects(
+  query: string,
+  limit = 20,
+  configDir?: string,
+): Promise<AllProjectsResult[]> {
+  if (!query.trim()) return [];
+
+  // Enumerate the tiers ONCE, then reuse that same set for both the meta-index
+  // refresh and the per-tier BM25 search below. Previously this re-enumerated
+  // `wiki/projects/*` a second time (rebuildMetaIndex did it internally, then we
+  // called listProjectWikis again) — `rebuildMetaIndexFromTiers` consumes the
+  // tier set we already have so the directory walk happens exactly once.
+  const tiers = listProjectWikis(configDir);
+  await rebuildMetaIndexFromTiers(tiers, configDir);
+
+  const aggregated: AllProjectsResult[] = [];
+  for (const { project, dir } of tiers) {
+    let hits: Array<{ page: WikiPage; score: number }>;
+    try {
+      hits = await searchPages(query, limit, dir);
+    } catch {
+      continue;
+    }
+    for (const { page, score } of hits) {
+      aggregated.push({ project, page, score });
+    }
+  }
+
+  aggregated.sort((a, b) => b.score - a.score);
+  return aggregated.slice(0, limit);
+}
+
+// ── Task-aware multi-tier apply-time wiki context (ADR-0054 R7) ──
+//
+// `buildWikiContext` is the consolidation seam for apply-time knowledge
+// injection. The pre-R7 `core/instructions.generateWikiContext` fired for only
+// a handful of adapters with a FIXED "project knowledge" query and a SINGLE
+// tier. R7 makes the mechanism:
+//   - task-aware  — the query is the agent/profile/target's actual task, not a
+//                   fixed string, so injected knowledge is relevant to what the
+//                   target will do;
+//   - multi-tier  — it queries the project tier first, then the global tier,
+//                   de-duped by slug with project winning (project > global);
+//   - opt-in      — callers gate on `settings.wiki.inject_on_apply`; with the
+//                   flag off (or absent) it returns "" so configs never bloat
+//                   unexpectedly.
+//
+// It is a pure builder (returns the formatted markdown block) so the controller
+// stays I/O-free and adapters can splice the block into their own output. The
+// content serialises to the same markdown the wiki already emits (ADR-0010).
+
+const WIKI_CONTEXT_BEGIN = "<!-- am:wiki:begin -->";
+const WIKI_CONTEXT_END = "<!-- am:wiki:end -->";
+
+export interface WikiContextOptions {
+  /**
+   * The task / query to scope injected knowledge to (task-aware). Falls back to
+   * "project knowledge" only when the caller has nothing more specific.
+   */
+  task?: string;
+  /** Agent / target id, used to bias retrieval toward that agent's pages. */
+  agentId?: string;
+  /** Max entries per tier (default 5). */
+  topK?: number;
+  /** Project wiki directory. When omitted, resolved from cwd. */
+  projectWikiDir?: string;
+  /** Global wiki directory. When omitted, resolved from configDir. */
+  globalWikiDir?: string;
+}
+
+/**
+ * Build a task-aware, project>global, multi-tier wiki context block for
+ * apply-time injection (ADR-0054 R7). Returns "" when both tiers are empty so
+ * callers can cheaply skip the splice.
+ *
+ * Tiering: a page found in the project tier suppresses the same slug from the
+ * global tier (project knowledge is more specific). Each surviving hit is
+ * rendered as a short titled section with a truncated body, tagged with its
+ * tier so the agent can see provenance.
+ */
+export async function buildWikiContext(opts: WikiContextOptions = {}): Promise<string> {
+  const task = opts.task?.trim() || "project knowledge";
+  const topK = opts.topK ?? 5;
+  const projectDir = opts.projectWikiDir ?? resolveWikiDir();
+  const global = opts.globalWikiDir ?? globalWikiDir();
+
+  const seen = new Set<string>();
+  const sections: string[] = [];
+
+  const renderTier = async (tierLabel: string, wikiDir: string): Promise<void> => {
+    let hits: Array<{ page: WikiPage; score: number }>;
+    try {
+      hits = await searchPages(task, topK, wikiDir);
+    } catch {
+      return;
+    }
+
+    // Task-aware agent bias: when an agentId is given, surface pages scoped to
+    // THAT agent first (front of the list) even if they ranked lower on the
+    // task query, then fill the rest with the BM25 order. This keeps an agent's
+    // own knowledge from being squeezed out by generic high-ranking pages.
+    let ordered = hits;
+    if (opts.agentId) {
+      const mine = hits.filter((h) => h.page.agent_id === opts.agentId);
+      const rest = hits.filter((h) => h.page.agent_id !== opts.agentId);
+      ordered = [...mine, ...rest];
+    }
+
+    for (const { page } of ordered) {
+      if (seen.has(page.slug)) continue; // project tier already won this slug
+      seen.add(page.slug);
+      const confidence = normalizeConfidence(page.confidence) ?? "medium";
+      const preview = page.content.slice(0, 400).trim();
+      sections.push(`### ${page.title} (${tierLabel}, confidence: ${confidence})\n\n${preview}`);
+    }
+  };
+
+  // Project tier first so it wins slug collisions, then global.
+  await renderTier("project", projectDir);
+  // Only descend to global when it is a different directory (a global-only wiki
+  // resolves both to the same path; don't double-list it).
+  if (global !== projectDir) {
+    await renderTier("global", global);
+  }
+
+  if (sections.length === 0) return "";
+
+  const heading = `## Agent Knowledge: "${task}"`;
+  return `${WIKI_CONTEXT_BEGIN}\n${heading}\n\n${sections.join("\n\n")}\n${WIKI_CONTEXT_END}`;
 }
 
 function searchIndexPath(baseDir?: string): string {
