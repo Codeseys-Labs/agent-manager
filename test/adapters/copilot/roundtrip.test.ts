@@ -65,7 +65,7 @@ describe("Copilot adapter roundtrip", () => {
     };
 
     // 4. Export (writes to disk)
-    const exported = exportConfig(resolved, { projectPath: projectDir }, dir.path);
+    const exported = await exportConfig(resolved, { projectPath: projectDir }, dir.path);
     expect(exported.warnings).toHaveLength(0);
     const mcpFile = exported.files.find((f) => f.path.endsWith("mcp.json"));
     expect(mcpFile).toBeDefined();

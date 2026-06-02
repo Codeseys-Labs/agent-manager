@@ -56,7 +56,7 @@ describe("copilot exportConfig()", () => {
       },
     });
 
-    const result = exportConfig(cfg, { projectPath: projectDir, dryRun: true }, dir.path);
+    const result = await exportConfig(cfg, { projectPath: projectDir, dryRun: true }, dir.path);
     const mcpFile = result.files.find((f) => toPosix(f.path).endsWith("mcp.json"));
     expect(mcpFile).toBeDefined();
 
@@ -86,7 +86,7 @@ describe("copilot exportConfig()", () => {
       },
     });
 
-    const result = exportConfig(cfg, { projectPath: projectDir, dryRun: true }, dir.path);
+    const result = await exportConfig(cfg, { projectPath: projectDir, dryRun: true }, dir.path);
     const instrFile = result.files.find((f) => toPosix(f.path).endsWith("copilot-instructions.md"));
     expect(instrFile).toBeDefined();
     expect(instrFile!.content).toContain("Use strict TypeScript.");
@@ -109,7 +109,7 @@ describe("copilot exportConfig()", () => {
       },
     });
 
-    const result = exportConfig(cfg, { projectPath: projectDir, dryRun: true }, dir.path);
+    const result = await exportConfig(cfg, { projectPath: projectDir, dryRun: true }, dir.path);
     const instrFile = result.files.find((f) => toPosix(f.path).endsWith("testing.instructions.md"));
     expect(instrFile).toBeDefined();
     expect(instrFile!.content).toContain('applyTo: "**/*.test.ts"');
@@ -130,7 +130,7 @@ describe("copilot exportConfig()", () => {
       },
     });
 
-    const result = exportConfig(cfg, { projectPath: projectDir, dryRun: true }, dir.path);
+    const result = await exportConfig(cfg, { projectPath: projectDir, dryRun: true }, dir.path);
     const mcpFile = result.files.find((f) => toPosix(f.path).endsWith("mcp.json"));
     const parsed = JSON.parse(mcpFile!.content);
     expect(parsed.servers.enabled_one).toBeDefined();
@@ -154,7 +154,7 @@ describe("copilot exportConfig()", () => {
       },
     });
 
-    const result = exportConfig(cfg, { projectPath: projectDir, dryRun: true }, dir.path);
+    const result = await exportConfig(cfg, { projectPath: projectDir, dryRun: true }, dir.path);
     const instrFiles = result.files.filter(
       (f) =>
         toPosix(f.path).endsWith("copilot-instructions.md") ||
@@ -176,7 +176,7 @@ describe("copilot exportConfig()", () => {
       },
     });
 
-    const result = exportConfig(cfg, { projectPath: projectDir, dryRun: true }, dir.path);
+    const result = await exportConfig(cfg, { projectPath: projectDir, dryRun: true }, dir.path);
     for (const file of result.files) {
       expect(file.written).toBe(false);
     }
@@ -195,7 +195,7 @@ describe("copilot exportConfig()", () => {
       },
     });
 
-    const result = exportConfig(cfg, { projectPath: projectDir }, dir.path);
+    const result = await exportConfig(cfg, { projectPath: projectDir }, dir.path);
     const mcpFile = result.files.find((f) => toPosix(f.path).endsWith("mcp.json"));
     expect(mcpFile?.written).toBe(true);
     const content = JSON.parse(await dir.read("project/.vscode/mcp.json"));
@@ -223,7 +223,7 @@ describe("copilot exportConfig()", () => {
       },
     });
 
-    const result = exportConfig(cfg, { projectPath: projectDir }, dir.path);
+    const result = await exportConfig(cfg, { projectPath: projectDir }, dir.path);
     const mcpFile = result.files.find((f) => toPosix(f.path).endsWith("mcp.json"));
     const parsed = JSON.parse(mcpFile!.content);
     expect(parsed.someOtherSetting).toBe(true);
@@ -250,7 +250,7 @@ describe("copilot exportConfig()", () => {
       },
     });
 
-    const result = exportConfig(cfg, { projectPath: projectDir, dryRun: true }, dir.path);
+    const result = await exportConfig(cfg, { projectPath: projectDir, dryRun: true }, dir.path);
     const mcpFile = result.files.find((f) => toPosix(f.path).endsWith("mcp.json"));
     const parsed = JSON.parse(mcpFile!.content);
     expect(parsed.servers.github.type).toBe("http");

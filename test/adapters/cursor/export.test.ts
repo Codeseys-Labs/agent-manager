@@ -94,7 +94,7 @@ describe("cursor exportConfig()", () => {
       },
     });
 
-    const result = exportConfig(cfg, { dryRun: true }, dir.path);
+    const result = await exportConfig(cfg, { dryRun: true }, dir.path);
     const globalFile = result.files.find((f) => toPosix(f.path).includes(".cursor/mcp.json"));
     expect(globalFile).toBeDefined();
 
@@ -118,7 +118,7 @@ describe("cursor exportConfig()", () => {
       },
     });
 
-    const result = exportConfig(cfg, { projectPath: projectDir, dryRun: true }, dir.path);
+    const result = await exportConfig(cfg, { projectPath: projectDir, dryRun: true }, dir.path);
     const projectFile = result.files.find((f) =>
       toPosix(f.path).includes("project/.cursor/mcp.json"),
     );
@@ -142,7 +142,7 @@ describe("cursor exportConfig()", () => {
       },
     });
 
-    const result = exportConfig(cfg, { projectPath: projectDir, dryRun: true }, dir.path);
+    const result = await exportConfig(cfg, { projectPath: projectDir, dryRun: true }, dir.path);
     const mdcFile = result.files.find((f) => toPosix(f.path).endsWith(".mdc"));
     expect(mdcFile).toBeDefined();
     expect(mdcFile!.content).toContain("alwaysApply: true");
@@ -166,7 +166,7 @@ describe("cursor exportConfig()", () => {
       },
     });
 
-    const result = exportConfig(cfg, { projectPath: projectDir, dryRun: true }, dir.path);
+    const result = await exportConfig(cfg, { projectPath: projectDir, dryRun: true }, dir.path);
     const mdcFile = result.files.find((f) => toPosix(f.path).endsWith(".mdc"));
     expect(mdcFile!.content).toContain('globs: ["**/*.ts", "**/*.tsx"]');
     expect(mdcFile!.content).toContain("alwaysApply: false");
@@ -185,7 +185,7 @@ describe("cursor exportConfig()", () => {
       },
     });
 
-    const result = exportConfig(cfg, { projectPath: projectDir, dryRun: true }, dir.path);
+    const result = await exportConfig(cfg, { projectPath: projectDir, dryRun: true }, dir.path);
     const mdcFiles = result.files.filter((f) => toPosix(f.path).endsWith(".mdc"));
     expect(mdcFiles).toHaveLength(0);
   });
@@ -203,7 +203,7 @@ describe("cursor exportConfig()", () => {
       },
     });
 
-    const result = exportConfig(cfg, { projectPath: projectDir, dryRun: true }, dir.path);
+    const result = await exportConfig(cfg, { projectPath: projectDir, dryRun: true }, dir.path);
     const agentFile = result.files.find((f) => toPosix(f.path).includes("agents/researcher.md"));
     expect(agentFile).toBeDefined();
     expect(agentFile!.content).toContain("# researcher");
@@ -219,7 +219,7 @@ describe("cursor exportConfig()", () => {
       },
     });
 
-    const result = exportConfig(cfg, { dryRun: true }, dir.path);
+    const result = await exportConfig(cfg, { dryRun: true }, dir.path);
     for (const file of result.files) {
       expect(file.written).toBe(false);
     }
@@ -238,7 +238,7 @@ describe("cursor exportConfig()", () => {
       },
     });
 
-    const result = exportConfig(cfg, { dryRun: true }, dir.path);
+    const result = await exportConfig(cfg, { dryRun: true }, dir.path);
     const globalFile = result.files.find((f) => toPosix(f.path).includes(".cursor/mcp.json"));
     const parsed = JSON.parse(globalFile!.content);
     expect(parsed.mcpServers.enabled_one).toBeDefined();
@@ -253,7 +253,7 @@ describe("cursor exportConfig()", () => {
       },
     });
 
-    const result = exportConfig(cfg, {}, dir.path);
+    const result = await exportConfig(cfg, {}, dir.path);
     const globalFile = result.files.find((f) => toPosix(f.path).includes(".cursor/mcp.json"));
     expect(globalFile?.written).toBe(true);
     expect(await dir.exists(".cursor/mcp.json")).toBe(true);

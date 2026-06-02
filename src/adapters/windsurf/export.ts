@@ -7,7 +7,12 @@
 
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { generateAgentsMd, generateWindsurfRule } from "../../core/instructions.ts";
+import {
+  generateAgentsMd,
+  generateWikiContext,
+  generateWindsurfRule,
+  spliceWikiBlock,
+} from "../../core/instructions.ts";
 import { filterByTarget } from "../../core/instructions.ts";
 import { sanitizePathSegment } from "../../lib/safe-path.ts";
 import { buildMcpServersJson, writeExportFiles } from "../shared/export-utils.ts";
@@ -22,11 +27,11 @@ import type {
 /**
  * Export resolved config to Windsurf native files.
  */
-export function exportConfig(
+export async function exportConfig(
   config: ResolvedConfig,
   options: ExportOptions = {},
   homeDir?: string,
-): ExportResult {
+): Promise<ExportResult> {
   const home = homeDir ?? homedir();
   const files: WrittenFile[] = [];
   const warnings: string[] = [];
@@ -49,7 +54,7 @@ export function exportConfig(
     files.push(...ruleFiles);
   }
 
-  // 3. Generate AGENTS.md (Windsurf 2.0.44+)
+  // 3. Generate AGENTS.md (Windsurf 2.0.44+) (instructions + optional wiki context)
   if (options.projectPath) {
     const targetInstructions = filterByTarget(config.instructions, "windsurf");
     if (Object.keys(targetInstructions).length > 0) {
@@ -61,8 +66,14 @@ export function exportConfig(
       } catch {
         // No existing file
       }
-      const agentsMdContent = generateAgentsMd(targetInstructions, existingContent);
+      let agentsMdContent = generateAgentsMd(targetInstructions, existingContent);
       if (agentsMdContent) {
+        // Inject wiki context if enabled (ADR-0054 R7)
+        const configDir = options.projectPath;
+        const wikiBlock = await generateWikiContext(configDir, config.settings);
+        if (wikiBlock) {
+          agentsMdContent = spliceWikiBlock(wikiBlock, agentsMdContent);
+        }
         files.push({ path: agentsMdPath, content: agentsMdContent, written: false });
       }
     }

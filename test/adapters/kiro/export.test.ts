@@ -50,7 +50,7 @@ describe("kiro exportConfig()", () => {
       },
     });
 
-    const result = exportConfig(config, { dryRun: true }, dir.path);
+    const result = await exportConfig(config, { dryRun: true }, dir.path);
     expect(result.files.length).toBeGreaterThanOrEqual(1);
 
     const globalFile = result.files.find((f) =>
@@ -75,7 +75,7 @@ describe("kiro exportConfig()", () => {
       },
     });
 
-    const result = exportConfig(config, { projectPath: projectDir, dryRun: true }, dir.path);
+    const result = await exportConfig(config, { projectPath: projectDir, dryRun: true }, dir.path);
     const projectFile = result.files.find((f) =>
       toPosix(f.path).includes("project/.kiro/settings/mcp.json"),
     );
@@ -102,7 +102,7 @@ describe("kiro exportConfig()", () => {
       },
     });
 
-    const result = exportConfig(config, { dryRun: true }, dir.path);
+    const result = await exportConfig(config, { dryRun: true }, dir.path);
     const globalFile = result.files[0];
     const parsed = JSON.parse(globalFile.content);
     expect(parsed.mcpServers.outlook.autoApprove).toEqual(["email_search"]);
@@ -119,7 +119,7 @@ describe("kiro exportConfig()", () => {
       },
     });
 
-    const result = exportConfig(config, { dryRun: true }, dir.path);
+    const result = await exportConfig(config, { dryRun: true }, dir.path);
     const globalFile = result.files[0];
     const parsed = JSON.parse(globalFile.content);
     expect(parsed.mcpServers.disabled).toBeUndefined();
@@ -143,7 +143,7 @@ describe("kiro exportConfig()", () => {
       },
     });
 
-    const result = exportConfig(config, { projectPath: projectDir, dryRun: true }, dir.path);
+    const result = await exportConfig(config, { projectPath: projectDir, dryRun: true }, dir.path);
     const steeringFile = result.files.find((f) =>
       toPosix(f.path).includes(".kiro/steering/code-style.md"),
     );
@@ -180,7 +180,7 @@ describe("kiro exportConfig()", () => {
       },
     });
 
-    const result = exportConfig(config, { projectPath: projectDir, dryRun: true }, dir.path);
+    const result = await exportConfig(config, { projectPath: projectDir, dryRun: true }, dir.path);
     const steeringFiles = result.files.filter((f) => toPosix(f.path).includes(".kiro/steering/"));
     expect(steeringFiles).toHaveLength(1);
     expect(steeringFiles[0].content).toContain("Kiro rules");
@@ -198,7 +198,7 @@ describe("kiro exportConfig()", () => {
       },
     });
 
-    const result = exportConfig(config, { dryRun: false }, dir.path);
+    const result = await exportConfig(config, { dryRun: false }, dir.path);
     expect(result.files[0].written).toBe(true);
 
     const content = await dir.read(".kiro/settings/mcp.json");
@@ -218,7 +218,7 @@ describe("kiro exportConfig()", () => {
       },
     });
 
-    const result = exportConfig(config, { dryRun: true }, dir.path);
+    const result = await exportConfig(config, { dryRun: true }, dir.path);
     const parsed = JSON.parse(result.files[0].content);
     expect(parsed.mcpServers.remote.url).toBe("https://mcp.example.com/api");
     expect(parsed.mcpServers.remote.command).toBeUndefined();

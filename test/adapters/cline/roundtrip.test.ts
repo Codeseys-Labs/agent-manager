@@ -73,7 +73,7 @@ describe("Cline adapter roundtrip", () => {
     };
 
     // 4. Export (writes to disk)
-    const exported = exportConfig(resolved, {}, dir.path);
+    const exported = await exportConfig(resolved, {}, dir.path);
     expect(exported.warnings).toHaveLength(0);
     const settingsFile = exported.files.find((f) => f.path.endsWith("cline_mcp_settings.json"));
     expect(settingsFile).toBeDefined();
@@ -151,7 +151,7 @@ describe("Cline adapter roundtrip", () => {
     };
 
     // Export
-    const exported = exportConfig(resolved, { dryRun: true }, dir.path);
+    const exported = await exportConfig(resolved, { dryRun: true }, dir.path);
     const settingsFile = exported.files.find((f) => f.path.endsWith("cline_mcp_settings.json"));
     const output = JSON.parse(settingsFile!.content) as Record<string, unknown>;
     const mcpServers = output.mcpServers as Record<string, Record<string, unknown>>;
@@ -220,7 +220,11 @@ describe("Cline adapter roundtrip", () => {
     };
 
     // Export
-    const exported = exportConfig(resolved, { projectPath: projectDir, dryRun: true }, dir.path);
+    const exported = await exportConfig(
+      resolved,
+      { projectPath: projectDir, dryRun: true },
+      dir.path,
+    );
 
     const ruleFile = exported.files.find((f) => f.path.includes(".clinerules"));
     expect(ruleFile).toBeDefined();

@@ -56,7 +56,7 @@ describe("roo-code exportConfig()", () => {
       }),
     });
 
-    const result = exportConfig(resolved, {}, dir.path);
+    const result = await exportConfig(resolved, {}, dir.path);
     expect(result.warnings).toHaveLength(0);
 
     const mcpFile = result.files.find((f) => toPosix(f.path).includes("mcp_settings.json"));
@@ -80,7 +80,7 @@ describe("roo-code exportConfig()", () => {
       }),
     });
 
-    const result = exportConfig(resolved, { projectPath: projectDir }, dir.path);
+    const result = await exportConfig(resolved, { projectPath: projectDir }, dir.path);
     const projectFile = result.files.find((f) => toPosix(f.path).includes(".roo/mcp.json"));
     expect(projectFile).toBeDefined();
     expect(projectFile?.written).toBe(true);
@@ -99,7 +99,7 @@ describe("roo-code exportConfig()", () => {
       }),
     });
 
-    const result = exportConfig(resolved, {}, dir.path);
+    const result = await exportConfig(resolved, {}, dir.path);
     const mcpFile = result.files.find((f) => toPosix(f.path).includes("mcp_settings.json"));
     expect(mcpFile).toBeDefined();
     const output = JSON.parse(mcpFile!.content);
@@ -117,7 +117,7 @@ describe("roo-code exportConfig()", () => {
       }),
     });
 
-    const result = exportConfig(resolved, {}, dir.path);
+    const result = await exportConfig(resolved, {}, dir.path);
     const mcpFile = result.files.find((f) => toPosix(f.path).includes("mcp_settings.json"));
     const output = JSON.parse(mcpFile!.content);
     expect(output.mcpServers.fetch.alwaysAllow).toEqual(["fetch_url"]);
@@ -141,7 +141,11 @@ describe("roo-code exportConfig()", () => {
       },
     );
 
-    const result = exportConfig(resolved, { projectPath: projectDir, dryRun: true }, dir.path);
+    const result = await exportConfig(
+      resolved,
+      { projectPath: projectDir, dryRun: true },
+      dir.path,
+    );
     const ruleFile = result.files.find((f) => toPosix(f.path).endsWith("code-style.md"));
     expect(ruleFile).toBeDefined();
     expect(ruleFile!.content).toBe("Use TypeScript strict mode.\n");
@@ -166,7 +170,11 @@ describe("roo-code exportConfig()", () => {
       },
     );
 
-    const result = exportConfig(resolved, { projectPath: projectDir, dryRun: true }, dir.path);
+    const result = await exportConfig(
+      resolved,
+      { projectPath: projectDir, dryRun: true },
+      dir.path,
+    );
     const ruleFiles = result.files.filter((f) => toPosix(f.path).includes(".roo/rules/"));
     expect(ruleFiles).toHaveLength(0);
   });
@@ -187,7 +195,7 @@ describe("roo-code exportConfig()", () => {
       }),
     });
 
-    const result = exportConfig(resolved, {}, dir.path);
+    const result = await exportConfig(resolved, {}, dir.path);
     const mcpFile = result.files.find((f) => toPosix(f.path).includes("mcp_settings.json"));
     const output = JSON.parse(mcpFile!.content);
     expect(output.customField).toBe("preserved");

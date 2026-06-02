@@ -55,7 +55,7 @@ describe("windsurf exportConfig()", () => {
       },
     });
 
-    const result = exportConfig(cfg, { dryRun: true }, dir.path);
+    const result = await exportConfig(cfg, { dryRun: true }, dir.path);
     expect(result.files.length).toBeGreaterThanOrEqual(1);
 
     const mcpFile = result.files.find((f) => toPosix(f.path).endsWith("mcp_config.json"));
@@ -84,7 +84,7 @@ describe("windsurf exportConfig()", () => {
       },
     });
 
-    const result = exportConfig(cfg, { projectPath: projectDir, dryRun: true }, dir.path);
+    const result = await exportConfig(cfg, { projectPath: projectDir, dryRun: true }, dir.path);
     const ruleFile = result.files.find((f) => toPosix(f.path).endsWith("ts-rules.md"));
     expect(ruleFile).toBeDefined();
     expect(ruleFile!.content).toContain("trigger: always_on");
@@ -108,7 +108,7 @@ describe("windsurf exportConfig()", () => {
       },
     });
 
-    const result = exportConfig(cfg, { projectPath: projectDir, dryRun: true }, dir.path);
+    const result = await exportConfig(cfg, { projectPath: projectDir, dryRun: true }, dir.path);
     const ruleFile = result.files.find((f) => toPosix(f.path).endsWith("testing.md"));
     expect(ruleFile).toBeDefined();
     expect(ruleFile!.content).toContain("trigger: glob");
@@ -128,7 +128,7 @@ describe("windsurf exportConfig()", () => {
       },
     });
 
-    const result = exportConfig(cfg, { dryRun: true }, dir.path);
+    const result = await exportConfig(cfg, { dryRun: true }, dir.path);
     const mcpFile = result.files.find((f) => toPosix(f.path).endsWith("mcp_config.json"));
     const parsed = JSON.parse(mcpFile!.content);
     expect(parsed.mcpServers.enabled_one).toBeDefined();
@@ -152,7 +152,7 @@ describe("windsurf exportConfig()", () => {
       },
     });
 
-    const result = exportConfig(cfg, { projectPath: projectDir, dryRun: true }, dir.path);
+    const result = await exportConfig(cfg, { projectPath: projectDir, dryRun: true }, dir.path);
     const ruleFiles = result.files.filter((f) => toPosix(f.path).includes(".windsurf/rules"));
     expect(ruleFiles).toHaveLength(0);
   });
@@ -169,7 +169,7 @@ describe("windsurf exportConfig()", () => {
       },
     });
 
-    const result = exportConfig(cfg, { dryRun: true }, dir.path);
+    const result = await exportConfig(cfg, { dryRun: true }, dir.path);
     for (const file of result.files) {
       expect(file.written).toBe(false);
     }
@@ -187,7 +187,7 @@ describe("windsurf exportConfig()", () => {
       },
     });
 
-    const result = exportConfig(cfg, {}, dir.path);
+    const result = await exportConfig(cfg, {}, dir.path);
     const mcpFile = result.files.find((f) => toPosix(f.path).endsWith("mcp_config.json"));
     expect(mcpFile?.written).toBe(true);
     const content = JSON.parse(await dir.read(".codeium/windsurf/mcp_config.json"));
@@ -211,7 +211,7 @@ describe("windsurf exportConfig()", () => {
       },
     });
 
-    const result = exportConfig(cfg, { projectPath: projectDir, dryRun: true }, dir.path);
+    const result = await exportConfig(cfg, { projectPath: projectDir, dryRun: true }, dir.path);
     const agentsMdFile = result.files.find((f) => toPosix(f.path).endsWith("AGENTS.md"));
     expect(agentsMdFile).toBeDefined();
     expect(agentsMdFile!.content).toContain("<!-- am:begin -->");
@@ -234,7 +234,7 @@ describe("windsurf exportConfig()", () => {
       },
     });
 
-    const result = exportConfig(cfg, { projectPath: projectDir, dryRun: true }, dir.path);
+    const result = await exportConfig(cfg, { projectPath: projectDir, dryRun: true }, dir.path);
     const skillFile = result.files.find((f) =>
       toPosix(f.path).includes(".windsurf/skills/research/SKILL.md"),
     );
@@ -263,7 +263,7 @@ describe("windsurf exportConfig()", () => {
       },
     });
 
-    const result = exportConfig(cfg, {}, dir.path);
+    const result = await exportConfig(cfg, {}, dir.path);
     const mcpFile = result.files.find((f) => toPosix(f.path).endsWith("mcp_config.json"));
     const parsed = JSON.parse(mcpFile!.content);
     expect(parsed.someOtherSetting).toBe(true);

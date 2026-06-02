@@ -7,7 +7,7 @@
 
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { generateCursorMdc } from "../../core/instructions.ts";
+import { generateCursorMdc, generateWikiContext } from "../../core/instructions.ts";
 import { sanitizePathSegment } from "../../lib/safe-path.ts";
 import { writeExportFiles } from "../shared/export-utils.ts";
 import type {
@@ -22,11 +22,11 @@ import type {
 /**
  * Export resolved config to Cursor native files.
  */
-export function exportConfig(
+export async function exportConfig(
   config: ResolvedConfig,
   options: ExportOptions = {},
   homeDir?: string,
-): ExportResult {
+): Promise<ExportResult> {
   const home = homeDir ?? homedir();
   const files: WrittenFile[] = [];
   const warnings: string[] = [];
@@ -63,6 +63,23 @@ export function exportConfig(
   if (options.projectPath) {
     const ruleFiles = generateMdcRules(config, options.projectPath);
     files.push(...ruleFiles);
+
+    // 3a. Inject apply-time wiki context (ADR-0054 R7). Cursor has no single
+    //     canonical instruction file (it uses the per-rule `.cursor/rules/`
+    //     directory of `.mdc` files), so the wiki block lands in a dedicated
+    //     managed rule file `.cursor/rules/am-wiki.mdc` with `alwaysApply: true`
+    //     so Cursor always loads it. It augments an existing instruction
+    //     surface, so we only emit it when this target actually has rules —
+    //     mirroring the reference adapters that splice wiki only alongside an
+    //     instruction file.
+    if (ruleFiles.length > 0) {
+      const wikiBlock = await generateWikiContext(options.projectPath, config.settings);
+      if (wikiBlock) {
+        const wikiMdc = `---\ndescription: "Agent knowledge (managed by agent-manager)"\nalwaysApply: true\n---\n\n${wikiBlock}\n`;
+        const wikiPath = join(options.projectPath, ".cursor", "rules", "am-wiki.mdc");
+        files.push({ path: wikiPath, content: wikiMdc, written: false });
+      }
+    }
   }
 
   // 4. Generate .cursor/agents/*.md (agents)
