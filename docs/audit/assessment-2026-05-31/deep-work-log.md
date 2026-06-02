@@ -29,3 +29,19 @@ WIKI-opt (chub-mcp) closed-as-deferred: ADR-0054 mandates optional-external-only
 Integrated main verified green across all three OS runners (ubuntu/windows-2025/macOS) + integration + integration-windows on every PR; local full suite 3451 pass / 0 fail; tsc first-party clean; lint 0 warnings.
 
 Key cross-platform lessons (Mulch cross-platform domain): `process.env.X = undefined` → string "undefined" on Windows poisons shared bun process + spawned children; macOS `/var→/private/var` symlink breaks exact-path asserts (use realpathSync); APFS mtime/clock-skew breaks debounceSeconds:0 (backdate mtimes); atomic-write prune must drive off manifest insertion-order not lexical readdir; session-reader realpath dedup must case-fold on NTFS/APFS.
+
+## Checkpoint 10 — 2026-06-02 (PHASE 8 SIGN-OFF: v1 backlog zero, both teams confirm)
+
+**Deep-work-loop closed.** 18 PRs merged total (#23–#40). main @ 4c9aa36+.
+
+The loop ran the full investigate→plan→execute→review→reconcile cycle to convergence:
+- Waves A–E landed the original audit backlog + ADR-0054 wiki (R1–R8) + cross-platform hardening (93+8 Windows failures, env-coercion root cause) + apply-safety (SEC-4b/4c fail-closed across all surfaces) + command-handler coverage.
+- **PHASE 8 review #1 (independent, NO sign-off):** caught real gaps the per-wave reviews missed — R7 wired to only 4/13 adapters, `am setup` claimed import it didn't do (P0-4 doc-honesty), ~52 test-side `=undefined` env footguns, 5th apply surface bypassing shared default. Fed back into backlog.
+- **Wave F + G:** closed every PHASE-8 gap — R7 across all 13 adapters; wizard genuinely wires `am import`; env-coercion swept (108 sites) + CI regression guard; APPLY_SAFE_DEFAULTS unified across all 5 apply surfaces; doc honesty; R4 supersede/coverage read surface.
+- **PHASE 8 review #2 (independent re-verification): SIGN-OFF APPROVED** — backlogZero=true, signOff=true; all 3 re-audits `clean`; only 2 optional-low polish items remain (filed: e7c0, 929a).
+
+**Final state:** v1 Seeds backlog = 0 open / 0 in_progress. Full suite 3490 pass / 0 fail. Main CI green on all 3 OS runners + integration. tsc first-party clean, lint 0 warnings.
+
+**Documented v-next deferrals (ADR-backed, NOT v1 gaps):** WIKI-opt chub-mcp (ADR-0054: optional-external-only, never embed); WIKI-supersede-consumer invalidate-don't-delete contradiction handling (ADR-0054 R4: fields are forward-compat scaffolding, auto-flow is v-next); marketplace pillar (ADR-0031/0052: v2 web-platform era).
+
+Key durable lessons (Mulch): real multi-OS CI is irreplaceable (Linux-only "correct-by-construction" missed shared-process env pollution, macOS symlink/APFS-mtime, R7/R8 dead-code wiring gaps); file-ownership partitioning keeps parallel waves conflict-free but defers cross-boundary wiring (needs an integration pass); don't launch a follow-up wave touching files an in-flight wave still owns (Wave G/F copilot collision); the independent final review catches what per-wave reviews rationalize past.

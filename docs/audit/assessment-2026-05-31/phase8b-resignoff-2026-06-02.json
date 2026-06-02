@@ -1,0 +1,95 @@
+{
+  "summary": "PHASE 8 RE-REVIEW after Waves F+G: independently confirm the gaps the first PHASE-8 review found are now actually closed (R7 all adapters, wizard brownfield-import + doc honesty, test env-coercion sweep) and the v1 backlog is genuinely zero with only justified v-next deferrals",
+  "agentCount": 4,
+  "logs": [
+    "PHASE 8b: backlogZero=true signOff=true mustDo=0"
+  ],
+  "result": {
+    "audits": [
+      {
+        "dimension": "r7-wizard",
+        "audit": {
+          "dimension": "PHASE-8 re-sign-off: R7 apply-time wiki injection across all instruction-emitting adapters + wizard brownfield-import doc-honesty",
+          "findings": [
+            "GAP #1 CLOSED: All 13 built-in instruction-emitting adapters now wire R7 wiki injection (verified by reading every src/adapters/*/export.ts, not just grep). Registry (src/adapters/registry.ts) confirms exactly 13 built-ins; all 13 call generateWikiContext and write the result.",
+            "The 4 reference adapters (claude-code, codex-cli, forgecode, kilo-code) plus copilot, windsurf, gemini-cli splice the wiki block into their single canonical instruction file via spliceWikiBlock (CLAUDE.md / AGENTS.md / GEMINI.md / .github/copilot-instructions.md).",
+            "The 6 directory-based adapters (cursor, amazon-q, cline, continue, kiro, roo-code) correctly emit a dedicated managed am-wiki.* rule/steering file that is genuinely pushed into the `files` array and written via writeExportFiles — not computed-and-discarded. Verified the file push in each. continue is the most thorough: it also appends `uses: file://.continue/rules/am-wiki.md` to the config `rules:` array so Continue actually loads it.",
+            "Gating is consistent and deliberate across all 13: wiki only injects when the adapter has an instruction surface targeting it (ruleFiles.length>0 / steeringFiles.length>0 / non-null global instructions). This mirrors the claude-code reference adapter's own `if (instructionContent)` gate, so it is not a regression.",
+            "Community adapters (src/adapters/community/) are user-supplied JSON-RPC proxies loaded from adapters.toml, not built-in instruction emitters — correctly out of scope for R7.",
+            "generateWikiContext (src/core/instructions.ts:159) is correctly opt-in gated on settings.wiki.inject_on_apply and returns \"\" otherwise, so no adapter silently bloats native configs.",
+            "Dedicated proof test test/adapters/wiki-injection.test.ts exercises all 9 newly-wired adapters on two axes (wiki heading present when enabled / absent when disabled). It plus test/wiki/apply-injection.test.ts (the 4 reference adapters) = 23 tests, all PASS. Full adapter suite (871 tests) PASSES.",
+            "GAP #2 CLOSED: src/commands/setup.ts genuinely invokes the am import engine. runImport (line 143) calls `importCommand.run({ args })` (the real commands/import.ts citty command) when no test override is set; step 4b (line 491-543) calls runImport with source:\"auto\", auto:true, gated by !args[\"no-import\"] && !cloned && detectedAdapterNames.length>0.",
+            "Wizard import is well-tested: test/commands/setup.test.ts asserts the import engine is reached exactly once (importCalls.length===1, source===\"auto\"), that --no-import skips it, that no-tools skips it, that a --from clone skips it, and that the --json `imported` flag reflects it. All 16 setup tests PASS.",
+            "DOC HONESTY CLEAN: README.md and AGENTS.md now truthfully say `am setup` imports (verified true in code) and that `am init` does NOT import — both explicitly tell the user to `run am import auto` (README:693, AGENTS.md:184). init.ts:168 confirms `am init` only prints that hint and never invokes import. ADR-0053 accurately documents the follow-up wiring of step 4b. No surviving false claim that setup/init import when they don't.",
+            "The only doc string saying `am init` does \"detect, import, git init\" is docs/2026-04-07-agent-manager-design-spec.md:669, which carries a prominent HISTORICAL / DO-NOT-TREAT-AS-CURRENT banner explicitly deferring to AGENTS.md — not a live doc-honesty lie."
+          ],
+          "remainingWork": [
+            {
+              "severity": "low",
+              "item": "copilot adapter injects the wiki block only when there is at least one `scope: \"always\"` instruction targeting copilot; a project whose copilot instructions are all glob-scoped gets a .github/copilot-instructions.md surface skipped (globalInstr is null) and therefore NO wiki injection, even though copilot has a canonical instruction file. This sub-case is consistent with the surface-gating pattern but is NOT covered by wiki-injection.test.ts (which forces scope:\"always\"). Edge case only — not a regression and arguably correct (no always-surface means nowhere canonical to splice).",
+              "evidence": "src/adapters/copilot/export.ts:74-83 wraps the wiki call inside `if (globalInstr)`; generateGlobalInstructions (line 192-203) returns null unless an instruction has scope===\"always\". test/adapters/wiki-injection.test.ts:81-82 deliberately uses scope:\"always\" to give every adapter a base surface, so the glob-only path is unexercised."
+            }
+          ],
+          "verdict": "clean"
+        }
+      },
+      {
+        "dimension": "env-apply",
+        "audit": {
+          "dimension": "PHASE-8 re-sign-off: env-coercion footgun elimination + five-surface APPLY_SAFE_DEFAULTS fail-closed gate",
+          "findings": [
+            "Claim 1 VERIFIED: Zero actual bare `process.env.X = undefined` assignments in test/. The 7 grep hits are all benign — 4 explanatory comments (test/commands/run/variant.test.ts:106, test/core/config.test.ts:25, test/core/secrets.test.ts:72, test/core/secrets-backend-selection.test.ts:41) and 3 inside the guard file itself (no-env-undefined.test.ts:72 comment, :77 test-name string, :107 error-message string). The first review's ~52 are gone.",
+            "Regression guard exists at /mnt/e/CS/github/agent-manager/test/lint/no-env-undefined.test.ts. It scans BOTH src/ and test/, strips // and /* */ comments before matching (so prose documenting the footgun does not trip it), and covers dot-access AND bracket-access (single/double quote) forms via regex process\\.env(?:\\.NAME|[\"NAME\"]) = undefined.",
+            "Guard PROVEN to fail on reappearance: I dropped a temp file test/lint/_regression_probe.test.ts containing `process.env.AM_PROBE_VAR = undefined;` and re-ran — the guard reported `1 fail` with exact location (`_regression_probe.test.ts:2`) and the Reflect.deleteProperty remediation hint, then I removed the probe. Clean run is `1 pass`.",
+            "Guard is CI-wired: .github/workflows/ci.yml runs `bun test` (lines 41 and 108); `bun test` auto-discovers test/lint/no-env-undefined.test.ts, so a reintroduced pattern fails the build. 63 test files use the correct `Reflect.deleteProperty(process.env, ...)` unset pattern.",
+            "Claim 2 VERIFIED: APPLY_SAFE_DEFAULTS defined exactly once at src/core/controller.ts:204 (`{ diff: true, force: false } as const`). All five live-apply surfaces import and derive their gate from it — none hardcode diff/force.",
+            "CLI src/commands/apply.ts:270 — `diff: APPLY_SAFE_DEFAULTS.diff || args.diff`, `force: args.force` (gate cannot be turned off via flag; diff true is OR-forced).",
+            "MCP src/mcp/server.ts:1757,1761 — `force = args.force === true ? true : APPLY_SAFE_DEFAULTS.force`; `diff: APPLY_SAFE_DEFAULTS.diff`.",
+            "Web src/web/server.ts:540,549 — `let force = APPLY_SAFE_DEFAULTS.force` default, opt-in via `{force:true}` body; `diff: APPLY_SAFE_DEFAULTS.diff`. Bodiless/invalid-JSON POST keeps safe default.",
+            "TUI src/tui/index.tsx:29,30 — `diff: APPLY_SAFE_DEFAULTS.diff`, `force: force || APPLY_SAFE_DEFAULTS.force`. (This was the surface that was previously fail-OPEN; now fixed.)",
+            "Setup wizard src/commands/setup.ts — three call sites: 607 (dry-run preview, no force needed), 635 (interactive live write) and 648 (non-interactive live write) BOTH use `diff: APPLY_SAFE_DEFAULTS.diff` and `force: args.force ? true : APPLY_SAFE_DEFAULTS.force`.",
+            "Defense-in-depth check: controller gate is `if (options.diff)` (controller.ts:420) — fail-OPEN if a surface omits diff — which makes the shared-const derivation load-bearing; every surface passes it. The only other applyResolved caller is applyResolvedDefault (controller.ts:523), a thin options pass-through with ZERO callers in src/.",
+            "Per-surface fail-closed tests exist and pass: test/mcp/apply-failclosed.test.ts, test/web/apply-failclosed.test.ts, test/tui/apply-failclosed.test.ts, test/core/controller-diff-throws-failclosed.test.ts plus the lint guard — ran together: 17 pass, 0 fail, 60 expect() calls. Wizard live-write shares the controller seam covered by controller-diff-throws-failclosed."
+          ],
+          "remainingWork": [
+            {
+              "severity": "low",
+              "item": "Setup wizard has no dedicated apply-failclosed unit test asserting the wizard SKIPS a drifted target (setup.test.ts runs with force:false and mostly --no-apply paths; the live-write gate is exercised only transitively through the shared controller test).",
+              "evidence": "test/commands/setup.test.ts uses makeArgs with no-apply:true for most cases and force:false; no assertion on result.skipped for a drifted adapter via the wizard path. Gate correctness still holds because all three setup.ts sites pass diff: APPLY_SAFE_DEFAULTS.diff (lines 607/635/648) into the controller whose fail-closed behavior is independently tested in test/core/controller-diff-throws-failclosed.test.ts."
+            }
+          ],
+          "verdict": "clean"
+        }
+      },
+      {
+        "dimension": "backlog-quality",
+        "audit": {
+          "dimension": "v1 re-sign-off audit (seeds backlog, type/lint debt, fake-green tests)",
+          "findings": [
+            "SEEDS — CLEAN. `sd list --status open --format ids` and `sd list --status in_progress --format ids` both return ZERO lines. `sd list --format json` (default = non-closed) returns total 0. `sd list --status blocked` is empty. Full corpus: 50 closed seeds, 0 open / 0 in_progress / 0 blocked.",
+            "DEFERRALS — CORRECT. Both ADR-backed v-next items are CLOSED-as-deferred, not lingering open: agent-manager-db31 (WIKI-opt chub-mcp, ADR-0054, labels wiki/adr-0054/v2) status=closed (closed 2026-06-02T07:26Z); agent-manager-1436 (WIKI-supersede-consumer contradiction-handling) status=closed (closed 2026-06-02T08:52Z) with body explicitly documenting the ADR-0054 R4 backlog rationale. The 36 WIKI items in `sd search` are all `x`-prefixed (closed).",
+            "TYPECHECK — CLEAN. `bun run typecheck` => 'First-party typecheck clean. (52 @silvery vendor-source errors ignored — not ours)'. The 52 ignored errors are third-party vendor source, not first-party. Matches the 'first-party-clean' expectation.",
+            "LINT — CLEAN. `bun run lint` (biome check ./src ./test) => 'Checked 506 files. No fixes applied.' Biome --reporter=json reports errorCount=0, warningCount=0, diagnostics=[] (0). Grep for warning/error/× markers in output: none. Matches '0 lint warnings'.",
+            "TEST test/adapters/wiki-injection.test.ts (Wave F, ADR-0054 R7) — REAL, not tautology. Asserts actual injected content (am:wiki:begin marker, task-aware heading, page title, page body) reaches each of 9 adapters' instruction files on inject_on_apply=ON, AND a genuine negative case on OFF (no wiki block emitted) that still proves the base instruction 'Follow the team conventions.' IS emitted — so the OFF assertion is not vacuously true. The discriminating string 'Agent Knowledge: \"<task>\"' is produced ONLY by src/wiki/storage.ts:741, confirmed by grep — the test cannot pass without the real R7 wiring.",
+            "TEST test/commands/setup.test.ts (wizard-import, PHASE-8 P0-4) — REAL. Drives setupCommand.run() with isolated AM_CONFIG_DIR + detection/apply/importer seams. The wizard-import test asserts the importer seam is invoked exactly once with source='auto', auto=true, report=false, json=false; complemented by negative cases (--no-import => not invoked + skip message; no tools detected => not invoked; --from clone => import skipped). File header documents the test process is non-TTY so a re-introduced hanging prompt would time out — not a tautology.",
+            "TEST test/protocols/acp/client.test.ts (Wave G) — REAL and adversarial. Includes genuine regression locks: SEC-1 deny-policy-bypass (malicious agent sends only allow_* options => must return 'cancelled', not select options[0]); killSubprocess grace-timer leak (asserts clearTimeout called with the created handle — fails on pre-fix code); timeoutPromise clear() contract via Promise.race; isPathAllowed path-traversal + prefix-not-child rejection; parseCommand shell-injection (&&, |, ;, $() treated as literal args). Not tautologies.",
+            "TEST EXECUTION — GREEN. `bun test` over the three files: 116 pass, 0 fail, 264 expect() calls. No skipped/todo. R7 wiring confirmed present in all 13 instruction-emitting adapter export files (matches closure of seed ebbe R7-ALL-ADAPTERS '4/13 -> all 13').",
+            "ENVIRONMENT — on branch main as required; working tree has only the pre-existing dirty files from the audit snapshot (.mulch/, .seeds/, docs/audit/), no audit-introduced changes to src/ or test/."
+          ],
+          "remainingWork": [],
+          "verdict": "clean"
+        }
+      }
+    ],
+    "synthesis": {
+      "backlogZero": true,
+      "signOff": true,
+      "mustDoBeforeDone": [],
+      "optionalFollowups": [
+        "Optional (low): Add a copilot glob-only wiki-injection test in /mnt/e/CS/github/agent-manager/test/adapters/wiki-injection.test.ts asserting that a project whose copilot instructions are ALL glob-scoped emits no .github/copilot-instructions.md and therefore no wiki block. This documents the benign surface-gating sub-case (src/adapters/copilot/export.ts:74-83 + generateGlobalInstructions at :192-203) that the current always-scoped fixture does not exercise. Not a regression — correct behavior, just unproven by an explicit test.",
+        "Optional (low): Add a wizard-path apply-failclosed assertion in /mnt/e/CS/github/agent-manager/test/commands/setup.test.ts that drives a drifted adapter through setup.ts (force:false, apply on) and asserts result.skipped contains it, to cover the live-write gate directly rather than transitively via test/core/controller-diff-throws-failclosed.test.ts."
+      ],
+      "summary": "PHASE 8 RE-SIGN-OFF: APPROVED. The two previously-found gaps are GENUINELY closed and the v1 backlog is verifiably zero, so I sign off. No HIGH/CRITICAL remainingWork exists; both residual items are correctly classed low and are optional polish.\n\nVerification performed (not just trusting the audit JSON):\n\n1. r7-wizard (copilot wiki injection) — VERIFIED CLEAN. src/adapters/copilot/export.ts:74-83 splices the wiki block into .github/copilot-instructions.md whenever that canonical surface exists (globalInstr non-null). generateGlobalInstructions (:192-203) returns null only when there are ZERO always-scoped copilot instructions — in which case the canonical file is never emitted at all, so there is no surface to splice into. The flagged glob-only sub-case is therefore correct surface-gating behavior, NOT a regression. test/adapters/wiki-injection.test.ts proves R7 injection reaches all 9 remaining instruction-emitting adapters (copilot included) on both axes (ON → task-aware \"Agent Knowledge\" heading + am:wiki markers + body; OFF → no block, base instructions still emitted). The auditor's own low-severity note matches: the glob-only path is unexercised but arguably correct.\n\n2. env-apply (apply fail-closed) — VERIFIED CLEAN. The drift gate is centralized: APPLY_SAFE_DEFAULTS = { diff: true, force: false } at src/core/controller.ts:204. All three setup.ts apply sites (lines 607, 635, 648) feed diff: APPLY_SAFE_DEFAULTS.diff into the controller, and so do apply.ts, mcp/server.ts, and tui/index.tsx — one safe posture, one place. The fail-closed semantics (throwing diff() in --diff live without --force → SKIP, no overwrite, warning naming --force; --force / dry-run / no-diff preserve legacy fall-through) are independently and exhaustively proven in test/core/controller-diff-throws-failclosed.test.ts (5 cases, all green).\n\n3. backlog-quality — VERIFIED CLEAN, zero remainingWork. sd inventory: 0 open, 0 in_progress, 0 blocked, 50 closed. sd ready returns empty. All deferred items are CLOSED and ADR-backed v-next: marketplace (ADR-0039 accepted + ADR-0052 accepted removal target), GitHub App OAuth (ADR-0048), am-pair (ADR-0047), R7 frontmatter slug check (ADR-0054 explicitly \"deferred backlog\"). 57 ADRs present in ./ADRs/.\n\nTest evidence: ran all three cited files — 40 pass / 0 fail / 135 expect() calls across test/adapters/wiki-injection.test.ts, test/commands/setup.test.ts, test/core/controller-diff-throws-failclosed.test.ts.\n\nConclusion: Waves F+G closed the first review's gaps. v1 backlog is zero with only ADR-backed v-next deferrals remaining. Both residual notes are low-severity optional test-coverage polish (filed below as optional follow-ups) and do not block sign-off."
+    }
+  }
+}
