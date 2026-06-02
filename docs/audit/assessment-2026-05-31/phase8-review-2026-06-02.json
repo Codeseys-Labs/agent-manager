@@ -1,0 +1,168 @@
+{
+  "summary": "PHASE 8 independent review-team pass: confirm the v1 backlog is genuinely zero and the merged wave B/C/D/E + ACP work is sound, complete, and not hiding regressions or unaddressed scope",
+  "agentCount": 5,
+  "logs": [
+    "PHASE 8 review: backlogZero=false signOff=false mustDo=3"
+  ],
+  "result": {
+    "audits": [
+      {
+        "dimension": "wiki",
+        "audit": {
+          "dimension": "ADR-0054 wiki implementation — independent final sign-off (R1–R8 real-call-path verification)",
+          "findings": [
+            "R1 (live write-path) — REAL, not plumbing-only. src/wiki/storage.ts writePage() runs generateWikilinks() on the body, then after the atomic rename calls loadGraph→addPageToGraph(persisted, graph, options.ner)→saveGraph and updateSearchIndex(persisted); deletePage() mirrors it with removePageFromGraph + removeFromSearchIndex. Live callers exist: harvester.ts:535 (ingest), storage.ts:1445 addEntry (add/import), storage.ts:1470 updateEntry. Best-effort try/catch keeps a derived-artifact failure from losing the persisted page. Tested in test/wiki/storage-write-path.test.ts.",
+            "R2 (harvest wikilinks) — REAL. harvester.ts entryToWikiPage() emits a '## Related Entities' list of `- [[entity]] (type)` wikilinks (not the old inert backtick bullets) and populates the entities[] frontmatter. test/wiki/harvester-wikilinks.test.ts asserts harvested bodies contain [[...]] AND that addPageToGraph mines them into real type:'wikilink' edges originating from harvested slugs.",
+            "R3 (catalog-derived NER) — REAL, fully threaded. ner.ts buildToolVocabulary() merges NerOptions.catalogEntities ahead of a deliberately-minimal STATIC_FALLBACK_ENTITIES; catalogEntityNames() derives names from servers/agents/skills/instructions. commands/wiki.ts resolveCatalogEntities() loads the resolved config and forwards { ner: { catalogEntities } } through add (line 308), ingest (556), harvest (664) into writePage/generateWikilinks/addPageToGraph. wiki/ stays decoupled from core/ (structural type, not a ResolvedConfig import). Tested (ner-catalog, wiki-catalog-ner).",
+            "R4 (frontmatter + confidence enum) — REAL. types.ts WikiConfidence = low|medium|high; WikiPage gains supersedes/superseded_by/coverage/entities. writePage serialises the enum (normalizeConfidence) + the new fields when present; parseWikiPage normalises legacy numeric confidence on read (non-destructive migration). lint and show were updated to the enum (the old numeric `< 0.3` dead comparison was fixed). Tested in types-confidence + storage-frontmatter.",
+            "R5 (cross-project search --all-projects) — REAL, wired end-to-end. storage.ts searchAllProjects() enumerates tiers once via listProjectWikis(), rebuilds the committed wiki/meta-index.json (rebuildMetaIndexFromTiers), and aggregates per-tier BM25 hits. commands/wiki.ts search subcommand calls it under --all-projects (line 147); sync calls rebuildMetaIndex() on a non-divergent sync (line 1328). meta-index.json is NOT gitignored (git-diffable per ADR-0002). Tested across >1 project tier in storage-meta-index.test.ts.",
+            "R6 (pushToGlobal promote-gated) — REAL. pushToGlobal({ promote: true }) targets join(configDir,'wiki','global') instead of the per-project mirror, with conflict/force semantics and a discriminated { pushed, conflict } return. publish subcommand gates on the --promote flag; --auto discovers promote:true frontmatter via discoverPromoteSlugs. Tested in storage-push-promote + wiki-wave-c (lands in wiki/global, conflict→exit 1).",
+            "R8 (enumerateSessions + --llm-extract) — REAL, wired. wiki/sessions.ts enumerateSessions()/loadEnumeratedSession() are consumed by commands/wiki.ts sweepSessions() (line 506), which BOTH ingest (612) and harvest (715) use — replacing the old claude-code-only inline loop. Default spans TOP_HARVEST_ADAPTERS (6); --all reaches all 8 adapters that expose a sessionReader. The gated LlmExtractor interface defaults to noopLlmExtractor; ingest/harvest expose --llm-extract which flips harvestSession's gate (graceful no-op without an injected extractor). Tested in sessions, harvester-llm-extraction, wiki-harvest-enumeration.",
+            "WIKI-opt/chub-mcp correctly v2-deferred (optional external content source, never embedded) — not flagged, per instructions.",
+            "Verification: 327/327 wiki-related tests pass across 28 files; bunx tsc --noEmit shows zero errors in src/ or test/ (only third-party @silvery/@termless node_modules errors, pre-existing and unrelated)."
+          ],
+          "remainingWork": [
+            {
+              "severity": "high",
+              "item": "R7 apply-time injection is wired into only 4 of the instruction-emitting adapters, not 'all 13' as the R7 acceptance criterion requires. generateWikiContext()/spliceWikiBlock() are imported and called only in claude-code, codex-cli, forgecode, and kilo-code export.ts. This is the exact pre-R7 state the recommendation §3/§4-R7 flagged ('fires for only 4/13 adapters'). The underlying buildWikiContext mechanism IS genuinely task-aware + multi-tier (project>global, opt-in gated) and reaches the export — but the rollout to the remaining adapters that DO write marker-wrapped instruction files was not done.",
+              "evidence": "grep: generateWikiContext callers = src/adapters/{claude-code,codex-cli,forgecode,kilo-code}/export.ts only (4 files). Non-wired adapters with an instruction-file surface but NO wiki injection: gemini-cli (writes GEMINI.md via generateGeminiMd, export.ts:85), windsurf (AGENTS.md, export.ts:56), copilot (.github/copilot-instructions.md, export.ts:69), cursor (.cursor/rules/*.mdc), plus amazon-q, cline, continue, kiro, roo-code. test/wiki/apply-injection.test.ts header explicitly states 'The claude-code adapter is exercised read-only ... we own everything else this pass' and no test asserts R7 reaches all 13 (or even all 4) adapters."
+            },
+            {
+              "severity": "low",
+              "item": "R6 frontmatter gate is partial for the explicit-slug path. ADR-0054 Decision §2 says promotion to wiki/global/ is 'gated on a real promote: true frontmatter field', but `am wiki publish <slug> --promote` promotes the named slug to global regardless of whether its frontmatter actually contains promote:true — only `--auto` consults the frontmatter (discoverPromoteSlugs). The CLI --promote flag is the de-facto gate for the named-slug case. Functionally cross-project promotion works and is behind an explicit action; this is a spec-wording vs implementation nuance, not a broken path.",
+              "evidence": "src/commands/wiki.ts publishSubcommand: when args.auto is false, targets=[slugArg] with no frontmatter check; pushToGlobal({ promote: promoteToGlobal }) is called directly. test/commands/wiki-wave-c.test.ts:243 seeds promote:true but the named-slug code path never reads it."
+            },
+            {
+              "severity": "low",
+              "item": "R4 schema fields coverage/supersedes/superseded_by are serialize+parse-only — never consumed. No read surface reports 'superseded by X' and no merge/contradiction logic reads them, so 'invalidate, don't delete' remains unbuilt (only enabled). This is consistent with R4's stated scope ('makes it implementable', not 'implements it'), so it is not a gap against R4 as written — but the contradiction-handling the fields exist for is still future work. (entities[] IS consumed: meta-index byEntity + harvester population.)",
+              "evidence": "grep for superseded_by/supersedes/.coverage in src/ shows references only in storage.ts writePage serialise (1015-1022) and parseWikiPage read (1217-1220) — no other consumer."
+            }
+          ],
+          "verdict": "real-gaps"
+        }
+      },
+      {
+        "dimension": "xplat-apply",
+        "audit": {
+          "dimension": "cross-platform + apply-safety (final sign-off)",
+          "findings": [
+            "(1) SOURCE env-coercion footgun is GONE. The only src/ grep hit (src/commands/pair-accept.ts:245) is the warning COMMENT itself; the actual finally-block uses `Reflect.deleteProperty(process.env, 'AM_AGE_IDENTITY_DIR')` (line 249). Repo-wide grep finds ZERO non-comment `process.env.X = undefined` assignments in src/. Verified by simulation that the coercion is real: on Windows `AM_CONFIG_DIR = undefined` becomes the literal string 'undefined', so `resolveConfigDir()`'s `?? fallback` never fires.",
+            "(2) The SEC-4b/4c fail-closed drift gate covers all FOUR named apply surfaces, all deriving from the shared const. CLI src/commands/apply.ts:270 `diff: APPLY_SAFE_DEFAULTS.diff || args.diff`; MCP src/mcp/server.ts:1757-1762 `force = args.force===true ? true : APPLY_SAFE_DEFAULTS.force` + `diff: APPLY_SAFE_DEFAULTS.diff`; web src/web/server.ts:540-550 `force = APPLY_SAFE_DEFAULTS.force` (bodiless/invalid-JSON POST keeps safe default) + `diff: APPLY_SAFE_DEFAULTS.diff`; TUI src/tui/index.tsx:28-31 runTuiApply uses `diff: APPLY_SAFE_DEFAULTS.diff`, `force: force || APPLY_SAFE_DEFAULTS.force` and is correctly wired to handleApply (line 215). No surface is fail-open.",
+            "(2b) Controller gate (src/core/controller.ts:411-478) is genuinely fail-closed on BOTH branches: drift-detected (skipDueToDrift) AND diff() threw (skipDueToDiffError -> 'drift check failed ... state unknown — refusing to overwrite'). It does NOT fail-open on an unreadable diff in live mode without --force. `APPLY_SAFE_DEFAULTS = { diff: true, force: false }` at controller.ts:204 is the single source of truth.",
+            "(3) apply.ts NO LONGER masks arbitrary errors as 'Config not found'. The catch (src/commands/apply.ts:276-300) narrows to the exact regex `/Adapter \".*\" not found/` for ADAPTER_NOT_FOUND and surfaces every other error's REAL message via APPLY_FAILED. test/commands/apply-error-surface.test.ts:143-159 explicitly asserts a crypto error ('The string contains invalid characters') surfaces verbatim and is NOT relabeled 'Config not found'. The other src/ CONFIG_NOT_FOUND sites are legitimate `if (!config)` guards, not catch-all maskers.",
+            "(4) The shared APPLY_SAFE_DEFAULTS genuinely unifies the four surfaces (all import it from ../core/controller and reference it rather than hardcoding the posture). All five live-apply call sites in src/ pass `diff` (CLI/MCP/web/TUI via the const; setup.ts hardcodes `diff: true`).",
+            "TEST EVIDENCE: ran the consolidated apply-safety + cross-platform suites on this Linux host — 80 pass / 0 fail across 11 files (apply-error-surface, apply-summary-line, apply-targets-cli, controller-diff-throws-failclosed, controller-apply-partial, config, secrets-backend-selection, web/mcp/tui apply-failclosed, web/apply-skipped-ui). The footgun is invisible on POSIX, so green-on-Linux does NOT validate the test-side residual.",
+            "CONTEXT: CI runs the Windows test matrix as a HARD-failing leg (.github/workflows/ci.yml:96, continue-on-error explicitly removed) plus a compiled-.exe smoke leg. The project's own recorded expertise mx-457cf9 states the footgun is 'in BOTH test and product code' and that bun runs all files in ONE shared process, so a single bad assignment poisons sibling files and spawned subprocesses."
+          ],
+          "remainingWork": [
+            {
+              "severity": "high",
+              "item": "Test-side env-coercion footgun is NOT eliminated, contradicting the task's stated expectation that tests use Reflect.deleteProperty. ~52 UNCONDITIONAL bare `process.env.X = undefined` assignments (mostly `AM_CONFIG_DIR` in beforeEach/afterEach) remain across ~58 test files, plus 23 guarded-restore `if (orig===undefined) process.env.X = undefined` idioms (which the project's own pair-accept.ts comment flags as the same footgun). On Windows these set the literal string and leak into sibling files in the shared bun process — the exact class captured in the residual CI doc (config.test.ts#42 'Received: undefined').",
+              "evidence": "grep `process.env.[A-Z_]* = undefined` test/ → 81 non-comment hits / 58 files. Unconditional examples: test/mcp/server.test.ts:20,904,1014,1081,1135,1362; test/core/apply-backup.test.ts:74,75,80-82,207,231,251,274; test/web/server.test.ts:61; test/protocols/a2a/server.test.ts:91; test/commands/agents.test.ts:197,226,279,341. Only 6 test files use Reflect.deleteProperty. Simulation: `sim.AM_CONFIG_DIR = String(undefined)` → 'undefined', so `?? fallback` returns the literal string."
+            },
+            {
+              "severity": "medium",
+              "item": "No lint rule or hook prevents regression of the bare `process.env.X = undefined` pattern. The fix was applied case-by-case (config.test.ts, secrets-backend-selection.test.ts, pair-accept.ts) with no enforcement, which is why ~52 files still carry it and new ones can reintroduce it.",
+              "evidence": "biome.json has no rule targeting `process.env` assignment-to-undefined; grep of biome.json for process.env/noDelete/undefined → none. No PreToolUse/grep guard in .github/workflows or hooks."
+            },
+            {
+              "severity": "low",
+              "item": "A FIFTH live-apply path — src/commands/setup.ts (lines 508-513, 520-525) — is fail-closed but does NOT route through the shared APPLY_SAFE_DEFAULTS; it hardcodes `diff: true` and `force: Boolean(args.force)`. Safe today, but it is the one apply surface whose safe posture is duplicated rather than derived from the single source of truth, so a future change to APPLY_SAFE_DEFAULTS would silently not reach it.",
+              "evidence": "src/commands/setup.ts:508-513 and 520-525 pass literal `diff: true` instead of `APPLY_SAFE_DEFAULTS.diff`; the file does not import APPLY_SAFE_DEFAULTS. The task named only four surfaces; this fifth one was not in scope but is an apply write path."
+            }
+          ],
+          "verdict": "minor-gaps"
+        }
+      },
+      {
+        "dimension": "quality",
+        "audit": {
+          "dimension": "Code quality & test integrity (final sign-off on main)",
+          "findings": [
+            "typecheck: CLEAN. `bun run typecheck` passes (0 first-party errors). The wrapper script (scripts/typecheck.ts) filters only `node_modules/` and `silvery/src/` vendor-source TS errors and FAILS on any first-party error. Independently re-ran `bun x tsc --noEmit` with the same filter applied manually: 0 first-party errors leak through. The 52 ignored errors are genuinely upstream @silvery vendor source that ships .ts, not .d.ts (skipLibCheck cannot silence). Legitimate, not hidden debt.",
+            "lint: CLEAN. `bun run lint` (biome check ./src ./test) checked 504 files, no fixes/errors. biome.json disables only noExplicitAny/noImplicitAnyLet/noNonNullAssertion and ignores only dist/node_modules/*.json/*.toml/*.md (build artifacts + non-source). Only 1 `biome-ignore` suppression exists in all of src/ (src/tui/HelpView.tsx). No broad rule-off masking real bug classes.",
+            "Full suite: 3451 pass, 0 fail, 10709 expect() calls across 272 files (361s). The `error:`-prefixed lines in output are intentional negative-path stderr (checksum-mismatch / tampered-adapter / native-binary-launch-failure in a hermetic sandbox) emitted BY tests exercising failure handling, not test failures.",
+            "Skip/todo audit: 8 skips total, ALL `test.skipIf(process.platform === 'win32')` / `describe.skipIf(...)` in test/protocols/acp/{env-sandbox,shell-wrapper}.test.ts and test/integration/install-sh.test.ts — legitimate platform guards (POSIX-shell shim wrappers can't run on Windows), not fake-green. ZERO `.only(`, `xit(`, `fit(`, `.todo(`, or unconditional `.skip(` anywhere in src/ or test/.",
+            "apply-multiselect.test.ts (Wave E): NOT a tautology. Verified against src/commands/apply.ts resolveApplyTargets (lines 96-136) — logic matches exactly. Mutation-resistant: `neverPromptClack()` THROWS if the prompt is reached (proves --yes/--json/--quiet/--target/--targets/--dry-run/non-TTY genuinely bypass); the cancel-branch test injects an adapter resolver that throws so a regression ignoring the cancel errors loudly; `dbl.calls` counts real prompt invocations; distinguishes targets:[] (explicit empty) vs targets:undefined (fan-out-to-all), a real semantic the source preserves. Handler-level tests drive the real applyCommand.run() through injected seams and assert per-adapter 'wrote' output + exitCode.",
+            "client.test.ts killSubprocess test (line 369): NOT a tautology. Instruments global setTimeout/clearTimeout, asserts the created grace-timer handle is later passed to clearTimeout (`clearedHandles.toContain(createdHandle)`) AND that SIGKILL did NOT fire (graceful exit won the race). Verified against src/protocols/acp/client.ts:260-292 — killSubprocess creates timerHandle and clears it in `finally`. The test FAILS on the pre-fix code (comment confirms) and would catch removal of the clearTimeout — a real event-loop-leak regression guard.",
+            "wiki/harvester-llm-extraction.test.ts (Wave): NOT a tautology. Verified against src/wiki/harvester.ts:454-500. `called` flag proves the gate truly blocks the extractor when off; the 'vandal' test has an explicit anti-vacuity assertion (`lengthSeenByExtractor.toBeGreaterThan(0)`) then asserts neither VANDALIZED nor injected-junk content survives — this only passes because the source hands the extractor `[...rawEntries]` (a defensive shallow copy, line 486), so the test would FAIL if that were changed to the live array. Sync-throw AND async-reject graceful-degradation paths tested separately; both verified against the `catch {}` at line 491.",
+            "wiki-wave-c.test.ts (Wave C): NOT a tautology. Cross-project search asserts specific tiers contribute (alpha/beta/global) and that the single-tier shape omits the `project` key. Promotion tests assert BOTH positive (global/entities/cross.md exists) AND negative (per-project mirror absent) on the real filesystem — proving the file changed tiers, not just got reported. Conflict test asserts exitCode===1, conflict list, empty published list, AND the differing global entry left intact (fail-closed). The --auto test seeds one promote:true + one non-promote entry and proves only the flagged one promotes.",
+            "No TODO/FIXME/HACK debt markers in shipped src/ (the 2 'XXX' hits are a placeholder-secret detection regex in src/wiki/sync.ts:68 — functional code). No @ts-ignore/@ts-nocheck/@ts-expect-error in src/. Working tree on main has NO src/ or test/ changes — only .seeds/issues.jsonl (issue-tracker metadata) is modified, so this sign-off reflects committed state."
+          ],
+          "remainingWork": [
+            {
+              "severity": "low",
+              "item": "Reminder-test with a literal `expect(true).toBe(true)` tautology in test/core/adr-frontmatter.test.ts:54",
+              "evidence": "The test 'when ADR-0034 accepts, flip this test suite' has only `expect(true).toBe(true)` with a doc comment 'No assertion here — this is a reminder-test.' It is honestly self-documented (not deceptive fake-green) and outside the Wave B/C/D/E scope, but a `test.todo(...)` or an actual assertion on ADR-0034's frontmatter `status` would be a stronger, self-updating guard. This is the ONLY literal `expect(true).toBe(true)` / `expect(1).toBe(1)` tautology in the entire 272-file suite."
+            }
+          ],
+          "verdict": "clean"
+        }
+      },
+      {
+        "dimension": "backlog",
+        "audit": {
+          "dimension": "v1 backlog-zero final sign-off (issue tracker + six-pillar implementation reality)",
+          "findings": [
+            "Backlog tracker is GENUINELY zero: `sd list --status open` and `--status in_progress` both empty; `sd stats` = 129 total / 0 open / 0 in_progress / 0 blocked / 129 closed; raw `.seeds/issues.jsonl` independently confirms 129 lines all `status:closed`. No deferred/blocked v1 items hiding in the tracker (grep for defer/block/v2/XL/punt in titles returns nothing).",
+            "Pillar 1 (catalog + git sync + 13 adapters): genuinely implemented. Pillar 2 (MCP gateway): 58 tool entries in src/mcp/server.ts, ship-quality per audit. Pillar 3 (ACP/A2A router): commands present (run/agents/flow), in v1 scope per the recorded scope-correction. Pillar 5 (LLM-wiki): harvest/synthesize primitives (buildWikiContext, enumerateSessions, catalogEntityNames) are now wired into REAL callers in src/commands/wiki.ts + src/core/instructions.ts (the WIKI-R1/R3/R5/R7/R8 wave fixed the dead-code/plumbing-only gaps the audit flagged). Pillar 6 (three UIs): TUI (src/tui/App.tsx 267 LOC), local web (src/web/server.ts 785 LOC), CF worker (src/web/worker.ts 609 LOC) all substantial. None are hollow.",
+            "First-party typecheck is clean (`bun x tsc --noEmit` filtered of @silvery vendor = 0 errors). Setup wizard tests pass (17 pass / 0 fail across setup.test.ts + setup-interactive.test.ts).",
+            "Marketplace (pillar 4) correctly retained-but-v2-deferred per the scope correction: code in src/marketplace/* kept, command still registered in cli.ts:72 and listed in help.ts:47. NOT flagged — this is the explicit non-negotiable (keep code, returns in v2). WIKI-opt/chub-mcp correctly closed-as-v2-deferred per ADR-0054. NOT flagged.",
+            "GENUINE GAP: the `am setup` first-run wizard (P0-2, the single biggest v1 deliverable) shipped WITHOUT the brownfield-import step. The 7-step flow in src/commands/setup.ts is probe -> clone-or-init -> AES-secrets -> tool-MULTISELECT(which tools to apply TO) -> profile-bootstrap -> apply -> doctor. There is NO `am import auto` invocation anywhere (grep for import/brownfield/runImport in the run body returns only the file-header doc comment). The import.ts engine with source='auto' + brownfield merge + secret auto-encrypt EXISTS and is callable, but the wizard never calls it.",
+            "The missing-import gap is the EXACT thing the audit's P0-2 said distinguishes a wizard from a hint ('This is the step am init punts on. Executing it is the difference between a wizard and a hint.'). A new user with pre-existing IDE configs runs `am setup`, the wizard detects their tools but never pulls their existing servers into the catalog, then applies an EMPTY catalog. The drift gate (controller.ts:424-431) only skips `status==='drifted'` (am-managed file edited out-of-band), NOT `status==='unmanaged'` (a native file am never touched) — so apply of an empty catalog over a populated-but-unmanaged native config falls through to export() and can clobber it.",
+            "Three documents OVERCLAIM the wizard does import: (1) README.md:130 Quick Start literally says `am setup` does 'detect tools -> import configs -> set up an encryption key...'; (2) src/commands/setup.ts:166 meta.description = 'detect tools, import, configure secrets, apply'; (3) help.ts:17 = 'detect, import, secrets, apply'. All claim an import step that the code does not perform — a doc-vs-code honesty defect of the same class P0-4 was opened to fix.",
+            "ADR-0053 (the wizard's own design ADR) is built explicitly on `am import auto` (line 20) and frames the entire motivation as fixing init's print-only-hint behavior (lines 13-15) — yet ADR-0053 status is still 'proposed', not 'accepted', despite commit d707392 ('P0-2 shipped') and README claiming it shipped. ADR-index honesty issue (audit's P2-F class: code landed, ADR left plan-only).",
+            "MINOR stale-doc (opposite direction): README.md:161 says `am setup --from <remote>` clone path 'is on the roadmap; until then clone manually' — but `--from` IS implemented and tested in setup.ts (cloneRepo at lines 324-326; test 'from clones a local bare repo'). README New-Machine section under-claims a feature that exists.",
+            "deep-work-log Checkpoint 9 narrative says '52 closed' but the project total is 129 closed — not a tracker discrepancy (52 was that wave's subset); just a stale narrative number in the log. Cosmetic only."
+          ],
+          "remainingWork": [
+            {
+              "severity": "high",
+              "item": "Wire the brownfield-import step into the `am setup` wizard, OR correct every doc that claims it imports. The wizard (src/commands/setup.ts) detects tools then jumps straight to apply with NO `am import auto` call, so a first-run user with existing IDE configs has their servers left out of the catalog and risks an empty catalog being applied over their unmanaged native config. This is the explicit P0-2 deliverable ('detect->IMPORT->key->profile->apply->doctor') and the audit's literal 'difference between a wizard and a hint'.",
+              "evidence": "src/commands/setup.ts: no import invocation in the run body (grep for import/brownfield/runImport returns only the line-7 header comment); 7-step flow is probe->clone/init->secrets->tool-multiselect->profile->apply(applyResolved)->doctor. import.ts source='auto' engine exists (lines 85-86, 317+) but is uncalled. P0-2 issue title agent-manager-9147 = 'detect->import->key->profile->apply->doctor'."
+            },
+            {
+              "severity": "high",
+              "item": "Reconcile the wizard documentation with the as-built behavior (doc-honesty defect of the P0-4 class). Three surfaces tell users `am setup` imports configs when it does not.",
+              "evidence": "README.md:130 ('detect tools -> import configs -> ...'); src/commands/setup.ts:166 meta.description ('detect tools, import, configure secrets, apply'); src/help.ts:17 ('detect, import, secrets, apply'). Code performs no import."
+            },
+            {
+              "severity": "medium",
+              "item": "Promote ADR-0053 (am setup wizard) from 'proposed' to 'accepted' (or split decision vs plan status). The wizard shipped (#19, README says 'P0-2 shipped') but its ADR is still plan-only — the audit's P2-F untrustworthy-ADR-index pattern.",
+              "evidence": "ADRs/0053-*.md line 2 'status: proposed'; commit d707392 'docs: README Quick Start now uses the real am setup wizard (P0-2 shipped)'."
+            },
+            {
+              "severity": "low",
+              "item": "Fix README New-Machine section: it says `am setup --from <remote>` is 'on the roadmap; until then clone manually', but --from is implemented and tested. Under-claims a shipped feature.",
+              "evidence": "README.md:161-163 vs src/commands/setup.ts cloneRepo at lines 324-326 and test/commands/setup.test.ts 'from clones a local bare repo into the config dir and applies'."
+            },
+            {
+              "severity": "low",
+              "item": "Update deep-work-log Checkpoint 9 stale count ('52 closed' vs actual 129 closed project total). Cosmetic narrative drift, not a tracker error.",
+              "evidence": "docs/audit/assessment-2026-05-31/deep-work-log.md:19 '0 open / 0 in_progress / 52 closed' vs `sd stats` 129 closed."
+            }
+          ],
+          "verdict": "minor-gaps"
+        }
+      }
+    ],
+    "synthesis": {
+      "backlogZero": false,
+      "signOff": false,
+      "mustDoBeforeDone": [
+        "WIZARD-IMPORT (seed agent-manager-ca97, HIGH): Wire the brownfield `am import` (source='auto', engine exists at src/commands/import.ts:85) into the `am setup` run body. The wizard flow is probe->clone/init->secrets->tool-multiselect->profile->apply->doctor with NO import step (verified: zero import-engine calls in setup.ts run body). This is the P0-2 'detect->IMPORT->key->profile->apply->doctor' deliverable; without it a first-run user with existing IDE configs gets an empty/partial catalog applied over their unmanaged native config. Either wire it OR (see next item) fix every doc.",
+        "WIZARD-IMPORT-HONESTY (seed agent-manager-ca97, HIGH): Three user-facing surfaces claim `am setup` imports configs when it does not — README.md:130 ('detect tools -> import configs'), src/help.ts:17 ('detect, import, secrets, apply'), and src/commands/setup.ts:166 meta.description ('detect tools, import, configure secrets, apply'). If import is not wired (above), all three MUST be corrected to match as-built behavior. A wizard that lies about importing is the doc-honesty defect the audit flagged.",
+        "R7-ALL-ADAPTERS (seed agent-manager-ebbe, HIGH per audit / filed Medium): Apply-time wiki injection (generateWikiContext/spliceWikiBlock) is wired into only 4 of 13 instruction-emitting adapters — verified callers are src/adapters/{claude-code,codex-cli,forgecode,kilo-code}/export.ts only. ADR-0054 R7 acceptance criterion is 'all 13'. Extend injection to the remaining marker-wrapped-instruction adapters (gemini-cli GEMINI.md, windsurf AGENTS.md, copilot .github/copilot-instructions.md, cursor .cursor/rules, plus amazon-q, cline, continue, kiro, roo-code) and add a test asserting coverage. This is a real gap against a written acceptance criterion, not polish."
+      ],
+      "optionalFollowups": [
+        "TEST-ENV-COERCION-SWEEP (seed agent-manager-de66, Medium): 81 bare `process.env.X = undefined` hits across 60 test files remain (verified) — Windows-CI footgun coerces to literal string 'undefined' in the shared bun process. Sweep to Reflect.deleteProperty and add a biome rule / CI grep guard to prevent regression. Tests currently pass; this is hardening, not a green-blocker for v1 unless Windows CI is gating.",
+        "ADR-0053 status (seed agent-manager-bbfb, Low): promote 'proposed' -> 'accepted' since the wizard shipped in #19 (verified status: proposed). Untrustworthy-ADR-index hygiene.",
+        "README New-Machine section (seed agent-manager-7b8f, Low): says `am setup --from <remote>` is 'on the roadmap; clone manually' but --from is implemented+tested (cloneRepo at setup.ts:324). Under-claims a shipped feature; correct the doc.",
+        "APPLY-5TH-SURFACE (seed agent-manager-ef01, Low): setup.ts live-apply (~508-525) is fail-closed but hardcodes diff:true/force instead of deriving from APPLY_SAFE_DEFAULTS. Safe today; route through the single source of truth so future safe-default changes reach it.",
+        "R6 explicit-slug promote gate (seed agent-manager-a9fc, Low) and R4 supersedes/coverage read surface (seed agent-manager-9994, Low): both are spec-wording-vs-implementation nuances and forward-compat scaffolding respectively; document-as-intended or defer.",
+        "Replace the lone tautology `expect(true).toBe(true)` reminder-test at test/core/adr-frontmatter.test.ts:54 with a real assertion on ADR-0034's frontmatter status or a test.todo(). Honestly self-documented and out of wave scope; cosmetic."
+      ],
+      "summary": "NO SIGN-OFF. The backlog-to-zero claim is false: `sd stats` shows 8 open seeds (0 in_progress, 129 closed of 137 total). The audits' own findings were converted into tracked seeds rather than resolved — honest tracking, but the backlog is demonstrably non-zero. I verified all four high-severity claims against source and every one holds: (1) WIKI R7 apply-time injection is wired into exactly 4 of 13 instruction-emitting adapters (grep confirmed: claude-code, codex-cli, forgecode, kilo-code only) versus the ADR-0054 R7 'all 13' acceptance criterion — a real gap against a written spec. (2) The `am setup` wizard does NOT wire brownfield import: its run body is probe->clone/init->secrets->tool-multiselect->profile->apply->doctor with zero import-engine calls, though the engine exists at import.ts:85 — this misses the P0-2 deliverable and risks applying an empty catalog over a user's native config. (3) Three surfaces (README:130, help.ts:17, setup.ts:166) claim setup imports configs when it does not — a doc-honesty defect. (4) ADR-0053 is still status:proposed despite the wizard having shipped. The env-coercion footgun is also confirmed (81 hits / 60 files). Three HIGH items must be done before sign-off: wire import into setup, reconcile the import docs, and complete R7 to all 13 adapters (or formally amend the acceptance criterion). The remaining low/medium items are already filed and genuinely optional polish. Quality dimension is clean (single self-documented tautology test, out of scope). Verdict: merged work is largely sound, but v1 is NOT done and the zero-backlog claim does not hold."
+    }
+  }
+}
