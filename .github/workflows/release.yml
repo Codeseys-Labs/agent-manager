@@ -212,11 +212,12 @@ jobs:
 
             def caveats
               <<~EOS
-                To get started:
-                  am init
+                To get started (guided first-run wizard — detect tools, import
+                existing configs, set up secrets + profile, apply, health check):
+                  am setup
 
-                Then sync your config:
-                  am apply
+                Or drive the steps manually:
+                  am init && am import auto && am apply
 
                 To use a Tier-2 wrapped agent (aider / amazon-q / cody):
                   am agent enable-shim <name> --yes
