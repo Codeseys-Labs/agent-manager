@@ -20,6 +20,15 @@ jobs:
         with:
           bun-version: 1.3.11
       - run: bun install --frozen-lockfile
+      # Dependency vulnerability scan (SECURITY.md: "continuous dependency
+      # monitoring"). REPORT-ONLY by design: continue-on-error surfaces
+      # advisories in every PR/push log without hard-failing the build, so a
+      # transitive CVE (e.g. the hono drift) is visible per-PR rather than
+      # discovered late. Tighten to a hard gate only once the advisory
+      # baseline is clean. `bun audit` queries the registry advisory DB.
+      - name: Dependency audit (report-only)
+        continue-on-error: true
+        run: bun audit
       - name: Type check (src/ only)
         run: |
           # Full tsc output, then fail only if src/ files have errors.
