@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import {
@@ -368,18 +368,16 @@ describe("am agents", () => {
     ): Promise<void> {
       const origConfigDir = process.env.AM_CONFIG_DIR;
       process.env.AM_CONFIG_DIR = configDir;
-      // Replace the discovery module's discoverFromUrl with a throwing stub.
-      mock.module("../../src/protocols/a2a/discovery", () => ({
-        discoverFromUrl: discoverImpl,
-        // Keep the other named exports the command imports importable.
-        addToRoster: async () => {},
-        discoverFromConfig: async () => [],
-        loadRoster: async () => [],
-        removeFromRoster: async () => false,
-        saveRoster: async () => {},
-      }));
+      // Inject the discovery stub via the command's test seam — NOT
+      // mock.module(). Bun's mock.module permanently replaces the shared module
+      // for the whole process (mock.restore() does not undo it), which would
+      // bleed the stub into protocols/a2a/discovery.test.ts. The seam is reset
+      // in afterEach so no other test/file is affected.
+      const { agentsCommand, __setDiscoverFromUrlForTests } = await import(
+        "../../src/commands/agents"
+      );
+      __setDiscoverFromUrlForTests(discoverImpl as never);
       try {
-        const { agentsCommand } = await import("../../src/commands/agents");
         const addCmd = await (
           agentsCommand.subCommands as Record<string, () => Promise<unknown>>
         ).add();
@@ -395,9 +393,10 @@ describe("am agents", () => {
       }
     }
 
-    afterEach(() => {
-      // Restore the real discovery module so other tests/files are unaffected.
-      mock.restore();
+    afterEach(async () => {
+      // Reset the discovery seam so other tests/files use the real module.
+      const { __setDiscoverFromUrlForTests } = await import("../../src/commands/agents");
+      __setDiscoverFromUrlForTests(null);
     });
 
     test("a thrown discovery error yields a clean one-liner, no stack, exit 1", async () => {
@@ -413,7 +412,7 @@ describe("am agents", () => {
       expect(process.exitCode).toBe(1);
       const combined = [...consoleOutput, ...consoleErrors].join("\n");
       // Clean, actionable one-liner.
-      expect(combined).toContain("Could not reach http://localhost:59999");
+      expect(combined).toContain("Discovery failed for http://localhost:59999");
       expect(combined).toContain("Check the URL");
       expect(combined).toContain("/.well-known/agent.json");
       // The underlying message is surfaced...
@@ -434,7 +433,7 @@ describe("am agents", () => {
 
       expect(process.exitCode).toBe(1);
       const combined = [...consoleOutput, ...consoleErrors].join("\n");
-      expect(combined).toContain("Could not reach http://10.0.0.9");
+      expect(combined).toContain("Discovery failed for http://10.0.0.9");
       expect(combined).not.toMatch(/\bat\s+\w+\s+\(/);
       process.exitCode = 0;
     });
