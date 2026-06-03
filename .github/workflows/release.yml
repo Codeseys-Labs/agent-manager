@@ -278,7 +278,18 @@ jobs:
             await Bun.write('package.json', JSON.stringify(pkg, null, 2) + '\n');
           "
 
+      # npm distribution is intentionally DEFERRED (project memory:
+      # "npm publish intentionally deferred" + .npmignore). There is no
+      # NPM_TOKEN secret today, and the unscoped name `agent-manager` is
+      # already taken on the registry by another publisher. Without a token
+      # `npm publish` exits non-zero and turns the whole release job red even
+      # though every binary, checksum, the GitHub Release, and the Homebrew
+      # formula have already landed successfully above. Gate the step on the
+      # presence of an NPM_TOKEN secret so the job is GREEN when there is no
+      # token, and the step activates automatically the moment a token is
+      # added (no further workflow edit required). Do NOT remove this step.
       - name: Publish to npm
+        if: ${{ secrets.NPM_TOKEN != '' }}
         run: bunx npm publish --access public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
