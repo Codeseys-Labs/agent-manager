@@ -1,8 +1,17 @@
 ---
-status: proposed
+status: accepted
 date: 2026-06-01
+accepted: 2026-06-03
 amends: ADR-0020, ADR-0022, ADR-0044
 ---
+
+> **Accepted 2026-06-03.** The R1–R8 implementation sequence is fully shipped,
+> tested, and merged (live write-path graph/wikilink/index maintenance,
+> catalog-derived NER, the committed `wiki/meta-index.json` cross-project index +
+> `am wiki search --all-projects`, the `--promote` / `promote:` two-pronged
+> promotion gate to `wiki/global/`, the technique-only Context Hub annotation
+> borrow, and the optional external `chub-mcp` content source). The decision below
+> is recorded as-built.
 
 # ADR-0054: Knowledge as a First-Class Peer — Live Write-Path, Cross-Project Index, and the Context-Hub Boundary
 

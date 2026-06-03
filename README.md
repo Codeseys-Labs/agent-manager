@@ -690,7 +690,8 @@ agents = ["researcher"]
 
 | Command | Description |
 |---------|-------------|
-| `am init` | First-time setup -- detect tools, init git repo (run `am import auto` to import existing configs) |
+| `am setup` | Guided first run -- detect tools, import existing configs, set up an encryption key, create a profile, apply, end on a green `am doctor` (resumable, scriptable via `--yes`/`--json`/`--from`) |
+| `am init` | Granular sub-step of `am setup`: detect tools + init git repo only (run `am import auto` to import existing configs) |
 | `am init --project` | Initialize project-level `.agent-manager.toml` |
 | `am add server <name>` | Add an MCP server (secrets auto-detected) |
 | `am list servers` | List servers with status, tags, and profile filtering |
@@ -940,7 +941,11 @@ cache for faster downloads.
 1. Build all 5 binaries on native runners (Linux on Ubuntu, macOS on macOS, Windows on Windows)
 2. Generate SHA-256 checksums
 3. Create GitHub Release with all artifacts
-4. Publish to npm
+
+The npm publish step is **gated/deferred until v1.0** (see the install note above): the
+unscoped `agent-manager` name is owned by an unrelated package, so the release
+pipeline does not push to npm today — GitHub Releases (consumed by `install.sh`)
+are the distribution channel until the name is resolved.
 
 **Workarounds documented in CI:**
 - Bun exits 1 when test code writes to stderr even with 0 failures — CI captures

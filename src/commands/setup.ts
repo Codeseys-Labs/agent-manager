@@ -22,10 +22,14 @@
  * Non-interactive resolves every value from flag > env > existing config >
  * default; a required value with no source is a structured error, never a hang.
  *
- * NOTE ON SECRETS (Wave 2 fence): only the legacy AES backend (ADR-0012) is
- * offered here. The age backend (ADR-0042) is fenced until its apply-path
- * runtime is fixed and integration-tested — the wizard MUST NOT offer the age
- * path. See ADR-0053 step 3 and ADR-0042 status.
+ * NOTE ON SECRETS: only the AES backend (ADR-0012) is offered here. The age
+ * backend's apply path IS fixed and integration-tested — the controller routes
+ * `enc:v2:age:` envelopes through decodeEnvelope and fails loud
+ * (core/controller.ts `configContainsAgeEnvelope` + age-backend load). The
+ * wizard intentionally fences age for v1 UX simplicity: a first-run stranger
+ * gets one zero-config default (AES) rather than a recipients/identity choice.
+ * age remains fully available outside the wizard via `am secret` / migration.
+ * See ADR-0053 step 3 and ADR-0042.
  */
 import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
@@ -151,11 +155,13 @@ async function runImport(args: WizardImportArgs): Promise<void> {
 /**
  * The secret-encryption choices offered by the wizard's step 3.
  *
- * Wave 2 fence (ADR-0053 step 3 / ADR-0042 status): ONLY the legacy AES
- * backend (ADR-0012) is offered. The age backend is fenced until its
- * apply-path runtime is fixed and integration-tested. This is a pure function
- * so the contract ("never offers age") is directly assertable in tests without
- * mocking the prompt library.
+ * v1-wizard fence (ADR-0053 step 3 / ADR-0042): ONLY the AES backend
+ * (ADR-0012) is offered. age is NOT broken — its apply path is fixed and
+ * integration-tested (controller decodes `enc:v2:age:` and fails loud); it is
+ * fenced from the first-run wizard purely for UX simplicity (one zero-config
+ * default vs a recipients/identity choice), and stays available via `am secret`.
+ * This is a pure function so the contract ("never offers age") is directly
+ * assertable in tests without mocking the prompt library.
  */
 export function secretsBackendOptions(): Array<{ value: "generate" | "skip"; label: string }> {
   return [
