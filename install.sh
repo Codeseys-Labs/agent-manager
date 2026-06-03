@@ -284,7 +284,7 @@ main() {
   esac
 
   printf "Get started:\n"
-  printf "  am init\n"
+  printf "  am setup   # guided first run: detect tools, import configs, set up a key, apply\n"
 }
 
 main

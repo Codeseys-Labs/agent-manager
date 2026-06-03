@@ -2,6 +2,58 @@
 
 ## [Unreleased]
 
+### Added
+- **`am setup` — first-run setup wizard (ADR-0053).** A single guided,
+  resumable command takes a stranger from "just installed `am`" to "native
+  configs written + green health check": detect tools → import their existing
+  configs → set up an encryption key (AES) → create a profile → apply → end on
+  a green `am doctor`. Fully scriptable (`--yes` / `--json` /
+  `--non-interactive` for CI) and `--from <git-url>` clones an existing catalog
+  onto a new machine. Idempotent — safe to re-run; resumes/repairs rather than
+  clobbering. The granular steps (`am init`, `am import auto`,
+  `am secret scan --fix`, `am apply`) remain independently usable.
+- **Knowledge as a first-class peer (ADR-0054, wiki R1–R8).** Graph, wikilink,
+  and search-index maintenance moved onto the `writePage` write path
+  (backlinks/orphans are always current, not batch-rebuilt). NER entities are
+  now derived from the resolved catalog (server/agent/skill names) with a static
+  fallback. New committed cross-project meta-index (`wiki/meta-index.json`) plus
+  `am wiki search --all-projects`. Promotion to `wiki/global/` is gated by an
+  explicit `--promote` flag (with a `promote:` frontmatter discovery gate for
+  the batch `--auto` path). Optional external `chub-mcp` content source via
+  `am mcp-serve` for users who want curated API docs alongside project knowledge.
+
+### Fixed
+- **Cross-platform Windows hardening.** Systematic sweep of Windows
+  build-verify failures: env-var coercion footgun (`process.env.X = undefined`
+  stringifying to `"undefined"` and poisoning the shared Bun process),
+  path-separator assumptions in path assertions (now separator-agnostic via
+  `toPosix`), VS Code session-directory de-duplication, and an fsync handle
+  opened `r+` for Windows.
+- **Fail-closed apply across all surfaces.** The drift gate fails closed when
+  `adapter.diff()` throws (SEC-4), and the same `APPLY_SAFE_DEFAULTS` posture is
+  shared verbatim by the CLI (`am apply`), MCP (`am_apply`), web
+  (`POST /api/apply`), and the TUI apply button — a drifted native config is
+  skipped, never silently overwritten.
+- **age-secrets apply path (ADR-0042).** The controller routes `enc:v2:age:`
+  envelopes through `decodeEnvelope` and fails loud, loading the age backend
+  whenever the config selects age or already contains age envelopes — fixing
+  prior apply-time corruption. v1 envelopes with no configured key keep the
+  ADR-0012 graceful passthrough; v2/unknown envelopes fail loud.
+- **Security hardening.** Path-traversal validation, A2A SSRF guards, and an
+  MCP buffer fix; BetterLeaks binary pinned by SHA.
+
+### Changed
+- **Command-handler test coverage** raised substantially across the CLI surface
+  (parent-command help now exits 0, non-interactive guards added for UX-1/UX-2).
+- **README first-touch aligned on `am setup`** (the full wizard) rather than
+  `am init` (the detect+git-init sub-step); `install.sh`'s "Get started" hint
+  now points at `am setup`.
+- **Adapter export logic deduplicated** via a shared `export-utils` module.
+
+> npm publish remains deferred until v1.0 (unscoped `agent-manager` name is
+> owned by an unrelated package). GitHub Releases (consumed by `install.sh`)
+> are the distribution channel.
+
 ## [0.5.0-rc6] - 2026-04-20
 
 ### Added
