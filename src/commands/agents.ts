@@ -35,6 +35,25 @@ import {
 import type { AgentRosterEntry } from "../protocols/a2a/types";
 import { AmAcpClient } from "../protocols/acp/client";
 
+/**
+ * Test-only seam for `discoverFromUrl` (mirrors `__setAdapterResolverForTests`
+ * / `__setClackForTests` elsewhere). Lets a command-level test inject a
+ * discovery double WITHOUT `mock.module("../protocols/a2a/discovery", …)` —
+ * that approach permanently replaces the shared module in Bun's single test
+ * process (mock.restore() does NOT undo it) and bleeds into discovery.test.ts.
+ * Null (the default) uses the real `discoverFromUrl`. Never set in prod.
+ */
+let discoverFromUrlOverride: typeof discoverFromUrl | null = null;
+
+/** @internal test seam — see `discoverFromUrlOverride`. */
+export function __setDiscoverFromUrlForTests(fn: typeof discoverFromUrl | null): void {
+  discoverFromUrlOverride = fn;
+}
+
+function resolveDiscoverFromUrl(): typeof discoverFromUrl {
+  return discoverFromUrlOverride ?? discoverFromUrl;
+}
+
 // ── Subcommands ─────────────────────────────────────────────────
 
 const listSubcommand = defineCommand({
@@ -222,7 +241,24 @@ const addSubcommand = defineCommand({
 
     info(`Discovering agent at ${url}...`, opts);
 
-    const card = await discoverFromUrl(url);
+    // UX-STACK: wrap discovery so a network/parse/SSRF-guard failure prints a
+    // clean actionable one-liner instead of leaking a developer stack trace to
+    // the user (clig.dev robustness requirement). Matches the error-handling
+    // style of the sibling subcommands (ping/delegate/cancel).
+    let card: Awaited<ReturnType<typeof discoverFromUrl>>;
+    try {
+      card = await resolveDiscoverFromUrl()(url);
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
+      // Noun-phrase prefix so it reads cleanly after output.ts's "error: "
+      // (matches sibling style: "Delegation failed: …", "Cancel failed: …").
+      error(
+        `Discovery failed for ${url}: ${message}. Check the URL and that the agent exposes /.well-known/agent.json`,
+        opts,
+      );
+      process.exitCode = 1;
+      return;
+    }
     if (!card) {
       error(`No A2A Agent Card found at ${url}/.well-known/agent.json`, opts);
       process.exitCode = 1;
