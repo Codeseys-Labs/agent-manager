@@ -1,0 +1,285 @@
+{
+  "summary": "Fresh independent production-readiness audit of agent-manager v0.5.0-rc6 across facets the wave-scoped reviews never deep-dived: distribution/install honesty, age-secrets production-readiness, ADR decision-state hygiene (0054 shipped but proposed), dependency/supply-chain/CVE, six-pillar v1 completeness, real first-run CLI UX. Research-backed (web best-practices). Surfaces ONLY genuine v1 gaps — documented v-next deferrals (chub-mcp, contradiction-handling, marketplace pillar, hosted-UI ADRs) are NOT gaps.",
+  "agentCount": 6,
+  "logs": [
+    "Prod audit: verdict=real-work realV1Gaps=7"
+  ],
+  "result": {
+    "audits": [
+      {
+        "facet": "distribution",
+        "audit": {
+          "facet": "Distribution & Install (downloadable-CLI north star)",
+          "findings": [
+            "install.sh is correct, safe, and idempotent. Verified end-to-end against the LIVE release: `sh ./install.sh --version 0.5.0-rc6 --prefix /tmp/...` downloaded checksums.sha256, downloaded both `am` and `am-acp-shell`, verified each SHA-256 (fail-closed), chmod +x'd, and printed a PATH hint. The installed binary runs and reports its version. OS detection (Linux/Darwin/MINGW-MSYS-CYGWIN) and arch detection (x64/arm64) are correct.",
+            "Checksum verification is mandatory and fail-closed by default. With no sha256sum/shasum tool it refuses to install (install.sh:104-111); an artifact missing from the manifest aborts unless `--insecure` (install.sh:229-238). The checksum-grep is correctly anchored (`grep -F \" ${artifact}\" | grep -E \" ${artifact}\\$\"`, install.sh:225-228) — verified it does NOT let `am-linux-x64` collide with `am-acp-shell-linux-x64`. macOS Gatekeeper quarantine xattr is stripped (install.sh:261-263).",
+            "GitHub Releases pipeline is real and works for binaries. .github/workflows/release.yml builds all 5 targets on native runners (Linux x64+arm64, macOS arm64+x64, Windows x64), ad-hoc-signs darwin binaries, generates checksums.sha256, and `gh release create`s with all artifacts attached. Confirmed v0.5.0-rc6 has all 10 binaries + checksums.sha256 attached, and the downloaded `am-linux-x64` SHA matches the manifest byte-for-byte.",
+            "Version reporting is correct. The shipped rc6 binary returns `0.5.0-rc6` for both `am version` and `am --version`. BUILD_VERSION is injected via `--define` at compile time (scripts/build.ts:124) and read in src/lib/version.ts:9 with a `0.0.0-dev` sentinel fallback (not a fake real version).",
+            "npm publish is correctly deferred and consistently documented — NOT flagging it. .npmignore explains the deferral and the planned optionalDependencies launcher strategy; README:119-122 states it explicitly. I independently confirmed the unscoped npm name `agent-manager` is already owned by an unrelated package (George Livas, currently latest 0.3.1 on registry.npmjs.org), so the name is genuinely unavailable.",
+            "Homebrew formula auto-generation is wired (release.yml:135-243): regenerates Formula/am.rb from scratch with per-platform URLs + SHAs for both `am` and the `am-acp-shell` resource, commits it back to main. SECURITY.md exists and is thorough (age/Argon2id at-rest, supply-chain section, MCP-impersonation explicitly out-of-scope for v1)."
+          ],
+          "gaps": [
+            {
+              "severity": "critical",
+              "title": "The downloadable artifact is 288 commits stale: the documented headline command `am setup` does NOT exist in the shipped binary",
+              "evidence": "`curl | sh` resolves to v0.5.0-rc6 (the GitHub releases/latest API returns it). I downloaded the real rc6 `am-linux-x64` and ran the documented first-touch command: `am setup --yes --no-import --no-apply` PRINTS ROOT HELP, EXITS 1, and creates NO config. README:131-146 documents `am setup` as THE guided first-run wizard ('detect tools → import → set up encryption → create profile → apply → green am doctor'). The same command run from current HEAD source works perfectly (initializes config, applies, ends on green doctor). Proof of staleness: `git cat-file -e v0.5.0-rc6:src/commands/setup.ts` => ABSENT at rc6; setup was added in PR #19 (29d583e) and refined in #34/#40, all AFTER rc6. `git rev-list --count v0.5.0-rc6..HEAD` => 288 commits unreleased. A stranger installing today gets a binary where the documented entry point fails.",
+              "isV1": true
+            },
+            {
+              "severity": "high",
+              "title": "Every release pipeline run reports FAILURE because the unconditional npm-publish step has no token and the package name is taken",
+              "evidence": "`gh run list --workflow release.yml` shows conclusion=failure for ALL runs incl. rc6. `gh run view 24681165425` confirms the rc6 release job succeeded through 'Create GitHub Release', 'Update Homebrew formula', 'Commit formula+changelog', 'Set version from tag' — then FAILED at the final 'Publish to npm' step (release.yml:281-284, `bunx npm publish` with `NODE_AUTH_TOKEN: secrets.NPM_TOKEN`). Since npm is intentionally deferred (no NPM_TOKEN) AND the name `agent-manager` is owned by another publisher, this step can never succeed and hard-fails the job. Binaries still land (npm is last), but the red pipeline masks real failures and blocks any future post-publish step. The npm step should be gated on NPM_TOKEN presence / a release input, or removed until npm distribution is built.",
+              "isV1": true
+            },
+            {
+              "severity": "medium",
+              "title": "Docs contradict each other on first-touch command and on the npm step",
+              "evidence": "(1) README:131 documents `am setup` as the first-run command and install.sh:287 + Homebrew caveats (release.yml:215) tell users to run `am init`. `am init` is only the detect+git-init sub-step, not the full wizard — so the installer's 'Get started: am init' undersells/diverges from the documented `am setup` flow. (2) README:943 lists 'Publish to npm' as step 4 of the active release pipeline while README:119-122 (and .npmignore) say npm publish is deferred — the docs both claim and deny the npm step.",
+              "isV1": true
+            },
+            {
+              "severity": "low",
+              "title": "CHANGELOG [Unreleased] section is empty, so the next release's notes will be blank",
+              "evidence": "CHANGELOG.md has `## [Unreleased]` immediately followed by `## [0.5.0-rc6]` with no content between them, despite 288 commits of work. release.yml:101-115 extracts notes via `sed` from the [Unreleased] block and falls back to a bare 'Release vX' string when empty. The next release (likely the big 1.0) would ship with no release notes.",
+              "isV1": false
+            },
+            {
+              "severity": "low",
+              "title": "No native Windows install path; install.sh ignores Windows arm64",
+              "evidence": "README:110 advertises `curl | sh` only for macOS/Linux; there is no install.ps1, so native Windows users must hand-download from Releases. Additionally install.sh:176-182 hardcodes `windows → am-windows-x64.exe` regardless of arch and build.ts:16 only builds `bun-windows-x64` (Bun supports bun-windows-arm64). A Windows-arm64 user gets the x64 binary (works under Win11 emulation, so functional, not broken).",
+              "isV1": false
+            },
+            {
+              "severity": "low",
+              "title": "Binaries rely on ad-hoc macOS signing + checksums only; no cosign/sigstore provenance or SBOM",
+              "evidence": "release.yml:48-57 ad-hoc-signs darwin binaries, but the release job's own comment (release.yml:82-92) admits the signature can be stripped by the upload/download artifact round-trip and there is a standing TODO to move re-signing to a macOS release runner. Integrity rests solely on the SHA-256 manifest (which itself is served from the same GitHub release — no detached signature / Sigstore attestation / SLSA provenance / SBOM). Bun's docs confirm only `codesign` is needed for Gatekeeper; for a security-positioned tool, GitHub artifact attestations or cosign keyless signing would harden the supply chain. Acceptable for an initial v1 ship given checksums are enforced fail-closed.",
+              "isV1": false
+            }
+          ],
+          "verdict": "real-gaps"
+        }
+      },
+      {
+        "facet": "secrets-age",
+        "audit": {
+          "facet": "SECRETS / AGE BACKEND PRODUCTION-READINESS (ADR-0042 age-envelope + Argon2id + OS-keychain; ADR-0012 AES legacy)",
+          "findings": [
+            "VERDICT ON THE FENCE: The setup.ts:25-28 comment claiming the age backend is 'fenced until its apply-path runtime is fixed and integration-tested' is STALE, not accurate. The age apply-path IS fixed and IS integration-tested. Evidence: src/core/controller.ts:314-322 (applyResolved) loads the age backend when selectBackendName(config)==='age' OR the config contains any enc:v2:age: envelope, then routes the whole config through interpolateEnvAsync -> decodeEnvelope, which decrypts v2 envelopes and FAILS LOUD on anything it cannot decrypt. The original CRITICAL ('apply writes enc:v2:age: ciphertext verbatim into native IDE configs') is closed.",
+            "GIT TIMELINE PROVES STALENESS: The P0-3 apply-path fix landed in commit 1e6429f / 4986b8a at 2026-05-31 22:07 ('Wave 2: fix age-secrets apply corruption (P0-3)'). The setup.ts wizard carrying the fence comment was created in commit 9ce3567 (PR #19) at 2026-06-01 00:46 — ~2.5 hours AFTER the fix. The fence language was inherited verbatim from the pre-fix audit doc docs/audit/assessment-2026-05-31/secrets-and-security.md (written the same day BEFORE the fix), whose CRITICAL section (line 12, 87-88) describes the exact bug that 1e6429f resolved.",
+            "END-TO-END ROUND-TRIP IS TESTED: test/integration/secret-decode-pipeline.test.ts proves encrypt->apply-decode round-trips for BOTH enc:v1: and enc:v2:age: through the SAME apply chokepoint (interpolateEnvAsync), that a real AgeSecretsBackend.encrypt() output decrypts back to plaintext (lines 137-155), that mixed v1+v2 configs decrypt in one walk (157-179), and that applyResolved() FAILS LOUD (throws, no verbatim ciphertext) on a v2 envelope it cannot decrypt and on unknown enc:v99: (205-276). All 42 tests in the two integration files pass (verified: `bun test` -> 42 pass / 0 fail).",
+            "FULL AGE SUITE GREEN: ran test/core/secrets-age.test.ts + secrets-backend.test.ts + secrets-argon2-params.test.ts + secrets.test.ts + secrets-migrate.test.ts + commands/secrets-rotate.test.ts + secrets-revoke.test.ts -> 91 pass / 0 fail. Rotation grace-period (ADR-0051), rewrap, revoke, recipient management, and cross-process legacy-identity hydration are all implemented and tested.",
+            "FENCE IS NOT A V1 GAP BECAUSE AGE IS NOT ADVERTISED TO V1 USERS: README.md line 40 and AGENTS.md lines 22/85/239 describe shipped secret hygiene as 'AES-256-GCM at rest'. No user-facing doc (README, AGENTS.md, docs/*.md excluding ADR/research/audit) tells a v1 user to set settings.secrets.backend='age' or claims age is the default/recommended path. The fence hides an internally-complete-and-tested feature, NOT a broken feature that v1 docs claim works. v1 docs claim AES; AES ships and works.",
+            "SHIPPED AES PATH (ADR-0012) IS CRYPTOGRAPHICALLY SOUND: secrets.ts:188 generates a fresh 12-byte random IV per encryptValue call (no nonce reuse), uses AES-256-GCM via Web Crypto (authenticated encryption), and stores the master key at mode 0o600 OUTSIDE the git-tracked config dir (resolveKeyPath -> OS data dir; secrets.ts:105,183). The apply path never calls raw decryptValue (which passes non-enc:v1: strings through) — controller.ts has zero references to decryptValue; it uses the fail-loud decodeEnvelope, so an enc:v2:/unknown envelope cannot leak even on the AES-only default. SECURITY.md documents the threat model honestly (values hidden; names/paths/commit-history not).",
+            "SECONDARY OBSERVATION (not a v1 blocker): `am secret set` (commands/secret.ts:63-70) always writes enc:v1: AES regardless of settings.secrets.backend — it calls loadKey+encryptValue directly and never consults getDefaultBackend/selectBackendName for the WRITE path (the age backend is only used in `am secret get` to DECRYPT v2). So the only CLI route that PRODUCES a v2 envelope is `am secrets migrate --to age`. This matches audit-doc prerequisite (b) 'write commands honouring settings.secrets.backend' still being open. It is consistent with the deliberate v1-defaults-to-AES posture and is not advertised, so it is a v-next polish item, not a v1 break.",
+            "ADR-0042 is `accepted` (2026-05-16) with all 5 verification gates closed (keyring audit, migration round-trip, SECURITY.md threat model, am pair surface via ADR-0047, ADR-0043 coherence). am pair accept/finalize commands exist (src/commands/pair*.ts). Argon2idParams default to OWASP-2025-aligned m=128MiB/t=3/p=4 with an 8MiB floor and loud validation; note the on-disk identity wrap currently uses age's scrypt (documented at secrets-age.ts:100-117), with Argon2id-WASM deferred to ADR-0042 Phase 2 (a documented deferral, not a gap)."
+          ],
+          "gaps": [
+            {
+              "severity": "low",
+              "title": "Stale fence comment + wizard option claim age apply-path is 'not fixed/not integration-tested' when it demonstrably is (developer-facing accuracy / honesty drift)",
+              "evidence": "src/commands/setup.ts:25-28 ('The age backend (ADR-0042) is fenced until its apply-path runtime is fixed and integration-tested') and the parallel claim in secretsBackendOptions() doc (setup.ts:154-159) and ADR-0053 line 59-60. The apply-path WAS fixed in commit 1e6429f (2026-05-31 22:07, controller.ts:314-322) and integration-tested (test/integration/secret-decode-pipeline.test.ts, 42 pass), which landed ~2.5h BEFORE the fence comment (commit 9ce3567, 2026-06-01 00:46). Not a v1 ship blocker — the wizard correctly defaults to the working AES path and age is not advertised to v1 users — but the stated RATIONALE for the fence is no longer true and will mislead the next contributor into thinking age apply is broken. Fix: update the comment to reflect the real reason age stays out of the v1 wizard (deliberate v1-scoping / write-commands don't yet honor backend / multi-device is a v-next story), not 'apply-path broken'.",
+              "isV1": false
+            }
+          ],
+          "verdict": "clean"
+        }
+      },
+      {
+        "facet": "adr-hygiene",
+        "audit": {
+          "facet": "ADR Decision-State Hygiene",
+          "findings": [
+            "The task's premise of '8 proposed ADRs (0033, 0039, 0043, 0045, 0048, 0049, 0050, 0054)' is inaccurate. The actual proposed set is 6: 0043, 0045, 0048, 0049, 0050, and 0054. ADR-0033 is status:accepted (with a pending_amendment_by header) and ADR-0039 is status:accepted. Verified via per-file frontmatter scan of all 55 ADR files.",
+            "The five hosted-UI ADRs (0043, 0045, 0048, 0049, 0050) are correctly proposed and are genuine v2 deferrals. 0048/0049/0050 each carry an explicit frontmatter `note: plan-only, code not yet landed`. CodeMirror/CM6 returns ZERO hits in src/ (grep for codemirror/@codemirror/EditorView empty). The OAuth + crypto.subtle code in src/web/worker.ts is the pre-existing ADR-0015 stateless-web-ui (accepted), not the richer hosted-UI auth tiers these ADRs describe. NOT flagged, per task instruction.",
+            "ADR-0054 (Knowledge as a First-Class Peer, R1-R8) is FULLY SHIPPED but still status:proposed. All 8 R-items appear in source (src/wiki/storage.ts meta-index at :439-527, --all-projects search, --promote gate at :346-418; src/wiki/ner.ts catalog-derived NER at :17-69; writePage graph/wikilink maintenance at :991/:1056). Merged via PRs #26, #29, #30, #35, #37, #39 (multiple merge commits in git log). Every R-tracking seed (WIKI-R1..R8 + FIX/WIRE follow-ups) is status:closed in .seeds/issues.jsonl. This is the exact decision-state debt pattern the task flagged (like ADR-0053 pre-promotion).",
+            "ADR-0034 (Scope Fence for First-Party ACP Shims) is status:accepted (accepted 2026-05-01) and its 'Tier-down-before-remove' policy (lines 123-132) is the operative binding amendment to ADR-0033. Deprecation warnings are shipped in code (src/commands/marketplace.ts, run.ts use @deprecated/warn). Yet ADR-0033 still carries `pending_amendment_by: ADR-0034` and a stale header note saying ADR-0034 'is currently status: proposed' and its policy is 'NOT yet binding' — directly contradicted by reality.",
+            "test/core/adr-frontmatter.test.ts is a purpose-built regression lock for the 0033<->0034 transition. Its doc comment says 'WHEN ADR-0034 IS PROMOTED TO ACCEPTED, flip this test... A failure of this test IS the signal that ADR-0033's amendment state has transitioned.' Because BOTH ADR-0033's frontmatter AND the test were left stale together, the test still passes (verified: 3 pass, 0 fail) and the engineered signal never fired despite ADR-0034 having been accepted for over a month.",
+            "ADRs/README.md index has two file<->table status mismatches (automated cross-check): row 0053 says 'Proposed' but the file is status:accepted and `am setup` is shipped (src/commands/setup.ts exists, wired via PR #34); row 0052 says 'Superseded' but the file frontmatter is status:accepted.",
+            "AGENTS.md line 174 says 'ADRs/ ... 54 architectural decision records (0001-0053, incl. 0031a)' but there are 55 ADR files (0001-0054 + 0031a) — the count and the range both omit ADR-0054.",
+            "No CI gate enforces ADR status consistency beyond the single stale regression-lock test; the README index and AGENTS.md count are maintained by hand, which is why these drifted."
+          ],
+          "gaps": [
+            {
+              "severity": "medium",
+              "title": "ADR-0054 is status:proposed but its R1-R8 decision is fully shipped, tested, and merged",
+              "evidence": "ADRs/0054-knowledge-as-first-class-peer.md:2 (status: proposed). Implementation present: src/wiki/storage.ts:439-527 (meta-index R5), :346-418 (--promote gate R6), :991/:1056 (write-path graph/wikilink R1); src/wiki/ner.ts:17-69 (catalog-derived NER R3); src/commands/wiki.ts:136-155 (--all-projects). Merged via PRs #26/#29/#30/#35/#37/#39 (git log). All WIKI-R1..R8 seeds closed in .seeds/issues.jsonl. A shipped+tested+merged v1 feature whose decision record still reads 'proposed' is decision-state debt — the same condition ADR-0053 was in before promotion. Should be promoted to status:accepted.",
+              "isV1": true
+            },
+            {
+              "severity": "low",
+              "title": "ADR-0033 carries stale pending_amendment_by note and never flipped to amended_by after ADR-0034 was accepted",
+              "evidence": "ADRs/0033-acp-agent-tiers-and-shim-wrapper.md:4 still has `pending_amendment_by: ADR-0034` and lines 9-20 assert ADR-0034 'is currently status: proposed' and its tier-down policy is 'NOT yet binding'. But ADRs/0034-shim-scope-and-inclusion-criteria.md:2 is status:accepted (since 2026-05-01) and its tier-down-before-remove policy (0034 lines 123-132) is operative + shipped. The header should flip to `amended_by: ADR-0034` and the 'Until then' conditional block removed.",
+              "isV1": false
+            },
+            {
+              "severity": "low",
+              "title": "Purpose-built ADR-0033/0034 regression-lock test silently passes on stale state — the engineered transition signal never fired",
+              "evidence": "test/core/adr-frontmatter.test.ts:9-12 doc comment: 'WHEN ADR-0034 IS PROMOTED TO ACCEPTED, flip this test... A failure of this test IS the signal that ADR-0033's amendment state has transitioned.' Assertions at :39 (pending_amendment_by===ADR-0034) and :42 (amended_by !contains ADR-0034) still hold because ADR-0033's frontmatter was never updated alongside 0034's promotion. Verified `bun test` -> 3 pass, 0 fail. The lock failed at its single designed job. Test should be flipped to assert amended_by, restoring a working guard.",
+              "isV1": false
+            },
+            {
+              "severity": "low",
+              "title": "ADRs/README.md index status column is stale for ADR-0053 (and inconsistent for 0052)",
+              "evidence": "Automated cross-check of every ADR file's frontmatter status vs the README table: row 0053 (ADRs/README.md:62) = 'Proposed' but ADRs/0053-am-setup-first-run-wizard.md:2 = status:accepted and `am setup` is shipped (src/commands/setup.ts, PR #34). Row 0052 (ADRs/README.md:61) = 'Superseded' but ADRs/0052-...md:2 = status:accepted (the file<->index disagree; given the documented don't-delete decision, the file frontmatter itself is arguably the stale one). The README is the canonical ADR index and an LLM reading it would be misled about which decisions are live.",
+              "isV1": true
+            },
+            {
+              "severity": "low",
+              "title": "AGENTS.md ADR count/range is stale — claims 54 records (0001-0053) when 55 exist including 0054",
+              "evidence": "AGENTS.md:174 'ADRs/ # 54 architectural decision records (0001-0053, incl. 0031a)'. Actual: `ls ADRs/0*.md | grep -vE 'README|template' | wc -l` = 55, and ADR-0054 exists. AGENTS.md is the declared single source of truth (per CLAUDE.md); a wrong count/range there is a documentation-integrity miss for a v1 ship.",
+              "isV1": true
+            }
+          ],
+          "verdict": "minor-gaps"
+        }
+      },
+      {
+        "facet": "supply-chain",
+        "audit": {
+          "facet": "DEPENDENCY / SUPPLY-CHAIN / SECURITY",
+          "findings": [
+            "Runtime dependency surface is tight and on-thesis (ADR-0010 minimal posture honored). package.json:60-75 lists 13 direct runtime deps — all the expected ones (citty, @clack/prompts, zod, @iarna/toml, isomorphic-git, hono, minisearch, age-encryption) plus cross-keychain (OS keychain), @agentclientprotocol/sdk (ACP), and silvery+react (TUI). `bun pm ls --all` = 256 packages total in the tree, which is lean for a CLI of this scope. No obviously bloated or unmaintained direct dep.",
+            "Lockfile integrity is enforced. bun.lock is committed (text format, 58KB), and `bun install --frozen-lockfile` is used in EVERY workflow leg: ci.yml:22, :103, :139, :290 and release.yml:27, :270. A broken/mutated lockfile fails CI. This is the correct 2026 posture.",
+            "SHA-pinning of git deps is honored even transitively: silvery's `loggily` git dep resolves to a pinned commit in the lockfile — bun.lock:423 `loggily@github:beorn/loggily#c5e8f32`. This matches SECURITY.md's mandate ('any package installed directly from a Git repository MUST be pinned to a specific commit SHA').",
+            "SECURITY.md is present and genuinely thorough: an 8-section threat model (secret-at-rest, in-transit, key-leak, env snapshot, browser side-channel, supply-chain, MCP impersonation, perms), a cryptographic-posture table (age + Argon2id m=128MiB/t=3/p=4), a disclosure window (48h triage / 90-day), GitHub Private Vulnerability Reporting, and cross-refs to ADR-0042/0046/0019/0047. This is well above the bar for a v1 OSS CLI.",
+            "CI security hygiene is good: least-privilege `permissions: contents: read` (ci.yml:11-12), pinned bun version (1.3.11), and the release path generates and publishes sha256 checksums (release.yml:94-99) plus ad-hoc codesigns the darwin binaries (release.yml:48-57). install.sh fail-closes on checksum verification (install.sh:96-110: refuses to install if no sha256 tool is available unless --insecure).",
+            "ws@8.18.0 (GHSA-58qx-3vcg-4xpx, moderate) reaches the tree only via wrangler -> miniflare, both of which are devDependencies (package.json:76-83) and are NOT compiled into the shipped `am` binary (scripts/build.ts entry points are src/cli.ts + src/acp-shell-cli.ts only). Not a v1 runtime exposure.",
+            "The vulnerable hono features are not used in shipped code. grep of src/ shows hono is used only for routing + `serveStatic` (src/web/server.ts:5,776) and basic A2A/run servers — NO `hono/jsx` SSR, NO `jwt()`, NO cache middleware. So the CSS-injection, JWT-NumericDate, and cache-leakage advisories do not apply to the actual code paths; only the bodyLimit-bypass advisory could theoretically touch `am serve` POST endpoints, and those are token-gated."
+          ],
+          "gaps": [
+            {
+              "severity": "high",
+              "title": "Direct dependency `hono` ships with 6 known advisories; fix is a trivial in-range patch bump",
+              "evidence": "`bun audit` reports hono <4.12.18 with 6 advisories (1 GHSA-qp7p CSS injection, GHSA-hm8q JWT NumericDate, GHSA-p77w cache leakage, GHSA-9vqf bodyLimit bypass, GHSA-69xw + GHSA-458j JSX HTML injection). package.json:69 pins `\"hono\": \"^4.12.12\"` and the tree resolves to hono@4.12.12 (bun pm ls). GHSA-qp7p (verified via advisory) is first-patched in 4.12.18 — a patch release within the ^4.12 range, so `bun update hono` closes all 6 with zero breaking change. The dangerous features (JSX SSR, JWT, cache mw) are NOT used by shipped code, so real exploitability is low — but for a security-positioned tool, shipping a direct dependency carrying 6 named CVEs/advisories when the remediation is a no-risk patch bump is a credibility gap a fresh `bun audit` (or any downstream consumer's audit) will surface on day one. Bump the floor to ^4.12.18 and regenerate the lockfile.",
+              "isV1": true
+            },
+            {
+              "severity": "medium",
+              "title": "SECURITY.md claims continuous `bun pm audit` monitoring, but NO audit step exists in CI or any script",
+              "evidence": "SECURITY.md:83 states 'We rely on `bun pm audit` to continuously monitor for known vulnerabilities' and §6 repeats 'We audit transitive dependencies using bun pm audit.' But `grep -rniE 'bun (pm )?audit|npm audit|osv|snyk' .github scripts package.json .coderabbit.yaml` returns ZERO matches — there is no audit gate or even a non-blocking audit job anywhere. The claim is aspirational, not implemented; the 8 live advisories (incl. 1 high) would have been caught months ago by the control the policy says exists. This is a documentation-vs-reality gap on a security-sensitive tool. Add a non-blocking (report-only) `bun audit` step to ci.yml so new advisories surface on every PR, matching the stated policy.",
+              "isV1": true
+            },
+            {
+              "severity": "medium",
+              "title": "`am serve` binds to 0.0.0.0 (all interfaces) while telling the user 'localhost' — undocumented",
+              "evidence": "src/commands/serve.ts:45-48 calls `Bun.serve({ port, fetch: app.fetch })` with NO `hostname`. Bun docs (verified) state `hostname` 'defaults to \"0.0.0.0\"', so the local dashboard listens on every network interface, yet serve.ts:52 prints `http://localhost:${port}`. The repo already has an inbound/outbound asymmetry: A2A *outbound* requests are guarded against private/loopback hosts (src/protocols/a2a/url-guard.ts SEC-3), but the *inbound* `am serve` listener has no bind restriction and no ADR/comment justifying 0.0.0.0 (grep of src/ADRs/docs finds no documented decision). Mitigation in place: a fresh 128-bit URL token per invocation + HttpOnly/SameSite=Lax cookie + 0o600 token file (src/web/server.ts:42-56,138). So this is not an open door, but a 'local' editing surface (pillar 6) defaulting to LAN-reachable widens the attack surface for the hono bodyLimit advisory and is exactly the kind of thing a security review should flag. Fix: pass `hostname: \"127.0.0.1\"` by default (with an opt-in flag for LAN access), or document the 0.0.0.0 choice in an ADR.",
+              "isV1": true
+            },
+            {
+              "severity": "low",
+              "title": "Transitive HIGH-severity DoS (@chenglou/pretext O(n^2)) ships in the TUI binary; no override pinning it to the fixed version",
+              "evidence": "`bun audit` flags @chenglou/pretext <=0.0.4 as HIGH (GHSA-5478-66c3-rhxr, CVSS 8.7, O(n^2) algorithmic-complexity DoS; verified first-patched in 0.0.5). It is a runtime dependency of silvery (node_modules/silvery/package.json `dependencies` -> `@chenglou/pretext: ^0.0.3`), and silvery IS compiled into the `am` binary (the TUI), so it ships. bun.lock resolves pretext@0.0.3. Real exploitability for a local CLI TUI is low — the malicious ~80k-repeated-punctuation payload would be the user's own terminal input (self-DoS), not attacker-controlled. silvery's range hasn't picked up 0.0.5; the project could close it now with a package.json `overrides` entry (the repo already uses overrides for @silvery/commander, package.json:85-87), e.g. `\"@chenglou/pretext\": \"0.0.5\"`. Not ship-blocking, but it's a HIGH advisory in the shipped tree that a one-line override eliminates.",
+              "isV1": false
+            },
+            {
+              "severity": "low",
+              "title": "No dependency-update automation (dependabot/renovate) and no build provenance/attestation (SLSA/Sigstore)",
+              "evidence": "No `.github/dependabot.yml`, no `renovate.json` (confirmed by ls). With no audit gate AND no auto-update bot, the gap between an advisory landing and the project noticing is unbounded — exactly how hono drifted to 6 advisories and pretext to a HIGH. Separately, against 2026 supply-chain best practice (SLSA provenance, npm/GitHub build attestations), the release pipeline (release.yml) produces sha256 checksums but emits NO provenance attestation — no `actions/attest-build-provenance`, no Sigstore/cosign signing of the downloadable binaries that install.sh and Homebrew pull. Checksums prove integrity-from-the-release-page but not build provenance (who/what built them). For a tool distributed via `curl | sh` and Homebrew this is a recognized hardening gap. Both are cheap to add (dependabot weekly + the attest action) and neither blocks a v1 ship, but together they explain why this facet's vulns went unnoticed despite the policy claiming otherwise.",
+              "isV1": false
+            }
+          ],
+          "verdict": "minor-gaps"
+        }
+      },
+      {
+        "facet": "pillars-ux",
+        "audit": {
+          "facet": "SIX-PILLAR v1 COMPLETENESS + REAL FIRST-RUN UX",
+          "findings": [
+            "Pillar 1 (catalog + git-sync) traces end-to-end on a real run: `am add server tavily` -> `am list servers` (shows it active) -> `am apply --dry-run` (names the exact native file it would write, /home/.claude.json) -> `am apply` (fail-closed drift refusal works: 'refusing to overwrite -- re-run with --force') -> `am status` (correctly reports 'drift detected (1 change)'). The init/setup `noCommit:true` design is real and correct: a fresh `am setup` leaves config.toml untracked, then the next `am add` sweeps it into the commit (verified: log shows 'add server: tavily' then 'init: agent-manager repository', working tree clean after).",
+            "Pillar 2 (MCP gateway) is live: piping JSON-RPC into `am mcp-serve` returns a valid `initialize` result (protocolVersion 2024-11-05, serverInfo agent-manager), a populated `tools/list` (am_list_servers, am_status, am_config_show, etc. with x-am tier metadata), and a working `tools/call` for am_list_servers that returns the configured tavily server as structured text content.",
+            "Pillar 3 (ACP/A2A router) is wired: `am agent list` shows the 3-source unified registry with correct tiers (4 native/3 shim/7 catalog-only), `--runnable` correctly filters to claude/codex/gemini/kiro. `am agent ping ghost` and `am agent delegate ghost` produce clean actionable errors ('not found in roster. Use `am agent list`...'). SSRF guard fires on loopback URLs.",
+            "Pillar 5 (LLM-wiki) full pipeline works: `am session list` reads a real Claude Code projects/*.jsonl transcript and lists it (claude-code:sess1, 2 msgs); `am wiki ingest --session` runs the heuristic harvester and produced 3 wiki pages from a pattern-matching session; `am wiki list`/`search` then return them with BM25 scores. `am wiki add --type fact` works. The earlier 'Ingested 0 pages' on a thin Q&A session was CORRECT heuristic behavior (harvester.ts patterns require fact/error/preference markers, and am ships no LLM per ADR-0010), not a bug.",
+            "Pillar 6 (local web UI) boots and serves: `am serve --port 8799` returns HTTP 200 on / and `{\"status\":\"ok\",\"version\":...}` on /api/health. TUI uses Silvery/React requiring a real TTY (relied on its unit tests).",
+            "First-run UX is largely strong and clig.dev-aligned: `am setup --yes` works on both a truly fresh machine AND a brownfield machine with a pre-existing Claude Code MCP server (imports it, then apply succeeds 1/1, ends on green doctor). `am doctor` is highly actionable -- parse errors include row/col, missing key/remote/scanner each carry the exact fix command. Most error paths print a `suggestion:` line (`am use ghost` lists available profiles; `am add server foo` shows usage; `am push`/`am secret set`/registry commands all give clean human-readable errors with exit code 1). `am --help` is well-grouped by category, full wiki surface (21 subcommands) is discoverable via `am wiki --help`, and `am completion bash` emits a working script. Released binaries get a real version (release.yml sets VERSION from the git tag; 0.0.0-dev is only the local-dev sentinel)."
+          ],
+          "gaps": [
+            {
+              "severity": "medium",
+              "title": "`am agent add <url>` leaks a raw stack trace to the user (clig.dev violation) -- isolated missing try/catch in a v1 Pillar-3 path",
+              "evidence": "src/commands/agents.ts:225 calls `await discoverFromUrl(url)` with NO try/catch, so any discovery error escapes uncaught to citty's top-level handler and prints a developer stack trace with internal src/ paths. Reproduced two ways: `am agent add http://localhost:59999` -> 'ERROR ... refused' + 'at validateRemoteUrl (src/protocols/a2a/url-guard.ts:140:15) / at discoverAgent (src/protocols/a2a/client.ts:107:5) / at discoverFromUrl (src/protocols/a2a/discovery.ts:37:17) / at run (src/commands/agents.ts:225:24)'; `am agent add https://...invalid` -> the message is even printed TWICE with a stack frame. Contrast its siblings `am agent ping`/`delegate` and all registry commands (`am search`/`install`) which catch and print clean one-line errors. clig.dev explicitly lists 'not printing scary-looking stack traces' as a robustness requirement. Adding an A2A agent is the canonical first Pillar-3 action; pointing it at one's own local/unreachable agent is normal and yields a stack dump.",
+              "isV1": true
+            },
+            {
+              "severity": "low",
+              "title": "Marketplace scope-leak: `am --help` advertises a top-level 'Marketplace commands' group, while the command + README still cite 'retired per ADR-0039' -- both contradict AGENTS.md's canonical v1 scope",
+              "evidence": "src/help.ts:46-48 renders a first-class 'Marketplace commands:' heading in `am --help`; `am marketplace` runs and exposes 8 subcommands. But src/commands/marketplace.ts:1-6 docstring says '@deprecated Marketplace v1 is retired per ADR-0039 ... scheduled for removal' and emits a 'WARNING: am marketplace is deprecated' to stderr, and README.md:50-51 repeats 'Marketplace v1 is retired per ADR-0039'. AGENTS.md lines 31-41 say the OPPOSITE: 'ADR-0039 (retire) and ADR-0052 (schedule code deletion) are superseded by this product decision -- do NOT execute the marketplace deletion; it returns in v2' and the surface is 'kept out of the v1 CLI's advertised surface.' So the v1 advertised surface (help group) plus the deprecation warning directly contradict the canonical scope doc. This is NOT the v2 marketplace pillar being 'missing' -- it is documentation/UX drift around the scope boundary. A first-run user sees 'Marketplace commands' prominently, runs it, and is told it's 'deprecated and will be removed', which the product decision says is wrong. Recommend either demoting it out of the advertised help surface (per AGENTS.md) or updating the docstring/README to the superseded-returns-in-v2 framing -- pick one and make all three agree.",
+              "isV1": false
+            },
+            {
+              "severity": "low",
+              "title": "Benign 'File not found'/'No CLAUDE.md found' import warnings leak into a clean first-run `am setup`",
+              "evidence": "During a successful brownfield `am setup --yes`, the output includes `warning: claude-code: File not found: <cwd>/.mcp.json`. src/adapters/claude-code/import.ts:93 (`warnings.push('File not found: ' + filePath)`) and :153 ('No CLAUDE.md found in ...') push warnings for OPTIONAL project files that simply don't exist; these bubble through `am import auto` (which setup invokes) to the user. Cosmetic only -- import still succeeds and reports 'Imported 1 server(s)' -- but clig.dev advises against scary warnings for optional/expected-absent files on the golden first-run path. Suggest downgrading 'optional file absent' to verbose-only.",
+              "isV1": false
+            },
+            {
+              "severity": "low",
+              "title": "`am wiki ingest` silent 0-page dead-end gives no guidance",
+              "evidence": "`am wiki ingest --session claude-code:sess1` on a normal Q&A session prints exactly 'Ingested 0 wiki pages from claude-code:sess1' and exits 0, then `am wiki list` shows 'No wiki pages found.' This is correct behavior (the heuristic harvester in src/wiki/harvester.ts requires fact/error/preference/tool-call markers, and am ships no LLM per ADR-0010 so --llm-extract degrades to the same heuristic), but a first-run user reasonably expects session->wiki to produce something and gets no hint about WHY zero, or that richer sessions / --llm-extract behave differently. A one-line 'no extractable knowledge matched the heuristics; richer sessions or a host-injected LLM (--llm-extract) yield more' would close the dead-end. Pipeline itself is verified working (a marker-rich session produced 3 pages).",
+              "isV1": false
+            }
+          ],
+          "verdict": "minor-gaps"
+        }
+      }
+    ],
+    "synthesis": {
+      "overallVerdict": "real-work",
+      "summary": "There is one genuine, verified ship-blocker that overshadows everything else: the downloadable v0.5.0-rc6 binary is 288 commits stale, and the documented headline first-run command `am setup` does not exist in it (confirmed: setup.ts is absent at the rc6 tag, present at HEAD). A stranger who installs today via `curl | sh` runs the documented entry point and gets help + exit 1 with no config — the entire \"downloadable CLII + wizard\" north star is broken in the artifact people can actually download. This is gated by a second real problem: every release run reports FAILURE because an unconditional npm-publish step has no token and the name is taken, so cutting a fresh release isn't a clean one-button operation today. Around those two, there is a small cluster of credibility/honesty gaps that are cheap and worth fixing in the same pass (hono 6 advisories via a no-risk patch bump, SECURITY.md claiming an audit gate that doesn't exist, `am serve` silently binding 0.0.0.0 while saying localhost, an A2A `agent add` stack-trace leak, and four stale-decision-record items). None of the v2 surface (marketplace, hosted-UI, chub-mcp, contradiction-handling) is counted as v1 work. Verdict is real-work because shipping requires cutting a non-stale release off a green pipeline — not a rubber stamp, but also not a deep redesign; the code at HEAD already does the right thing.",
+      "realV1Gaps": [
+        {
+          "title": "Shipped rc6 binary is 288 commits stale — documented `am setup` wizard does not exist in it",
+          "action": "Cut a fresh release off HEAD (setup.ts confirmed present at HEAD, absent at rc6) so the downloadable binary actually contains the documented first-run wizard; this is the prerequisite for every other fix to reach users.",
+          "severity": "critical"
+        },
+        {
+          "title": "Release pipeline hard-fails on every run at the unconditional npm-publish step (no NPM_TOKEN, name taken)",
+          "action": "Gate release.yml:281-284 npm publish on NPM_TOKEN presence (or a release input) so the job goes green and a clean release can be cut; npm distribution is intentionally deferred per project memory.",
+          "severity": "high"
+        },
+        {
+          "title": "Direct dep hono@4.12.12 carries 6 known advisories (1 = CSS injection fixed in 4.12.18)",
+          "action": "Bump package.json:69 floor to ^4.12.18 and regenerate the lockfile — fully in-range patch, zero breaking change; closes all 6 before a downstream `bun audit` surfaces them day one.",
+          "severity": "high"
+        },
+        {
+          "title": "`am agent add <url>` leaks a raw stack trace (clig.dev violation) on the canonical first Pillar-3 action",
+          "action": "Wrap the `await discoverFromUrl(url)` call at src/commands/agents.ts:225 in try/catch and print a clean one-line error, matching sibling commands (ping/delegate/search/install).",
+          "severity": "medium"
+        },
+        {
+          "title": "`am serve` binds 0.0.0.0 (LAN-reachable) while telling the user 'localhost' — undocumented inbound surface",
+          "action": "Pass `hostname: \"127.0.0.1\"` by default in the Bun.serve call (src/commands/serve.ts:45) with an opt-in flag for LAN access; matches the existing A2A outbound private-host guard and the printed 'localhost' promise.",
+          "severity": "medium"
+        },
+        {
+          "title": "SECURITY.md claims continuous `bun pm audit` monitoring that has no implementation anywhere",
+          "action": "Add a non-blocking report-only `bun audit` step to ci.yml so the documented policy becomes real and new advisories surface per-PR (would have caught the hono drift).",
+          "severity": "medium"
+        },
+        {
+          "title": "Decision-record state is stale for shipped v1 features (ADR index + AGENTS.md source of truth)",
+          "action": "Promote ADR-0054 to accepted (R1-R8 shipped/tested/merged); fix ADRs/README.md row 0053 (Proposed→Accepted) and reconcile 0052 file-vs-index; correct AGENTS.md:174 to '55 records (0001-0054)' — verified 55 files exist.",
+          "severity": "low"
+        }
+      ],
+      "v2OrOptional": [
+        "Docs first-touch divergence: README cites `am setup`, install.sh/Homebrew caveats say `am init` — align messaging, but not ship-blocking once a fresh release lands.",
+        "Docs contradict themselves on the npm step (README:943 lists it active vs README:119 says deferred) — copy fix, low risk.",
+        "CHANGELOG [Unreleased] section is empty so next release notes will be blank — populate before cutting the release (mechanical).",
+        "No native Windows install path (no install.ps1) and install.sh ignores Windows arm64 — x64 binary works under Win11 emulation; v-next polish.",
+        "No cosign/Sigstore provenance, SBOM, or actions/attest-build-provenance — checksums enforced fail-closed are acceptable for initial v1; hardening for later.",
+        "Stale age-backend fence comment (setup.ts:25-28 / ADR-0053) claims apply-path 'not fixed/not integration-tested' when it demonstrably was — developer-facing honesty fix, age correctly out of v1 wizard.",
+        "ADR-0033 still carries pending_amendment_by:ADR-0034 instead of amended_by; the purpose-built regression-lock test (adr-frontmatter.test.ts) silently passes on stale state — flip both together.",
+        "Transitive HIGH @chenglou/pretext O(n^2) DoS in the TUI binary — self-DoS only (user's own terminal input); close with a one-line package.json overrides entry when convenient.",
+        "No dependabot/renovate automation — cheap to add (weekly), explains how deps drifted, but not a v1 ship blocker.",
+        "Marketplace help-surface scope drift: `am --help` advertises a 'Marketplace commands' group while command/README call it 'retired per ADR-0039' — both contradict AGENTS.md's superseded-returns-in-v2 framing; demote from advertised surface OR update copy. This is scope-boundary UX drift, NOT the v2 marketplace pillar.",
+        "Benign 'File not found'/'No CLAUDE.md found' import warnings leak into clean first-run `am setup` — downgrade optional-file-absent to verbose-only.",
+        "`am wiki ingest` silent 0-page dead-end gives no guidance — add a one-line hint about heuristics/--llm-extract; pipeline verified working."
+      ],
+      "cleanFacets": [
+        "secrets-age"
+      ]
+    }
+  }
+}
