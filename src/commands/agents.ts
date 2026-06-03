@@ -222,7 +222,22 @@ const addSubcommand = defineCommand({
 
     info(`Discovering agent at ${url}...`, opts);
 
-    const card = await discoverFromUrl(url);
+    // UX-STACK: wrap discovery so a network/parse/SSRF-guard failure prints a
+    // clean actionable one-liner instead of leaking a developer stack trace to
+    // the user (clig.dev robustness requirement). Matches the error-handling
+    // style of the sibling subcommands (ping/delegate/cancel).
+    let card: Awaited<ReturnType<typeof discoverFromUrl>>;
+    try {
+      card = await discoverFromUrl(url);
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
+      error(
+        `Could not reach ${url}: ${message}. Check the URL and that the agent exposes /.well-known/agent.json`,
+        opts,
+      );
+      process.exitCode = 1;
+      return;
+    }
     if (!card) {
       error(`No A2A Agent Card found at ${url}/.well-known/agent.json`, opts);
       process.exitCode = 1;

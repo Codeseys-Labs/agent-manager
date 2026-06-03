@@ -353,4 +353,98 @@ describe("am agents", () => {
       expect(combinedText).toContain("enable-shim to activate");
     });
   });
+
+  // ── add subcommand: clean error on discovery failure (UX-STACK) ─
+  //
+  // `am agent add <url>` is the canonical first Pillar-3 action. Pointing it
+  // at an unreachable/local/invalid agent is normal; it must NOT leak a raw
+  // developer stack trace (clig.dev robustness requirement). It should print
+  // a clean actionable one-liner and exit 1, matching its siblings.
+
+  describe("add — clean error on discovery failure", () => {
+    async function runAddWith(
+      discoverImpl: (url: string) => Promise<unknown>,
+      argv: Record<string, unknown>,
+    ): Promise<void> {
+      const origConfigDir = process.env.AM_CONFIG_DIR;
+      process.env.AM_CONFIG_DIR = configDir;
+      // Replace the discovery module's discoverFromUrl with a throwing stub.
+      mock.module("../../src/protocols/a2a/discovery", () => ({
+        discoverFromUrl: discoverImpl,
+        // Keep the other named exports the command imports importable.
+        addToRoster: async () => {},
+        discoverFromConfig: async () => [],
+        loadRoster: async () => [],
+        removeFromRoster: async () => false,
+        saveRoster: async () => {},
+      }));
+      try {
+        const { agentsCommand } = await import("../../src/commands/agents");
+        const addCmd = await (
+          agentsCommand.subCommands as Record<string, () => Promise<unknown>>
+        ).add();
+        await (addCmd as { run: (ctx: { args: Record<string, unknown> }) => Promise<void> }).run({
+          args: { json: false, quiet: false, verbose: false, ...argv },
+        });
+      } finally {
+        if (origConfigDir !== undefined) {
+          process.env.AM_CONFIG_DIR = origConfigDir;
+        } else {
+          Reflect.deleteProperty(process.env, "AM_CONFIG_DIR");
+        }
+      }
+    }
+
+    afterEach(() => {
+      // Restore the real discovery module so other tests/files are unaffected.
+      mock.restore();
+    });
+
+    test("a thrown discovery error yields a clean one-liner, no stack, exit 1", async () => {
+      await runAddWith(
+        async () => {
+          throw new Error(
+            "A2A URL targets a private/loopback host (localhost); refused. Set AM_A2A_ALLOW_PRIVATE=1",
+          );
+        },
+        { url: "http://localhost:59999" },
+      );
+
+      expect(process.exitCode).toBe(1);
+      const combined = [...consoleOutput, ...consoleErrors].join("\n");
+      // Clean, actionable one-liner.
+      expect(combined).toContain("Could not reach http://localhost:59999");
+      expect(combined).toContain("Check the URL");
+      expect(combined).toContain("/.well-known/agent.json");
+      // The underlying message is surfaced...
+      expect(combined).toContain("refused");
+      // ...but NO developer stack frame leaks (clig.dev).
+      expect(combined).not.toMatch(/\bat\s+\w+\s+\(/); // e.g. "at validateRemoteUrl ("
+      expect(combined).not.toContain("src/protocols/a2a");
+      process.exitCode = 0;
+    });
+
+    test("a network-failure throw also prints clean error + exit 1", async () => {
+      await runAddWith(
+        async () => {
+          throw new Error("Failed to fetch agent card from http://10.0.0.9/.well-known/agent.json");
+        },
+        { url: "http://10.0.0.9" },
+      );
+
+      expect(process.exitCode).toBe(1);
+      const combined = [...consoleOutput, ...consoleErrors].join("\n");
+      expect(combined).toContain("Could not reach http://10.0.0.9");
+      expect(combined).not.toMatch(/\bat\s+\w+\s+\(/);
+      process.exitCode = 0;
+    });
+
+    test("non-throwing null result still gives the no-card error (regression guard)", async () => {
+      await runAddWith(async () => null, { url: "https://example.com" });
+      expect(process.exitCode).toBe(1);
+      const combined = [...consoleOutput, ...consoleErrors].join("\n");
+      expect(combined).toContain("No A2A Agent Card found");
+      process.exitCode = 0;
+    });
+  });
 });
