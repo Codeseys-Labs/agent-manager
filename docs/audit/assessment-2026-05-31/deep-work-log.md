@@ -56,3 +56,23 @@ PHASE-8 re-review signed off with 2 OPTIONAL low items classed non-blocking; imp
 **FINAL: 19 PRs merged (#23–#41). v1 Seeds backlog = 0 open / 0 in_progress / all closed. Full suite 3490 pass / 0 fail. tsc first-party clean, lint 0 warnings. main CI green across ubuntu/windows-2025/macOS + integration + integration-windows. Both execution and review teams confirm zero remaining v1 work. Documented v-next deferrals: WIKI-opt chub-mcp, WIKI-supersede-consumer contradiction-handling, marketplace pillar — all ADR-backed.**
 
 Loop closed.
+
+## Checkpoint 12 — 2026-06-04 (production-readiness audit + FIRST WORKING RELEASE)
+
+After the deep-work-loop reached backlog-zero (checkpoints 10/11), a re-activated /goal triggered a FRESH independent production-readiness audit (5 facets w/ research: distribution, secrets-age, ADR-hygiene, supply-chain, pillars-UX). It found the one thing every prior wave-scoped review missed by only ever checking `main`:
+
+**CRITICAL: the downloadable v0.5.0-rc6 binary was 288 commits stale — `am setup` (the documented headline command, built this very session) did NOT exist in it.** Gated by: the release pipeline hard-failed EVERY run on an unconditional npm-publish step (no NPM_TOKEN, name taken).
+
+**Wave H** (4 disjoint strands, all reviewed) fixed 7 verified v1 gaps:
+- release.yml npm-publish gated + ci.yml report-only `bun audit` step
+- hono ^4.12.12 → ^4.12.18 (resolves 4.12.23, clears 6 advisories)
+- `am serve` binds 127.0.0.1 by default (was 0.0.0.0/LAN) + `--lan`/`--host`; `am agent add` clean error (no stack trace) via `__setDiscoverFromUrlForTests` seam (replacing a mock.module that bled into discovery.test.ts)
+- ADR-0054 promoted proposed→accepted; doc-honesty (README/install.sh/Homebrew first-touch → `am setup`; npm-step contradiction resolved); CHANGELOG [Unreleased] populated
+Integrated: 3503 pass / 0 fail, tsc + lint clean, main CI green all OS.
+
+**The release-cut (the north-star fix):**
+- First rc7 tag FAILED: `if: ${{ secrets.NPM_TOKEN != '' }}` — the `secrets` context is NOT allowed in `if:` conditions; GitHub rejected release.yml at parse time. Caught by `actionlint` (which both the implementer and its adversarial reviewer had skipped). Fix: job-level `env: NPM_TOKEN: ${{ secrets.NPM_TOKEN }}` + `if: ${{ env.NPM_TOKEN != '' }}`.
+- Added an **actionlint CI step (pinned v1.7.7)** so this context-error class is caught locally, not by a failed release.
+- Re-tagged v0.5.0-rc7 on the fix → **release pipeline SUCCEEDED** (first green release since rc6): all 5 platform binaries + checksums attached, Homebrew formula regenerated, npm step cleanly SKIPPED. Verified by downloading `am-linux-x64` (checksum OK) and running `am setup --help` → wizard text (was root-help+exit1 in rc6).
+
+**v0.5.0-rc7 is published.** v1 backlog: 0 open / 0 in_progress except agent-manager-43d2 (CI-AUDIT-HARDEN), deferred-with-documented-justification: the 2 remaining `bun audit` advisories are unfixable in-range (ws via dev-only wrangler→miniflare; @chenglou/pretext self-DoS via silvery TUI, no patch exists). Lesson: "main green" ≠ "release succeeds" ≠ "the binary ships the feature" — verify the downloadable artifact, not just the branch.
