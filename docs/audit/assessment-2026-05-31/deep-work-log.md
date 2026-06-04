@@ -76,3 +76,16 @@ Integrated: 3503 pass / 0 fail, tsc + lint clean, main CI green all OS.
 - Re-tagged v0.5.0-rc7 on the fix → **release pipeline SUCCEEDED** (first green release since rc6): all 5 platform binaries + checksums attached, Homebrew formula regenerated, npm step cleanly SKIPPED. Verified by downloading `am-linux-x64` (checksum OK) and running `am setup --help` → wizard text (was root-help+exit1 in rc6).
 
 **v0.5.0-rc7 is published.** v1 backlog: 0 open / 0 in_progress except agent-manager-43d2 (CI-AUDIT-HARDEN), deferred-with-documented-justification: the 2 remaining `bun audit` advisories are unfixable in-range (ws via dev-only wrangler→miniflare; @chenglou/pretext self-DoS via silvery TUI, no patch exists). Lesson: "main green" ≠ "release succeeds" ≠ "the binary ships the feature" — verify the downloadable artifact, not just the branch.
+
+## Checkpoint 13 — 2026-06-04 (PHASE-8c: release default-path + supply-chain hardening)
+
+The independent PHASE-8c verification of the rc7 release found one CRITICAL gap the release-cut itself missed (the same north-star failure mode, one level deeper): **the default `curl|sh` installed the stale rc6, NOT rc7.** install.sh resolved via GitHub `/releases/latest`, which EXCLUDES prereleases — rc7 was correctly tagged prerelease, rc6 was (mis-)flagged non-prerelease, so `/releases/latest` returned rc6. I'd verified "the released binary contains am setup" via `gh release download <tag>` but never the *default installer path*.
+
+Fixes (all verified):
+- **install.sh prerelease-aware** (`d4f5f4f`): prefer `/releases` first-item (newest of ANY kind) over `/releases/latest`, since the project ships only `-rc` prereleases pre-1.0. Verified END-TO-END: bare `sh install.sh` (no flags) → checksum OK → installs am 0.5.0-rc7 → `am setup --help` works. Also marked rc6 as prerelease (GitHub-state hygiene).
+- **@chenglou/pretext override → 0.0.7** (cleared the high-severity DoS advisory). The PHASE-8c reviewer caught that my 43d2 deferral justification was factually wrong — pretext DID have fixed versions (0.0.5-0.0.7); silvery's `^0.0.3` caret locks to 0.0.3 on a 0.0.x version, fixable via a bun override (same mechanism as @silvery/commander). Verified: bun audit clears pretext, typecheck clean, TUI tests 13/0, build smoke OK, TUI module loads at runtime.
+- **43d2 IMPLEMENTED, not deferred** (`598dbf3`): with hono≥4.12.18 + pretext override, no high/critical advisories remain, so added a hard `bun audit --audit-level=high` CI gate (+ kept full report-only audit for the dev-only `ws` moderate via wrangler→miniflare, not bundled).
+- **CHANGELOG**: dropped the chub-mcp overclaim (v2-deferred, no code).
+- **Stats refreshed** (`a962854`): 3064→3503 tests, 54→55 ADRs across README (badge+block+inline), AGENTS.md, ROADMAP.
+
+**v0.5.0-rc7 published + the default install delivers it.** Advisory baseline: 1 dev-only moderate (ws, not shipped). v1 backlog: 0 open / 0 in_progress. Lesson (recursion of checkpoint 12): "binary contains the feature" ≠ "the default installer delivers that binary" — verify the documented one-liner end-to-end, not a pinned download.
