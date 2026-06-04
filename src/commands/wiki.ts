@@ -309,10 +309,42 @@ const addSubcommand = defineCommand({
     const catalogEntities = await resolveCatalogEntities();
     await addEntry(entry, catalogEntities.length > 0 ? { ner: { catalogEntities } } : undefined);
 
+    // ── Visibility-boundary feedback (W1-3) ──────────────────────────
+    //
+    // `addEntry` writes via `writePage` with NO wikiDir, so the page always
+    // lands at whatever `resolveWikiDir()` resolves to — a project-local
+    // `.am-wiki/` when cwd is inside a project, else the global store. Couple
+    // the scope readout to THAT same decision (not a re-derived path) so it can
+    // never drift from where the write actually landed.
+    //
+    // The cross-project enumerator (`searchAllProjects` → `listProjectWikis`)
+    // only sees `wiki/projects/*` + `wiki/global/` — never a project's local
+    // `.am-wiki/`. So a project-local entry is invisible to
+    // `am wiki search --all-projects` from other projects until it is published.
+    // Surface that boundary; do NOT auto-push (local-first is intentional —
+    // ADR-0044). NOTE: `--global` is currently a no-op for the WRITE (addEntry
+    // ignores it; threading it would require a storage change deferred under
+    // seed agent-manager-eb5c), so scope is derived from the real landing dir,
+    // not the flag — keeping the readout honest.
+    const writeDir = resolveWikiDir();
+    const globalDir = resolveWikiDir({ global: true });
+    const visibleAcrossProjects = writeDir === globalDir;
+    const scope = visibleAcrossProjects ? "global" : "project-local";
+
     if (args.json) {
-      output({ action: "add", entry }, opts);
+      output({ action: "add", entry, scope, visibleAcrossProjects }, opts);
     } else {
       info(`Added entry ${entry.id} (${entityType})`, opts);
+      // Only nudge when the entry is project-local AND the user did not ask for
+      // the global store. `am wiki publish <slug>` promotes a local `.am-wiki/`
+      // entry up to the cross-project `wiki/projects/<name>/` mirror that
+      // `--all-projects` enumerates (add `--promote` to reach `wiki/global/`).
+      if (!visibleAcrossProjects && !args.global) {
+        info(
+          `Note: this entry is project-local. Run \`am wiki publish ${entry.id}\` to make it visible to \`am wiki search --all-projects\` from other projects.`,
+          opts,
+        );
+      }
     }
   },
 });

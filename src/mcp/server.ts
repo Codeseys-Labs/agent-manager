@@ -394,6 +394,7 @@ const TOOL_GROUP_MAP: Record<string, McpToolGroup> = {
   am_registry_search: "registry",
   am_registry_install: "registry",
   am_registry_list_installed: "registry",
+  am_registry_uninstall: "registry",
   // a2a group
   am_agent_discover: "a2a",
   am_agent_list: "a2a",
@@ -656,6 +657,8 @@ const TOOL_SCHEMAS: Record<string, z.ZodTypeAny> = {
   // ── core read-only ────────────────────────────────────────
   am_list_servers: withAuth({ active: zBool.optional() }),
   am_list_profiles: withAuth({}),
+  am_list_skills: withAuth({}),
+  am_list_instructions: withAuth({}),
   am_status: withAuth({}),
   am_config_show: withAuth({}),
   am_doctor: withAuth({}),
@@ -686,6 +689,12 @@ const TOOL_SCHEMAS: Record<string, z.ZodTypeAny> = {
     env: zStrMap.optional(),
   }),
   am_remove_server: withAuth({ name: zStrNonEmpty }),
+  am_profile_create: withAuth({
+    name: zStrNonEmpty,
+    inherits: zStr.optional(),
+    description: zStr.optional(),
+  }),
+  am_profile_delete: withAuth({ name: zStrNonEmpty }),
   am_server_update: withAuth({
     name: zStrNonEmpty,
     enabled: zBool.optional(),
@@ -716,6 +725,7 @@ const TOOL_SCHEMAS: Record<string, z.ZodTypeAny> = {
   }),
   am_registry_install: withAuth({ name: zStrNonEmpty, env: zStrMap.optional() }),
   am_registry_list_installed: withAuth({}),
+  am_registry_uninstall: withAuth({ name: zStrNonEmpty }),
 
   // ── a2a ───────────────────────────────────────────────────
   am_agent_discover: withAuth({ url: zStrNonEmpty.url() }),
@@ -856,6 +866,47 @@ function defineTools(): ToolEntry[] {
           active: name === activeProfile,
         }));
         return { profiles: entries, activeProfile };
+      },
+    },
+    {
+      def: {
+        name: "am_list_skills",
+        description:
+          "List skills registered in the agent-manager catalog. Returns name, path, description, and tags for each skill.",
+        inputSchema: { type: "object", properties: {} },
+      },
+      tier: "read-only",
+      handler: async () => {
+        const { config } = await loadConfigAndProfile();
+        const skills = config.skills ?? {};
+        const entries = Object.entries(skills).map(([name, skill]) => ({
+          name,
+          path: skill.path,
+          description: skill.description ?? "",
+          tags: skill.tags ?? [],
+        }));
+        return { skills: entries };
+      },
+    },
+    {
+      def: {
+        name: "am_list_instructions",
+        description:
+          "List instructions registered in the agent-manager catalog. Returns name, scope, description, globs, and target adapters for each instruction.",
+        inputSchema: { type: "object", properties: {} },
+      },
+      tier: "read-only",
+      handler: async () => {
+        const { config } = await loadConfigAndProfile();
+        const instructions = config.instructions ?? {};
+        const entries = Object.entries(instructions).map(([name, instruction]) => ({
+          name,
+          scope: instruction.scope,
+          description: instruction.description ?? "",
+          globs: instruction.globs ?? [],
+          targets: instruction.targets ?? [],
+        }));
+        return { instructions: entries };
       },
     },
     {
@@ -1368,6 +1419,121 @@ function defineTools(): ToolEntry[] {
           return {
             result: { action: "remove", server: name },
             commitMessage: `remove server: ${name}`,
+            changed: true,
+          };
+        });
+      },
+    },
+    {
+      def: {
+        name: "am_profile_create",
+        description:
+          "Create a new profile in the agent-manager catalog. A profile is a named subset of the catalog (servers, skills, agents, instructions) selected at apply time. Optionally inherit from a parent profile.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            name: { type: "string", description: "Profile name (unique identifier)" },
+            inherits: { type: "string", description: "Parent profile to inherit from" },
+            description: { type: "string", description: "Human-readable description" },
+          },
+          required: ["name"],
+        },
+      },
+      tier: "write-local",
+      handler: async (args) => {
+        const configDir = resolveConfigDir();
+        const name = args.name as string;
+        return withConfig(configDir, async (config) => {
+          if (!config) throw new Error("Config not found. Run `am init` first.");
+          if (config.profiles?.[name]) {
+            throw new Error(
+              `Profile "${name}" already exists. Use am_list_profiles to see existing profiles.`,
+            );
+          }
+          const inherits = args.inherits as string | undefined;
+          if (inherits && !config.profiles?.[inherits]) {
+            throw new Error(`Parent profile "${inherits}" does not exist.`);
+          }
+          if (!config.profiles) config.profiles = {};
+          config.profiles[name] = {
+            ...(args.description ? { description: args.description as string } : {}),
+            ...(inherits ? { inherits } : {}),
+          };
+          return {
+            result: { action: "create", profile: name },
+            commitMessage: `add profile: ${name}`,
+            changed: true,
+          };
+        });
+      },
+    },
+    {
+      def: {
+        name: "am_profile_delete",
+        description:
+          "Delete a profile from the agent-manager catalog. Refuses if another profile inherits from it. This does not prompt for confirmation; the change is recoverable via am_undo.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            name: { type: "string", description: "Profile name to delete" },
+          },
+          required: ["name"],
+        },
+      },
+      tier: "write-local",
+      handler: async (args) => {
+        const configDir = resolveConfigDir();
+        const name = args.name as string;
+        return withConfig(configDir, async (config) => {
+          if (!config) throw new Error("Config not found. Run `am init` first.");
+          if (!config.profiles?.[name]) {
+            throw new Error(
+              `Profile "${name}" does not exist. Use am_list_profiles to see existing profiles.`,
+            );
+          }
+          for (const [otherName, otherProfile] of Object.entries(config.profiles)) {
+            if (otherProfile.inherits === name) {
+              throw new Error(`Cannot delete "${name}": profile "${otherName}" inherits from it.`);
+            }
+          }
+          delete config.profiles[name];
+          return {
+            result: { action: "delete", profile: name },
+            commitMessage: `delete profile: ${name}`,
+            changed: true,
+          };
+        });
+      },
+    },
+    {
+      def: {
+        name: "am_registry_uninstall",
+        description:
+          "Remove a registry-installed MCP server from the catalog, returning its registry provenance. Run am_apply afterward to update native IDE configs.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            name: { type: "string", description: "Server name to uninstall" },
+          },
+          required: ["name"],
+        },
+      },
+      tier: "write-local",
+      handler: async (args) => {
+        const configDir = resolveConfigDir();
+        const name = args.name as string;
+        return withConfig(configDir, async (config) => {
+          if (!config) throw new Error("Config not found. Run `am init` first.");
+          if (!config.servers?.[name]) {
+            throw new Error(
+              `Server "${name}" not found. Use am_list_servers to see available server names.`,
+            );
+          }
+          const provenance = config.servers[name]._registry ?? null;
+          delete config.servers[name];
+          return {
+            result: { action: "uninstall", server: name, provenance },
+            commitMessage: `uninstall server: ${name}`,
             changed: true,
           };
         });
@@ -1996,7 +2162,7 @@ function defineTools(): ToolEntry[] {
       },
       tier: "write-local",
       handler: async (args) => {
-        const { addEntry } = await import("../wiki/storage");
+        const { addEntry, resolveWikiDir } = await import("../wiki/storage");
         const now = new Date().toISOString();
         const entry = {
           id: crypto.randomUUID(),
@@ -2029,11 +2195,24 @@ function defineTools(): ToolEntry[] {
           },
         };
         await addEntry(entry);
+        // W1-3: surface the local-first visibility boundary (ADR-0044). When the
+        // entry landed in a PROJECT-local wiki, it is NOT visible to
+        // `am wiki search --all-projects` until `am wiki publish <slug>` mirrors
+        // it into wiki/projects/<name>/. Agents are the primary wiki writers, so
+        // they get the same {scope, visibleAcrossProjects} signal the CLI emits.
+        const visibleAcrossProjects = resolveWikiDir() === resolveWikiDir({ global: true });
         return {
           action: "add",
           id: entry.id,
           entity_type: entry.entity_type,
           title: entry.content.split("\n")[0].slice(0, 120),
+          scope: visibleAcrossProjects ? "global" : "project-local",
+          visibleAcrossProjects,
+          ...(visibleAcrossProjects
+            ? {}
+            : {
+                hint: "This entry is project-local. Run `am wiki publish <slug>` to make it visible to `am wiki search --all-projects` from other projects.",
+              }),
         };
       },
     },

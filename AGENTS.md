@@ -22,9 +22,10 @@ this serve?** Features orthogonal to all six are flagged for reconsideration.
    hygiene (AES-256-GCM + 24-provider detection), MCP Package Registry
    (ADR-0024).
 2. **MCP gateway** — `am mcp-serve` as the stable endpoint any agent plumbs
-   into. 38 tools (33 active + 5 deprecated aliases), concurrency-safe writers
-   (iter4 Wave B), bearer auth (iter2 Wave B), streaming via MCP progress
-   notifications (iter4 Wave D).
+   into. 43 tools (38 canonical + 5 deprecated aliases that still dispatch to
+   their replacements; alias removal targeted for v1.0), concurrency-safe
+   writers (iter4 Wave B), bearer auth (iter2 Wave B), streaming via MCP
+   progress notifications (iter4 Wave D).
 3. **Protocol router** — ACP local, A2A remote, A2A-ACP bridge, unified agent
    registry (ADR-0030), **auto-detection of installed agents** (iter4 Wave C),
    flows (ADR-0026) scoped to pillar 3 composition.
@@ -161,7 +162,7 @@ src/
     registry.ts             # Platform detection (GitHub > GitLab > bare)
     github.ts, gitlab.ts, bare.ts
   mcp/
-    server.ts               # MCP server: JSON-RPC 2.0, 38 tools (33 active + 5 deprecated aliases), 6 groups, 3 permission tiers (ADR-0009, ADR-0021)
+    server.ts               # MCP server: JSON-RPC 2.0, 43 tools (38 canonical + 5 deprecated aliases that still dispatch; removal targeted v1.0), 6 groups, 3 permission tiers (ADR-0009, ADR-0021, ADR-0055 proposed)
   tui/
     index.tsx, App.tsx      # Silvery/React terminal UI with dashboard, server management (D/E/I/P keys)
   web/

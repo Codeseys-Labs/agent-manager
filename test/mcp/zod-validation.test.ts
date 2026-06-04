@@ -369,13 +369,51 @@ describe("MCP zod validation", () => {
     expect(isInvalidArgsError(resp)).toBe(true);
   });
 
-  test("all 38 tools have a registered schema (coverage guard)", async () => {
+  test("am_profile_create rejects missing name", async () => {
+    await setupConfig({});
+    const server = makeServer();
+    const resp = await server.handleRequest({
+      jsonrpc: "2.0",
+      id: 30,
+      method: "tools/call",
+      params: { name: "am_profile_create", arguments: {} },
+    });
+    expect(isInvalidArgsError(resp)).toBe(true);
+  });
+
+  test("am_profile_delete rejects missing name", async () => {
+    await setupConfig({});
+    const server = makeServer();
+    const resp = await server.handleRequest({
+      jsonrpc: "2.0",
+      id: 31,
+      method: "tools/call",
+      params: { name: "am_profile_delete", arguments: {} },
+    });
+    expect(isInvalidArgsError(resp)).toBe(true);
+  });
+
+  test("am_registry_uninstall rejects missing name", async () => {
+    await setupConfig({});
+    const server = makeServer();
+    const resp = await server.handleRequest({
+      jsonrpc: "2.0",
+      id: 32,
+      method: "tools/call",
+      params: { name: "am_registry_uninstall", arguments: {} },
+    });
+    expect(isInvalidArgsError(resp)).toBe(true);
+  });
+
+  test("all 43 tools have a registered schema (coverage guard)", async () => {
     await setupConfig({});
     const server = makeServer();
     const tools = server.getTools();
     // Wave D: 33 original + 5 unified (am_agent_invoke / session_list /
     // session_cancel / status / detect). Legacy aliases kept for back-compat.
-    expect(tools.length).toBe(38);
+    // W1-4: +5 quick-win tools (am_list_skills, am_list_instructions,
+    // am_profile_create, am_profile_delete, am_registry_uninstall) → 43.
+    expect(tools.length).toBe(43);
     // Every tool should reject a known-bad shape (an array) with Invalid arguments.
     // Tools with empty schemas (properties: {}) will pass any object, so we only
     // assert that the dispatcher *invokes* validation — which we verify by running
