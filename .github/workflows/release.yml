@@ -67,6 +67,11 @@ jobs:
   release:
     needs: build
     runs-on: blacksmith-2vcpu-ubuntu-2404
+    # The `secrets` context is NOT available in `if:` conditions (GitHub
+    # evaluates `if:` before injecting secrets). Map NPM_TOKEN into a job-level
+    # env var here so the deferred npm-publish step can gate on `env.NPM_TOKEN`.
+    env:
+      NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -290,7 +295,10 @@ jobs:
       # token, and the step activates automatically the moment a token is
       # added (no further workflow edit required). Do NOT remove this step.
       - name: Publish to npm
-        if: ${{ secrets.NPM_TOKEN != '' }}
+        # Gate on the job-level env var (secrets are not allowed in `if:`).
+        # Skipped when no NPM_TOKEN is set → release job stays green; activates
+        # automatically the moment a token is added (no further workflow edit).
+        if: ${{ env.NPM_TOKEN != '' }}
         run: bunx npm publish --access public
         env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          NODE_AUTH_TOKEN: ${{ env.NPM_TOKEN }}
