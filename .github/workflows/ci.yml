@@ -21,12 +21,16 @@ jobs:
           bun-version: 1.3.11
       - run: bun install --frozen-lockfile
       # Dependency vulnerability scan (SECURITY.md: "continuous dependency
-      # monitoring"). REPORT-ONLY by design: continue-on-error surfaces
-      # advisories in every PR/push log without hard-failing the build, so a
-      # transitive CVE (e.g. the hono drift) is visible per-PR rather than
-      # discovered late. Tighten to a hard gate only once the advisory
-      # baseline is clean. `bun audit` queries the registry advisory DB.
-      - name: Dependency audit (report-only)
+      # monitoring"). Two layers: a HARD gate that FAILS the build on any
+      # high/critical advisory (the baseline is now clean of these — hono was
+      # bumped to >=4.12.18 and @chenglou/pretext overridden to 0.0.7), plus a
+      # report-only full `bun audit` that surfaces lower-severity advisories
+      # (e.g. the dev-only `ws` moderate via wrangler→miniflare, not bundled in
+      # the shipped binary) in the log without blocking. `bun audit` queries the
+      # registry advisory DB.
+      - name: Dependency audit (fail on high/critical)
+        run: bun audit --audit-level=high
+      - name: Dependency audit (full, report-only)
         continue-on-error: true
         run: bun audit
       - name: Type check (src/ only)
