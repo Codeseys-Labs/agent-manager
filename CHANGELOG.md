@@ -4,8 +4,6 @@
 
 ## [0.5.0-rc7] - 2026-06-04
 
-## [0.5.0-rc7] - 2026-06-03
-
 ### Added
 - **`am setup` — first-run setup wizard (ADR-0053).** A single guided,
   resumable command takes a stranger from "just installed `am`" to "native
