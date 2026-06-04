@@ -67,11 +67,12 @@ jobs:
   release:
     needs: build
     runs-on: blacksmith-2vcpu-ubuntu-2404
-    # The `secrets` context is NOT available in `if:` conditions (GitHub
-    # evaluates `if:` before injecting secrets). Map NPM_TOKEN into a job-level
-    # env var here so the deferred npm-publish step can gate on `env.NPM_TOKEN`.
-    env:
-      NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+    # NOTE: when re-enabling the npm-publish step below, restore this job-level
+    # env mapping — the `secrets` context is NOT available in `if:` conditions
+    # (GitHub evaluates `if:` before injecting secrets), so the publish step must
+    # gate on `env.NPM_TOKEN` fed from here:
+    #   env:
+    #     NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -284,21 +285,18 @@ jobs:
             await Bun.write('package.json', JSON.stringify(pkg, null, 2) + '\n');
           "
 
-      # npm distribution is intentionally DEFERRED (project memory:
-      # "npm publish intentionally deferred" + .npmignore). There is no
-      # NPM_TOKEN secret today, and the unscoped name `agent-manager` is
-      # already taken on the registry by another publisher. Without a token
-      # `npm publish` exits non-zero and turns the whole release job red even
-      # though every binary, checksum, the GitHub Release, and the Homebrew
-      # formula have already landed successfully above. Gate the step on the
-      # presence of an NPM_TOKEN secret so the job is GREEN when there is no
-      # token, and the step activates automatically the moment a token is
-      # added (no further workflow edit required). Do NOT remove this step.
-      - name: Publish to npm
-        # Gate on the job-level env var (secrets are not allowed in `if:`).
-        # Skipped when no NPM_TOKEN is set → release job stays green; activates
-        # automatically the moment a token is added (no further workflow edit).
-        if: ${{ env.NPM_TOKEN != '' }}
-        run: bunx npm publish --access public
-        env:
-          NODE_AUTH_TOKEN: ${{ env.NPM_TOKEN }}
+      # ── npm publish: DISABLED for now (GitHub artifact releases first) ──
+      # Distribution is via GitHub Releases (per-platform binaries + checksums,
+      # consumed by install.sh) and Homebrew. npm publishing is intentionally
+      # NOT done yet: the unscoped name `agent-manager` is taken by another
+      # publisher and the vision for npm distribution isn't settled. The step
+      # below is commented out (not just token-gated) so it cannot run at all.
+      # To re-enable later: uncomment, decide on a scoped name (e.g.
+      # @codeseys-labs/agent-manager), add the NPM_TOKEN secret, and the
+      # job-level `env: NPM_TOKEN` mapping above feeds the `if:` gate.
+      #
+      # - name: Publish to npm
+      #   if: ${{ env.NPM_TOKEN != '' }}
+      #   run: bunx npm publish --access public
+      #   env:
+      #     NODE_AUTH_TOKEN: ${{ env.NPM_TOKEN }}
