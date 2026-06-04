@@ -44,6 +44,18 @@ jobs:
           echo "Type check passed (src/ clean)"
       - name: Lint
         run: bun run lint
+      # Validate GitHub Actions workflows with actionlint. Catches context-
+      # availability errors that plain YAML parsing misses — e.g. using the
+      # `secrets` context in an `if:` condition (not allowed), which silently
+      # rejected the entire release.yml at parse time and broke a release. The
+      # blacksmith self-hosted runner labels are ignored (custom, valid here).
+      # Pin the actionlint version (not `latest`) so the CI-installed binary is
+      # deterministic — consistent with the project's supply-chain posture
+      # (install.sh enforces checksum verification; CI tools should be pinned).
+      - name: Validate workflows (actionlint)
+        run: |
+          bash <(curl -fsSL https://raw.githubusercontent.com/rhysd/actionlint/v1.7.7/scripts/download-actionlint.bash) 1.7.7
+          ./actionlint -ignore 'label ".+" is unknown' .github/workflows/*.yml
       - name: Test with coverage
         run: |
           set +e
