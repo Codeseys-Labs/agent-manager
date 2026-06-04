@@ -21,8 +21,7 @@
   fallback. New committed cross-project meta-index (`wiki/meta-index.json`) plus
   `am wiki search --all-projects`. Promotion to `wiki/global/` is gated by an
   explicit `--promote` flag (with a `promote:` frontmatter discovery gate for
-  the batch `--auto` path). Optional external `chub-mcp` content source via
-  `am mcp-serve` for users who want curated API docs alongside project knowledge.
+  the batch `--auto` path).
 
 ### Fixed
 - **Cross-platform Windows hardening.** Systematic sweep of Windows

@@ -120,14 +120,35 @@ verify_checksum() {
 
 # --- Version resolution ---
 
-fetch_latest_version() {
+# Fetch a URL to stdout using whichever of curl/wget is available.
+http_get() {
   if command -v curl >/dev/null 2>&1; then
-    tag="$(curl -fsSL "${API_URL}/releases/latest" | grep '"tag_name"' | sed 's/.*"tag_name": *"\([^"]*\)".*/\1/')"
+    curl -fsSL "$1" 2>/dev/null
   elif command -v wget >/dev/null 2>&1; then
-    tag="$(wget -qO- "${API_URL}/releases/latest" | grep '"tag_name"' | sed 's/.*"tag_name": *"\([^"]*\)".*/\1/')"
+    wget -qO- "$1" 2>/dev/null
   else
     printf "Error: curl or wget is required\n" >&2
     exit 1
+  fi
+}
+
+# Parse the first "tag_name" field out of a GitHub releases JSON payload.
+first_tag_name() {
+  grep -m1 '"tag_name"' | sed 's/.*"tag_name": *"\([^"]*\)".*/\1/'
+}
+
+fetch_latest_version() {
+  # agent-manager is pre-1.0 and ships ONLY `-rc` prereleases. GitHub's
+  # /releases/latest deliberately EXCLUDES prereleases, so it returns whichever
+  # OLD tag happened to be published as a non-prerelease (e.g. v0.5.0-rc6) and
+  # the bare `curl | sh` would install a stale binary missing newer features.
+  # So PREFER the newest release of ANY kind via /releases (listed newest-first)
+  # and fall back to /releases/latest only if that is somehow unavailable. Once
+  # a stable (non-rc) 1.0 ships, promote it to Latest and it becomes the newest
+  # item here too — no installer change needed.
+  tag="$(http_get "${API_URL}/releases?per_page=1" | first_tag_name)"
+  if [ -z "$tag" ]; then
+    tag="$(http_get "${API_URL}/releases/latest" | first_tag_name)"
   fi
 
   if [ -z "$tag" ]; then
