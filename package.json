@@ -1,7 +1,7 @@
 {
   "name": "agent-manager",
   "version": "0.5.0-rc7",
-  "description": "the control plane for AI agents — catalog, MCP gateway, protocol router (ACP/A2A), marketplace, LLM-wiki, and multi-UI",
+  "description": "the control plane for AI agents \u2014 catalog, MCP gateway, protocol router (ACP/A2A), marketplace, LLM-wiki, and multi-UI",
   "type": "module",
   "main": "src/cli.ts",
   "bin": {
@@ -83,6 +83,7 @@
   },
   "license": "MIT",
   "overrides": {
-    "@silvery/commander": "0.8.1"
+    "@silvery/commander": "0.8.1",
+    "@chenglou/pretext": "0.0.7"
   }
 }
