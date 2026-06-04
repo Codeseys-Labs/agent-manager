@@ -331,9 +331,9 @@ entries for orientation:
 | Metric | Count |
 |--------|-------|
 | Source files | 215 |
-| Test files | 231 |
-| Tests | 3,064 |
-| Assertions | 9,672 |
+| Test files | 273 |
+| Tests | 3,503 |
+| Assertions | 10,862 |
 | IDE adapters | 13 (+community) |
 | Platform adapters | 3 |
 | CLI commands | 36 |

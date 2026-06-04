@@ -7,7 +7,7 @@ skills/instructions/agents via git. Remember sessions in an LLM-wiki. Edit from
 terminal, local web, or cloud.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Tests: 3064 pass](https://img.shields.io/badge/tests-3064%20pass-green.svg)](#development)
+[![Tests: 3503 pass](https://img.shields.io/badge/tests-3503%20pass-green.svg)](#development)
 [![Coverage](https://img.shields.io/badge/coverage-see%20CI%20summary-blue.svg)](https://github.com/Codeseys-Labs/agent-manager/actions/workflows/ci.yml)
 [![Adapters: 13](https://img.shields.io/badge/adapters-13-purple.svg)](#adapter-support-matrix)
 [![MCP Tools: 38](https://img.shields.io/badge/MCP%20tools-38-orange.svg)](#mcp-server-mode)
@@ -904,7 +904,7 @@ Design decisions documented in [54 ADRs](ADRs/README.md).
 
 ```bash
 bun install                       # install dependencies
-bun test                          # run all tests (3064)
+bun test                          # run all tests (3503)
 bun test --coverage --coverage-reporter=text --coverage-reporter=lcov --config=/dev/null
                                   # run coverage locally; writes coverage/lcov.info
 bun test --watch                  # watch mode
@@ -932,7 +932,7 @@ cache for faster downloads.
 **CI pipeline** (`.github/workflows/ci.yml` — triggers on push to main + PRs):
 1. Type check — `tsc --noEmit` filtered to `src/` errors only
 2. Lint — `biome check`
-3. Test with coverage — `bun test --coverage --coverage-reporter=text --coverage-reporter=lcov --config=/dev/null` (3064 tests)
+3. Test with coverage — `bun test --coverage --coverage-reporter=text --coverage-reporter=lcov --config=/dev/null` (3503 tests)
    and publish `coverage/lcov.info` to the GitHub Actions job summary/artifact
 4. Build smoke test — all 5 platform targets
 5. Cross-platform build verify — Ubuntu + macOS + Windows
@@ -964,15 +964,15 @@ today. It auto-activates if a token is ever added. GitHub Releases (consumed by
 <!-- stats:start -->
 | Metric | Count |
 |--------|-------|
-| Source files | 215 |
-| Test files | 231 |
-| Tests | 3,064 |
-| Assertions | 9,672 |
+| Source files | 223 |
+| Test files | 273 |
+| Tests | 3,503 |
+| Assertions | 10,862 |
 | IDE adapters | 13 (+community) |
 | Platform adapters | 3 |
-| CLI commands | 36 |
+| CLI commands | 37 |
 | MCP tools | 38 (33 active + 5 deprecated aliases) |
-| ADRs | 54 |
+| ADRs | 55 |
 <!-- stats:end -->
 
 ### Tech Stack

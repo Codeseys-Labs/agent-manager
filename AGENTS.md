@@ -170,7 +170,7 @@ src/
     git-providers.ts        # Git provider abstraction: GitHub, GitLab, Codeberg/Gitea (ADR-0025)
     public/                 # Static HTML
   lib/                      # Shared utilities (errors.ts, output.ts)
-test/                       # 231 files, 3064 tests, 9672 assertions
+test/                       # 273 files, 3503 tests, 10862 assertions
 ADRs/                       # 55 architectural decision records (0001-0054, incl. 0031a)
 scripts/
   build.ts                  # Cross-platform build (5 targets)
@@ -356,7 +356,7 @@ Workflow: `am wiki ingest --session <id>` → `am wiki search <query>` → `am w
 
 ```bash
 bun install              # Install dependencies
-bun test                 # Run all 3064 tests
+bun test                 # Run all 3503 tests
 bun test --watch         # Watch mode
 bun run dev              # Run CLI in dev mode
 bun run build            # Single binary (macOS arm64)
