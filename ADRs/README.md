@@ -45,7 +45,7 @@ This folder contains the architectural decisions for agent-manager.
 | [0036](0036-agent-variants.md) | Per-Agent Variants for Multi-Provider / Multi-Account Routing | Accepted | 2026-05-02 |
 | [0037](0037-per-tool-mcp-metadata.md) | Per-Tool MCP Metadata via `x-am.*` Namespace | Accepted | 2026-05-03 |
 | [0038](0038-dry-run-explain-surface.md) | Dry-Run / Explain Surface Pattern | Accepted | 2026-05-02 |
-| [0039](0039-marketplace-v1-scope-decision.md) | Marketplace v1 Scope Decision — Retire pillar 4 in favor of MCP Registry + git-subtree bundles | Accepted | 2026-05-05 |
+| [0039](0039-marketplace-v1-scope-decision.md) | Marketplace v1 Scope Decision — Retire pillar 4 in favor of MCP Registry + git-subtree bundles | Superseded by product-scope decision (AGENTS.md) — marketplace deferred to v2, not retired | 2026-05-05 |
 | [0040](0040-controller-scope-and-concurrency.md) | Controller Scope & Concurrency Model (`withConfig` + AsyncMutex) | Accepted | 2026-05-05 |
 | [0041](0041-adr-0007-phase-2-deferred.md) | ADR-0007 Phase 2 Resolution — Delete the Adapter Schema Field | Accepted | 2026-05-05 |
 | [0042](0042-universal-secrets-strategy.md) | Universal Secrets Strategy — age envelope + Argon2id-passphrase + OS keychain cache | Accepted | 2026-05-05 |
@@ -58,7 +58,7 @@ This folder contains the architectural decisions for agent-manager.
 | [0049](0049-hosted-ui-editor-cm6-implementation.md) | Hosted UI Editor CodeMirror 6 Implementation Plan | Proposed | 2026-05-05 |
 | [0050](0050-browser-secret-decryption-bundle.md) | Browser Secret Decryption Bundle (Synthesizes Lens H + Clarification) | Proposed | 2026-05-05 |
 | [0051](0051-secrets-rotation-grace-period.md) | Secrets Rotation + Grace Period (Synthesizes Lens I) | Accepted | 2026-05-05 |
-| [0052](0052-marketplace-v1-code-removal-target.md) | Marketplace v1 Code Removal Target (removal deferred to v2 — deprecated surface kept, not deleted) | Accepted (removal deferred to v2) | 2026-05-16 |
+| [0052](0052-marketplace-v1-code-removal-target.md) | Marketplace v1 Code Removal Target (removal deferred to v2 — deprecated surface kept, not deleted) | Superseded by product-scope decision (AGENTS.md) — removal deferred to v2, code kept | 2026-05-16 |
 | [0053](0053-am-setup-first-run-wizard.md) | `am setup` — First-Run Setup Wizard | Accepted | 2026-05-31 |
 | [0054](0054-knowledge-as-first-class-peer.md) | Knowledge as a First-Class Peer — Live Write-Path, Cross-Project Index, Context-Hub Boundary | Accepted | 2026-06-01 |
 | [0055](0055-runtime-access-scoping-profiles.md) | Runtime Access-Scoping Profiles for the MCP Server (Scopes) — supersedes [0021](0021-mcp-tool-grouping-and-gateway.md) | Proposed | 2026-06-04 |

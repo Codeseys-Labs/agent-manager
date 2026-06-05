@@ -1,9 +1,17 @@
 ---
-status: accepted
+status: superseded
 date: 2026-05-16
 accepted: 2026-05-17
 amends: ADR-0039
+superseded_by: product-scope decision (AGENTS.md, 2026-06-04)
 ---
+
+> **Superseded 2026-06-04 by the product-scope decision (AGENTS.md): the
+> marketplace is DEFERRED to v2, not deleted. The `0.6.0` removal target below
+> is REVERSED — `src/marketplace/*`, `src/commands/marketplace.ts`, and the
+> `am marketplace *` surface are retained (kept out of the v1 advertised CLI but
+> not removed) and return in v2. Do NOT execute the deletion PR described in the
+> Decision.** This ADR is retained for its decision history.
 
 # ADR-0052: Marketplace v1 Code Removal Target
 

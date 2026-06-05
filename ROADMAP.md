@@ -79,7 +79,7 @@ All adapters: detect, import, export, drift detection. 5-file pattern (index/det
 
 Future candidates: Gitea, Codeberg, Forgejo, BitBucket (ADR-0013 updated).
 
-### CLI (36 commands) — Complete
+### CLI (37 commands) — Complete
 
 Config: init, add, list, use, apply, status, config, profile
 Git: push, pull, undo, log
@@ -92,16 +92,16 @@ Marketplace: marketplace (7 subcommands)
 Tools: import, adapter (5 subcommands), doctor, secret (6 subcommands), session, version
 Interfaces: mcp-serve, tui, serve, completion (bash/zsh/fish)
 
-### MCP Server (38 tools: 33 active + 5 deprecated aliases, 6 groups) — Complete
+### MCP Server (43 tools: 38 canonical + 5 deprecated aliases, 6 groups) — Complete
 
 | Group | Tools | Default |
 |-------|-------|---------|
-| core (14) | servers, profiles, status, config, doctor, add/remove/update, undo, apply, import, push/pull | Yes |
-| registry (3) | search, install, list_installed | No |
+| core (18) | servers, profiles, skills, instructions, status, config, doctor, add/remove/update, profile_create/delete, undo, use_profile, apply, import, push/pull | Yes |
+| registry (4) | search, install, list_installed, uninstall | No |
 | a2a (4) | discover, list, delegate, task_status | No |
 | wiki (5) | search, add, synthesize, briefing, harvest | No |
 | session (3) | list, export, search | No |
-| acp (4) | run_agent, list_agents, session_list, session_cancel | No |
+| acp (9) | invoke, session_list, session_cancel, status, detect + 4 deprecated aliases (run_agent, acp_list_agents, acp_session_list, acp_session_cancel) | No |
 
 Controlled via `settings.mcp_serve.tools` (ADR-0021).
 
@@ -170,8 +170,8 @@ Search, install, uninstall, update with provenance tracking. ADR-0024.
 
 | Interface | Status | Notes |
 |-----------|--------|-------|
-| CLI (citty + clack) | Done | 36 commands, --json/--quiet everywhere |
-| MCP Server | Done | 38 tools (33 active + 5 aliases), 3 permission tiers, 6 groups |
+| CLI (citty + clack) | Done | 37 commands, --json/--quiet everywhere |
+| MCP Server | Done | 43 tools (38 canonical + 5 aliases), 3 permission tiers, 6 groups |
 | TUI (Silvery + React) | Done | Dashboard, server management (D/E/I/P keys), status, profiles |
 | Local Web (Hono + Bearer auth) | Done | REST API + SSE, server CRUD, wiki endpoints |
 | Stateless Web (CF Workers) | Done | Multi-backend git auth (ADR-0025), wiki browsing, git-backed config |
@@ -281,7 +281,7 @@ am-cli as a runtime MCP proxy — accept tool calls, route to configured servers
 
 ## ADR Index
 
-**53 architectural decisions** (0001–0053, including 0031a). The canonical,
+**57 architectural decisions** (0001–0056, including 0031a). The canonical,
 always-current index is [`ADRs/README.md`](ADRs/README.md) and the `AGENTS.md`
 ADR table — this list is no longer mirrored here to avoid drift. Foundational
 entries for orientation:
@@ -326,18 +326,18 @@ entries for orientation:
 ## Stats
 
 > The authoritative, generated stats table lives in [`README.md`](README.md)
-> (run `bun run scripts/stats.ts`). Summary as of 2026-05-31:
+> (run `bun run scripts/stats.ts`). Summary as of 2026-06-04:
 
 | Metric | Count |
 |--------|-------|
-| Source files | 215 |
+| Source files | 223 |
 | Test files | 273 |
-| Tests | 3,503 |
-| Assertions | 10,862 |
+| Tests | 3,520 |
+| Assertions | 11,002 |
 | IDE adapters | 13 (+community) |
 | Platform adapters | 3 |
-| CLI commands | 36 |
-| MCP tools | 38 (33 active + 5 deprecated aliases) |
-| ADRs | 53 |
+| CLI commands | 37 |
+| MCP tools | 43 (38 canonical + 5 deprecated aliases) |
+| ADRs | 57 |
 | `as any` in src/ | 0 |
 | `err: any` in src/ | 0 |

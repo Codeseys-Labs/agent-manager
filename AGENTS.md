@@ -19,7 +19,7 @@ this serve?** Features orthogonal to all six are flagged for reconsideration.
 
 1. **Catalog + git sync** — define once, sync via user's choice of git.
    Includes brownfield import (ADR-0028), drift detection (ADR-0006), secret
-   hygiene (AES-256-GCM + 24-provider detection), MCP Package Registry
+   hygiene (AES-256-GCM + 40+ provider-pattern detection), MCP Package Registry
    (ADR-0024).
 2. **MCP gateway** — `am mcp-serve` as the stable endpoint any agent plumbs
    into. 43 tools (38 canonical + 5 deprecated aliases that still dispatch to
@@ -105,7 +105,7 @@ in TOML, decrypted at apply time.
 
 ```
 src/
-  cli.ts                    # Entry point -- 36 subcommands via citty
+  cli.ts                    # Entry point -- 37 subcommands via citty
   commands/                 # One file per CLI command (includes session.ts, wiki.ts, agents.ts, run.ts, flow.ts, completion.ts)
   core/
     schema.ts               # Zod schemas (Server, Instruction, Skill, AgentProfile, Profile, Config)
@@ -118,6 +118,7 @@ src/
     instructions.ts         # Shared instruction generation for all formats + wiki context injection
     session.ts              # Cross-tool session harvest: types, reader interface, filter/format
     agent-registry.ts       # Unified agent registry: config + tiered ACP built-in + A2A roster (ADR-0030, ADR-0033)
+    controller.ts           # shared write path: withConfig (serialized RMW) + applyResolved + APPLY_SAFE_DEFAULTS (ADR-0040)
   adapters/
     types.ts                # Adapter interface + all type definitions
     registry.ts             # Lazy factory adapter registry (13 adapters)
@@ -171,8 +172,8 @@ src/
     git-providers.ts        # Git provider abstraction: GitHub, GitLab, Codeberg/Gitea (ADR-0025)
     public/                 # Static HTML
   lib/                      # Shared utilities (errors.ts, output.ts)
-test/                       # 273 files, 3503 tests, 10862 assertions
-ADRs/                       # 55 architectural decision records (0001-0054, incl. 0031a)
+test/                       # 273 files, 3520 tests, 11002 assertions
+ADRs/                       # 57 architectural decision records (0001-0056, incl. 0031a)
 scripts/
   build.ts                  # Cross-platform build (5 targets)
 install.sh                  # curl-based installer (repo root, not scripts/)
@@ -357,7 +358,7 @@ Workflow: `am wiki ingest --session <id>` → `am wiki search <query>` → `am w
 
 ```bash
 bun install              # Install dependencies
-bun test                 # Run all 3503 tests
+bun test                 # Run all 3520 tests
 bun test --watch         # Watch mode
 bun run dev              # Run CLI in dev mode
 bun run build            # Single binary (macOS arm64)
