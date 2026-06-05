@@ -46,3 +46,6 @@ TMP-PROMPT.md
 
 # Claude Code session state (worktrees, workflow journals, local settings)
 .claude/
+
+# Downloaded CI tool (actionlint) — pinned + fetched in CI, never committed.
+/actionlint

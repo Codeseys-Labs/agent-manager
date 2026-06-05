@@ -12,6 +12,31 @@ permissions:
   contents: read
 
 jobs:
+  # Secret scan (PR #42 / GitGuardian follow-up). The ENFORCING layer for the
+  # lefthook pre-commit hook (which is best-effort locally — it skips if a dev
+  # hasn't installed betterleaks). Here it is a HARD gate: a real secret-shaped
+  # string in a non-allowlisted file fails the build. `.betterleaksignore`
+  # allowlists the deliberate redaction-test fixtures (fake ghp_/user:pass URLs
+  # that EXIST to prove we scrub secrets). Pinned version per the project's
+  # supply-chain posture (consistent with the pinned actionlint below).
+  secret-scan:
+    runs-on: blacksmith-2vcpu-ubuntu-2404
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # full history so `betterleaks git` can scan commits
+      - name: Install betterleaks (pinned)
+        run: |
+          set -euo pipefail
+          VER="1.1.1"
+          URL="https://github.com/betterleaks/betterleaks/releases/download/v${VER}/betterleaks_${VER}_linux_amd64.tar.gz"
+          curl -fsSL "$URL" -o /tmp/betterleaks.tar.gz
+          tar -xzf /tmp/betterleaks.tar.gz -C /tmp betterleaks
+          install -m 0755 /tmp/betterleaks /usr/local/bin/betterleaks
+          betterleaks version
+      - name: Scan repository for secrets
+        run: betterleaks git . --no-banner --no-color --redact
+
   test:
     runs-on: blacksmith-2vcpu-ubuntu-2404
     steps:
