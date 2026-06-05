@@ -1,5 +1,10 @@
 import { describe, expect, test } from "bun:test";
-import { resolveActiveServers, resolveProfile, resolveServerTags } from "../../src/core/resolver";
+import {
+  isToolInScope,
+  resolveActiveServers,
+  resolveProfile,
+  resolveServerTags,
+} from "../../src/core/resolver";
 import type { Config } from "../../src/core/schema";
 
 /** Minimal server helper */
@@ -251,5 +256,77 @@ describe("resolveActiveServers", () => {
     expect(names).toContain("fetch");
     expect(names).toContain("outlook");
     expect(names).toContain("wiki");
+  });
+});
+
+// ── ADR-0055: runtime access Scope resolution + composition ──────────────────
+
+describe("resolveProfile — scope (ADR-0055)", () => {
+  const cfg: Config = {
+    profiles: {
+      base: {},
+      scoped: { scope: { tool_groups: ["core", "wiki"], deny_tools: ["am_apply"] } },
+      child: { inherits: "scoped", scope: { allow_tools: ["am_registry_search"] } },
+    },
+  };
+
+  test("a profile WITHOUT scope resolves to scope:undefined (global ceiling)", () => {
+    expect(resolveProfile("base", cfg).scope).toBeUndefined();
+  });
+
+  test("a profile WITH scope surfaces toolGroups + deny", () => {
+    const s = resolveProfile("scoped", cfg).scope;
+    expect(s).toBeDefined();
+    expect(s?.toolGroups).toEqual(["core", "wiki"]);
+    expect(s?.denyTools).toEqual(["am_apply"]);
+    expect(s?.allowTools).toEqual([]);
+  });
+
+  test("inherited scope: child-wins tool_groups absent → parent's kept; allow unions", () => {
+    const s = resolveProfile("child", cfg).scope;
+    expect(s).toBeDefined();
+    // child sets no tool_groups → parent's ["core","wiki"] survives.
+    expect(s?.toolGroups).toEqual(["core", "wiki"]);
+    // allow unions parent(none)+child; deny inherited from parent.
+    expect(s?.allowTools).toEqual(["am_registry_search"]);
+    expect(s?.denyTools).toEqual(["am_apply"]);
+  });
+});
+
+describe("isToolInScope — composition (ADR-0055)", () => {
+  const CEILING = ["core", "registry", "a2a", "wiki", "session", "acp"] as const;
+
+  test("no scope → visible iff group in ceiling", () => {
+    expect(isToolInScope("am_status", "core", CEILING, undefined)).toBe(true);
+    expect(isToolInScope("am_status", "core", ["registry"], undefined)).toBe(false);
+  });
+
+  test("ceiling is absolute — scope can never widen beyond it", () => {
+    const scope = { toolGroups: ["registry" as const], allowTools: ["am_status"], denyTools: [] };
+    // am_status is 'core'; ceiling here excludes 'core' → even an explicit allow can't expose it.
+    expect(isToolInScope("am_status", "core", ["registry"], scope)).toBe(false);
+  });
+
+  test("tool_groups narrows within the ceiling", () => {
+    const scope = { toolGroups: ["core" as const], allowTools: [], denyTools: [] };
+    expect(isToolInScope("am_status", "core", CEILING, scope)).toBe(true);
+    expect(isToolInScope("am_wiki_search", "wiki", CEILING, scope)).toBe(false);
+  });
+
+  test("deny_tools wins over group inclusion", () => {
+    const scope = { toolGroups: ["core" as const], allowTools: [], denyTools: ["am_apply"] };
+    expect(isToolInScope("am_apply", "core", CEILING, scope)).toBe(false);
+    expect(isToolInScope("am_status", "core", CEILING, scope)).toBe(true);
+  });
+
+  test("allow_tools re-includes a tool whose group was narrowed out (within ceiling)", () => {
+    const scope = { toolGroups: ["core" as const], allowTools: ["am_wiki_search"], denyTools: [] };
+    // wiki group is narrowed out, but the explicit allow + wiki ∈ ceiling → visible.
+    expect(isToolInScope("am_wiki_search", "wiki", CEILING, scope)).toBe(true);
+  });
+
+  test("deny beats allow", () => {
+    const scope = { toolGroups: undefined, allowTools: ["am_apply"], denyTools: ["am_apply"] };
+    expect(isToolInScope("am_apply", "core", CEILING, scope)).toBe(false);
   });
 });

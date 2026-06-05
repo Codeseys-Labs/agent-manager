@@ -1,10 +1,25 @@
 ---
-status: proposed
+status: accepted
 date: 2026-06-04
+accepted: 2026-06-05
 supersedes: 0021
 ---
 
 # ADR-0055: Runtime Access-Scoping Profiles for the MCP Server (Scopes)
+
+> **Accepted 2026-06-05. Phase 1 shipped as-built (branch `keystone-runtime-scoping`):**
+> Decision 1 (`Profile.scope` schema + `resolveProfile`/`ResolvedProfile` +
+> `isToolInScope` composition in `src/core/resolver.ts`), Decision 2 (gate BOTH
+> `tools/list` HIDE and `tools/call` REFUSE in `src/mcp/server.ts` — the global
+> `settings.mcp_serve.tools` ceiling stays a discovery-only filter for
+> backward-compat; the **profile scope** is the dispatch-enforced boundary), and
+> Decision 3 Phase-1 (connection profile via `initialize`
+> `capabilities.experimental["am.profile"]` + `AM_MCP_PROFILE` env fallback,
+> stdio = one-process-one-profile) are LIVE and tested. **Deferred:** Decision 4
+> (`listChanged` notification on `am_use_profile`) and Decision 5 (per-session
+> scope over a shared connection) both depend on ADR-0056's HTTP transport;
+> Decision 6's auditability surface (`am profile show --tools` / a scope-manifest
+> MCP tool) is a fast follow. A profile without `scope` is unchanged.
 
 ## Context
 

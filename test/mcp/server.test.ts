@@ -1160,6 +1160,129 @@ describe("MCP server", () => {
     expect(result.isError).toBe(true);
     expect(result.content[0].text).toContain("not found");
   });
+
+  // ── ADR-0055: runtime access-scoping profiles ──────────────────────────
+  //
+  // A profile that declares `scope` narrows the MCP surface at BOTH discovery
+  // (tools/list) and dispatch (tools/call), intersected with the global
+  // `settings.mcp_serve.tools` ceiling. A profile WITHOUT scope is unchanged.
+
+  test("a profile scope narrows tools/list within the global ceiling", async () => {
+    // Ceiling exposes core+wiki+registry; the active profile's scope narrows to
+    // core only (+ explicitly allows one wiki tool).
+    await setupConfig({
+      settings: {
+        default_profile: "locked",
+        mcp_serve: { tools: ["core", "wiki", "registry"] },
+      },
+      profiles: {
+        locked: { scope: { tool_groups: ["core"], allow_tools: ["am_wiki_search"] } },
+      },
+    });
+    const server = new McpServer({ auth: { token: undefined, allowUnsafeLocal: true } });
+    const resp = await server.handleRequest({ jsonrpc: "2.0", id: 90, method: "tools/list" });
+    const names = (resp?.result as JsonRpcResult).tools.map((t: { name: string }) => t.name);
+    // core tools visible:
+    expect(names).toContain("am_status");
+    expect(names).toContain("am_list_servers");
+    // wiki group narrowed out EXCEPT the explicitly-allowed am_wiki_search:
+    expect(names).toContain("am_wiki_search");
+    expect(names).not.toContain("am_wiki_add");
+    // registry group narrowed out entirely:
+    expect(names).not.toContain("am_registry_search");
+  });
+
+  test("a profile scope REFUSES an out-of-scope tools/call (dispatch gate)", async () => {
+    await setupConfig({
+      settings: {
+        default_profile: "locked",
+        mcp_serve: { tools: ["core", "registry"] },
+      },
+      profiles: {
+        locked: { scope: { tool_groups: ["core"] } }, // registry narrowed out
+      },
+    });
+    const server = new McpServer({ auth: { token: undefined, allowUnsafeLocal: true } });
+    const resp = await server.handleRequest({
+      jsonrpc: "2.0",
+      id: 91,
+      method: "tools/call",
+      params: { name: "am_registry_search", arguments: { query: "x" } },
+    });
+    // Refused at dispatch even though the tool exists — hiding alone isn't a
+    // boundary. -32601 with a profile-scope message.
+    expect(resp?.error).toBeDefined();
+    expect(resp?.error?.code).toBe(-32601);
+    expect(resp?.error?.message).toContain("locked");
+    expect(resp?.error?.message).toContain("scope");
+  });
+
+  test("deny_tools refuses a tool whose group is otherwise in scope", async () => {
+    await setupConfig({
+      settings: { default_profile: "noapply", mcp_serve: { tools: ["core"] } },
+      profiles: { noapply: { scope: { deny_tools: ["am_apply"] } } },
+    });
+    const server = new McpServer({ auth: { token: undefined, allowUnsafeLocal: true } });
+    // am_apply hidden from discovery:
+    const list = await server.handleRequest({ jsonrpc: "2.0", id: 92, method: "tools/list" });
+    const names = (list?.result as JsonRpcResult).tools.map((t: { name: string }) => t.name);
+    expect(names).not.toContain("am_apply");
+    expect(names).toContain("am_status");
+    // …and refused at dispatch:
+    const call = await server.handleRequest({
+      jsonrpc: "2.0",
+      id: 93,
+      method: "tools/call",
+      params: { name: "am_apply", arguments: {} },
+    });
+    expect(call?.error?.code).toBe(-32601);
+  });
+
+  test("a profile WITHOUT scope leaves the default surface unchanged", async () => {
+    // No scope on the active profile → tools/call for a non-core tool still
+    // works (gated only by tier/auth, not group) — ADR-0021 discovery semantics
+    // preserved, no regression.
+    await setupConfig({
+      settings: { default_profile: "plain" },
+      profiles: { plain: { description: "no scope" } },
+    });
+    const server = new McpServer({ auth: { token: undefined, allowUnsafeLocal: true } });
+    const resp = await server.handleRequest({
+      jsonrpc: "2.0",
+      id: 94,
+      method: "tools/call",
+      params: { name: "am_list_skills", arguments: {} },
+    });
+    // am_list_skills is 'core' read-only → succeeds, not refused by scope.
+    expect(resp?.error).toBeUndefined();
+    expect((resp?.result as JsonRpcResult).isError).toBeUndefined();
+  });
+
+  test("AM_MCP_PROFILE env selects the connection scope at initialize", async () => {
+    await setupConfig({
+      settings: { mcp_serve: { tools: ["core", "registry"] } },
+      profiles: { envlocked: { scope: { tool_groups: ["core"] } } },
+    });
+    const prev = process.env.AM_MCP_PROFILE;
+    process.env.AM_MCP_PROFILE = "envlocked";
+    try {
+      const server = new McpServer({ auth: { token: undefined, allowUnsafeLocal: true } });
+      // Drive a real initialize so the connection profile is read.
+      await server.handleRequest({
+        jsonrpc: "2.0",
+        id: 95,
+        method: "initialize",
+        params: { protocolVersion: "2024-11-05" },
+      });
+      const list = await server.handleRequest({ jsonrpc: "2.0", id: 96, method: "tools/list" });
+      const names = (list?.result as JsonRpcResult).tools.map((t: { name: string }) => t.name);
+      expect(names).toContain("am_status");
+      expect(names).not.toContain("am_registry_search"); // registry narrowed by env-selected profile
+    } finally {
+      if (prev === undefined) Reflect.deleteProperty(process.env, "AM_MCP_PROFILE");
+      else process.env.AM_MCP_PROFILE = prev;
+    }
+  });
 });
 
 // ── Error hint field tests ────────────────────────────────────────

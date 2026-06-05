@@ -163,7 +163,7 @@ src/
     registry.ts             # Platform detection (GitHub > GitLab > bare)
     github.ts, gitlab.ts, bare.ts
   mcp/
-    server.ts               # MCP server: JSON-RPC 2.0, 43 tools (38 canonical + 5 deprecated aliases that still dispatch; removal targeted v1.0), 6 groups, 3 permission tiers (ADR-0009, ADR-0021, ADR-0055 proposed)
+    server.ts               # MCP server: JSON-RPC 2.0, 43 tools (38 canonical + 5 deprecated aliases that still dispatch; removal targeted v1.0), 6 groups, 3 permission tiers, runtime access-scoping (ADR-0009, ADR-0055 supersedes ADR-0021)
   tui/
     index.tsx, App.tsx      # Silvery/React terminal UI with dashboard, server management (D/E/I/P keys)
   web/
@@ -253,10 +253,26 @@ push/pull auth handling.
 storage. Config accessed via git provider API. Wiki browsing + server CRUD from
 both local and worker web UIs.
 
-**MCP tool grouping (ADR-0021):** `settings.mcp_serve.tools` controls which MCP tools
-are exposed per profile. Enables fine-grained tool selection when running as an MCP
-server gateway -- profiles can restrict tools to a subset without modifying the
-underlying server definitions.
+**MCP tool grouping (ADR-0021):** `settings.mcp_serve.tools` is the GLOBAL tool-group
+ceiling — a discovery-time filter over the 6 groups (core/registry/a2a/wiki/session/acp).
+
+**Runtime access-scoping profiles (ADR-0055, supersedes ADR-0021's global-only model):**
+the active profile's optional `[profiles.<name>.scope]` projects a RUNTIME access
+boundary over the MCP tool surface, intersected with the global ceiling (the ceiling is
+absolute — scope can only NARROW, never widen):
+
+```toml
+[profiles.locked.scope]
+tool_groups = ["core", "wiki"]   # narrow within the global ceiling
+allow_tools = ["am_registry_search"]  # re-include a specific tool (still within ceiling)
+deny_tools  = ["am_apply"]       # remove a specific tool (deny wins)
+```
+
+Enforced at BOTH `tools/list` (hide) AND `tools/call` (refuse with -32601) — hiding alone
+is not a boundary. A profile WITHOUT `scope` is unchanged (global ceiling). The connection
+selects its profile via the `initialize` param `capabilities.experimental["am.profile"]`
+or the `AM_MCP_PROFILE` env var (stdio is one-client-per-process). Per-session scoping over
+a shared HTTP transport is Phase 2 (depends on ADR-0056's remote transport).
 
 **Wiki dual location (ADR-0022):** Wiki pages live in two locations: global
 (`~/.config/agent-manager/wiki/`) for cross-project knowledge, and project-level
