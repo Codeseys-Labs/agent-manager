@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import {
+  buildScopeManifest,
   isToolInScope,
   resolveActiveServers,
   resolveProfile,
@@ -355,5 +356,51 @@ describe("resolveProfile scope — inheritance edge cases (K-CRIT verify follow-
     expect(s?.denyTools).toContain("am_apply");
     expect(s?.allowTools).toContain("am_apply");
     expect(isToolInScope("am_apply", "core", ["core"], s)).toBe(false);
+  });
+});
+
+describe("buildScopeManifest (ADR-0055 Decision 6 — auditability)", () => {
+  const catalog = [
+    { name: "am_status", group: "core" as const },
+    { name: "am_apply", group: "core" as const },
+    { name: "am_registry_search", group: "registry" as const },
+    { name: "am_wiki_search", group: "wiki" as const },
+  ];
+  const CEILING = ["core", "registry", "wiki"] as const;
+
+  test("no scope → all ceiling tools effective, scoped=false", () => {
+    const m = buildScopeManifest("plain", catalog, CEILING, undefined);
+    expect(m.scoped).toBe(false);
+    expect(m.effectiveTools).toEqual([
+      "am_apply",
+      "am_registry_search",
+      "am_status",
+      "am_wiki_search",
+    ]);
+    expect(m.excludedTools).toEqual([]);
+  });
+
+  test("scope narrows + deny → manifest matches isToolInScope, sorted", () => {
+    const m = buildScopeManifest("locked", catalog, CEILING, {
+      toolGroups: ["core"],
+      allowTools: [],
+      denyTools: ["am_apply"],
+    });
+    expect(m.scoped).toBe(true);
+    expect(m.toolGroups).toEqual(["core"]);
+    expect(m.effectiveTools).toEqual(["am_status"]); // core minus denied am_apply
+    expect(m.excludedTools).toEqual(["am_apply", "am_registry_search", "am_wiki_search"]);
+  });
+
+  test("ceiling reported verbatim; a tool outside the ceiling is always excluded", () => {
+    const m = buildScopeManifest("p", catalog, ["core"], {
+      toolGroups: ["core", "registry"],
+      allowTools: ["am_registry_search"],
+      denyTools: [],
+    });
+    // registry not in ceiling → am_registry_search excluded despite allow + group.
+    expect(m.ceiling).toEqual(["core"]);
+    expect(m.effectiveTools).not.toContain("am_registry_search");
+    expect(m.excludedTools).toContain("am_registry_search");
   });
 });

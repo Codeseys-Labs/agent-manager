@@ -82,12 +82,14 @@ describe("MCP server", () => {
     expect(names).toContain("am_sync_push");
     expect(names).toContain("am_sync_pull");
     // W1-4 added 4 core tools: am_list_skills, am_list_instructions,
-    // am_profile_create, am_profile_delete (14 → 18).
+    // am_profile_create, am_profile_delete (14 → 18). K6 added am_get_scope
+    // (ADR-0055 auditability, core read-only) → 19.
     expect(names).toContain("am_list_skills");
     expect(names).toContain("am_list_instructions");
     expect(names).toContain("am_profile_create");
     expect(names).toContain("am_profile_delete");
-    expect(names.length).toBe(18);
+    expect(names).toContain("am_get_scope");
+    expect(names.length).toBe(19);
     // Session tools are in their own group now (ADR-0021), not core
     expect(names).not.toContain("am_session_list");
     expect(names).not.toContain("am_session_export");
@@ -155,9 +157,9 @@ describe("MCP server", () => {
     expect(names).toContain("am_agent_session_cancel");
     expect(names).toContain("am_agent_status");
     expect(names).toContain("am_agent_detect");
-    // W1-4: +5 quick-win tools (am_list_skills, am_list_instructions,
-    // am_profile_create, am_profile_delete, am_registry_uninstall) → 43.
-    expect(names.length).toBe(43);
+    expect(names).toContain("am_get_scope");
+    // W1-4: +5 quick-win tools → 43. K6: +am_get_scope (ADR-0055 auditability) → 44.
+    expect(names.length).toBe(44);
   });
 
   test("tools/list respects selective group configuration (ADR-0021)", async () => {
@@ -175,10 +177,9 @@ describe("MCP server", () => {
     expect(resp).not.toBeNull();
     const tools = (resp?.result as JsonRpcResult).tools;
     const names = tools.map((t: { name: string }) => t.name);
-    // Core + wiki = 18 + 5 = 23. W1-4 added 4 core tools (am_list_skills,
-    // am_list_instructions, am_profile_create, am_profile_delete); the 5th new
-    // tool (am_registry_uninstall) is in the registry group, excluded here.
-    expect(names.length).toBe(23);
+    // Core + wiki = 19 + 5 = 24. Core gained 4 W1-4 tools + am_get_scope (K6).
+    // am_registry_uninstall is in the registry group, excluded here.
+    expect(names.length).toBe(24);
     expect(names).toContain("am_list_servers");
     expect(names).toContain("am_list_skills");
     expect(names).toContain("am_profile_create");
@@ -1329,6 +1330,40 @@ describe("MCP server", () => {
       if (prev === undefined) Reflect.deleteProperty(process.env, "AM_MCP_PROFILE");
       else process.env.AM_MCP_PROFILE = prev;
     }
+  });
+
+  // K6 (ADR-0055 Decision 6): am_get_scope returns the effective tool manifest,
+  // matching what tools/list exposes — the auditable, drift-free boundary view.
+  test("am_get_scope reports the active profile's effective tool manifest", async () => {
+    await setupConfig({
+      settings: { default_profile: "locked", mcp_serve: { tools: ["core", "registry"] } },
+      profiles: { locked: { scope: { tool_groups: ["core"], deny_tools: ["am_apply"] } } },
+    });
+    const server = new McpServer({ auth: { token: undefined, allowUnsafeLocal: true } });
+    const resp = await server.handleRequest({
+      jsonrpc: "2.0",
+      id: 100,
+      method: "tools/call",
+      params: { name: "am_get_scope", arguments: {} },
+    });
+    const m = JSON.parse((resp?.result as JsonRpcResult).content[0].text);
+    expect(m.profile).toBe("locked");
+    expect(m.scoped).toBe(true);
+    expect(m.ceiling).toEqual(["core", "registry"]);
+    expect(m.toolGroups).toEqual(["core"]);
+    expect(m.denyTools).toContain("am_apply");
+    // Effective excludes the denied tool + the narrowed-out registry group.
+    expect(m.effectiveTools).toContain("am_status");
+    expect(m.effectiveTools).not.toContain("am_apply");
+    expect(m.effectiveTools).not.toContain("am_registry_search");
+    expect(m.excludedTools).toContain("am_apply");
+    expect(m.excludedTools).toContain("am_registry_search");
+    // The manifest must agree with what tools/list actually exposes (no drift).
+    const list = await server.handleRequest({ jsonrpc: "2.0", id: 101, method: "tools/list" });
+    const listed = (list?.result as JsonRpcResult).tools
+      .map((t: { name: string }) => t.name)
+      .sort();
+    expect(m.effectiveTools).toEqual(listed);
   });
 });
 

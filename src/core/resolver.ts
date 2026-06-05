@@ -184,6 +184,54 @@ export function isToolInScope(
   return scope.toolGroups.includes(toolGroup);
 }
 
+/** A profile's effective MCP-scope manifest (ADR-0055 Decision 6). */
+export interface ScopeManifest {
+  profile: string;
+  /** The global ceiling (settings.mcp_serve.tools) the scope is intersected with. */
+  ceiling: McpToolGroup[];
+  /** Whether the profile declares any narrowing (false ⇒ ceiling-only). */
+  scoped: boolean;
+  /** Declared narrowing, when scoped. */
+  toolGroups?: McpToolGroup[];
+  allowTools: string[];
+  denyTools: string[];
+  /** Tool names visible/callable under ceiling ∩ scope (sorted). */
+  effectiveTools: string[];
+  /** Tool names present in the catalog but excluded by ceiling ∩ scope (sorted). */
+  excludedTools: string[];
+}
+
+/**
+ * Build the effective-scope manifest for a profile from the full tool catalog
+ * (name+group pairs), the global ceiling, and the resolved scope — using the
+ * SAME `isToolInScope` the gateway enforces, so `am profile show --tools` /
+ * `am_get_scope` can never disagree with what `tools/list`/`tools/call` do.
+ */
+export function buildScopeManifest(
+  profile: string,
+  catalog: ReadonlyArray<{ name: string; group: McpToolGroup }>,
+  ceiling: readonly McpToolGroup[],
+  scope: ResolvedScope | undefined,
+): ScopeManifest {
+  const effective: string[] = [];
+  const excluded: string[] = [];
+  for (const { name, group } of catalog) {
+    (isToolInScope(name, group, ceiling, scope) ? effective : excluded).push(name);
+  }
+  effective.sort();
+  excluded.sort();
+  return {
+    profile,
+    ceiling: [...ceiling],
+    scoped: scope !== undefined,
+    ...(scope?.toolGroups !== undefined ? { toolGroups: [...scope.toolGroups] } : {}),
+    allowTools: scope ? [...scope.allowTools] : [],
+    denyTools: scope ? [...scope.denyTools] : [],
+    effectiveTools: effective,
+    excludedTools: excluded,
+  };
+}
+
 /**
  * Find server names whose tags overlap with the requested tags.
  * Skips servers with `enabled = false`.

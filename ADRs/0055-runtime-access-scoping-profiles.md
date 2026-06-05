@@ -15,11 +15,13 @@ supersedes: 0021
 > backward-compat; the **profile scope** is the dispatch-enforced boundary), and
 > Decision 3 Phase-1 (connection profile via `initialize`
 > `capabilities.experimental["am.profile"]` + `AM_MCP_PROFILE` env fallback,
-> stdio = one-process-one-profile) are LIVE and tested. **Deferred:** Decision 4
+> stdio = one-process-one-profile) and **Decision 6** (auditability — `am profile
+> show --tools` + the read-only `am_get_scope` MCP tool, both built via the SAME
+> `buildScopeManifest`/`isToolInScope` the gateway enforces, so the manifest can
+> never drift from enforcement) are LIVE and tested. **Deferred:** Decision 4
 > (`listChanged` notification on `am_use_profile`) and Decision 5 (per-session
-> scope over a shared connection) both depend on ADR-0056's HTTP transport;
-> Decision 6's auditability surface (`am profile show --tools` / a scope-manifest
-> MCP tool) is a fast follow. A profile without `scope` is unchanged.
+> scope over a shared connection) both depend on ADR-0056's HTTP transport.
+> A profile without `scope` is unchanged.
 
 ## Context
 

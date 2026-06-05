@@ -178,6 +178,10 @@ export type AgentProfile = z.infer<typeof AgentProfileSchema>;
 export const MCP_TOOL_GROUPS = ["core", "registry", "a2a", "wiki", "session", "acp"] as const;
 export type McpToolGroup = (typeof MCP_TOOL_GROUPS)[number];
 
+/** Default global tool-group ceiling when settings.mcp_serve.tools is unset
+ * (ADR-0021): just the core config-management tools. */
+export const DEFAULT_MCP_TOOL_GROUPS: McpToolGroup[] = ["core"];
+
 // --- Profile Schema ---
 /**
  * ADR-0055: a Profile's `scope` projects a RUNTIME access boundary over the MCP

@@ -8,10 +8,12 @@ import {
   tryReadConfig,
 } from "../core/config";
 import { withConfig } from "../core/controller";
-import { resolveProfile } from "../core/resolver";
+import { buildScopeManifest, resolveProfile } from "../core/resolver";
+import { DEFAULT_MCP_TOOL_GROUPS } from "../core/schema";
 import type { Config, Profile } from "../core/schema";
 import { AmError, errorMessage, requireConfig } from "../lib/errors";
 import { amError, error, info, output } from "../lib/output";
+import { toolGroupCatalog } from "../mcp/server";
 import { readActiveProfile } from "./use";
 
 export const profileCommand = defineCommand({
@@ -82,6 +84,11 @@ export const profileShowCommand = defineCommand({
   meta: { name: "show", description: "Show resolved config for a profile" },
   args: {
     name: { type: "positional", description: "Profile name", required: true },
+    tools: {
+      type: "boolean",
+      description: "Show the MCP tool-access scope this profile grants (ADR-0055)",
+      default: false,
+    },
     json: { type: "boolean", description: "JSON output", default: false },
     quiet: { type: "boolean", alias: "q", default: false },
     verbose: { type: "boolean", alias: "v", default: false },
@@ -104,6 +111,42 @@ export const profileShowCommand = defineCommand({
       }
 
       const resolved = resolveProfile(args.name, config);
+
+      // ADR-0055 Decision 6: `--tools` prints the effective MCP access Scope —
+      // the git-diffable manifest of which tools this profile exposes — built
+      // via the SAME isToolInScope the gateway enforces (buildScopeManifest), so
+      // the explanation can never drift from enforcement.
+      if (args.tools) {
+        const ceiling = config.settings?.mcp_serve?.tools ?? DEFAULT_MCP_TOOL_GROUPS;
+        const catalog = toolGroupCatalog();
+        const manifest = buildScopeManifest(resolved.name, catalog, ceiling, resolved.scope);
+        if (args.json) {
+          output(manifest, opts);
+          return;
+        }
+        info(`Profile: ${manifest.profile} — MCP tool scope`, opts);
+        info(`Ceiling (settings.mcp_serve.tools): ${manifest.ceiling.join(", ")}`, opts);
+        if (!manifest.scoped) {
+          info("Scope: none declared — this profile exposes the full ceiling.", opts);
+        } else {
+          info(
+            `Scope groups: ${manifest.toolGroups ? manifest.toolGroups.join(", ") || "(none)" : "(inherit ceiling)"}`,
+            opts,
+          );
+          if (manifest.allowTools.length > 0)
+            info(`Allow: ${manifest.allowTools.join(", ")}`, opts);
+          if (manifest.denyTools.length > 0) info(`Deny: ${manifest.denyTools.join(", ")}`, opts);
+        }
+        info(
+          `Effective tools (${manifest.effectiveTools.length}): ${manifest.effectiveTools.join(", ") || "none"}`,
+          opts,
+        );
+        info(
+          `Excluded (${manifest.excludedTools.length}): ${manifest.excludedTools.join(", ") || "none"}`,
+          opts,
+        );
+        return;
+      }
 
       if (args.json) {
         output(resolved, opts);

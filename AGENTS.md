@@ -49,7 +49,7 @@ this serve?** Features orthogonal to all six are flagged for reconsideration.
    hygiene (AES-256-GCM + 40+ provider-pattern detection), MCP Package Registry
    (ADR-0024).
 2. **MCP gateway** — `am mcp-serve` as the stable endpoint any agent plumbs
-   into. 43 tools (38 canonical + 5 deprecated aliases that still dispatch to
+   into. 44 tools (39 canonical + 5 deprecated aliases that still dispatch to
    their replacements; alias removal targeted for v1.0), concurrency-safe
    writers (iter4 Wave B), bearer auth (iter2 Wave B), streaming via MCP
    progress notifications (iter4 Wave D).
@@ -190,7 +190,7 @@ src/
     registry.ts             # Platform detection (GitHub > GitLab > bare)
     github.ts, gitlab.ts, bare.ts
   mcp/
-    server.ts               # MCP server: JSON-RPC 2.0, 43 tools (38 canonical + 5 deprecated aliases that still dispatch; removal targeted v1.0), 6 groups, 3 permission tiers, runtime access-scoping (ADR-0009, ADR-0055 supersedes ADR-0021)
+    server.ts               # MCP server: JSON-RPC 2.0, 44 tools (39 canonical + 5 deprecated aliases that still dispatch; removal targeted v1.0), 6 groups, 3 permission tiers, runtime access-scoping (ADR-0009, ADR-0055 supersedes ADR-0021)
   tui/
     index.tsx, App.tsx      # Silvery/React terminal UI with dashboard, server management (D/E/I/P keys)
   web/
@@ -199,7 +199,7 @@ src/
     git-providers.ts        # Git provider abstraction: GitHub, GitLab, Codeberg/Gitea (ADR-0025)
     public/                 # Static HTML
   lib/                      # Shared utilities (errors.ts, output.ts)
-test/                       # 284 files, 3649 tests, 11384 assertions
+test/                       # 284 files, 3653 tests, 11425 assertions
 ADRs/                       # 57 architectural decision records (0001-0056, incl. 0031a)
 scripts/
   build.ts                  # Cross-platform build (5 targets)
@@ -405,7 +405,7 @@ Workflow: `am wiki ingest --session <id>` → `am wiki search <query>` → `am w
 
 ```bash
 bun install              # Install dependencies
-bun test                 # Run all 3649 tests
+bun test                 # Run all 3653 tests
 bun test --watch         # Watch mode
 bun run dev              # Run CLI in dev mode
 bun run build            # Single binary (macOS arm64)

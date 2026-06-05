@@ -24,7 +24,13 @@ import {
 } from "../core/config";
 import { APPLY_SAFE_DEFAULTS, applyResolved, withConfig } from "../core/controller";
 import { commitAll, getStatus, log as gitLog, pull, push, revertHead } from "../core/git";
-import { type ResolvedScope, isToolInScope, resolveProfile } from "../core/resolver";
+import {
+  type ResolvedScope,
+  buildScopeManifest,
+  isToolInScope,
+  resolveProfile,
+} from "../core/resolver";
+import { DEFAULT_MCP_TOOL_GROUPS } from "../core/schema";
 import type { Config, McpToolGroup, Settings } from "../core/schema";
 import { interpolateEnvAsync, legacyKeyPath, loadKey, resolveKeyPath } from "../core/secrets";
 import { filterMessages, formatJson, formatMarkdown } from "../core/session";
@@ -433,8 +439,10 @@ export function checkSensitiveReadAuth(
   return { allowed: true };
 }
 
-/** Default tool groups exposed when settings.mcp_serve.tools is unset. */
-const DEFAULT_TOOL_GROUPS: McpToolGroup[] = ["core"];
+/** Default tool groups exposed when settings.mcp_serve.tools is unset.
+ * Canonical definition lives in core/schema (DEFAULT_MCP_TOOL_GROUPS); re-exported
+ * here under the original local name to avoid churning every call site. */
+const DEFAULT_TOOL_GROUPS: McpToolGroup[] = DEFAULT_MCP_TOOL_GROUPS;
 
 /**
  * Map each MCP tool name to its tool group (ADR-0021).
@@ -480,6 +488,31 @@ const TOOL_GROUP_MAP: Record<string, McpToolGroup> = {
 /** Resolve the tool group for a given tool name. */
 function getToolGroup(toolName: string): McpToolGroup {
   return TOOL_GROUP_MAP[toolName] ?? "core";
+}
+
+/** One entry in the MCP tool catalog (ADR-0055 auditability, Decision 6). */
+export interface ToolCatalogEntry {
+  name: string;
+  group: McpToolGroup;
+  tier: ToolTier;
+  deprecated: boolean;
+}
+
+/**
+ * The full MCP tool catalog: every tool's name, group, tier, and deprecation
+ * flag. Lightweight (no McpServer instance, no I/O) so the CLI (`am profile
+ * show --tools`) and the `am_get_scope` MCP tool can both build a profile's
+ * effective-scope manifest via the SAME `isToolInScope` decision the gateway
+ * enforces — the explanation can never drift from enforcement (the ADR-0055
+ * differentiator: the access boundary is an inspectable, git-diffable artifact).
+ */
+export function toolGroupCatalog(): ToolCatalogEntry[] {
+  return defineTools().map((t) => ({
+    name: t.def.name,
+    group: getToolGroup(t.def.name),
+    tier: t.tier,
+    deprecated: t.def.name in DEPRECATED_ALIASES,
+  }));
 }
 
 // ── Permission check ────────────────────────────────────────────
@@ -726,6 +759,7 @@ const TOOL_SCHEMAS: Record<string, z.ZodTypeAny> = {
   am_list_profiles: withAuth({}),
   am_list_skills: withAuth({}),
   am_list_instructions: withAuth({}),
+  am_get_scope: withAuth({}),
   am_status: withAuth({}),
   am_config_show: withAuth({}),
   am_doctor: withAuth({}),
@@ -974,6 +1008,32 @@ function defineTools(): ToolEntry[] {
           targets: instruction.targets ?? [],
         }));
         return { instructions: entries };
+      },
+    },
+    {
+      def: {
+        name: "am_get_scope",
+        description:
+          "Show the MCP tool-access scope the active profile grants (ADR-0055): the global tool-group ceiling, the profile's scope (groups/allow/deny), and the effective + excluded tool names. This is the same decision the gateway enforces at tools/list and tools/call — use it to see exactly which tools you can call under the current profile.",
+        inputSchema: { type: "object", properties: {} },
+      },
+      tier: "read-only",
+      handler: async () => {
+        const { config, profileName } = await loadConfigAndProfile();
+        const ceiling = config.settings?.mcp_serve?.tools ?? DEFAULT_MCP_TOOL_GROUPS;
+        const catalog = toolGroupCatalog();
+        // Resolve the active profile's scope, fail-safe identical to the gateway
+        // (resolveActiveScope): unknown profile → undefined (ceiling); a profile
+        // that EXISTS but whose chain throws → fail CLOSED (empty groups).
+        let scope: ResolvedScope | undefined;
+        if (config.profiles?.[profileName]) {
+          try {
+            scope = resolveProfile(profileName, config).scope;
+          } catch {
+            scope = { toolGroups: [], allowTools: [], denyTools: [] };
+          }
+        }
+        return buildScopeManifest(profileName, catalog, ceiling, scope);
       },
     },
     {

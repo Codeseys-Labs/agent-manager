@@ -92,7 +92,7 @@ Marketplace: marketplace (7 subcommands)
 Tools: import, adapter (5 subcommands), doctor, secret (6 subcommands), session, version
 Interfaces: mcp-serve, tui, serve, completion (bash/zsh/fish)
 
-### MCP Server (43 tools: 38 canonical + 5 deprecated aliases, 6 groups) — Complete
+### MCP Server (44 tools: 39 canonical + 5 deprecated aliases, 6 groups) — Complete
 
 | Group | Tools | Default |
 |-------|-------|---------|
@@ -171,7 +171,7 @@ Search, install, uninstall, update with provenance tracking. ADR-0024.
 | Interface | Status | Notes |
 |-----------|--------|-------|
 | CLI (citty + clack) | Done | 37 commands, --json/--quiet everywhere |
-| MCP Server | Done | 43 tools (38 canonical + 5 aliases), 3 permission tiers, 6 groups |
+| MCP Server | Done | 44 tools (39 canonical + 5 aliases), 3 permission tiers, 6 groups |
 | TUI (Silvery + React) | Done | Dashboard, server management (D/E/I/P keys), status, profiles |
 | Local Web (Hono + Bearer auth) | Done | REST API + SSE, server CRUD, wiki endpoints |
 | Stateless Web (CF Workers) | Done | Multi-backend git auth (ADR-0025), wiki browsing, git-backed config |
@@ -332,12 +332,12 @@ entries for orientation:
 |--------|-------|
 | Source files | 223 |
 | Test files | 273 |
-| Tests | 3,649 |
-| Assertions | 11,384 |
+| Tests | 3,653 |
+| Assertions | 11,425 |
 | IDE adapters | 13 (+community) |
 | Platform adapters | 3 |
 | CLI commands | 37 |
-| MCP tools | 43 (38 canonical + 5 deprecated aliases) |
+| MCP tools | 44 (39 canonical + 5 deprecated aliases) |
 | ADRs | 57 |
 | `as any` in src/ | 0 |
 | `err: any` in src/ | 0 |
