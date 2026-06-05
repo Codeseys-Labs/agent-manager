@@ -291,3 +291,184 @@ describe("M5.2 conflict sidecar + syncWiki rollback", () => {
     expect(e.conflictedFiles).toEqual(["a.md", "b.md"]);
   });
 });
+
+/**
+ * R-TEST3 — previously-untested syncWiki branches:
+ *   - the PUSH branch records {action:'push', ok:false} WITHOUT throwing when
+ *     gitPush fails,
+ *   - the direction:'both' / 'commit-and-sync' pipeline (auto-commit → pull →
+ *     push) with stale-sidecar clearing on success,
+ *   - the rollback-FAILURE sub-branch: softResetHead itself throws →
+ *     {action:'rollback', ok:false} is recorded (not rethrown).
+ *
+ * Seam note: src/wiki/sync.ts has no DI seam for gitPush/pullFastForwardOnly/
+ * softResetHead — they are static imports from ../core/git. Rather than
+ * mock.module("../core/git", ...) (process-global in Bun, NOT undone by
+ * mock.restore(), leaks into later files), we stub the underlying isomorphic-git
+ * methods (git.push / git.pull / git.log) by per-object property assignment and
+ * restore the originals in afterEach. This is the same leak-free pattern the
+ * rollback-success test above already uses for git.pull. Each git wrapper used
+ * by the parts of the pipeline we DON'T want to perturb (commitAll, getStatus,
+ * collectDirtyWikiFiles) avoids git.log, so stubbing git.log to force a
+ * softResetHead failure does not disturb auto-commit.
+ */
+describe("R-TEST3 syncWiki push / both / rollback-failure branches", () => {
+  let dir: string;
+  const originalPull = git.pull;
+  const originalPush = git.push;
+  const originalLog = git.log;
+
+  beforeEach(async () => {
+    dir = await mkdtemp(join(tmpdir(), "am-rtest3-sync-"));
+    await initRepo(dir);
+    await addRemote(dir, "https://example.com/fake.git");
+  });
+  afterEach(async () => {
+    (git as unknown as { pull: typeof git.pull }).pull = originalPull;
+    (git as unknown as { push: typeof git.push }).push = originalPush;
+    (git as unknown as { log: typeof git.log }).log = originalLog;
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  function stubPush(impl: () => Promise<unknown>): void {
+    (git as unknown as { push: (...a: unknown[]) => Promise<unknown> }).push = impl;
+  }
+  function stubPull(impl: () => Promise<unknown>): void {
+    (git as unknown as { pull: (...a: unknown[]) => Promise<unknown> }).pull = impl;
+  }
+
+  test("push failure → records {action:'push', ok:false} without throwing", async () => {
+    stubPush(async () => {
+      throw new Error("remote rejected: 403 forbidden");
+    });
+
+    // direction:'push' skips pull; goes straight to the push branch.
+    const result = await syncWiki(dir, {
+      direction: "push",
+      autoCommit: false,
+      allowDirty: true,
+    });
+
+    const push = result.actions.find((a) => a.action === "push");
+    expect(push).toBeDefined();
+    expect(push?.ok).toBe(false);
+    expect(push?.error).toContain("403 forbidden");
+    // syncWiki itself resolved (push failure is recorded, not fatal).
+    expect(result.wikiDir).toBe(dir);
+  });
+
+  test("direction:'both' runs auto-commit → pull → push and clears a stale sidecar on success", async () => {
+    // Pre-seed a stale conflict sidecar from a hypothetical prior run; a clean
+    // sync must clear it.
+    await writeConflictSidecar(dir, {
+      timestamp: "2026-01-01T00:00:00Z",
+      remote: "origin",
+      conflictedFiles: ["old.md"],
+    });
+    expect(fs.existsSync(join(dir, CONFLICT_SIDECAR))).toBe(true);
+
+    // Dirty wiki page, backdated past the debounce so auto-commit picks it up.
+    await writeFile(join(dir, "note.md"), "fresh local note");
+    const past = Date.now() - 120_000;
+    fs.utimesSync(join(dir, "note.md"), new Date(past), new Date(past));
+
+    // Pull = clean fast-forward (no-op resolve); push succeeds.
+    stubPull(async () => undefined);
+    stubPush(async () => undefined);
+
+    const result = await syncWiki(dir, {
+      direction: "both",
+      autoCommit: true,
+      allowDirty: false,
+      debounceSeconds: 0,
+    });
+
+    // All three stages recorded as ok.
+    const ac = result.actions.find((a) => a.action === "auto-commit");
+    const pull = result.actions.find((a) => a.action === "pull");
+    const push = result.actions.find((a) => a.action === "push");
+    expect(ac?.ok).toBe(true);
+    expect(ac?.files).toContain("note.md");
+    expect(pull?.ok).toBe(true);
+    expect(push?.ok).toBe(true);
+
+    // Stale sidecar cleared on the clean-sync exit, and no new one written.
+    expect(result.sidecarWritten).toBeUndefined();
+    expect(fs.existsSync(join(dir, CONFLICT_SIDECAR))).toBe(false);
+  });
+
+  test("direction:'commit-and-sync' behaves like 'both' (auto-commit → pull → push)", async () => {
+    await writeFile(join(dir, "cas.md"), "commit-and-sync note");
+    const past = Date.now() - 120_000;
+    fs.utimesSync(join(dir, "cas.md"), new Date(past), new Date(past));
+
+    stubPull(async () => undefined);
+    let pushed = false;
+    stubPush(async () => {
+      pushed = true;
+    });
+
+    const result = await syncWiki(dir, {
+      direction: "commit-and-sync",
+      autoCommit: true,
+      allowDirty: false,
+      debounceSeconds: 0,
+    });
+
+    expect(result.actions.find((a) => a.action === "auto-commit")?.ok).toBe(true);
+    expect(result.actions.find((a) => a.action === "pull")?.ok).toBe(true);
+    expect(result.actions.find((a) => a.action === "push")?.ok).toBe(true);
+    expect(pushed).toBe(true);
+  });
+
+  test("rollback FAILURE: softResetHead throws → records {action:'rollback', ok:false}", async () => {
+    // Dirty wiki page that auto-commits successfully (commitAll does not use
+    // git.log, so the git.log stub below does not disturb it).
+    await writeFile(join(dir, "diverge.md"), "local edit");
+    const past = Date.now() - 120_000;
+    fs.utimesSync(join(dir, "diverge.md"), new Date(past), new Date(past));
+
+    // Pull diverges → WikiSyncConflictError → triggers the rollback path.
+    stubPull(async () => {
+      const e = new Error("A simple fast-forward merge was not possible.") as Error & {
+        name: string;
+        code: string;
+      };
+      e.name = "FastForwardError";
+      e.code = "FastForwardError";
+      throw e;
+    });
+
+    // softResetHead's FIRST git call is git.log({depth:2}). Make it throw so
+    // the rollback sub-branch hits its catch and records ok:false (instead of
+    // rethrowing or recording ok:true).
+    (git as unknown as { log: (...a: unknown[]) => Promise<unknown> }).log = async () => {
+      throw new Error("git.log boom — cannot read parent commit");
+    };
+
+    const result = await syncWiki(dir, {
+      direction: "pull",
+      autoCommit: true,
+      allowDirty: false,
+      debounceSeconds: 0,
+    });
+
+    // Auto-commit ran...
+    expect(result.actions.find((a) => a.action === "auto-commit")?.ok).toBe(true);
+
+    // ...rollback was attempted and FAILED (recorded, not thrown).
+    const rollback = result.actions.find((a) => a.action === "rollback");
+    expect(rollback).toBeDefined();
+    expect(rollback?.ok).toBe(false);
+    expect(rollback?.error).toContain("git.log boom");
+
+    // The conflict sidecar is still written despite the rollback failure, and
+    // its path is returned to the caller.
+    expect(result.sidecarWritten).toBe(join(dir, CONFLICT_SIDECAR));
+    expect(fs.existsSync(join(dir, CONFLICT_SIDECAR))).toBe(true);
+
+    // The pull divergence is also recorded ok:false.
+    const pull = result.actions.find((a) => a.action === "pull" && a.ok === false);
+    expect(pull?.error).toContain("fast-forward-only");
+  });
+});

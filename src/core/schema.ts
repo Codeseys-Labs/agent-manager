@@ -8,7 +8,9 @@ export const RegistryProvenanceSchema = z.object({
   source: z.literal("mcp-registry"),
   package: z.string(),
   version: z.string(),
-  installed_at: z.string(),
+  // ISO-8601 datetime (e.g. "2026-04-01T00:00:00.000Z"). `am update` / `am
+  // audit` reason about install recency, so a bare date is insufficient.
+  installed_at: z.string().datetime(),
 });
 export type RegistryProvenance = z.infer<typeof RegistryProvenanceSchema>;
 
@@ -23,25 +25,64 @@ export const MarketplaceProvenanceSchema = z.object({
   ]),
   package: z.string(),
   version: z.string(),
-  imported_at: z.string(),
+  // ISO-8601 datetime — see RegistryProvenanceSchema.installed_at.
+  imported_at: z.string().datetime(),
   install_path: z.string().optional(),
 });
 export type MarketplaceProvenance = z.infer<typeof MarketplaceProvenanceSchema>;
 
 // --- Server Schema (MCP) ---
-export const ServerSchema = z.object({
-  command: z.string(),
-  url: z.string().optional(),
-  args: z.array(z.string()).optional(),
-  env: z.record(z.string(), z.string()).optional(),
-  transport: z.enum(["stdio", "streamable-http", "sse"]).default("stdio"),
-  description: z.string().optional(),
-  tags: z.array(z.string()).optional(),
-  enabled: z.boolean().default(true),
-  _registry: RegistryProvenanceSchema.optional(),
-  _marketplace: MarketplaceProvenanceSchema.optional(),
-  adapters: adaptersPassthrough,
-});
+export const ServerSchema = z
+  .object({
+    command: z.string(),
+    // DEPRECATED / largely unused: the adapter export path
+    // (src/adapters/shared/export-utils.ts) treats `command` as the URL for
+    // remote (streamable-http / sse) transports — `url` is NOT read there.
+    // Only `am install` / marketplace installer set it (redundantly with
+    // `command`), and only `mcp superset` surfaces it informationally. A
+    // future ADR should migrate ServerSchema to a discriminatedUnion on
+    // `transport` (stdio: command.min(1), no url; remote: url.url(), no
+    // command) and drop this field; that touches every adapter + fixture, so
+    // it is deferred. Until then the superRefine below rejects the clearly
+    // illegal stdio+url combination.
+    url: z.string().optional(),
+    args: z.array(z.string()).optional(),
+    env: z.record(z.string(), z.string()).optional(),
+    transport: z.enum(["stdio", "streamable-http", "sse"]).default("stdio"),
+    description: z.string().optional(),
+    tags: z.array(z.string()).optional(),
+    enabled: z.boolean().default(true),
+    _registry: RegistryProvenanceSchema.optional(),
+    _marketplace: MarketplaceProvenanceSchema.optional(),
+    adapters: adaptersPassthrough,
+  })
+  .superRefine((data, ctx) => {
+    // A server is installed via the MCP registry OR imported from a
+    // marketplace plugin/extension — never both. Carrying both provenance
+    // blocks is a contradiction (am audit / update can't reason about a
+    // server with two mutually-exclusive origins).
+    if (data._registry && data._marketplace) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message:
+          "_registry and _marketplace are mutually exclusive: a server is either " +
+          "registry-installed or marketplace-imported, not both",
+        path: ["_marketplace"],
+      });
+    }
+    // A stdio server launches a local command and has no URL. Carrying a
+    // `url` on a stdio transport is an illegal, ignored field. (Remote
+    // transports legitimately carry the URL in `command` today — see the
+    // `url` field comment above; that shape is intentionally left valid
+    // pending the discriminated-union migration.)
+    if (data.transport === "stdio" && data.url !== undefined) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "url is not valid for a stdio transport (stdio servers launch a local command)",
+        path: ["url"],
+      });
+    }
+  });
 export type Server = z.infer<typeof ServerSchema>;
 
 // --- Instruction Schema ---

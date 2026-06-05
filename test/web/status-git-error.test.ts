@@ -24,8 +24,7 @@ const originalEnv = process.env.AM_CONFIG_DIR;
 // undo `mock.module()`, so we must explicitly re-install the real exports
 // after each test or the `getStatus`-throws stub leaks into every test file
 // loaded later in the same process (e.g. wiki sync's git-root resolution).
-// biome-ignore lint/suspicious/noExplicitAny: module-shape snapshot for re-install
-let REAL_GIT: any;
+let REAL_GIT: typeof import("../../src/core/git") | undefined;
 
 beforeAll(async () => {
   tmpDir = await mkdtemp(join(tmpdir(), "am-web-status-error-"));
