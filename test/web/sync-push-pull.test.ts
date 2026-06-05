@@ -146,16 +146,15 @@ describe("POST /api/sync/push & /pull — error responses", () => {
     expect(data.error.length).toBeGreaterThan(0);
   });
 
-  // ── SECURITY contract (currently FAILING — known leak, see file header) ──
+  // ── SECURITY contract (R3-SEC — FIXED) ──
   //
-  // These assert the SAFE behavior: a credential-bearing remote URL in the
-  // underlying git error must be scrubbed before it reaches the response body.
-  // The handler does not yet do this, so the assertions fail and `it.failing`
-  // records them as expected failures (suite stays green). When a fix lands,
-  // these "unexpectedly pass" and Bun turns them into hard failures — the
-  // signal to delete `.failing`.
+  // The sync handlers now run the error through safeErrorMessage, which scrubs
+  // credential userinfo from any URL in the message. These assert the SAFE
+  // behavior: a credential-bearing remote URL in the underlying git error must
+  // be scrubbed before it reaches the 500 body. (Was `it.failing` while the
+  // leak existed; flipped to a live guard once the fix landed.)
 
-  it.failing("push error body must NOT echo a credential-bearing remote URL", async () => {
+  it("push error body must NOT echo a credential-bearing remote URL", async () => {
     const realGit = await import("../../src/core/git");
     mock.module("../../src/core/git", () => ({
       ...realGit,
@@ -176,7 +175,7 @@ describe("POST /api/sync/push & /pull — error responses", () => {
     expect(raw).not.toContain(SECRET_TOKEN);
   });
 
-  it.failing("pull error body must NOT echo a credential-bearing remote URL", async () => {
+  it("pull error body must NOT echo a credential-bearing remote URL", async () => {
     const realGit = await import("../../src/core/git");
     mock.module("../../src/core/git", () => ({
       ...realGit,

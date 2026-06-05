@@ -2,6 +2,7 @@ import * as fs from "node:fs";
 import { join } from "node:path";
 import git from "isomorphic-git";
 import { WikiSyncConflictError } from "../lib/errors.ts";
+import { stripUrlUserinfo } from "../lib/redact.ts";
 
 const DEFAULT_AUTHOR = { name: "agent-manager", email: "am@localhost" };
 
@@ -243,7 +244,17 @@ export async function getStatus(dir: string): Promise<StatusResult> {
     }
   }
 
-  const remotes = await git.listRemotes({ fs, dir });
+  // R2-SEC1: strip any embedded credentials from remote URLs at this boundary
+  // so no downstream consumer leaks them. am_status / am_doctor are ungated
+  // read-only MCP tools and the web /api/status route all read these remotes;
+  // a raw `https://x-access-token:ghp_xxx@github.com/...` would otherwise leak
+  // a live token to a tokenless client. Fixing it here covers every consumer
+  // with no per-call-site mistake. SCP shorthand (git@host:org/repo) and
+  // credential-free URLs pass through unchanged.
+  const remotes = (await git.listRemotes({ fs, dir })).map((r) => ({
+    remote: r.remote,
+    url: stripUrlUserinfo(r.url),
+  }));
 
   return {
     branch,

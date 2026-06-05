@@ -99,4 +99,54 @@ describe("GET /api/config — encrypted-secret redaction (enc:v1 AND enc:v2:age)
     expect(raw).not.toContain("enc:v1:");
     expect(raw).not.toContain("enc:v2:age:");
   });
+
+  // R2-SEC2 / R2-SEC3: the envelope pass alone misses PLAINTEXT secrets. The
+  // endpoint now runs the two-pass redactor, so plaintext env values, named
+  // secret scalars (settings.a2a.auth_token), header tables, and credential
+  // userinfo in URLs must all be masked.
+  it("masks plaintext secrets the envelope pass misses (env, a2a.auth_token, headers, URL userinfo)", async () => {
+    const plaintextDir = await mkdtemp(join(tmpdir(), "am-web-redact-plain-"));
+    await initRepo(plaintextDir);
+    const PLAIN_TOKEN = "tvly-plaintextkey0123456789";
+    const A2A_TOKEN = "hunter2hunter2hunter2";
+    const HEADER_KEY = "rawplaintextheaderkey";
+    const CRED_URL = "https://alice:p4ssw0rdInUrl@remote.example.com/mcp";
+    const config = {
+      settings: {
+        default_profile: "default",
+        env: { TAVILY_API_KEY: PLAIN_TOKEN },
+        a2a: { auth_token: A2A_TOKEN },
+      },
+      servers: {
+        remote: {
+          command: CRED_URL,
+          transport: "streamable-http",
+          enabled: true,
+          headers: { Authorization: `Bearer ${HEADER_KEY}` },
+        },
+      },
+      profiles: { default: { description: "Default profile" } },
+    };
+    await writeFile(join(plaintextDir, "config.toml"), TOML.stringify(config as TOML.JsonMap));
+    process.env.AM_CONFIG_DIR = plaintextDir;
+    const token = ensureAuthToken(plaintextDir);
+    try {
+      const app = await createApp();
+      const res = await app.request("/api/config", {
+        headers: { authorization: `Bearer ${token}` },
+      });
+      expect(res.status).toBe(200);
+      const raw = await res.text();
+      // None of the raw secret values may survive anywhere in the response.
+      expect(raw).not.toContain(PLAIN_TOKEN);
+      expect(raw).not.toContain(A2A_TOKEN);
+      expect(raw).not.toContain(HEADER_KEY);
+      expect(raw).not.toContain("p4ssw0rdInUrl");
+      // The host is still legible (diagnostics) but the credential is gone.
+      expect(raw).toContain("remote.example.com");
+    } finally {
+      process.env.AM_CONFIG_DIR = tmpDir;
+      await rm(plaintextDir, { recursive: true, force: true });
+    }
+  });
 });

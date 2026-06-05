@@ -25,7 +25,7 @@ import {
   saveKey,
 } from "../core/secrets";
 import { errorMessage } from "../lib/errors";
-import { redactConfigSecrets } from "../lib/redact";
+import { redactConfigPlaintextSecrets, redactConfigSecrets, safeErrorMessage } from "../lib/redact";
 import { AM_VERSION } from "../lib/version";
 
 // ── Token-based authentication for local web server ─────────────
@@ -194,7 +194,15 @@ export async function createApp(options?: CreateAppOptions) {
   app.get("/api/config", async (c) => {
     try {
       const { config, profileName } = await getConfigAndProfile();
-      return c.json({ profile: profileName, config: redactConfigSecrets(config) });
+      // R2-SEC2: two-pass redaction, identical to the MCP am_config_show path.
+      // redactConfigSecrets masks enc: envelopes (v1 + v2 age);
+      // redactConfigPlaintextSecrets masks PLAINTEXT secrets the envelope pass
+      // misses — env/headers maps by location, named secret scalars
+      // (a2a.auth_token etc.), and credential userinfo in URLs.
+      return c.json({
+        profile: profileName,
+        config: redactConfigPlaintextSecrets(redactConfigSecrets(config)),
+      });
     } catch {
       return c.json({ error: "Config not found. Run `am init` first." }, 500);
     }
@@ -574,7 +582,10 @@ export async function createApp(options?: CreateAppOptions) {
       await gitPush(configDir);
       return c.json({ action: "push", success: true });
     } catch (e: unknown) {
-      return c.json({ error: errorMessage(e) || "Push failed" }, 500);
+      // R3-SEC: safeErrorMessage scrubs credential userinfo (and token shapes)
+      // — a failed push to https://user:token@host would otherwise echo the
+      // token verbatim in the error body.
+      return c.json({ error: safeErrorMessage(e) || "Push failed" }, 500);
     }
   });
 
@@ -584,7 +595,8 @@ export async function createApp(options?: CreateAppOptions) {
       await gitPull(configDir);
       return c.json({ action: "pull", success: true });
     } catch (e: unknown) {
-      return c.json({ error: errorMessage(e) || "Pull failed" }, 500);
+      // R3-SEC: see push handler — scrub credential-bearing remote URLs.
+      return c.json({ error: safeErrorMessage(e) || "Pull failed" }, 500);
     }
   });
 

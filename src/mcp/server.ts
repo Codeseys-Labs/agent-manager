@@ -28,12 +28,12 @@ import type { Config, McpToolGroup, Settings } from "../core/schema";
 import { interpolateEnvAsync, legacyKeyPath, loadKey, resolveKeyPath } from "../core/secrets";
 import { filterMessages, formatJson, formatMarkdown } from "../core/session";
 import type { SessionSummary } from "../core/session";
-import { errorMessage } from "../lib/errors";
 import {
   redactConfigPlaintextSecrets,
   redactConfigSecrets,
   redactSecretish,
   safeErrorMessage,
+  stripUrlUserinfo,
 } from "../lib/redact";
 import { AM_VERSION } from "../lib/version";
 
@@ -1027,7 +1027,13 @@ function defineTools(): ToolEntry[] {
             branch: gitStatus.branch,
             clean: gitStatus.clean,
             dirty: gitStatus.dirty,
-            remotes: gitStatus.remotes,
+            // Belt-and-suspenders (R2-SEC1): getStatus already strips userinfo
+            // at the git boundary, but scrub each remote URL again here so a raw
+            // credential URL can never leak to a tokenless client via am_status.
+            remotes: gitStatus.remotes.map((r) => ({
+              remote: r.remote,
+              url: stripUrlUserinfo(r.url),
+            })),
             ...(gitError !== undefined ? { gitError } : {}),
           },
           tools: toolStatuses,
@@ -1096,7 +1102,10 @@ function defineTools(): ToolEntry[] {
           checks.push({
             name: "config.toml",
             status: "fail",
-            message: `Parse/validation error: ${errorMessage(err)}`,
+            // safeErrorMessage (not errorMessage): a malformed config can echo a
+            // secret value back inside a Zod/TOML parse error; am_doctor is
+            // read-only and reachable by a tokenless client (R2-LOW).
+            message: `Parse/validation error: ${safeErrorMessage(err)}`,
           });
         }
 
@@ -1125,7 +1134,12 @@ function defineTools(): ToolEntry[] {
         try {
           const gitStatus = await getStatus(configDir);
           if (gitStatus.remotes.length > 0) {
-            checks.push({ name: "Git remote", status: "ok", message: gitStatus.remotes[0].url });
+            checks.push({
+              name: "Git remote",
+              status: "ok",
+              // Belt-and-suspenders userinfo scrub (R2-SEC1).
+              message: stripUrlUserinfo(gitStatus.remotes[0].url),
+            });
           } else {
             checks.push({ name: "Git remote", status: "warn", message: "No remote configured" });
           }

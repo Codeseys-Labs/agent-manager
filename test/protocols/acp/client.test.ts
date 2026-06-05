@@ -747,47 +747,145 @@ describe("AmAcpClient permission policy", () => {
 // ── MEDIUM-3: Path restriction for readTextFile/writeTextFile ────
 
 describe("isPathAllowed (MEDIUM-3)", () => {
-  test("allows path within allowed directory", () => {
-    expect(isPathAllowed("/home/user/project/src/file.ts", ["/home/user/project"])).toBe(true);
+  // R2-MED: isPathAllowed is now async (it dereferences symlinks via realpath).
+  // For fictional/non-existent paths it falls back to lexical resolution, so
+  // these original lexical-behavior assertions still hold — they just await.
+  test("allows path within allowed directory", async () => {
+    expect(await isPathAllowed("/home/user/project/src/file.ts", ["/home/user/project"])).toBe(
+      true,
+    );
   });
 
-  test("allows path that is exactly the allowed directory", () => {
-    expect(isPathAllowed("/home/user/project", ["/home/user/project"])).toBe(true);
+  test("allows path that is exactly the allowed directory", async () => {
+    expect(await isPathAllowed("/home/user/project", ["/home/user/project"])).toBe(true);
   });
 
-  test("rejects path outside allowed directory", () => {
-    expect(isPathAllowed("/etc/passwd", ["/home/user/project"])).toBe(false);
+  test("rejects path outside allowed directory", async () => {
+    expect(await isPathAllowed("/etc/passwd", ["/home/user/project"])).toBe(false);
   });
 
-  test("rejects path traversal attack (../)", () => {
-    expect(isPathAllowed("/home/user/project/../../../etc/passwd", ["/home/user/project"])).toBe(
+  test("rejects path traversal attack (../)", async () => {
+    expect(
+      await isPathAllowed("/home/user/project/../../../etc/passwd", ["/home/user/project"]),
+    ).toBe(false);
+  });
+
+  test("rejects path that is a prefix but not a child directory", async () => {
+    // /home/user/project-evil is not a child of /home/user/project
+    expect(await isPathAllowed("/home/user/project-evil/file.ts", ["/home/user/project"])).toBe(
       false,
     );
   });
 
-  test("rejects path that is a prefix but not a child directory", () => {
-    // /home/user/project-evil is not a child of /home/user/project
-    expect(isPathAllowed("/home/user/project-evil/file.ts", ["/home/user/project"])).toBe(false);
-  });
-
-  test("allows paths in any of multiple allowed directories", () => {
+  test("allows paths in any of multiple allowed directories", async () => {
     const allowed = ["/home/user/project", "/tmp/scratch"];
-    expect(isPathAllowed("/tmp/scratch/output.txt", allowed)).toBe(true);
-    expect(isPathAllowed("/home/user/project/src/main.ts", allowed)).toBe(true);
+    expect(await isPathAllowed("/tmp/scratch/output.txt", allowed)).toBe(true);
+    expect(await isPathAllowed("/home/user/project/src/main.ts", allowed)).toBe(true);
   });
 
-  test("rejects all paths when allowed list is empty", () => {
-    expect(isPathAllowed("/home/user/project/file.ts", [])).toBe(false);
+  test("rejects all paths when allowed list is empty", async () => {
+    expect(await isPathAllowed("/home/user/project/file.ts", [])).toBe(false);
   });
 
-  test("handles deeply nested allowed paths", () => {
-    expect(isPathAllowed("/a/b/c/d/e/f.txt", ["/a/b/c"])).toBe(true);
+  test("handles deeply nested allowed paths", async () => {
+    expect(await isPathAllowed("/a/b/c/d/e/f.txt", ["/a/b/c"])).toBe(true);
   });
 
-  test("handles relative path resolution", () => {
+  test("handles relative path resolution", async () => {
     // path.resolve will resolve relative paths against cwd
     const cwd = process.cwd();
-    expect(isPathAllowed("./file.ts", [cwd])).toBe(true);
+    expect(await isPathAllowed("./file.ts", [cwd])).toBe(true);
+  });
+});
+
+// ── R2-MED: isPathAllowed dereferences symlinks (realpath, not lexical) ──
+//
+// The pre-fix code used path.resolve(), which is purely lexical: a symlink
+// placed INSIDE the sandbox that points OUTSIDE it (e.g. sandbox/escape -> /etc)
+// passes the lexical prefix check because `sandbox/escape/...` textually starts
+// with the sandbox root — even though reads/writes land in /etc. These tests
+// build a real sandbox on disk with a symlink that escapes and assert the
+// realpath comparison REJECTS it, while a genuine in-sandbox path still passes.
+// Skipped on win32 (symlink creation needs elevated privileges there).
+
+describe("isPathAllowed symlink escape (R2-MED)", () => {
+  const isWin = process.platform === "win32";
+  const fs = require("node:fs");
+  const os = require("node:os");
+  const nodePath = require("node:path");
+
+  let root: string | null = null;
+
+  beforeEach(() => {
+    if (isWin) return;
+    root = fs.mkdtempSync(nodePath.join(os.tmpdir(), "acp-realpath-"));
+  });
+
+  test.skipIf(isWin)("rejects a symlink inside the sandbox that points outside it", async () => {
+    const sandbox = nodePath.join(root as string, "sandbox");
+    const outside = nodePath.join(root as string, "outside");
+    fs.mkdirSync(sandbox, { recursive: true });
+    fs.mkdirSync(outside, { recursive: true });
+    // A real secret living OUTSIDE the sandbox.
+    fs.writeFileSync(nodePath.join(outside, "secret.txt"), "TOP SECRET");
+
+    // The escape hatch: a symlink inside the sandbox pointing at the outside dir.
+    const escapeLink = nodePath.join(sandbox, "escape");
+    fs.symlinkSync(outside, escapeLink);
+
+    // Lexically, `<sandbox>/escape/secret.txt` starts with `<sandbox>/`, so the
+    // old path.resolve() check would WRONGLY allow it. With realpath it resolves
+    // to `<outside>/secret.txt`, which escapes the sandbox → must be rejected.
+    const target = nodePath.join(escapeLink, "secret.txt");
+    expect(await isPathAllowed(target, [sandbox])).toBe(false);
+  });
+
+  test.skipIf(isWin)("still allows a genuine path inside the sandbox", async () => {
+    const sandbox = nodePath.join(root as string, "sandbox");
+    fs.mkdirSync(sandbox, { recursive: true });
+    fs.writeFileSync(nodePath.join(sandbox, "real.txt"), "in-bounds");
+
+    const target = nodePath.join(sandbox, "real.txt");
+    expect(await isPathAllowed(target, [sandbox])).toBe(true);
+  });
+
+  test.skipIf(isWin)("allows a not-yet-existing file inside the sandbox (write case)", async () => {
+    // writeTextFile targets a brand-new file; canonicalize() must walk up to the
+    // nearest existing ancestor (the sandbox) and still treat the tail as inside.
+    const sandbox = nodePath.join(root as string, "sandbox");
+    fs.mkdirSync(sandbox, { recursive: true });
+
+    const target = nodePath.join(sandbox, "subdir", "new-file.txt");
+    expect(await isPathAllowed(target, [sandbox])).toBe(true);
+  });
+
+  test.skipIf(isWin)(
+    "matches when the allowed root itself is a symlink (root realpathed too)",
+    async () => {
+      // The sandbox root is reached via a symlink; the requested path uses the
+      // real directory. Because BOTH sides are realpathed, they must still match.
+      const realDir = nodePath.join(root as string, "real-sandbox");
+      fs.mkdirSync(realDir, { recursive: true });
+      fs.writeFileSync(nodePath.join(realDir, "f.txt"), "x");
+      const linkedRoot = nodePath.join(root as string, "linked-sandbox");
+      fs.symlinkSync(realDir, linkedRoot);
+
+      const target = nodePath.join(realDir, "f.txt");
+      // Allowed root given via the symlink; requested path via the real dir.
+      expect(await isPathAllowed(target, [linkedRoot])).toBe(true);
+    },
+  );
+
+  test.skipIf(isWin)("rejects a sibling dir sharing a prefix (sep guard retained)", async () => {
+    const sandbox = nodePath.join(root as string, "sandbox");
+    const sibling = nodePath.join(root as string, "sandbox-evil");
+    fs.mkdirSync(sandbox, { recursive: true });
+    fs.mkdirSync(sibling, { recursive: true });
+    fs.writeFileSync(nodePath.join(sibling, "f.txt"), "evil");
+
+    const target = nodePath.join(sibling, "f.txt");
+    // `<root>/sandbox-evil` must NOT be considered inside `<root>/sandbox`.
+    expect(await isPathAllowed(target, [sandbox])).toBe(false);
   });
 });
 

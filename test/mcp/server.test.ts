@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, mock, test } from "bun:test";
 import { join } from "node:path";
 import { writeConfig } from "../../src/core/config";
-import { initRepo } from "../../src/core/git";
+import { addRemote, initRepo } from "../../src/core/git";
 import type { Config } from "../../src/core/schema";
 import type { Session, SessionReader, SessionSummary } from "../../src/core/session";
 import { McpServer } from "../../src/mcp/server";
@@ -270,6 +270,50 @@ describe("MCP server", () => {
     expect(content.git.branch).toBeDefined();
     expect(typeof content.git.clean).toBe("boolean");
     expect(Array.isArray(content.tools)).toBe(true);
+  });
+
+  // R2-SEC1 belt-and-suspenders: am_status is read-only and tokenless, so a git
+  // remote URL with embedded credentials must never reach the client verbatim —
+  // even if a future code path bypasses getStatus's boundary redaction.
+  test("am_status strips userinfo from remote URLs", async () => {
+    const configDir = await setupConfig({});
+    const secretToken = "ghp_abcdefghijklmnopqrstuvwxyz0123456789";
+    const plainPassword = "s3cretPasswordWithNoTokenShape";
+    await addRemote(
+      configDir,
+      `https://x-access-token:${secretToken}@github.com/org/repo.git`,
+      "origin",
+    );
+    // A plain user:password URL has no recognizable token shape — only the
+    // URL-userinfo strip catches it, which is the whole point of this guard.
+    await addRemote(
+      configDir,
+      `https://alice:${plainPassword}@example.com/org/repo.git`,
+      "upstream",
+    );
+
+    const server = new McpServer({ auth: { token: undefined, allowUnsafeLocal: true } });
+    const resp = await server.handleRequest({
+      jsonrpc: "2.0",
+      id: 53,
+      method: "tools/call",
+      params: { name: "am_status", arguments: {} },
+    });
+
+    const text = (resp?.result as JsonRpcResult).content[0].text as string;
+    expect(text).not.toContain(secretToken);
+    expect(text).not.toContain(plainPassword);
+
+    const content = JSON.parse(text);
+    expect(Array.isArray(content.git.remotes)).toBe(true);
+    expect(content.git.remotes.length).toBeGreaterThanOrEqual(2);
+    for (const r of content.git.remotes) {
+      // The userinfo segment is replaced wholesale with `[redacted]@`, so the
+      // raw `user:secret@` is gone but the host is still legible for diagnostics.
+      expect(r.url).toContain("[redacted]@");
+      expect(r.url).not.toContain(secretToken);
+      expect(r.url).not.toContain(plainPassword);
+    }
   });
 
   test("am_config_show returns config", async () => {
@@ -541,6 +585,42 @@ describe("MCP server", () => {
 
     const configCheck = content.checks.find((c: { name: string }) => c.name === "config.toml");
     expect(configCheck?.status).toBe("ok");
+  });
+
+  // R2-LOW: am_doctor's config.toml check surfaces parse/validation errors to a
+  // read-only, tokenless client. A Zod error echoes the offending VALUE — here
+  // an invalid `transport` enum whose value is a GitHub token — so the message
+  // must pass through safeErrorMessage before it leaves the process.
+  test("am_doctor redacts secret-shaped values in config validation errors", async () => {
+    await setupConfig({});
+    const secretToken = "ghp_abcdefghijklmnopqrstuvwxyz0123456789";
+    // Overwrite config.toml with a raw, schema-invalid file. We bypass
+    // writeConfig (which would reject it) by writing the TOML text directly.
+    await dir.write(
+      "config.toml",
+      `[servers.leaky]\ncommand = "echo"\ntransport = "${secretToken}"\nenabled = true\n`,
+    );
+
+    const server = new McpServer({ auth: { token: undefined, allowUnsafeLocal: true } });
+    const resp = await server.handleRequest({
+      jsonrpc: "2.0",
+      id: 52,
+      method: "tools/call",
+      params: { name: "am_doctor", arguments: {} },
+    });
+
+    const result = resp?.result as JsonRpcResult;
+    const text = result.content[0].text as string;
+    // The raw token must not appear anywhere in the response...
+    expect(text).not.toContain(secretToken);
+
+    const content = JSON.parse(text);
+    const configCheck = content.checks.find((c: { name: string }) => c.name === "config.toml");
+    expect(configCheck?.status).toBe("fail");
+    expect(configCheck?.message).toContain("Parse/validation error:");
+    // ...and the token specifically is replaced by the redaction placeholder.
+    expect(configCheck?.message).not.toContain(secretToken);
+    expect(configCheck?.message).toContain("[REDACTED_GH_TOKEN]");
   });
 
   test("am_doctor is read-only (no opt-in needed)", async () => {

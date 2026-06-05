@@ -229,7 +229,7 @@ export const searchSubcommand = defineCommand({
   },
 });
 
-const addSubcommand = defineCommand({
+export const addSubcommand = defineCommand({
   meta: { name: "add", description: "Add a wiki page or knowledge entry" },
   args: {
     json: { type: "boolean", description: "JSON output", default: false },
@@ -330,21 +330,36 @@ const addSubcommand = defineCommand({
     const globalDir = resolveWikiDir({ global: true });
     const visibleAcrossProjects = writeDir === globalDir;
     const scope = visibleAcrossProjects ? "global" : "project-local";
+    // R2-MED: `--global` is currently a no-op for the WRITE (addEntry ignores
+    // it; threading wikiDir through is the deferred storage fix, seed
+    // agent-manager-eb5c). When the user EXPLICITLY asked for --global but the
+    // entry still landed project-local, we must NOT stay silent (the W1-3 gate
+    // `&& !args.global` suppressed all feedback in that case). Surface a
+    // distinct warning so the request isn't silently misleading.
+    const globalRequestedButLocal = !visibleAcrossProjects && (args.global as boolean);
 
     if (args.json) {
-      output({ action: "add", entry, scope, visibleAcrossProjects }, opts);
+      output({ action: "add", entry, scope, visibleAcrossProjects, globalRequestedButLocal }, opts);
     } else {
       info(`Added entry ${entry.id} (${entityType})`, opts);
-      // Only nudge when the entry is project-local AND the user did not ask for
-      // the global store. `am wiki publish <slug>` promotes a local `.am-wiki/`
-      // entry up to the cross-project `wiki/projects/<name>/` mirror that
-      // `--all-projects` enumerates (add `--promote` to reach `wiki/global/`).
-      if (!visibleAcrossProjects && !args.global) {
-        info(
-          `Note: this entry is project-local. Run \`am wiki publish ${entry.id}\` to make it visible to \`am wiki search --all-projects\` from other projects.`,
-          opts,
-        );
-      }
+    }
+
+    if (globalRequestedButLocal) {
+      // Distinct from the plain project-local nudge: the user asked for global
+      // and did not get it. Route to stderr via warn() so scripts notice.
+      warn(
+        `--global was requested but this entry landed in the project-local wiki (am wiki add does not yet route the write to the global store — see backlog). Run \`am wiki publish ${entry.id} --promote\` to push it to the global store.`,
+        opts,
+      );
+    } else if (!visibleAcrossProjects && !args.global) {
+      // Plain project-local nudge. `am wiki publish <slug>` promotes a local
+      // `.am-wiki/` entry up to the cross-project `wiki/projects/<name>/` mirror
+      // that `--all-projects` enumerates (add `--promote` to reach
+      // `wiki/global/`).
+      info(
+        `Note: this entry is project-local. Run \`am wiki publish ${entry.id}\` to make it visible to \`am wiki search --all-projects\` from other projects.`,
+        opts,
+      );
     }
   },
 });

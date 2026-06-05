@@ -987,12 +987,40 @@ describe("am wiki add: visibility-boundary feedback (W1-3)", () => {
     expect(joined).not.toContain("project-local");
   });
 
-  test("--global suppresses the notice even in a project context (user opted out)", async () => {
+  // R2-MED: when --global is requested but the write still lands project-local
+  // (addEntry ignores --global — deferred under seed agent-manager-eb5c), the
+  // user must NOT be silently misled. Instead of suppressing all feedback, the
+  // add command emits a DISTINCT warning pointing at the documented workaround.
+  test("--global requested but landed local emits a distinct warning (stderr)", async () => {
     const add = await getAdd();
     await add.run({ args: addArgs({ global: true }) });
-    // Scope still reflects the real landing dir (addEntry ignores --global —
-    // deferred under seed agent-manager-eb5c), but the explicit --global means
-    // the user does not want the project-local nudge.
-    expect(consoleOutput.join("\n")).not.toContain("project-local");
+    // warn() routes to console.error → consoleErrors (NOT consoleOutput).
+    const warned = consoleErrors.join("\n");
+    expect(warned).toContain("--global was requested");
+    expect(warned).toContain("does not yet route the write to the global store");
+    expect(warned).toContain("--promote");
+    // It is NOT the plain project-local nudge (that fires only without --global).
+    expect(consoleOutput.join("\n")).not.toContain("visible to `am wiki search --all-projects`");
+  });
+
+  test("--global requested but landed local sets globalRequestedButLocal in --json", async () => {
+    const add = await getAdd();
+    await add.run({ args: addArgs({ global: true, json: true }) });
+    const payload = JSON.parse(consoleOutput.join("\n"));
+    expect(payload.action).toBe("add");
+    expect(payload.scope).toBe("project-local");
+    expect(payload.visibleAcrossProjects).toBe(false);
+    expect(payload.globalRequestedButLocal).toBe(true);
+  });
+
+  test("--global in a true global context does NOT warn (request honored)", async () => {
+    // No project wiki above dir.path → resolveWikiDir() IS the global store, so
+    // --global is effectively satisfied; no warning, globalRequestedButLocal false.
+    process.chdir(dir.path);
+    const add = await getAdd();
+    await add.run({ args: addArgs({ global: true, json: true }) });
+    const payload = JSON.parse(consoleOutput.join("\n"));
+    expect(payload.visibleAcrossProjects).toBe(true);
+    expect(payload.globalRequestedButLocal).toBe(false);
   });
 });

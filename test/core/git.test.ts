@@ -155,6 +155,52 @@ describe("getStatus", () => {
     expect(status.dirty.length).toBeGreaterThan(0);
     expect(status.dirty).toContain("new.txt");
   });
+
+  // R2-SEC1: am_status / am_doctor / web /api/status all consume
+  // StatusResult.remotes. A raw remote URL can embed a live credential
+  // (https://x-access-token:ghp_xxx@github.com/...). getStatus must scrub
+  // userinfo at the boundary so no ungated, read-only consumer leaks it.
+  describe("remote URL credential redaction (R2-SEC1)", () => {
+    test("strips userinfo from a credential-bearing https remote", async () => {
+      await initRepo(dir);
+      await addRemote(dir, "https://user:ghp_secrettokenvalue@github.com/org/repo.git");
+      const status = await getStatus(dir);
+      const origin = status.remotes.find((r) => r.remote === "origin");
+      expect(origin).toBeDefined();
+      expect(origin?.url).toBe("https://[redacted]@github.com/org/repo.git");
+      // Defense-in-depth: the raw token must not survive anywhere in the URL.
+      expect(origin?.url).not.toContain("ghp_secrettokenvalue");
+      expect(origin?.url).not.toContain("user:");
+    });
+
+    test("strips userinfo carrying only a token (no username)", async () => {
+      await initRepo(dir);
+      await addRemote(dir, "https://x-access-token:ghp_anothersecret@github.com/o/r.git");
+      const status = await getStatus(dir);
+      const origin = status.remotes.find((r) => r.remote === "origin");
+      expect(origin?.url).toBe("https://[redacted]@github.com/o/r.git");
+      expect(origin?.url).not.toContain("ghp_anothersecret");
+      expect(origin?.url).not.toContain("x-access-token");
+    });
+
+    test("leaves a credential-free https remote unchanged", async () => {
+      await initRepo(dir);
+      await addRemote(dir, "https://github.com/org/repo.git");
+      const status = await getStatus(dir);
+      const origin = status.remotes.find((r) => r.remote === "origin");
+      expect(origin?.url).toBe("https://github.com/org/repo.git");
+    });
+
+    test("leaves SCP-style shorthand (git@host:org/repo) unchanged", async () => {
+      await initRepo(dir);
+      // SCP shorthand has no `://` scheme; it must pass through untouched so
+      // we never corrupt a legitimate non-credential remote.
+      await addRemote(dir, "git@github.com:org/repo.git");
+      const status = await getStatus(dir);
+      const origin = status.remotes.find((r) => r.remote === "origin");
+      expect(origin?.url).toBe("git@github.com:org/repo.git");
+    });
+  });
 });
 
 describe("addRemote", () => {
