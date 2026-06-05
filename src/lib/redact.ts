@@ -56,28 +56,72 @@ export function redactConfigSecrets(obj: unknown): unknown {
  * `redactConfigSecrets` on its output, before the config crosses the MCP trust
  * boundary in `am_config_show`.
  */
+/**
+ * Object-property names that hold a first-class secret OUTSIDE an `env` map and
+ * are NOT reliably secret-shaped (so the redactSecretish backstop would miss
+ * them). Wave-4 review finding R2-SEC3: `settings.a2a.auth_token`, header tables
+ * (`servers.*.headers.Authorization` / `X-Api-Key`), and credential-bearing
+ * URLs all passed through verbatim. Matched case-insensitively, exact name.
+ */
+const SECRET_KEY_NAMES = new Set([
+  "auth_token",
+  "authtoken",
+  "token",
+  "authorization",
+  "api_key",
+  "apikey",
+  "secret",
+  "password",
+  "passphrase",
+  "x-api-key",
+  "x_api_key",
+]);
+
+/**
+ * Strip the `user:password@` (or `:token@`) userinfo segment from any URL-shaped
+ * string, replacing it with `[redacted]@`. Git remotes and MCP server URLs can
+ * embed a live credential (e.g. `https://x-access-token:ghp_xxx@github.com/...`)
+ * that no token-shape regex reliably catches. Non-URL strings pass through
+ * unchanged. Used both as a config-leaf pass and (via SECRET_PATTERNS) on
+ * free-form error text.
+ */
+export function stripUrlUserinfo(text: string): string {
+  // scheme://userinfo@host — userinfo is everything between `://` and the `@`
+  // that precedes the host. Keep it conservative: require a scheme and a host
+  // char after the `@` so we don't maul `a@b` prose.
+  return text.replace(
+    /([a-zA-Z][a-zA-Z0-9+.-]*:\/\/)[^/@\s]+@/g,
+    (_m, scheme) => `${scheme}[redacted]@`,
+  );
+}
+
 export function redactConfigPlaintextSecrets(obj: unknown): unknown {
-  const walk = (value: unknown, inEnvMap = false): unknown => {
+  const walk = (value: unknown, inSecretSlot = false): unknown => {
     if (typeof value === "string") {
       // Preserve structural redaction markers untouched.
       if (value === "[encrypted]" || value === "[redacted]") return value;
       if (value.startsWith("enc:")) return value;
-      // Inside an env map every value is, by location, a secret-bearing slot.
-      if (inEnvMap) return "[redacted]";
-      // Outside env maps, only mask secret-SHAPED substrings.
-      return redactSecretish(value);
+      // Inside an env map or a known secret-named slot, the value IS a secret
+      // by location — mask it whole regardless of shape.
+      if (inSecretSlot) return "[redacted]";
+      // Outside secret slots: strip any embedded URL credential, then mask
+      // secret-SHAPED substrings.
+      return redactSecretish(stripUrlUserinfo(value));
     }
     if (Array.isArray(value)) {
-      return value.map((v) => walk(v, inEnvMap));
+      return value.map((v) => walk(v, inSecretSlot));
     }
     if (value && typeof value === "object") {
       return Object.fromEntries(
-        Object.entries(value as Record<string, unknown>).map(([k, v]) => [
-          k,
-          // Any property literally named `env` whose value is an object is an
-          // environment map: mask all of its string leaves by key location.
-          walk(v, inEnvMap || (k === "env" && v !== null && typeof v === "object")),
-        ]),
+        Object.entries(value as Record<string, unknown>).map(([k, v]) => {
+          const key = k.toLowerCase();
+          // `env` and `headers` objects are entirely secret-bearing slots; a
+          // scalar property whose name is a known secret name is a secret slot.
+          const isEnvOrHeaderMap =
+            (key === "env" || key === "headers") && v !== null && typeof v === "object";
+          const isNamedSecretScalar = SECRET_KEY_NAMES.has(key) && typeof v === "string";
+          return [k, walk(v, inSecretSlot || isEnvOrHeaderMap || isNamedSecretScalar)];
+        }),
       );
     }
     return value;
@@ -130,6 +174,14 @@ const SECRET_PATTERNS: Array<{ re: RegExp; replace: string }> = [
   {
     re: /\beyJ[A-Za-z0-9_-]{4,}\.[A-Za-z0-9_-]{4,}\.[A-Za-z0-9_-]{4,}\b/g,
     replace: "[REDACTED_JWT]",
+  },
+  // URL userinfo: scheme://user:token@host → scheme://[redacted]@host. Git
+  // remotes and MCP server URLs embed live credentials here; error envelopes
+  // (e.g. a failed `git push` to https://x-access-token:ghp_xxx@host) would
+  // otherwise echo the token verbatim (Wave-4 review R3-SEC).
+  {
+    re: /([a-zA-Z][a-zA-Z0-9+.-]*:\/\/)[^/@\s]+@/g,
+    replace: "$1[redacted]@",
   },
   // Bearer tokens: "Bearer <token>" or "Authorization: Bearer <token>"
   { re: /\b[Bb]earer\s+[A-Za-z0-9._~+/=-]{8,}/g, replace: "Bearer [REDACTED]" },

@@ -7,7 +7,12 @@
  */
 
 import { describe, expect, test } from "bun:test";
-import { redactConfigSecrets, redactSecretish } from "../../src/lib/redact";
+import {
+  redactConfigPlaintextSecrets,
+  redactConfigSecrets,
+  redactSecretish,
+  stripUrlUserinfo,
+} from "../../src/lib/redact";
 
 describe("redactConfigSecrets — structural envelope redaction", () => {
   test("redacts a v1 AES-GCM envelope", () => {
@@ -57,5 +62,73 @@ describe("redactSecretish — free-form envelope redaction", () => {
     const out = redactSecretish("the value was enc:v2:age:QQQQQQ here");
     expect(out).toContain("[encrypted]");
     expect(out).not.toContain("enc:v2:age:QQQQQQ");
+  });
+
+  // Wave-4 review R3-SEC: error bodies (e.g. a failed git push) echoed a
+  // credential-bearing remote URL verbatim. safeErrorMessage runs
+  // redactSecretish, so the URL-userinfo pattern must scrub it.
+  test("strips credential userinfo from a URL embedded in error text", () => {
+    const out = redactSecretish(
+      "fatal: unable to push to https://x-access-token:ghp_abcdEFGH1234567890ab@github.com/o/r.git",
+    );
+    expect(out).not.toContain("ghp_abcdEFGH1234567890ab");
+    expect(out).not.toContain("x-access-token");
+    expect(out).toContain("https://[redacted]@github.com/o/r.git");
+  });
+});
+
+describe("stripUrlUserinfo", () => {
+  test("removes user:token@ from a URL", () => {
+    expect(stripUrlUserinfo("https://user:p4ss@host/repo.git")).toBe(
+      "https://[redacted]@host/repo.git",
+    );
+  });
+  test("leaves a credential-free URL untouched", () => {
+    expect(stripUrlUserinfo("https://github.com/o/r.git")).toBe("https://github.com/o/r.git");
+  });
+  test("does not maul non-URL prose containing @", () => {
+    expect(stripUrlUserinfo("ping me at alice@example.com")).toBe("ping me at alice@example.com");
+  });
+});
+
+describe("redactConfigPlaintextSecrets — Wave-4 non-env secret coverage (R2-SEC3)", () => {
+  test("masks env-map values by location regardless of shape", () => {
+    const out = redactConfigPlaintextSecrets({
+      settings: { env: { TAVILY_API_KEY: "tvly-plainvalue", DEBUG: "true" } },
+    }) as { settings: { env: Record<string, string> } };
+    expect(out.settings.env.TAVILY_API_KEY).toBe("[redacted]");
+    // every env value is a secret slot by location, including non-secret-shaped
+    expect(out.settings.env.DEBUG).toBe("[redacted]");
+  });
+
+  test("masks settings.a2a.auth_token (named secret outside an env map)", () => {
+    const out = redactConfigPlaintextSecrets({
+      settings: { a2a: { auth_token: "hunter2hunter2hunter2" } },
+    }) as { settings: { a2a: { auth_token: string } } };
+    expect(out.settings.a2a.auth_token).toBe("[redacted]");
+  });
+
+  test("masks values inside a headers table", () => {
+    const out = redactConfigPlaintextSecrets({
+      servers: { foo: { headers: { Authorization: "Bearer raw-plaintext-key" } } },
+    }) as { servers: { foo: { headers: Record<string, string> } } };
+    expect(out.servers.foo.headers.Authorization).toBe("[redacted]");
+  });
+
+  test("strips credential userinfo from a server URL value", () => {
+    const out = redactConfigPlaintextSecrets({
+      servers: { foo: { url: "https://user:p4ssw0rd@host/mcp" } },
+    }) as { servers: { foo: { url: string } } };
+    expect(out.servers.foo.url).not.toContain("p4ssw0rd");
+    expect(out.servers.foo.url).toContain("[redacted]@host/mcp");
+  });
+
+  test("preserves enc: envelopes and [redacted]/[encrypted] markers", () => {
+    const out = redactConfigPlaintextSecrets({
+      settings: { env: { K: "enc:v2:age:QQQ" } },
+      other: "[encrypted]",
+    }) as { settings: { env: Record<string, string> }; other: string };
+    expect(out.settings.env.K).toBe("enc:v2:age:QQQ");
+    expect(out.other).toBe("[encrypted]");
   });
 });
