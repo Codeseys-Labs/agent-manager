@@ -330,3 +330,30 @@ describe("isToolInScope — composition (ADR-0055)", () => {
     expect(isToolInScope("am_apply", "core", CEILING, scope)).toBe(false);
   });
 });
+
+describe("resolveProfile scope — inheritance edge cases (K-CRIT verify follow-up)", () => {
+  test("child tool_groups:[] (restrictive) OVERRIDES parent groups, not confused with undefined", () => {
+    const cfg: Config = {
+      profiles: {
+        parent: { scope: { tool_groups: ["core", "wiki"] } },
+        child: { inherits: "parent", scope: { tool_groups: [] } },
+      },
+    };
+    const s = resolveProfile("child", cfg).scope;
+    expect(s?.toolGroups).toEqual([]); // empty wins over parent's [core,wiki]
+  });
+
+  test("descendant allow CANNOT re-enable an ancestor's deny (deny-wins across chain)", () => {
+    const cfg: Config = {
+      profiles: {
+        parent: { scope: { deny_tools: ["am_apply"] } },
+        child: { inherits: "parent", scope: { allow_tools: ["am_apply"] } },
+      },
+    };
+    const s = resolveProfile("child", cfg).scope;
+    // both accumulate; isToolInScope checks deny before allow → still denied.
+    expect(s?.denyTools).toContain("am_apply");
+    expect(s?.allowTools).toContain("am_apply");
+    expect(isToolInScope("am_apply", "core", ["core"], s)).toBe(false);
+  });
+});

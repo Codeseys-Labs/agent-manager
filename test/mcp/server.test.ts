@@ -1258,6 +1258,53 @@ describe("MCP server", () => {
     expect((resp?.result as JsonRpcResult).isError).toBeUndefined();
   });
 
+  // K-CRIT: a scoped profile whose inheritance is BROKEN must fail CLOSED, never
+  // open. A typo'd `inherits` (or a cycle) makes resolveProfile throw; the
+  // boundary must then deny everything, not silently expose the full ceiling.
+  test("a scoped profile with an unknown inherits parent fails CLOSED (deny not bypassed)", async () => {
+    await setupConfig({
+      settings: { default_profile: "broken", mcp_serve: { tools: ["core", "registry"] } },
+      profiles: {
+        // `inherits: "ghost"` does not exist → resolveProfile throws.
+        broken: { inherits: "ghost", scope: { deny_tools: ["am_apply"] } },
+      },
+    });
+    const server = new McpServer({ auth: { token: undefined, allowUnsafeLocal: true } });
+    // tools/list must NOT expose the ceiling (fail-closed = empty surface).
+    const list = await server.handleRequest({ jsonrpc: "2.0", id: 97, method: "tools/list" });
+    const names = (list?.result as JsonRpcResult).tools.map((t: { name: string }) => t.name);
+    expect(names).not.toContain("am_registry_search");
+    expect(names).not.toContain("am_apply");
+    expect(names).not.toContain("am_status");
+    // The denied tool must be refused at dispatch, NOT silently callable.
+    const call = await server.handleRequest({
+      jsonrpc: "2.0",
+      id: 98,
+      method: "tools/call",
+      params: { name: "am_apply", arguments: {} },
+    });
+    expect(call?.error?.code).toBe(-32601);
+  });
+
+  test("a scoped profile with circular inheritance fails CLOSED", async () => {
+    await setupConfig({
+      settings: { default_profile: "a", mcp_serve: { tools: ["core", "registry"] } },
+      profiles: {
+        a: { inherits: "b", scope: { tool_groups: ["core"] } },
+        b: { inherits: "a" },
+      },
+    });
+    const server = new McpServer({ auth: { token: undefined, allowUnsafeLocal: true } });
+    const call = await server.handleRequest({
+      jsonrpc: "2.0",
+      id: 99,
+      method: "tools/call",
+      params: { name: "am_registry_search", arguments: { query: "x" } },
+    });
+    // Circular chain → fail closed → out-of-scope refusal, not exposure.
+    expect(call?.error?.code).toBe(-32601);
+  });
+
   test("AM_MCP_PROFILE env selects the connection scope at initialize", async () => {
     await setupConfig({
       settings: { mcp_serve: { tools: ["core", "registry"] } },

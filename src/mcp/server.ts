@@ -3160,11 +3160,21 @@ export class McpServer {
   /**
    * ADR-0055: resolve the runtime Scope for the active profile. Active profile
    * precedence: this connection's `am.profile` (initialize) → the persisted
-   * active profile (state.toml) → settings.default_profile → "default". An
-   * unknown/typo profile name MUST NOT silently widen the surface: we resolve
-   * it and, if `resolveProfile` throws (unknown name) or the profile has no
-   * `scope`, return `undefined` (= global ceiling, today's behaviour) — never a
-   * wider set. Only a profile that explicitly declares `scope` narrows.
+   * active profile (state.toml) → settings.default_profile → "default".
+   *
+   * Fail-safe directions (an access boundary must NEVER widen):
+   *  - Profile NAME absent from config.profiles (typo, implicit "default" with
+   *    no profiles table, removed profile): return `undefined` = the global
+   *    ceiling unchanged (today's behaviour). There is no declared boundary to
+   *    enforce, so we don't invent a narrower one.
+   *  - Profile EXISTS but `resolveProfile` THROWS (unknown `inherits` parent, or
+   *    circular inheritance — K-CRIT): the profile is structurally broken. We do
+   *    NOT fail open to `undefined` (that would expose the full ceiling and
+   *    silently void a confinement profile whose `inherits` has a typo). Fail
+   *    CLOSED to a maximally-restrictive scope so a broken boundary enforces
+   *    EVERYTHING-denied, never nothing.
+   *  - Profile resolves cleanly: use its declared scope (`undefined` if it
+   *    declares none).
    */
   private async resolveActiveScope(
     config: Config,
@@ -3176,14 +3186,17 @@ export class McpServer {
       config.settings?.default_profile ??
       "default";
     if (!config.profiles?.[profileName]) {
-      // Unknown profile (including the implicit "default" when none is defined):
-      // no narrowing. Fail safe to the global ceiling, never wider.
+      // No such profile → no declared boundary → global ceiling (never wider).
       return undefined;
     }
     try {
       return resolveProfile(profileName, config).scope;
     } catch {
-      return undefined;
+      // The named profile exists but its inheritance chain is broken. Fail
+      // CLOSED: an empty tool_groups narrows every group out (isToolInScope
+      // rule 4), so the broken confinement profile exposes nothing rather than
+      // the full ceiling. K-CRIT: never widen on a resolve failure.
+      return { toolGroups: [], allowTools: [], denyTools: [] };
     }
   }
 
