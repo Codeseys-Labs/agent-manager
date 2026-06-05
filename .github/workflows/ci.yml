@@ -15,7 +15,7 @@ jobs:
   # Secret scan (PR #42 / GitGuardian follow-up). The ENFORCING layer for the
   # lefthook pre-commit hook (which is best-effort locally — it skips if a dev
   # hasn't installed betterleaks). Here it is a HARD gate: a real secret-shaped
-  # string in a non-allowlisted file fails the build. `.betterleaksignore`
+  # string in a non-allowlisted file fails the build. `.betterleaks.toml`
   # allowlists the deliberate redaction-test fixtures (fake ghp_/user:pass URLs
   # that EXIST to prove we scrub secrets). Pinned version per the project's
   # supply-chain posture (consistent with the pinned actionlint below).
@@ -35,7 +35,7 @@ jobs:
           install -m 0755 /tmp/betterleaks /usr/local/bin/betterleaks
           betterleaks version
       - name: Scan repository for secrets
-        run: betterleaks git . --no-banner --no-color --redact
+        run: betterleaks git . --no-banner --no-color --redact --config .betterleaks.toml
 
   test:
     runs-on: blacksmith-2vcpu-ubuntu-2404

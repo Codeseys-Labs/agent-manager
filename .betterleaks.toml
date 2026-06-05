@@ -1,0 +1,33 @@
+# betterleaks config — keeps all default detection rules, and SKIPS findings in
+# the handful of files whose "secrets" are deliberate redaction-test fixtures or
+# documentation examples (fake ghp_…/user:pass@host strings that EXIST to prove
+# the credential-scrubbing code works). GitGuardian flagged 8 of these on PR #42;
+# they are false positives. Keep this list TIGHT — every path was reviewed, and a
+# real secret OUTSIDE these paths must still fail the scan.
+#
+# Used by the lefthook pre-commit hook and the CI `secret-scan` job:
+#   betterleaks git . --config .betterleaks.toml …
+
+betterleaksMinVersion = "1.1.0"
+
+[extend]
+useDefault = true
+
+# A finding is DISCARDED when its file path matches any pattern below. Anchored
+# to the repo-relative path. See AGENTS.md "How We Work §6" — keep this tight.
+filter = '''
+filter.matchesAny(
+  attributes[?"path"].orValue(""),
+  [
+    r"""(?i)(^|/)test/lib/redact\.test\.ts$""",
+    r"""(?i)(^|/)test/core/git\.test\.ts$""",
+    r"""(?i)(^|/)test/mcp/server\.test\.ts$""",
+    r"""(?i)(^|/)test/web/sync-push-pull\.test\.ts$""",
+    r"""(?i)(^|/)test/web/config-redaction\.test\.ts$""",
+    r"""(?i)(^|/)test/commands/secrets-rewrap\.test\.ts$""",
+    r"""(?i)(^|/)test/commands/secrets-revoke\.test\.ts$""",
+    r"""(?i)(^|/)src/core/git\.ts$""",
+    r"""(?i)(^|/)src/lib/redact\.ts$"""
+  ]
+)
+'''

@@ -129,16 +129,17 @@ there's a proven need (e.g., tools that cannot be expressed as static configs).
 - `src/core/schema.ts` — SettingsSchema with `mcp_serve.tools`
 - `src/mcp/server.ts` — tool group filtering in `tools/list`
 
-## Addendum — 2026-05-01 reconciliation
+## Addendum — group-enumeration reconciliations (2026-05-01, updated 2026-06-04)
 
 The original decision locked the tool-group set at `["core", "registry", "a2a",
 "wiki", "session"]` with a 14+3+4+5 budget totalling 26 tools. ADR-0026 Phase 2
 (ACP runtime integration) shipped a sixth group `"acp"` that was not reflected
-here, and Wave D added unified `am_agent_*` tools under the same group. This
-addendum is the audit trail — the original Decision remains unchanged, the
-group enumeration is expanded.
+here, and Wave D added unified `am_agent_*` tools under the same group (the
+**2026-05-01** reconciliation). **W1-4 (2026-06-04)** then added five quick-win
+tools (rows tagged below). This addendum is the audit trail — the original
+Decision remains unchanged, the group enumeration is expanded.
 
-**Current state as of commit 8a4d5f0 (run 2026-05-01):**
+**Current state (2026-05-01 baseline + W1-4 2026-06-04 additions):**
 
 | Group | Count | Notes |
 |-------|-------|-------|

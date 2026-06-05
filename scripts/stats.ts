@@ -104,6 +104,26 @@ const { tests, assertions } = FAST
   ? (readmeTestNumbers() ?? countTestCases(testFiles))
   : (runtimeTestCounts() ?? countTestCases(testFiles));
 
+// MCP tools: derive from src/mcp/server.ts so the count never goes stale by
+// hand (this is exactly what drifted to "38 (33 active…)" after W1-4 added 5).
+// Total = `name: "am_…"` tool definitions; aliases = DEPRECATED_ALIASES entries.
+const mcpSrc = readFileSync(join(ROOT, "src/mcp/server.ts"), "utf8");
+const mcpToolTotal = new Set([...mcpSrc.matchAll(/name:\s*"(am_[a-z0-9_]+)"/g)].map((m) => m[1]))
+  .size;
+// Anchor on the DECLARATION (`const DEPRECATED_ALIASES = {`), not the first
+// textual mention (a comment references it earlier). Count entries as keys
+// shaped `am_…: {` inside the object literal up to its closing `};`.
+const aliasDeclIdx = mcpSrc.search(/const\s+DEPRECATED_ALIASES\b/);
+const aliasBlock = aliasDeclIdx >= 0 ? mcpSrc.slice(aliasDeclIdx) : "";
+const aliasCount = (
+  aliasBlock.slice(0, aliasBlock.indexOf("};")).match(/\bam_[a-z0-9_]+:\s*\{/g) ?? []
+).length;
+const mcpCanonical = mcpToolTotal - aliasCount;
+const mcpToolsLabel =
+  mcpToolTotal > 0 && aliasCount > 0
+    ? `${mcpToolTotal} (${mcpCanonical} canonical + ${aliasCount} deprecated aliases)`
+    : `${mcpToolTotal}`;
+
 const stats = {
   sourceFiles: srcFiles.length,
   testFiles: testFiles.length,
@@ -112,7 +132,7 @@ const stats = {
   ideAdapters: "13 (+community)",
   platformAdapters: 3,
   cliCommands,
-  mcpTools: "38 (33 active + 5 deprecated aliases)",
+  mcpTools: mcpToolsLabel,
   adrs: adrFiles.length,
 };
 

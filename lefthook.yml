@@ -19,11 +19,11 @@ pre-commit:
   commands:
     secret-scan:
       # Scan only what is staged. betterleaks exits non-zero on findings, which
-      # blocks the commit. `.betterleaksignore` allowlists the known test
+      # blocks the commit. `.betterleaks.toml` allowlists the known test
       # fixtures. If betterleaks is not installed, warn and pass (CI enforces).
       run: |
         if command -v betterleaks >/dev/null 2>&1; then
-          betterleaks git . --pre-commit --staged --no-banner --redact
+          betterleaks git . --pre-commit --staged --no-banner --redact --config .betterleaks.toml
         else
           echo "lefthook: betterleaks not found — skipping local secret scan (CI will enforce). Install: am secret install-scanner" >&2
         fi

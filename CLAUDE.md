@@ -28,7 +28,7 @@ Follow the existing pattern: `feat:`, `fix:`, `test:`, `docs:`, `refactor:` pref
 - **Secret hygiene.** Run `bunx lefthook install` once per clone (the `prepare`
   script does this on `bun install`). Pre-commit runs betterleaks over staged
   changes; CI enforces the same scan as a hard gate. Deliberate redaction-test
-  fixtures are allowlisted in `.betterleaksignore` — keep it tight. Never commit a
+  fixtures are allowlisted in `.betterleaks.toml` — keep it tight. Never commit a
   real credential.
 - **PR review = two layers.** Before pushing, review the diff locally with codex
   and address what it finds. After the PR is open, **act on CodeRabbit's comments**

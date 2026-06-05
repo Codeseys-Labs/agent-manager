@@ -199,7 +199,7 @@ src/
     git-providers.ts        # Git provider abstraction: GitHub, GitLab, Codeberg/Gitea (ADR-0025)
     public/                 # Static HTML
   lib/                      # Shared utilities (errors.ts, output.ts)
-test/                       # 273 files, 3520 tests, 11002 assertions
+test/                       # 284 files, 3649 tests, 11384 assertions
 ADRs/                       # 57 architectural decision records (0001-0056, incl. 0031a)
 scripts/
   build.ts                  # Cross-platform build (5 targets)
@@ -405,7 +405,7 @@ Workflow: `am wiki ingest --session <id>` → `am wiki search <query>` → `am w
 
 ```bash
 bun install              # Install dependencies
-bun test                 # Run all 3520 tests
+bun test                 # Run all 3649 tests
 bun test --watch         # Watch mode
 bun run dev              # Run CLI in dev mode
 bun run build            # Single binary (macOS arm64)
@@ -583,7 +583,7 @@ project's `feat:`/`fix:`/`docs:`/`refactor:` style (no co-author trailers). Keep
 to for Tier-2 detection) over staged changes and Biome over staged source; it
 blocks a commit that introduces a real secret-shaped string. Deliberate
 redaction-test fixtures (fake `ghp_…` / `user:pass@host` strings that exercise the
-scrubbing code) are allowlisted in `.betterleaksignore` — keep that list TIGHT and
+scrubbing code) are allowlisted in `.betterleaks.toml` — keep that list TIGHT and
 review every addition. CI re-runs the same secret scan as a **hard gate**
 (`.github/workflows/ci.yml` `secret-scan` job), so the local hook is convenience,
 not the enforcing layer. Never commit a real credential; if one lands, rotate it.
