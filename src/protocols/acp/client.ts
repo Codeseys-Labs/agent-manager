@@ -567,6 +567,35 @@ export function createClientHandler(
       // `createTerminal({ command: "printenv" })` could dump every secret).
       // Now we pass the scrubbed default env; if the agent supplied explicit
       // env vars, those overlay on top via sandboxEnv's `extra` param.
+      //
+      // FS-containment fix (allowedPaths bypass via shell-out): readTextFile/
+      // writeTextFile above enforce isPathAllowed, but createTerminal spawned
+      // params.command with cwd=params.cwd and NO path check. The
+      // am_agent_invoke MCP path sets auto-approve + setAllowedPaths([cwd]) as
+      // the advertised containment boundary; without this gate a compromised
+      // ACP agent could `createTerminal({ command: "cat", cwd: "/anywhere" })`
+      // and read/write any file the am process can touch, defeating the guard.
+      // We enforce the SAME isPathAllowed helper on params.cwd that the file
+      // handlers use, refusing a cwd outside the allowed roots.
+      //
+      // LIMITATION: this only pins the *working directory*. A command can still
+      // `cd ../..`, use absolute paths, or shell out at runtime to escape the
+      // sandbox — process-level FS isolation (containers/landlock/seatbelt) is
+      // the only airtight boundary. The cwd check is the meaningful, consistent
+      // boundary the other handlers enforce; it raises the bar without claiming
+      // true containment. (A future hardening could also gate createTerminal
+      // behind the deny permission policy unless terminals are explicitly
+      // auto-approved, but that is out of scope for this fix.)
+      if (
+        allowedPaths.length > 0 &&
+        params.cwd != null &&
+        !isPathAllowed(params.cwd, allowedPaths)
+      ) {
+        throw new AcpClientError(
+          `Terminal cwd "${params.cwd}" is outside the allowed directories`,
+          "PATH_NOT_ALLOWED",
+        );
+      }
       const { executable, args } = parseCommand(params.command);
       const explicitEnv = params.env
         ? Object.fromEntries(params.env.map((e) => [e.name, e.value]))

@@ -29,7 +29,12 @@ import { interpolateEnvAsync, legacyKeyPath, loadKey, resolveKeyPath } from "../
 import { filterMessages, formatJson, formatMarkdown } from "../core/session";
 import type { SessionSummary } from "../core/session";
 import { errorMessage } from "../lib/errors";
-import { redactConfigSecrets, redactSecretish, safeErrorMessage } from "../lib/redact";
+import {
+  redactConfigPlaintextSecrets,
+  redactConfigSecrets,
+  redactSecretish,
+  safeErrorMessage,
+} from "../lib/redact";
 import { AM_VERSION } from "../lib/version";
 
 // ── JSON-RPC types ──────────────────────────────────────────────
@@ -382,6 +387,51 @@ export function checkWriteAuth(
   };
 }
 
+/**
+ * Read-only tools that disclose the FULL merged config (which may carry
+ * secrets the redactor cannot guarantee it caught). When an operator has gone
+ * to the trouble of configuring AM_MCP_TOKEN, a tokenless client should not be
+ * able to pull the merged config wholesale — even redacted, it leaks server
+ * names, internal URLs, and the shape of the deployment.
+ *
+ * This is a defense-in-depth gate layered ON TOP OF the two-pass redaction in
+ * `redactSecrets`: redaction is the last line, this gate is the first.
+ */
+const SENSITIVE_READONLY_TOOLS = new Set<string>(["am_config_show"]);
+
+/**
+ * Decide whether a SENSITIVE read-only tool (full-config disclosure) may
+ * proceed. Distinct from `checkWriteAuth` so the default local-dev experience
+ * is preserved:
+ *   - No token configured  → allowed (local dev, unchanged behaviour).
+ *   - Token configured     → require a matching bearer token, exactly like a
+ *                            write-tier call. A tokenless client is refused.
+ *
+ * `allowUnsafeLocal` is irrelevant here: it only relaxes WRITE tooling. A
+ * token, once configured, always gates these reads.
+ */
+export function checkSensitiveReadAuth(
+  toolName: string,
+  auth: AuthConfig,
+  req: JsonRpcRequest,
+): { allowed: true } | { allowed: false; reason: string } {
+  if (!SENSITIVE_READONLY_TOOLS.has(toolName)) return { allowed: true };
+  if (!auth.token) return { allowed: true };
+  const supplied = extractBearerToken(req);
+  if (!supplied) {
+    return {
+      allowed: false,
+      reason:
+        "Authentication required. Full-config disclosure is gated when AM_MCP_TOKEN is set. " +
+        "Pass params._meta.authorization = 'Bearer <token>' matching AM_MCP_TOKEN.",
+    };
+  }
+  if (!constantTimeEq(supplied, auth.token)) {
+    return { allowed: false, reason: "Invalid bearer token." };
+  }
+  return { allowed: true };
+}
+
 /** Default tool groups exposed when settings.mcp_serve.tools is unset. */
 const DEFAULT_TOOL_GROUPS: McpToolGroup[] = ["core"];
 
@@ -457,10 +507,17 @@ function checkPermission(
 }
 
 // ── Secret redaction ───────────────────────────────────────────
-// Thin shim kept for call-site stability; logic lives in src/lib/redact.ts.
+// Logic lives in src/lib/redact.ts. Two passes, defense-in-depth:
+//   1. redactConfigSecrets — masks `enc:` envelopes (v1 AES-GCM, v2 age).
+//   2. redactConfigPlaintextSecrets — masks PLAINTEXT secrets that the
+//      envelope pass cannot see: every value under any `env` map is redacted
+//      by key location, and all other string leaves run through the
+//      secret-shape backstop. A bare `sk-...`/`tvly-...` added by hand or
+//      imported before the encryption key existed would otherwise leak
+//      verbatim through `am_config_show` to a tokenless MCP client.
 
 function redactSecrets(obj: unknown): unknown {
-  return redactConfigSecrets(obj);
+  return redactConfigPlaintextSecrets(redactConfigSecrets(obj));
 }
 
 // ── Path traversal guard ────────────────────────────────────────
@@ -544,6 +601,15 @@ interface A2aActiveSession {
   kind: "a2a";
   agent: string;
   baseUrl: string;
+  // CODEX-11 parity for A2A: the server-authoritative task id. A strict A2A
+  // v0.3 server (which am's OWN server enforces via resolveSendTarget) mints
+  // its own task id, ignoring the client-supplied one. cancelTask/getTask MUST
+  // use the server's id — using the locally-minted sessionId silently no-ops
+  // the cancel (-32001 swallowed) and errors the final getTask. Populated from
+  // the Task.id returned by sendTask / the final sendSubscribe event. May be
+  // undefined briefly before the first server response; callers fall back to
+  // the lookup key (sessionId) for compatibility with non-strict servers.
+  serverTaskId?: string;
 }
 
 type ActiveSession = AcpActiveSession | A2aActiveSession;
@@ -919,11 +985,24 @@ function defineTools(): ToolEntry[] {
       tier: "read-only",
       handler: async () => {
         const { config, configDir, profileName } = await loadConfigAndProfile();
-        let gitStatus;
+        // getStatus returns clean:false for a normal dirty tree and only THROWS
+        // on a real fault (not-a-repo, corrupt index, IO error). Defaulting a
+        // throw to clean:true would report "working tree clean" precisely when
+        // git is broken, leading an agent to conclude there's nothing to sync.
+        // Mirror am_doctor's fail handling: on throw report clean:FALSE and
+        // surface the fault in `gitError` so the caller sees something is wrong.
+        let gitStatus: {
+          branch: string;
+          clean: boolean;
+          dirty: string[];
+          remotes: Array<{ remote: string; url: string }>;
+        };
+        let gitError: string | undefined;
         try {
           gitStatus = await getStatus(configDir);
-        } catch {
-          gitStatus = { branch: "unknown", clean: true, dirty: [], remotes: [] };
+        } catch (err: unknown) {
+          gitStatus = { branch: "unknown", clean: false, dirty: [], remotes: [] };
+          gitError = safeErrorMessage(err);
         }
         const resolved = buildResolvedConfig(config, profileName, configDir);
         const serverCount = Object.keys(resolved.servers).length;
@@ -949,6 +1028,7 @@ function defineTools(): ToolEntry[] {
             clean: gitStatus.clean,
             dirty: gitStatus.dirty,
             remotes: gitStatus.remotes,
+            ...(gitError !== undefined ? { gitError } : {}),
           },
           tools: toolStatuses,
         };
@@ -2736,17 +2816,30 @@ async function invokeAgentImpl(args: Record<string, unknown>, ctx: ToolContext):
     const client = new A2AClient({ timeout });
     const sessionId =
       sessionName ?? `am-a2a-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const baseUrl = entry.a2a.url;
+    // CODEX-11 parity for A2A: register on the local sessionId, then re-set the
+    // entry with the server-authoritative task id once the server responds. A
+    // strict A2A v0.3 server mints its own task id and ignores the one we send;
+    // cancelTask/getTask MUST then use the server's id or they silently target
+    // a task the remote never saw. Helper keeps the activeSessions entry in
+    // sync as we learn the id.
+    const rememberServerTaskId = (serverTaskId: string | undefined) => {
+      if (!serverTaskId) return;
+      activeSessions.set(sessionId, { kind: "a2a", agent: agentName, baseUrl, serverTaskId });
+    };
     activeSessions.set(sessionId, {
       kind: "a2a",
       agent: agentName,
-      baseUrl: entry.a2a.url,
+      baseUrl,
     });
 
     try {
       if (streamRequested) {
         // sendSubscribe streams SSE events — forward each as a progress notif.
-        await client.sendSubscribe(
-          entry.a2a.url,
+        // Its resolved value is the final TaskStatusUpdateEvent, whose `.id` is
+        // the server-authoritative task id.
+        const finalEvent = await client.sendSubscribe(
+          baseUrl,
           {
             id: sessionId,
             message: { role: "user", parts: [{ type: "text", text: promptText }] },
@@ -2758,22 +2851,29 @@ async function invokeAgentImpl(args: Record<string, unknown>, ctx: ToolContext):
               ctx.emitProgress({ message: { kind: "a2a.artifact", sessionId, data: ev } }),
           },
         );
-        // sendSubscribe resolves on stream close; fetch final task state for result body.
-        const finalTask = await client.getTask(entry.a2a.url, { id: sessionId });
+        const serverTaskId = finalEvent.id;
+        rememberServerTaskId(serverTaskId);
+        // sendSubscribe resolves on stream close; fetch final task state for
+        // result body. Use the SERVER task id — a strict server never knew our
+        // local sessionId, so getTask({id:sessionId}) would 404/-32001.
+        const finalTask = await client.getTask(baseUrl, { id: serverTaskId ?? sessionId });
         return {
           sessionId,
+          serverTaskId,
           agent: agentName,
           protocol: "a2a",
           result: JSON.stringify(finalTask),
           streamed: true,
         };
       }
-      const task = await client.sendTask(entry.a2a.url, {
+      const task = await client.sendTask(baseUrl, {
         id: sessionId,
         message: { role: "user", parts: [{ type: "text", text: promptText }] },
       });
+      rememberServerTaskId(task.id);
       return {
         sessionId,
+        serverTaskId: task.id,
         agent: agentName,
         protocol: "a2a",
         result: JSON.stringify(task),
@@ -2883,7 +2983,13 @@ async function cancelSessionImpl(
       try {
         const { A2AClient } = await import("../protocols/a2a/client");
         const client = new A2AClient({ timeout: 30_000 });
-        await client.cancelTask(entry.baseUrl, { id: sessionId });
+        // CODEX-11 parity: cancel with the server-authoritative task id when we
+        // captured one (strict A2A v0.3 mints its own id). Fall back to the
+        // local sessionId only for non-strict servers / pre-response entries —
+        // using sessionId against a strict server makes cancelTask a silent
+        // no-op (the remote never saw that id and swallows -32001).
+        const cancelId = entry.serverTaskId ?? sessionId;
+        await client.cancelTask(entry.baseUrl, { id: cancelId });
         cancelled = true;
       } catch {
         cancelled = false;
@@ -3266,6 +3372,24 @@ export class McpServer {
             id,
             result: {
               content: [{ type: "text", text: JSON.stringify({ error: authDecision.reason }) }],
+              isError: true,
+            },
+          };
+        }
+
+        // Sensitive read-only gate: full-config disclosure (am_config_show) is
+        // token-gated whenever AM_MCP_TOKEN is configured, so a tokenless
+        // client can't read the merged config even though it's a read-only
+        // tier. No-op when no token is set (local-dev default unchanged).
+        const sensitiveDecision = checkSensitiveReadAuth(toolName, this.auth, req);
+        if (!sensitiveDecision.allowed) {
+          return {
+            jsonrpc: "2.0",
+            id,
+            result: {
+              content: [
+                { type: "text", text: JSON.stringify({ error: sensitiveDecision.reason }) },
+              ],
               isError: true,
             },
           };

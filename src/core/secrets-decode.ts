@@ -121,9 +121,21 @@ export interface DecodeBackends {
    * `legacyKey` is configured, a `v1-aes-gcm` envelope is returned UNCHANGED
    * instead of throwing — i.e. "the user simply hasn't set up secrets yet", so
    * the encrypted literal flows through exactly as it did pre-P0-3. This does
-   * NOT relax the v2/unknown fail-loud rules (those were the real leak). Used
-   * by the no-key interpolate path; the apply path leaves it false so a missing
-   * key for an in-use v1 secret still surfaces loudly.
+   * NOT relax the v2/unknown fail-loud rules (those were the real leak).
+   *
+   * The sole producer of this flag is `interpolateEnvAsync`, which sets it to
+   * `!encryptionKey` unconditionally and exposes no override. Consequently the
+   * apply path (`controller.ts` → `interpolateEnvAsync`) ALSO passes a v1
+   * envelope through verbatim when no AES key is loaded — this is the documented
+   * ADR-0012 graceful-degradation behavior, NOT a regression: the value is AES
+   * ciphertext (not a plaintext leak), and a v1 envelope only exists at all if
+   * a key was once present, so "key missing on apply" means "operator hasn't
+   * brought the key to this machine yet" rather than "in-use secret is being
+   * silently dropped". Once a key IS loaded, v1 envelopes decrypt normally; if
+   * decryption then fails (wrong key, corrupt payload) it still throws. The
+   * v2/unknown fail-loud rules — the actual P0-3 leak class — are unaffected by
+   * this flag. See `test/integration/secret-pipeline.test.ts` ("v1 + no key →
+   * graceful passthrough") for the contract test.
    */
   allowV1PassthroughWithoutKey?: boolean;
 }
@@ -152,8 +164,9 @@ export async function decodeEnvelope(value: string, backends: DecodeBackends): P
         // all, a v1 envelope passes through unchanged — the user hasn't set up
         // secrets, and the value is AES ciphertext (not plaintext). This is the
         // documented pre-P0-3 behavior and is scoped to v1 only; v2/unknown
-        // still fail loud below. The apply path opts OUT (leaves the flag
-        // false) so an in-use v1 secret with a missing key surfaces loudly.
+        // still fail loud below. The apply path (`interpolateEnvAsync`) sets
+        // this flag to `!encryptionKey`, so it ALSO passes v1 through when no
+        // key is loaded — graceful degradation per ADR-0012, not a leak.
         if (backends.allowV1PassthroughWithoutKey) return value;
         throw new MissingBackendError(
           "v1-aes-gcm",

@@ -804,6 +804,120 @@ describe("AmAcpClient allowed paths", () => {
   });
 });
 
+// ── FS containment: createTerminal must enforce allowedPaths on cwd ──────
+//
+// readTextFile/writeTextFile already reject a path outside allowedPaths, but
+// createTerminal previously spawned params.command with cwd=params.cwd and NO
+// path check — letting a compromised ACP agent run `cat`/`curl`/`tar` with a
+// cwd anywhere on disk, bypassing the am_agent_invoke setAllowedPaths([cwd])
+// boundary. These tests mirror the readTextFile/writeTextFile path-traversal
+// setup and assert createTerminal refuses an out-of-sandbox cwd.
+describe("createTerminal allowedPaths containment", () => {
+  // Use a temp dir as the sandbox root so a benign command can actually spawn.
+  const fs = require("node:fs");
+  const os = require("node:os");
+  const nodePath = require("node:path");
+  let sandbox: string;
+
+  beforeEach(() => {
+    sandbox = fs.mkdtempSync(nodePath.join(os.tmpdir(), "am-acp-term-"));
+  });
+
+  test("refuses createTerminal with cwd OUTSIDE allowedPaths", async () => {
+    const handler = createClientHandler(null, "auto-approve", [sandbox]);
+    let threw: unknown;
+    try {
+      // A read-only command that, without the cwd gate, would happily run in
+      // an arbitrary directory the am process can touch.
+      await handler.createTerminal!({
+        sessionId: "s1",
+        command: "true",
+        cwd: "/etc",
+      });
+    } catch (err) {
+      threw = err;
+    }
+    expect(threw).toBeInstanceOf(AcpClientError);
+    expect((threw as AcpClientError).code).toBe("PATH_NOT_ALLOWED");
+    expect((threw as AcpClientError).message).toContain("outside the allowed directories");
+  });
+
+  test("rejects a traversal cwd that escapes the sandbox", async () => {
+    const handler = createClientHandler(null, "auto-approve", [sandbox]);
+    let threw: unknown;
+    try {
+      await handler.createTerminal!({
+        sessionId: "s1",
+        command: "true",
+        cwd: nodePath.join(sandbox, "..", "..", "..", "etc"),
+      });
+    } catch (err) {
+      threw = err;
+    }
+    expect(threw).toBeInstanceOf(AcpClientError);
+    expect((threw as AcpClientError).code).toBe("PATH_NOT_ALLOWED");
+  });
+
+  // `true` is a POSIX builtin/binary; these tests actually spawn so they only
+  // run on Unix. The cwd-rejection tests above throw BEFORE spawning, so they
+  // are platform-independent and run everywhere.
+  test("allows createTerminal with cwd INSIDE allowedPaths", async () => {
+    if (process.platform === "win32") return;
+    const handler = createClientHandler(null, "auto-approve", [sandbox]);
+    const res = await handler.createTerminal!({
+      sessionId: "s1",
+      command: "true",
+      cwd: sandbox,
+    });
+    expect(typeof res.terminalId).toBe("string");
+    expect(res.terminalId.length).toBeGreaterThan(0);
+    // Clean up the spawned process.
+    await handler.killTerminal!({ sessionId: "s1", terminalId: res.terminalId });
+  });
+
+  test("allows createTerminal with cwd in a nested subdir of allowedPaths", async () => {
+    if (process.platform === "win32") return;
+    const nested = nodePath.join(sandbox, "src", "deep");
+    fs.mkdirSync(nested, { recursive: true });
+    const handler = createClientHandler(null, "auto-approve", [sandbox]);
+    const res = await handler.createTerminal!({
+      sessionId: "s1",
+      command: "true",
+      cwd: nested,
+    });
+    expect(typeof res.terminalId).toBe("string");
+    await handler.killTerminal!({ sessionId: "s1", terminalId: res.terminalId });
+  });
+
+  test("unrestricted (empty allowedPaths) still allows any cwd (backwards-compat)", async () => {
+    if (process.platform === "win32") return;
+    // When allowedPaths is empty the gate is a no-op — matching readTextFile/
+    // writeTextFile behavior. This preserves the documented default.
+    const handler = createClientHandler(null, "auto-approve", []);
+    const res = await handler.createTerminal!({
+      sessionId: "s1",
+      command: "true",
+      cwd: sandbox,
+    });
+    expect(typeof res.terminalId).toBe("string");
+    await handler.killTerminal!({ sessionId: "s1", terminalId: res.terminalId });
+  });
+
+  test("no cwd provided + allowedPaths set does not throw (cwd defaults to am process dir)", async () => {
+    if (process.platform === "win32") return;
+    // params.cwd is optional in ACP; when omitted we can't pin it, so we don't
+    // reject — the spawn inherits the am process cwd. (A stricter policy could
+    // require cwd be inside the sandbox; left as documented limitation.)
+    const handler = createClientHandler(null, "auto-approve", [sandbox]);
+    const res = await handler.createTerminal!({
+      sessionId: "s1",
+      command: "true",
+    });
+    expect(typeof res.terminalId).toBe("string");
+    await handler.killTerminal!({ sessionId: "s1", terminalId: res.terminalId });
+  });
+});
+
 // ── MEDIUM-3: ACP allowed_paths schema ──────────────────────────
 
 describe("ACP allowed_paths schema", () => {

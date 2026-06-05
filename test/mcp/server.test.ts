@@ -436,8 +436,12 @@ describe("MCP server", () => {
     });
     const showContent = JSON.parse((showResp?.result as JsonRpcResult).content[0].text);
     const serverEnv = showContent.config.servers.fetch.env;
-    expect(serverEnv.API_KEY).toBe("existing");
-    expect(serverEnv.NEW_VAR).toBe("new-value");
+    // am_config_show redacts every env value by key location (defense-in-depth
+    // against plaintext-secret leaks — FIX 1). The merge is still verifiable
+    // via the KEYS: both the pre-existing and the new var must be present.
+    expect(Object.keys(serverEnv).sort()).toEqual(["API_KEY", "NEW_VAR"]);
+    expect(serverEnv.API_KEY).toBe("[redacted]");
+    expect(serverEnv.NEW_VAR).toBe("[redacted]");
   });
 
   test("am_server_update errors on nonexistent server", async () => {

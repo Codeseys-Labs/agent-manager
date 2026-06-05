@@ -25,6 +25,7 @@ import {
   saveKey,
 } from "../core/secrets";
 import { errorMessage } from "../lib/errors";
+import { redactConfigSecrets } from "../lib/redact";
 import { AM_VERSION } from "../lib/version";
 
 // ── Token-based authentication for local web server ─────────────
@@ -86,21 +87,6 @@ function readSessionCookie(cookieHeader: string | undefined): string | undefined
     if (rawName === SESSION_COOKIE) return rest.join("=");
   }
   return undefined;
-}
-
-// ── Redact encrypted secrets from config responses ──────────────
-
-function redactSecrets(obj: unknown): unknown {
-  if (typeof obj === "string" && obj.startsWith("enc:v1:")) return "[encrypted]";
-  if (Array.isArray(obj)) return obj.map(redactSecrets);
-  if (obj && typeof obj === "object") {
-    const result: Record<string, unknown> = {};
-    for (const [key, value] of Object.entries(obj)) {
-      result[key] = redactSecrets(value);
-    }
-    return result;
-  }
-  return obj;
 }
 
 export interface CreateAppOptions {
@@ -208,7 +194,7 @@ export async function createApp(options?: CreateAppOptions) {
   app.get("/api/config", async (c) => {
     try {
       const { config, profileName } = await getConfigAndProfile();
-      return c.json({ profile: profileName, config: redactSecrets(config) });
+      return c.json({ profile: profileName, config: redactConfigSecrets(config) });
     } catch {
       return c.json({ error: "Config not found. Run `am init` first." }, 500);
     }
@@ -446,11 +432,25 @@ export async function createApp(options?: CreateAppOptions) {
       const resolved = buildResolvedConfig(config, profileName, configDir);
 
       // Git status
-      let gitStatus;
+      //
+      // On ANY getStatus() fault (not-a-repo, corrupt index, IO error) we must
+      // report clean:FALSE, never clean:true — getStatus throws only on a real
+      // fault, not on a dirty tree (a dirty tree returns clean:false normally).
+      // Fabricating clean:true here would make the web sync indicator show
+      // "nothing to sync" precisely when git is broken. Surface the failure via
+      // a `gitError` field instead (matches the MCP am_status field naming).
+      let gitStatus: {
+        branch: string;
+        clean: boolean;
+        dirty: string[];
+        remotes: Array<{ remote: string; url: string }>;
+      };
+      let gitError: string | undefined;
       try {
         gitStatus = await getStatus(configDir);
-      } catch {
-        gitStatus = { branch: "unknown", clean: true, dirty: [], remotes: [] };
+      } catch (err) {
+        gitStatus = { branch: "unknown", clean: false, dirty: [], remotes: [] };
+        gitError = errorMessage(err) || "git status unavailable";
       }
 
       // Adapter drift
@@ -489,6 +489,7 @@ export async function createApp(options?: CreateAppOptions) {
           clean: gitStatus.clean,
           dirty: gitStatus.dirty,
           remotes: gitStatus.remotes,
+          ...(gitError ? { gitError } : {}),
         },
         tools,
       });

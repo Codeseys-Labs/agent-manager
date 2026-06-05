@@ -197,6 +197,58 @@ export const secretsRevokeCommand = defineCommand({
       const stats = await rewrapMany(targets, ageBackend, { dryRun: false, noBackup });
       const totalRewrapped = stats.reduce((n, s) => n + s.rewrapped, 0);
       const totalFound = stats.reduce((n, s) => n + s.found, 0);
+      const totalSkipped = stats.reduce((n, s) => n + s.skipped, 0);
+
+      // Any rewrap failure → the revoke is NOT complete. `rewrapTomlFile`
+      // writes the ORIGINAL envelope back when a per-envelope rewrap throws,
+      // so a skipped envelope is STILL ENCRYPTED to the recipient we just
+      // dropped — i.e. the "revoked" peer can keep decrypting it. Reporting
+      // success here would be a security lie. Mirror `rotate --finalize`'s
+      // safe-ordering abort: restore the recipient so the key isn't
+      // half-removed (revoked from recipients/ but still a live target on
+      // every skipped envelope), surface which files were skipped, and exit
+      // non-zero so the operator can fix the bad envelopes and re-run.
+      if (totalSkipped > 0 || totalRewrapped < totalFound) {
+        try {
+          await ageBackend.addRecipient({
+            id: match.id,
+            publicKey: match.publicKey,
+            addedAt: new Date().toISOString(),
+          });
+        } catch (restoreErr) {
+          const reason = restoreErr instanceof Error ? restoreErr.message : String(restoreErr);
+          const hint = `WARN: failed to restore recipient ${match.id} (${reason}) after a partial revoke. The recipient .pub is missing but skipped envelopes are still encrypted to it. Manual recovery: re-add the recipient ('am secrets ...') then re-run revoke once the offending envelopes are fixed.`;
+          if (args.json) output({ action: "revoke", error: hint }, opts);
+          else info(hint, opts);
+        }
+        const offenders = stats
+          .filter((s) => s.skipped > 0 || s.rewrapped < s.found)
+          .map((s) => `${s.file} (${s.rewrapped}/${s.found} rewrapped, ${s.skipped} skipped)`)
+          .join("; ");
+        const msg = `Revoke aborted: rewrap reported ${totalSkipped} skipped and ${totalFound - totalRewrapped} unrewrapped envelope(s) across ${stats.length} file(s). Those envelopes are STILL encrypted to ${match.id} (${match.fingerprint}) — the recipient is NOT revoked. Recipient restored to recipients/ so the key is not half-removed. Offending file(s): ${offenders}. Inspect the offending envelopes and re-run \`am secrets revoke ${match.fingerprint}\`.`;
+        if (args.json) {
+          output(
+            {
+              action: "revoke",
+              error: msg,
+              recipient: {
+                id: match.id,
+                publicKey: match.publicKey,
+                fingerprint: match.fingerprint,
+              },
+              files: stats,
+              envelopes: totalFound,
+              rewrapped: totalRewrapped,
+              skipped: totalSkipped,
+            },
+            opts,
+          );
+        } else {
+          info(msg, opts);
+        }
+        process.exitCode = 1;
+        return;
+      }
 
       await bestEffortCommitSecretsChanges(
         configDir,

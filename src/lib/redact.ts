@@ -31,6 +31,61 @@ export function redactConfigSecrets(obj: unknown): unknown {
 }
 
 /**
+ * Defense-in-depth redactor for config dumps that may carry PLAINTEXT secrets.
+ *
+ * `redactConfigSecrets` only rewrites `enc:`-prefixed envelopes. A secret added
+ * by hand, or imported before the encryption key existed, lives in the config
+ * as a bare plaintext string (e.g. `settings.env.TAVILY_API_KEY = "tvly-..."`,
+ * `servers.foo.env.OPENAI_API_KEY = "sk-..."`). Those pass through
+ * `redactConfigSecrets` VERBATIM — the exact data the MCP auth gate is meant to
+ * protect.
+ *
+ * Strategy (most reliable first):
+ *   1. Redact-by-KEY: any object property literally named `env` whose value is
+ *      an object is treated as an environment map. EVERY string value inside it
+ *      is masked to "[redacted]" regardless of shape. This catches novel secret
+ *      formats that no regex would match, and covers `settings.env`,
+ *      `servers.*.env`, `profiles.*.env`, and `agents.*.variants.*.env`
+ *      uniformly. Already-redacted `enc:`/`[encrypted]` placeholders are left
+ *      intact so the v1/v2 envelope signal survives.
+ *   2. Backstop: every OTHER string leaf is run through `redactSecretish`, so a
+ *      secret-shaped value living outside an env map (a URL with an embedded
+ *      token, an Authorization header field, etc.) is still masked.
+ *
+ * Returns a new structure; does not mutate the input. Intended to run AFTER
+ * `redactConfigSecrets` on its output, before the config crosses the MCP trust
+ * boundary in `am_config_show`.
+ */
+export function redactConfigPlaintextSecrets(obj: unknown): unknown {
+  const walk = (value: unknown, inEnvMap = false): unknown => {
+    if (typeof value === "string") {
+      // Preserve structural redaction markers untouched.
+      if (value === "[encrypted]" || value === "[redacted]") return value;
+      if (value.startsWith("enc:")) return value;
+      // Inside an env map every value is, by location, a secret-bearing slot.
+      if (inEnvMap) return "[redacted]";
+      // Outside env maps, only mask secret-SHAPED substrings.
+      return redactSecretish(value);
+    }
+    if (Array.isArray(value)) {
+      return value.map((v) => walk(v, inEnvMap));
+    }
+    if (value && typeof value === "object") {
+      return Object.fromEntries(
+        Object.entries(value as Record<string, unknown>).map(([k, v]) => [
+          k,
+          // Any property literally named `env` whose value is an object is an
+          // environment map: mask all of its string leaves by key location.
+          walk(v, inEnvMap || (k === "env" && v !== null && typeof v === "object")),
+        ]),
+      );
+    }
+    return value;
+  };
+  return walk(obj);
+}
+
+/**
  * Patterns that match common secret formats seen in error messages and logs.
  *
  * These are intentionally greedy on the value side — we prefer false positives

@@ -441,4 +441,53 @@ describe("ADR-0051 `am secrets revoke` — gate 4", () => {
     expect(typeof payload.error).toBe("string");
     expect(String(payload.error)).toMatch(/no recipient matching/i);
   });
+
+  // ── Skip-handling: a rewrap that skips an envelope must NOT report a
+  // successful revoke. `rewrapTomlFile` writes the ORIGINAL ciphertext
+  // back when a per-envelope rewrap throws, so a skipped envelope is
+  // still wrapped to the recipient we tried to revoke. The fix mirrors
+  // `rotate --finalize`'s safe-ordering abort: restore the recipient,
+  // surface the skipped files, and exit non-zero.
+  test("revoke with a skipped (corrupt) envelope aborts, restores the recipient, and exits non-zero", async () => {
+    const recipientsDir = join(fx.identityDir, "recipients");
+    // Sanity: peer starts registered.
+    expect(await readdir(recipientsDir)).toContain(`${fx.peer.id}.pub`);
+
+    // Inject a corrupted age envelope alongside the legitimate one. The
+    // rewrap walker will try `backend.rewrap()` on it, fail to decrypt,
+    // bump `skipped`, and write the ORIGINAL value back — which the
+    // revoke command must treat as "abort + restore". (Mirrors the
+    // rotate --finalize safe-ordering test.)
+    const tomlBefore = await readFile(fx.tomlPath, "utf-8");
+    const corrupted = `${AGE_PREFIX}AAAAcorruptedpayloadthatcannotbedecryptedAAAA==`;
+    const tomlWithBadEnv = tomlBefore.replace(
+      /(\s*\[servers\.test\.env\]\s*\n)(\s*SECRET\s*=\s*"[^"]+"\s*\n)/,
+      (_m, header, secLine) =>
+        `${header}${secLine}${secLine.replace(/SECRET/, "BROKEN").replace(/"[^"]+"/, `"${corrupted}"`)}`,
+    );
+    expect(tomlWithBadEnv).not.toBe(tomlBefore);
+    expect(tomlWithBadEnv).toContain(corrupted);
+    await writeFile(fx.tomlPath, tomlWithBadEnv, "utf-8");
+
+    await invokeRevoke({ fingerprint: fx.peer.id, file: fx.tomlPath, json: true });
+
+    // Partial revoke → non-zero exit.
+    expect(process.exitCode).toBe(1);
+
+    // The recipient was RESTORED — not left half-removed. The peer .pub
+    // is back on disk (skipped envelopes are still encrypted to it, so
+    // dropping the key would be a lie about the security posture).
+    const after = await readdir(recipientsDir);
+    expect(after).toContain(`${fx.peer.id}.pub`);
+
+    // JSON payload reports the abort + surfaces the skipped envelope(s).
+    const payload = jsonFromStdout();
+    expect(payload.action).toBe("revoke");
+    expect(typeof payload.error).toBe("string");
+    expect(String(payload.error)).toMatch(/revoke aborted|skipped|unrewrapped/i);
+    expect(String(payload.error)).toContain("NOT revoked");
+    expect(Number(payload.skipped)).toBeGreaterThanOrEqual(1);
+    // The offending file is surfaced so the operator can fix it.
+    expect(String(payload.error)).toContain(fx.tomlPath);
+  });
 });
