@@ -18,7 +18,13 @@ supersedes: 0021
 > stdio = one-process-one-profile) and **Decision 6** (auditability — `am profile
 > show --tools` + the read-only `am_get_scope` MCP tool, both built via the SAME
 > `buildScopeManifest`/`isToolInScope` the gateway enforces, so the manifest can
-> never drift from enforcement) are LIVE and tested. **Deferred:** Decision 4
+> never drift from enforcement) are LIVE and tested. Over the MCP transport,
+> `am_get_scope` reports the CONNECTION's resolved scope (the gateway hands the
+> handler its already-resolved `{profileName, scope, ceiling}` via `ToolContext`,
+> so the audit answer is the exact one `tools/list`/`tools/call` enforced —
+> connection `am.profile` included; a post-merge review caught and closed a
+> first-cut bug where the tool re-derived the default profile and could
+> disagree with the connection's). **Deferred:** Decision 4
 > (`listChanged` notification on `am_use_profile`) and Decision 5 (per-session
 > scope over a shared connection) both depend on ADR-0056's HTTP transport.
 > A profile without `scope` is unchanged.

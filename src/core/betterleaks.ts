@@ -45,6 +45,14 @@ function betterleaksBinPath(): string {
   return join(betterleaksBinDir(), `betterleaks${ext}`);
 }
 
+// Bun's spawnSync resolves a BARE command name against the PATH snapshot taken
+// at process launch, NOT the live `process.env.PATH`. Without passing `env`
+// explicitly, a betterleaks installed into a dir added to PATH within this
+// process (or any in-process PATH mutation) is invisible — the scan silently
+// reports UNAVAILABLE. Passing `env: process.env` makes resolution honor the
+// current PATH. Centralized here so every bare-name spawn is consistent.
+const SPAWN_ENV = { env: process.env } as const;
+
 /** Check if betterleaks is available (either on PATH or managed install) */
 export function isBetterleaksAvailable(): boolean {
   // Check managed install first
@@ -52,7 +60,11 @@ export function isBetterleaksAvailable(): boolean {
 
   // Check PATH
   try {
-    const result = spawnSync("betterleaks", ["version"], { stdio: "pipe", timeout: 5000 });
+    const result = spawnSync("betterleaks", ["version"], {
+      stdio: "pipe",
+      timeout: 5000,
+      ...SPAWN_ENV,
+    });
     return result.status === 0 && !result.error;
   } catch {
     return false;
@@ -66,7 +78,11 @@ export function getBetterleaksPath(): string | null {
 
   // Check PATH
   try {
-    const result = spawnSync("betterleaks", ["version"], { stdio: "pipe", timeout: 5000 });
+    const result = spawnSync("betterleaks", ["version"], {
+      stdio: "pipe",
+      timeout: 5000,
+      ...SPAWN_ENV,
+    });
     if (result.status === 0) return "betterleaks";
   } catch {
     /* not on PATH */
@@ -81,7 +97,7 @@ export function getBetterleaksVersion(): string | null {
   if (!bin) return null;
 
   try {
-    const result = spawnSync(bin, ["version"], { stdio: "pipe", timeout: 5000 });
+    const result = spawnSync(bin, ["version"], { stdio: "pipe", timeout: 5000, ...SPAWN_ENV });
     return result.stdout?.toString().trim() || null;
   } catch {
     return null;
@@ -302,6 +318,7 @@ export function scanWithBetterleaks(content: string): BetterleaksFinding[] | nul
         stdio: ["pipe", "pipe", "pipe"],
         timeout: 30000,
         maxBuffer: 10 * 1024 * 1024, // 10MB
+        ...SPAWN_ENV,
       },
     );
 
@@ -356,6 +373,7 @@ export function scanFileWithBetterleaks(filePath: string): BetterleaksFinding[] 
       {
         stdio: ["pipe", "pipe", "pipe"],
         timeout: 30000,
+        ...SPAWN_ENV,
       },
     );
 

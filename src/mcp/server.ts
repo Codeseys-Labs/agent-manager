@@ -174,6 +174,21 @@ export const PROGRESS_SUPPORTED = new Set<string>([
 export interface ToolContext {
   emitProgress: (payload: { progress?: number; total?: number; message?: unknown }) => void;
   progressToken: string | number | undefined;
+  /**
+   * ADR-0055 Decision 6: the gateway's ALREADY-RESOLVED active scope for this
+   * connection — the exact `{ profileName, scope, ceiling }` that `tools/list`
+   * and `tools/call` enforce (including the connection-supplied `am.profile`
+   * and the K-CRIT fail-closed branch). `am_get_scope` builds its manifest from
+   * THIS so the audit surface can never drift from enforcement. Undefined for
+   * in-process callers that invoke a handler without going through the gateway
+   * dispatch (e.g. some unit tests) — those fall back to persisted-profile
+   * resolution.
+   */
+  activeScope?: {
+    profileName: string;
+    scope: ResolvedScope | undefined;
+    ceiling: McpToolGroup[];
+  };
 }
 
 interface ToolEntry {
@@ -1018,13 +1033,25 @@ function defineTools(): ToolEntry[] {
         inputSchema: { type: "object", properties: {} },
       },
       tier: "read-only",
-      handler: async () => {
+      handler: async (_args, ctx) => {
+        const catalog = toolGroupCatalog();
+        // PRIMARY PATH (gateway dispatch): use the connection's ALREADY-resolved
+        // scope — the exact view tools/list/tools/call enforce, including the
+        // connection-supplied am.profile and the K-CRIT fail-closed scope. This
+        // is what guarantees the manifest can NEVER drift from enforcement
+        // (ADR-0055 Decision 6): same profile name, same scope object, same
+        // ceiling the dispatch gate just used.
+        if (ctx?.activeScope) {
+          const { profileName, scope, ceiling } = ctx.activeScope;
+          return buildScopeManifest(profileName, catalog, ceiling, scope);
+        }
+        // FALLBACK (no gateway context — e.g. a direct in-process handler call
+        // in a unit test): resolve the persisted/default profile with the SAME
+        // fail-safe directions as resolveActiveScope — unknown profile →
+        // undefined (ceiling); a profile that EXISTS but whose chain throws →
+        // fail CLOSED (empty groups), never fail open to the full ceiling.
         const { config, profileName } = await loadConfigAndProfile();
         const ceiling = config.settings?.mcp_serve?.tools ?? DEFAULT_MCP_TOOL_GROUPS;
-        const catalog = toolGroupCatalog();
-        // Resolve the active profile's scope, fail-safe identical to the gateway
-        // (resolveActiveScope): unknown profile → undefined (ceiling); a profile
-        // that EXISTS but whose chain throws → fail CLOSED (empty groups).
         let scope: ResolvedScope | undefined;
         if (config.profiles?.[profileName]) {
           try {
@@ -3119,6 +3146,13 @@ export class McpServer {
    */
   private scope?: ResolvedScope;
   /**
+   * ADR-0055 Decision 6: the active profile NAME that `this.scope` was resolved
+   * from (connection `am.profile` → state.toml → default). Recorded alongside
+   * `this.scope` by `resolveActiveScope` so the `am_get_scope` audit tool can
+   * report the SAME profile the gateway gated on, not a re-derived guess.
+   */
+  private activeProfileName = "default";
+  /**
    * Wave D: sink for `notifications/progress` emitted during tool calls.
    * Default sink writes newline-delimited JSON-RPC to stdout — matches the
    * format of the `serve()` loop. Tests override this to capture
@@ -3245,6 +3279,10 @@ export class McpServer {
       (await readActiveProfile(configDir)) ??
       config.settings?.default_profile ??
       "default";
+    // Record the resolved name so am_get_scope reports the SAME active profile
+    // the gateway gated on (Decision 6 no-drift), regardless of which branch
+    // below produces the scope.
+    this.activeProfileName = profileName;
     if (!config.profiles?.[profileName]) {
       // No such profile → no declared boundary → global ceiling (never wider).
       return undefined;
@@ -3598,8 +3636,18 @@ export class McpServer {
           const progressToken: string | number | undefined =
             typeof rawToken === "string" || typeof rawToken === "number" ? rawToken : undefined;
           const sink = this.progressSink;
+          // ADR-0055 Decision 6: hand am_get_scope the gateway's own resolved
+          // view (refreshSettings ran above for tools/call), so its manifest is
+          // built from the exact scope the dispatch gate enforces — including
+          // the connection-supplied am.profile and the K-CRIT fail-closed scope.
+          const activeScope = {
+            profileName: this.activeProfileName,
+            scope: this.scope,
+            ceiling: this.settings?.mcp_serve?.tools ?? DEFAULT_TOOL_GROUPS,
+          };
           const ctx: ToolContext = {
             progressToken,
+            activeScope,
             emitProgress: (payload) => {
               if (progressToken === undefined) return;
               // REV-2 HIGH-1 fix: redact secret-shaped content in the progress

@@ -16,6 +16,7 @@ import {
 } from "../core/config";
 import { APPLY_SAFE_DEFAULTS, applyResolved, withConfig } from "../core/controller";
 import { commitAll, getStatus, pull as gitPull, push as gitPush } from "../core/git";
+import { ServerSchema } from "../core/schema";
 import {
   encryptValue,
   generateKey,
@@ -234,6 +235,27 @@ export async function createApp(options?: CreateAppOptions) {
         return c.json({ error: "name and command are required" }, 400);
       }
 
+      // R2-LOW: validate the candidate server against ServerSchema BEFORE any
+      // write. Without this, a malformed body (e.g. transport:"bogus", or a
+      // stdio server carrying a url) was TOML-serialized into config.toml as-is;
+      // the next readConfig then threw on the invalid shape, bricking the whole
+      // config (a 201 followed by permanent 500s — a persistent self-DoS). Every
+      // other write surface (MCP am_add_server/am_server_update, registry/import)
+      // upholds this invariant; the web path must too.
+      const candidate = {
+        command,
+        args: args ?? [],
+        env: env ?? {},
+        tags: tags ?? [],
+        description: description ?? "",
+        transport: transport ?? "stdio",
+        enabled: true,
+      };
+      const parsed = ServerSchema.safeParse(candidate);
+      if (!parsed.success) {
+        return c.json({ error: `Invalid server: ${parsed.error.issues[0]?.message}` }, 400);
+      }
+
       const dir = resolveConfigDir();
       type Outcome = { status: "ok" } | { status: "duplicate" } | { status: "missing-config" };
       const outcome = await withConfig<Outcome>(dir, async (config) => {
@@ -293,12 +315,40 @@ export async function createApp(options?: CreateAppOptions) {
       const body = await c.req.json();
 
       const dir = resolveConfigDir();
-      type Outcome = { status: "ok" } | { status: "not-found" };
+      type Outcome =
+        | { status: "ok" }
+        | { status: "not-found" }
+        | { status: "invalid"; error: string };
       const outcome = await withConfig<Outcome>(dir, async (config) => {
         if (!config?.servers?.[serverName]) {
           return { result: { status: "not-found" }, changed: false };
         }
         const existing = config.servers[serverName];
+        // R2-LOW: build the MERGED candidate and validate it against ServerSchema
+        // BEFORE mutating `existing`. The PUT path validated nothing, so a patch
+        // like {transport:"grpc"} persisted an unloadable config (the next
+        // readConfig threw → permanent 500s). Validate first, mutate only on
+        // success, and return changed:false on failure so nothing is written.
+        const merged = {
+          ...existing,
+          ...(body.command !== undefined ? { command: body.command } : {}),
+          ...(body.args !== undefined ? { args: body.args } : {}),
+          ...(body.env !== undefined ? { env: body.env } : {}),
+          ...(body.tags !== undefined ? { tags: body.tags } : {}),
+          ...(body.description !== undefined ? { description: body.description } : {}),
+          ...(body.transport !== undefined ? { transport: body.transport } : {}),
+          ...(body.enabled !== undefined ? { enabled: body.enabled } : {}),
+        };
+        const parsed = ServerSchema.safeParse(merged);
+        if (!parsed.success) {
+          return {
+            result: {
+              status: "invalid",
+              error: parsed.error.issues[0]?.message ?? "invalid server",
+            },
+            changed: false,
+          };
+        }
         if (body.command !== undefined) existing.command = body.command;
         if (body.args !== undefined) existing.args = body.args;
         if (body.env !== undefined) existing.env = body.env;
@@ -315,6 +365,9 @@ export async function createApp(options?: CreateAppOptions) {
 
       if (outcome.status === "not-found") {
         return c.json({ error: `Server "${serverName}" not found` }, 404);
+      }
+      if (outcome.status === "invalid") {
+        return c.json({ error: `Invalid server: ${outcome.error}` }, 400);
       }
       return c.json({ action: "update", server: serverName });
     } catch (err) {

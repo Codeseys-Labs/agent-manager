@@ -167,9 +167,41 @@ if (!blockRe.test(readme)) {
 }
 const updated = readme.replace(blockRe, table);
 
+// Per-GROUP drift guard (review finding, 87bdd2a follow-up): the stats block
+// above only tracks the TOTAL tool count, so the per-group prose/table in
+// README ("Default: `[\"core\"]` (N tools)." and "| **core** (N) | …") could
+// silently disagree with reality — exactly what happened when am_get_scope
+// bumped core 18→19 but only the table was updated. Derive the live core count
+// from the same toolGroupCatalog() the gateway/manifest use and assert both
+// README references match. Dynamic import so --json stays import-light.
+async function checkCoreGroupCount(readmeText: string): Promise<string[]> {
+  const errs: string[] = [];
+  try {
+    const { toolGroupCatalog } = await import("../src/mcp/server");
+    const coreCount = toolGroupCatalog().filter((t) => t.group === "core").length;
+    const prose = readmeText.match(/Default:\s*`\["core"\]`\s*\((\d+)\s*tools?\)/);
+    if (prose && Number(prose[1]) !== coreCount) {
+      errs.push(`README "Default: [\"core\"] (${prose[1]} tools)" ≠ live core count ${coreCount}`);
+    }
+    const tableHdr = readmeText.match(/\*\*core\*\*\s*\((\d+)\)/);
+    if (tableHdr && Number(tableHdr[1]) !== coreCount) {
+      errs.push(`README "**core** (${tableHdr[1]})" table header ≠ live core count ${coreCount}`);
+    }
+  } catch (e) {
+    errs.push(`stats: could not derive core group count: ${e instanceof Error ? e.message : e}`);
+  }
+  return errs;
+}
+
 if (process.argv.includes("--check")) {
-  if (updated !== readme) {
-    console.error("stats: README.md is out of date. Run `bun run scripts/stats.ts` to regenerate.");
+  const groupErrs = await checkCoreGroupCount(readme);
+  if (updated !== readme || groupErrs.length > 0) {
+    if (updated !== readme) {
+      console.error(
+        "stats: README.md is out of date. Run `bun run scripts/stats.ts` to regenerate.",
+      );
+    }
+    for (const e of groupErrs) console.error(`stats: ${e}`);
     process.exit(1);
   }
   console.log("stats: README.md is up to date.");

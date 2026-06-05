@@ -1365,6 +1365,90 @@ describe("MCP server", () => {
       .sort();
     expect(m.effectiveTools).toEqual(listed);
   });
+
+  // K6 regression (review finding, 87bdd2a): am_get_scope MUST report the
+  // CONNECTION-supplied profile the gateway enforces — not the persisted/default
+  // profile. Before the fix it re-resolved via loadConfigAndProfile() (which
+  // ignores connectionProfile), so when the connection profile diverged from the
+  // default the manifest LIED: tools/list hid registry tools while am_get_scope
+  // reported them as available. The bug only manifests when connection ≠ default.
+  test("am_get_scope follows the connection profile (am.profile capability), not the default", async () => {
+    await setupConfig({
+      settings: { default_profile: "wideopen", mcp_serve: { tools: ["core", "registry"] } },
+      profiles: {
+        wideopen: {}, // default: no scope → full ceiling (core + registry)
+        locked: { scope: { tool_groups: ["core"], deny_tools: ["am_apply"] } },
+      },
+    });
+    const server = new McpServer({ auth: { token: undefined, allowUnsafeLocal: true } });
+    // Initialize with a connection profile that DIFFERS from default_profile.
+    await server.handleRequest({
+      jsonrpc: "2.0",
+      id: 110,
+      method: "initialize",
+      params: {
+        protocolVersion: "2024-11-05",
+        capabilities: { experimental: { "am.profile": "locked" } },
+      },
+    });
+    const resp = await server.handleRequest({
+      jsonrpc: "2.0",
+      id: 111,
+      method: "tools/call",
+      params: { name: "am_get_scope", arguments: {} },
+    });
+    const m = JSON.parse((resp?.result as JsonRpcResult).content[0].text);
+    // Reports the CONNECTION profile, not the wideopen default.
+    expect(m.profile).toBe("locked");
+    expect(m.scoped).toBe(true);
+    expect(m.effectiveTools).not.toContain("am_registry_search"); // registry narrowed by locked
+    expect(m.effectiveTools).not.toContain("am_apply"); // denied by locked
+    expect(m.excludedTools).toContain("am_registry_search");
+    // Zero drift: the manifest equals what tools/list exposes under this connection.
+    const list = await server.handleRequest({ jsonrpc: "2.0", id: 112, method: "tools/list" });
+    const listed = (list?.result as JsonRpcResult).tools
+      .map((t: { name: string }) => t.name)
+      .sort();
+    expect(m.effectiveTools).toEqual(listed);
+  });
+
+  test("am_get_scope follows the connection profile (AM_MCP_PROFILE env), not the default", async () => {
+    await setupConfig({
+      settings: { default_profile: "wideopen", mcp_serve: { tools: ["core", "registry"] } },
+      profiles: {
+        wideopen: {},
+        envlocked: { scope: { tool_groups: ["core"] } },
+      },
+    });
+    const prev = process.env.AM_MCP_PROFILE;
+    process.env.AM_MCP_PROFILE = "envlocked";
+    try {
+      const server = new McpServer({ auth: { token: undefined, allowUnsafeLocal: true } });
+      await server.handleRequest({
+        jsonrpc: "2.0",
+        id: 120,
+        method: "initialize",
+        params: { protocolVersion: "2024-11-05" },
+      });
+      const resp = await server.handleRequest({
+        jsonrpc: "2.0",
+        id: 121,
+        method: "tools/call",
+        params: { name: "am_get_scope", arguments: {} },
+      });
+      const m = JSON.parse((resp?.result as JsonRpcResult).content[0].text);
+      expect(m.profile).toBe("envlocked");
+      expect(m.effectiveTools).not.toContain("am_registry_search");
+      const list = await server.handleRequest({ jsonrpc: "2.0", id: 122, method: "tools/list" });
+      const listed = (list?.result as JsonRpcResult).tools
+        .map((t: { name: string }) => t.name)
+        .sort();
+      expect(m.effectiveTools).toEqual(listed);
+    } finally {
+      if (prev === undefined) Reflect.deleteProperty(process.env, "AM_MCP_PROFILE");
+      else process.env.AM_MCP_PROFILE = prev;
+    }
+  });
 });
 
 // ── Error hint field tests ────────────────────────────────────────

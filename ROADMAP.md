@@ -96,7 +96,7 @@ Interfaces: mcp-serve, tui, serve, completion (bash/zsh/fish)
 
 | Group | Tools | Default |
 |-------|-------|---------|
-| core (18) | servers, profiles, skills, instructions, status, config, doctor, add/remove/update, profile_create/delete, undo, use_profile, apply, import, push/pull | Yes |
+| core (19) | servers, profiles, skills, instructions, get_scope, status, config, doctor, add/remove/update, profile_create/delete, undo, use_profile, apply, import, push/pull | Yes |
 | registry (4) | search, install, list_installed, uninstall | No |
 | a2a (4) | discover, list, delegate, task_status | No |
 | wiki (5) | search, add, synthesize, briefing, harvest | No |
@@ -332,8 +332,8 @@ entries for orientation:
 |--------|-------|
 | Source files | 223 |
 | Test files | 273 |
-| Tests | 3,653 |
-| Assertions | 11,425 |
+| Tests | 3,659 |
+| Assertions | 11,443 |
 | IDE adapters | 13 (+community) |
 | Platform adapters | 3 |
 | CLI commands | 37 |

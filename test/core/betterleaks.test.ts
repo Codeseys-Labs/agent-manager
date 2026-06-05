@@ -188,20 +188,28 @@ describe("betterleaks scan failure ⇒ null (distinct from clean empty scan)", (
       }
     });
 
-    // Skip the PATH-shim e2e tests unless OUR shim is what actually resolves.
-    // Two ways it might not: a managed install (getBetterleaksPath checks that
-    // dir first), OR a real `betterleaks` earlier on the base PATH (e.g. a dev
-    // who ran `am secret install-scanner` or `brew install betterleaks`) winning
-    // the spawn even though we prepended our tmp dir. We can't rely on the bare
-    // "betterleaks" return value to tell shim-from-real apart, so we PROBE: the
-    // shim prints a unique sentinel on `version`; if `betterleaks version` does
-    // not echo it, a real binary is shadowing the shim → skip (CI's clean runner
-    // has no betterleaks, so the e2e tests still run there). The classifier
-    // tests above lock the platform-agnostic logic regardless.
+    // We PREPEND our tmp dir to PATH (installShim), so our shim should win the
+    // bare-name resolution. Run the e2e assertions ONLY when our shim is what
+    // actually resolves — and SKIP when something else shadows it: a managed
+    // install (getBetterleaksPath checks resolveConfigDir()/bin FIRST), or a
+    // real `betterleaks` that out-resolves the shim. We can't tell shim-from-real
+    // by the bare "betterleaks" return value, so we PROBE: the shim prints a
+    // unique sentinel on `version`; only if `betterleaks version` echoes it do we
+    // proceed. IMPORTANT: the probe (like getBetterleaksPath, post-fix) MUST pass
+    // `env: process.env` — Bun's spawnSync resolves a bare name against the
+    // launch-time PATH snapshot, not the live process.env.PATH, so without `env`
+    // the prepended shim is invisible and these tests would silently skip
+    // EVERYWHERE (the bug this probe + the production env-fix jointly close). The
+    // 4 spawnFailed classifier unit tests above lock the decision logic
+    // regardless of whether this integration layer runs.
     const SHIM_SENTINEL = "am-shim-betterleaks-2f1c";
     function shimResolves(): boolean {
       if (getBetterleaksPath() === null) return false;
-      const probe = spawnSync("betterleaks", ["version"], { stdio: "pipe", timeout: 5000 });
+      const probe = spawnSync("betterleaks", ["version"], {
+        stdio: "pipe",
+        timeout: 5000,
+        env: process.env,
+      });
       return (probe.stdout?.toString() ?? "").includes(SHIM_SENTINEL);
     }
 
