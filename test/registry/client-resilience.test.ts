@@ -28,8 +28,8 @@
  *  TTL expiry by snapshotting and overriding `globalThis.Date.now` (restored in
  *  afterEach), which is the least-invasive way to drive the clock without a real
  *  5-minute wait. A first-class clock seam on LRUCache (constructor-injected
- *  `now()`) would make this deterministic without monkey-patching a global — see
- *  the TTL test comment. The cache singleton is also process-global, so each
+ *  `now()`) would make this deterministic without monkey-patching a global
+ *  (tracked: seed agent-manager-06d8). The cache singleton is also process-global, so each
  *  test uses a UNIQUE base URL to keep cache keys from colliding across cases.
  */
 

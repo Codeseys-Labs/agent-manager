@@ -39,7 +39,7 @@ import {
   ndJsonStream,
 } from "@agentclientprotocol/sdk";
 
-import { lstat, realpath } from "node:fs/promises";
+import { lstat, readlink, realpath } from "node:fs/promises";
 import path from "node:path";
 import { sandboxEnv } from "./env-sandbox";
 import { parseCommand, resolveAgent } from "./registry";
@@ -490,8 +490,13 @@ export class AmAcpClient {
  * check. If nothing on the chain exists at all (fictional paths in unit tests),
  * we fall back to the lexical `path.resolve`.
  */
-async function canonicalize(p: string): Promise<string> {
+async function canonicalize(p: string, depth = 0): Promise<string> {
   const resolved = path.resolve(p);
+  // Bound symlink-chain recursion so a cycle (a -> b -> a, or a -> a) can never
+  // hang the FS-containment check. 40 hops mirrors the kernel's ELOOP budget; a
+  // chain that deep is pathological — fall back to the lexical resolution, which
+  // fails closed against the sandbox prefix.
+  if (depth > 40) return resolved;
   let existing = resolved;
   const tail: string[] = [];
   while (true) {
@@ -506,22 +511,26 @@ async function canonicalize(p: string): Promise<string> {
       try {
         const st = await lstat(existing);
         if (st.isSymbolicLink()) {
-          // Dereference: realpath the parent (exists, since lstat succeeded),
-          // then resolve the link relative to it. realpath on the symlink path
-          // itself follows the link; if the target is dangling it throws, in
-          // which case we conservatively canonicalize via the parent's realpath
-          // joined with the raw link — which still escapes the sandbox prefix
-          // when the target points outside, so the allow-check fails closed.
+          // `existing` is a symlink whose target does not currently exist (a
+          // DANGLING symlink — realpath on the path above threw). We must
+          // resolve where the link actually POINTS, not treat it as a real
+          // file: a writeTextFile through `sandbox/link -> /outside/x` would
+          // otherwise materialise the file OUTSIDE the sandbox. (R4-CRIT: the
+          // prior version re-appended the symlink's OWN basename here, which
+          // discarded the target and let the write escape.)
+          //
+          // Read the declared target, resolve it against the link's realpath'd
+          // parent when relative, then RE-CANONICALIZE the target (it may chain
+          // through further symlinks) and re-append any virtual tail. The
+          // re-canonicalized target escapes the sandbox prefix whenever the link
+          // points outside, so isPathAllowed fails closed.
           const parentReal = await realpath(path.dirname(existing));
-          try {
-            const linkReal = await realpath(existing);
-            return tail.length > 0 ? path.join(linkReal, ...tail) : linkReal;
-          } catch {
-            // Dangling target: use the parent's realpath + basename so a symlink
-            // escaping the sandbox is still detectable, never silently allowed.
-            const viaParent = path.join(parentReal, path.basename(existing));
-            return tail.length > 0 ? path.join(viaParent, ...tail) : viaParent;
-          }
+          const linkTarget = await readlink(existing);
+          const absTarget = path.isAbsolute(linkTarget)
+            ? linkTarget
+            : path.join(parentReal, linkTarget);
+          const canonTarget = await canonicalize(absTarget, depth + 1);
+          return tail.length > 0 ? path.join(canonTarget, ...tail) : canonTarget;
         }
       } catch {
         // lstat failed too → the component genuinely does not exist; keep

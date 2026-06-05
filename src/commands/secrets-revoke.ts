@@ -76,6 +76,97 @@ async function rollbackMutatedFiles(stats: readonly RewrapStat[]): Promise<strin
   return failed;
 }
 
+/**
+ * Rollback variant used when `rewrapMany` THREW (R4-BUG1): it never returned
+ * stats, so we don't know which files were rewritten. Defensively try to
+ * restore every target from its `${file}.bak` snapshot — tolerating files that
+ * were never written (no `.bak`) or already-good files. Returns the targets
+ * that could NOT be restored. Skips entirely under `--no-backup` (no snapshots
+ * exist), reporting all targets as unrestored so the operator is warned.
+ */
+async function rollbackTargets(targets: readonly string[], noBackup: boolean): Promise<string[]> {
+  if (noBackup) return [...targets];
+  const failed: string[] = [];
+  for (const file of targets) {
+    const backupPath = `${file}.bak`;
+    try {
+      const original = await readFile(backupPath, "utf-8");
+      await atomicWriteFile(file, original);
+    } catch {
+      // No `.bak` (file was never mutated) OR the restore failed. We cannot
+      // distinguish cheaply; report it so the operator can verify. A file that
+      // was never written is already correct, so this is conservative.
+      failed.push(file);
+    }
+  }
+  return failed;
+}
+
+/**
+ * Re-add the recipient that was removed at the start of the live revoke, so an
+ * aborted/rolled-back revoke leaves the recipient set intact. Fault-tolerant:
+ * a failing re-add must NOT abort the (already-completed) file rollback
+ * (R4-BUG2) — we report it via the returned boolean instead of throwing.
+ */
+async function safeReAddRecipient(
+  ageBackend: AgeSecretsBackend,
+  match: RecipientMatch,
+): Promise<boolean> {
+  try {
+    await ageBackend.addRecipient({
+      id: match.id,
+      publicKey: match.publicKey,
+      addedAt: new Date().toISOString(),
+    });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** Build the single human-readable abort message for a rolled-back revoke. */
+function buildAbortMessage(
+  match: RecipientMatch,
+  parts: { reason: string; reAddOk: boolean; unrestored: string[] },
+): string {
+  const head = `Aborted revoke of ${match.id} (${match.fingerprint}): ${parts.reason}.`;
+  const reAdd = parts.reAddOk
+    ? " Recipient re-added."
+    : " WARNING: recipient could NOT be re-added — re-add it manually (the .pub is missing from recipients/).";
+  const files =
+    parts.unrestored.length === 0
+      ? " All modified files were rolled back to their pre-revoke contents."
+      : ` WARNING: ${parts.unrestored.length} file(s) could NOT be rolled back (no backup — re-run WITHOUT --no-backup, or restore from version control): ${parts.unrestored.join(", ")}.`;
+  return head + reAdd + files;
+}
+
+/**
+ * Emit exactly ONE final result for an aborted revoke: a single JSON document
+ * on stdout (--json) OR a single stderr warning (R2-BUG3 — never both, never
+ * two JSON docs).
+ */
+function emitAbort(
+  json: boolean,
+  opts: { json: boolean; quiet: boolean; verbose: boolean },
+  msg: string,
+  match: RecipientMatch,
+  extra: Record<string, unknown>,
+): void {
+  if (json) {
+    output(
+      {
+        action: "revoke",
+        aborted: true,
+        recipient: { id: match.id, publicKey: match.publicKey, fingerprint: match.fingerprint },
+        ...extra,
+      },
+      opts,
+    );
+  } else {
+    warn(msg, opts);
+  }
+}
+
 async function findRecipient(
   recipientsDir: string,
   needle: string,
@@ -277,57 +368,65 @@ export const secretsRevokeCommand = defineCommand({
       }
 
       // Scan is clean → commit to the mutation. Drop the .pub file, then rewrap.
+      // The whole mutation window (removeRecipient + the file rewrites) is
+      // wrapped so that EITHER a per-envelope skip (TOCTOU) OR a thrown write
+      // error (ENOSPC/EACCES/EIO mid-walk — R4-BUG1) triggers the SAME full
+      // rollback. Without this, an exception during rewrapMany would bypass the
+      // skip-only rollback below and hit the outer catch, leaving the recipient
+      // removed and files half-mutated.
+      let stats: Awaited<ReturnType<typeof rewrapMany>> = [];
       await ageBackend.removeRecipient(match.id);
-      const stats = await rewrapMany(targets, ageBackend, { dryRun: false, noBackup });
+      try {
+        stats = await rewrapMany(targets, ageBackend, { dryRun: false, noBackup });
+      } catch (rewrapErr) {
+        // A write threw partway through. rewrapMany does not surface partial
+        // stats on throw, so we roll back EVERY target's `.bak` defensively
+        // (rollbackTargets tolerates files that were never written / have no
+        // .bak), then re-add the recipient. This restores pre-revoke state.
+        const unrestored = await rollbackTargets(targets, noBackup);
+        const reAddOk = await safeReAddRecipient(ageBackend, match);
+        const why = rewrapErr instanceof Error ? rewrapErr.message : String(rewrapErr);
+        const msg = buildAbortMessage(match, {
+          reason: `the rewrap pass threw before completing (${why})`,
+          reAddOk,
+          unrestored,
+        });
+        emitAbort(args.json, opts, msg, match, {
+          error: msg,
+          reAdded: reAddOk,
+          unrestored_files: unrestored,
+        });
+        process.exitCode = 1;
+        return;
+      }
       const totalRewrapped = stats.reduce((n, s) => n + s.rewrapped, 0);
       const totalFound = stats.reduce((n, s) => n + s.found, 0);
       const totalSkipped = stats.reduce((n, s) => n + s.skipped, 0);
 
       // Defensive TRUE ROLLBACK: the clean scan should guarantee a complete
       // rewrap, but a file could change on disk between scan and live pass
-      // (TOCTOU), or a found envelope could fail to rewrap. If anything was
-      // skipped, undo every mutation so on-disk state matches pre-revoke:
-      // restore each rewritten file from its `.bak` and re-add the recipient.
+      // (TOCTOU). If anything was skipped, undo every mutation so on-disk state
+      // matches pre-revoke. Restore FILES FIRST (the de-facto-revoke is the file
+      // mutation), THEN re-add the recipient — and a failing re-add must not
+      // abort the file rollback (R4-BUG2).
       if (totalSkipped > 0) {
-        await ageBackend.addRecipient({
-          id: match.id,
-          publicKey: match.publicKey,
-          addedAt: new Date().toISOString(),
-        });
         const unrestored = await rollbackMutatedFiles(stats);
-
-        const baseMsg = `Aborted revoke of ${match.id} (${match.fingerprint}): ${totalSkipped} of ${totalFound} envelope(s) could not be rewrapped after the recipient set changed. Recipient re-added; `;
-        const tailMsg =
-          unrestored.length === 0
-            ? "all modified files were rolled back to their pre-revoke contents."
-            : `WARNING: ${unrestored.length} file(s) could NOT be rolled back (no backup — re-run WITHOUT --no-backup, or restore from version control): ${unrestored.join(", ")}.`;
-        const msg = baseMsg + tailMsg;
-
-        // R2-BUG3: emit exactly ONE JSON document. Fold the warning into the
-        // single final payload; route the human-facing warning to stderr via
-        // warn() (never a second output()/JSON doc on stdout).
-        if (args.json) {
-          output(
-            {
-              action: "revoke",
-              aborted: true,
-              error: msg,
-              recipient: {
-                id: match.id,
-                publicKey: match.publicKey,
-                fingerprint: match.fingerprint,
-              },
-              files: stats.length,
-              envelopes: totalFound,
-              skipped: totalSkipped,
-              rolled_back: stats.filter((s) => s.rewrapped > 0).length - unrestored.length,
-              unrestored_files: unrestored,
-            },
-            opts,
-          );
-        } else {
-          warn(msg, opts);
-        }
+        const reAddOk = await safeReAddRecipient(ageBackend, match);
+        const msg = buildAbortMessage(match, {
+          reason: `${totalSkipped} of ${totalFound} envelope(s) could not be rewrapped after the recipient set changed`,
+          reAddOk,
+          unrestored,
+        });
+        // R2-BUG3: emit exactly ONE JSON document; human warning to stderr.
+        emitAbort(args.json, opts, msg, match, {
+          error: msg,
+          files: stats.length,
+          envelopes: totalFound,
+          skipped: totalSkipped,
+          reAdded: reAddOk,
+          rolled_back: stats.filter((s) => s.rewrapped > 0).length - unrestored.length,
+          unrestored_files: unrestored,
+        });
         process.exitCode = 1;
         return;
       }

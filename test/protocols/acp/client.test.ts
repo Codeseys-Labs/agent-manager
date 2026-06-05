@@ -840,6 +840,49 @@ describe("isPathAllowed symlink escape (R2-MED)", () => {
     expect(await isPathAllowed(target, [sandbox])).toBe(false);
   });
 
+  // R4-CRIT: a DANGLING symlink (target does not yet exist) inside the sandbox
+  // must also be rejected — otherwise a writeTextFile through it would create
+  // the file OUTSIDE the sandbox. The leaf itself is the symlink (no tail).
+  test.skipIf(isWin)("rejects a dangling symlink leaf pointing outside the sandbox", async () => {
+    const sandbox = nodePath.join(root as string, "sandbox");
+    const outside = nodePath.join(root as string, "outside");
+    fs.mkdirSync(sandbox, { recursive: true });
+    fs.mkdirSync(outside, { recursive: true });
+    // `sandbox/wc -> outside/pwned.txt`, where pwned.txt does NOT exist yet.
+    const danglingLink = nodePath.join(sandbox, "wc");
+    const danglingTarget = nodePath.join(outside, "pwned.txt");
+    fs.symlinkSync(danglingTarget, danglingLink);
+    // The write would land at outside/pwned.txt → must be rejected.
+    expect(await isPathAllowed(danglingLink, [sandbox])).toBe(false);
+  });
+
+  // R4-CRIT: a dangling symlink to a DIRECTORY outside the sandbox, with a file
+  // tail appended (the write target is link/<file>) must also be rejected.
+  test.skipIf(isWin)(
+    "rejects a dangling symlink-to-dir outside the sandbox with a tail",
+    async () => {
+      const sandbox = nodePath.join(root as string, "sandbox");
+      const outside = nodePath.join(root as string, "outside-nonexistent");
+      fs.mkdirSync(sandbox, { recursive: true });
+      // outside dir does NOT exist (dangling); link points at it.
+      const ghostLink = nodePath.join(sandbox, "ghostdir");
+      fs.symlinkSync(outside, ghostLink);
+      const target = nodePath.join(ghostLink, "new-file.txt");
+      expect(await isPathAllowed(target, [sandbox])).toBe(false);
+    },
+  );
+
+  // A dangling symlink whose target stays INSIDE the sandbox is still allowed
+  // (write case) — the fix must not over-reject legitimate in-bounds writes.
+  test.skipIf(isWin)("allows a dangling symlink that points inside the sandbox", async () => {
+    const sandbox = nodePath.join(root as string, "sandbox");
+    fs.mkdirSync(sandbox, { recursive: true });
+    const inLink = nodePath.join(sandbox, "pending");
+    // target inside the sandbox, not yet created.
+    fs.symlinkSync(nodePath.join(sandbox, "subdir", "out.txt"), inLink);
+    expect(await isPathAllowed(inLink, [sandbox])).toBe(true);
+  });
+
   test.skipIf(isWin)("still allows a genuine path inside the sandbox", async () => {
     const sandbox = nodePath.join(root as string, "sandbox");
     fs.mkdirSync(sandbox, { recursive: true });

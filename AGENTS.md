@@ -183,6 +183,7 @@ install.sh                  # curl-based installer (repo root, not scripts/)
 
 | Command | Description |
 |---------|-------------|
+| `am setup` | Guided first-run wizard (ADR-0053): detect → import → key + profile → apply → health check. Idempotent; `--yes`/`--json`/`--from <git-url>` for CI/onboarding |
 | `am init` | First-time setup: detect tools, init git (run `am import auto` to import existing configs) |
 | `am add server <name>` | Add an MCP server (auto-commits) |
 | `am list servers` | List all servers (`--active`, `--json`) |
@@ -203,6 +204,7 @@ install.sh                  # curl-based installer (repo root, not scripts/)
 | `am adapter list` | Show registered adapters with install status |
 | `am version` | Print version |
 | `am mcp-serve` | Run as MCP server (JSON-RPC over stdio) |
+| `am mcp-superset` | Reconcile the project `.mcp.json` to be a superset of global `~/.claude.json` MCP servers |
 | `am session list/export/search` | Cross-tool session harvest |
 | `am tui` | Interactive terminal dashboard (Silvery/React) |
 | `am serve` | Local web UI server (Hono) |
@@ -215,6 +217,8 @@ install.sh                  # curl-based installer (repo root, not scripts/)
 | `am run <agent> "<prompt>"` | ACP agent orchestration: drive coding agents headlessly |
 | `am run session list\|cancel` | Manage active ACP sessions |
 | `am flow run\|list\|status` | Multi-step workflow orchestration (flows engine) |
+| `am marketplace …` | **Deferred to v2** (kept, not deleted — supersedes ADR-0039/0052). Deprecated commands print a notice; prefer `am search/install` + git-vendored bundles |
+| `am pair` | Cross-device age-key handoff via git-native rendezvous (ADR-0047) |
 | `am completion bash\|zsh\|fish` | Generate shell completion scripts |
 
 Global flags: `--profile <name>`, `--json`, `--verbose`, `--quiet`

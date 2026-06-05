@@ -146,11 +146,17 @@ export const installCommand = defineCommand({
             }
           }
 
-          // Build server entry
+          // Build server entry. R4-MED2: resolve transport ONCE and guard the
+          // url assignment on the RESOLVED value, not the raw registry field.
+          // Previously the url guard checked `pkg.server.transport !== "stdio"`
+          // while transport was STORED as `?? "stdio"`, so a package with a url
+          // but no transport produced a schema-invalid stdio+url server that the
+          // ServerSchema superRefine (Wave-3) rejects on the next config read.
+          const transport = pkg.server.transport ?? "stdio";
           const server: Server & { _registry?: RegistryProvenance } = {
             command: pkg.server.command,
             args: pkg.server.args,
-            transport: pkg.server.transport ?? "stdio",
+            transport,
             enabled: true,
             description: pkg.description,
             tags: pkg.tags,
@@ -163,8 +169,8 @@ export const installCommand = defineCommand({
             },
           };
 
-          // Add URL for remote transports
-          if (pkg.server.url && pkg.server.transport !== "stdio") {
+          // Add URL for remote transports (guarded on the RESOLVED transport).
+          if (pkg.server.url && transport !== "stdio") {
             server.url = pkg.server.url;
           }
 

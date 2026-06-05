@@ -43,8 +43,8 @@ export const ServerSchema = z
     // future ADR should migrate ServerSchema to a discriminatedUnion on
     // `transport` (stdio: command.min(1), no url; remote: url.url(), no
     // command) and drop this field; that touches every adapter + fixture, so
-    // it is deferred. Until then the superRefine below rejects the clearly
-    // illegal stdio+url combination.
+    // it is deferred (tracked: seed agent-manager-a067). Until then the
+    // superRefine below rejects the clearly illegal stdio+url combination.
     url: z.string().optional(),
     args: z.array(z.string()).optional(),
     env: z.record(z.string(), z.string()).optional(),

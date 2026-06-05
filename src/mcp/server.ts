@@ -1603,7 +1603,7 @@ function defineTools(): ToolEntry[] {
       def: {
         name: "am_registry_uninstall",
         description:
-          "Remove a registry-installed MCP server from the catalog, returning its registry provenance. Run am_apply afterward to update native IDE configs.",
+          "Remove an MCP server from the catalog, returning its registry provenance (null if it was not registry-installed). Intended for registry packages; for a plain server use am_remove_server. Run am_apply afterward to update native IDE configs.",
         inputSchema: {
           type: "object",
           properties: {

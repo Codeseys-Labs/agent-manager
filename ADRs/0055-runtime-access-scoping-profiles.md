@@ -63,8 +63,9 @@ scope: z.object({
 }).optional()
 ```
 
-Resolution (added to `resolveProfile`, resolver.ts:28-101, reusing the existing
-parent-first/child-wins union; surfaced on `ResolvedProfile`, resolved.ts:4-12):
+Resolution (added to `resolveProfile` in `src/core/resolver.ts`, reusing the
+existing parent-first/child-wins union; surfaced on the `ResolvedProfile`
+interface, also in `src/core/resolver.ts`):
 
 ```
 effective = (global settings.mcp_serve.tools  AS CEILING)
@@ -169,7 +170,12 @@ the boundary is a git-diffable artifact.
 - ADR-0040 (Controller scope/concurrency) — Scope resolution lives in shared
   core so CLI/MCP/web/TUI read the same decision.
 - ADR-0056 (Remote Streamable-HTTP MCP Transport) — Phase 2 per-session Scope.
-- src/mcp/server.ts:386,392,620-631,1461,3003,3022-3048,3051+ ; src/core/
-  schema.ts:136-152 ; src/core/resolver.ts:28-101 ; src/core/resolved.ts:4-12.
+- Touch points (line anchors are point-in-time and WILL shift before this
+  proposed ADR is executed — locate by symbol, not line): `src/mcp/server.ts`
+  (`DEFAULT_TOOL_GROUPS`, `TOOL_GROUP_MAP`, `loadConfigAndProfile`,
+  `am_use_profile` handler, the `tools/list` filter + `tools/call` dispatch, the
+  `initialize` capabilities/protocolVersion handler); `src/core/schema.ts`
+  (`ProfileSchema`, `MCP_TOOL_GROUPS`); `src/core/resolver.ts` (`resolveProfile`
+  + the `ResolvedProfile` interface).
 - MCP spec 2025-06-18 basic/lifecycle (experimental capabilities), server/tools
   (listChanged, notifications/tools/list_changed).

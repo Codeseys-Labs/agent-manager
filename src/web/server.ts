@@ -458,7 +458,10 @@ export async function createApp(options?: CreateAppOptions) {
         gitStatus = await getStatus(configDir);
       } catch (err) {
         gitStatus = { branch: "unknown", clean: false, dirty: [], remotes: [] };
-        gitError = errorMessage(err) || "git status unavailable";
+        // safeErrorMessage (not errorMessage): a git fault message can embed a
+        // credential-bearing remote URL; scrub it before it crosses to the
+        // client (R4-MED, matches the MCP am_status path).
+        gitError = safeErrorMessage(err) || "git status unavailable";
       }
 
       // Adapter drift

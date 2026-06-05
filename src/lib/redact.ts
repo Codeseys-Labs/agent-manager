@@ -57,25 +57,41 @@ export function redactConfigSecrets(obj: unknown): unknown {
  * boundary in `am_config_show`.
  */
 /**
- * Object-property names that hold a first-class secret OUTSIDE an `env` map and
- * are NOT reliably secret-shaped (so the redactSecretish backstop would miss
- * them). Wave-4 review finding R2-SEC3: `settings.a2a.auth_token`, header tables
- * (`servers.*.headers.Authorization` / `X-Api-Key`), and credential-bearing
- * URLs all passed through verbatim. Matched case-insensitively, exact name.
+ * Substrings that mark an object-property name as holding a first-class secret
+ * OUTSIDE an `env`/`headers` map and NOT reliably secret-shaped (so the
+ * redactSecretish backstop would miss it). Reviews R2-SEC3 + R4-MED1:
+ * `settings.a2a.auth_token`, header `Authorization`, AND opaque values under
+ * schema-permitted passthrough/adapters keys like `apiToken`,
+ * `customBackendCreds`, `my_auth_token` all leaked. We match by SUBSTRING
+ * (case-insensitive, separators stripped) so `apiToken`, `clientSecret`,
+ * `backendCredential`, `xApiKey` are all caught — over-redaction of a benign
+ * key containing "token"/"secret" is an acceptable trade for a config dump that
+ * crosses a trust boundary.
  */
-const SECRET_KEY_NAMES = new Set([
-  "auth_token",
-  "authtoken",
+const SECRET_KEY_SUBSTRINGS = [
   "token",
-  "authorization",
-  "api_key",
-  "apikey",
   "secret",
   "password",
   "passphrase",
-  "x-api-key",
-  "x_api_key",
-]);
+  "cred", // matches `cred`, `creds`, `credential(s)`
+  "apikey",
+  "authorization",
+  "privatekey",
+];
+
+/** True when a property name looks like it holds a secret (substring match). */
+function isSecretKeyName(key: string): boolean {
+  const norm = key.toLowerCase().replace(/[_-]/g, "");
+  return SECRET_KEY_SUBSTRINGS.some((s) => norm.includes(s));
+}
+
+/**
+ * Object keys whose VALUE is an entirely-secret-bearing map (every string leaf
+ * masked by location): `env`, `headers`, and the `adapters` passthrough subtable
+ * (R4-MED1 — adapters extras can carry token-ish keys with opaque values that
+ * no shape regex matches).
+ */
+const SECRET_MAP_KEYS = new Set(["env", "headers", "adapters"]);
 
 /**
  * Strip the `user:password@` (or `:token@`) userinfo segment from any URL-shaped
@@ -85,14 +101,60 @@ const SECRET_KEY_NAMES = new Set([
  * unchanged. Used both as a config-leaf pass and (via SECRET_PATTERNS) on
  * free-form error text.
  */
+/**
+ * Query-param key names that carry a credential in a URL. Mirrors
+ * CREDENTIAL_QUERY_KEYS in src/core/url-credentials.ts (the APPLY-time scanner,
+ * GitHub issue #3) so the config-DISCLOSURE boundary masks the same params the
+ * apply boundary already strips — e.g. `?tavilyApiKey=tvly-…` (R4-SEC1).
+ */
+const CREDENTIAL_QUERY_KEY_RE = [
+  /^[a-z]+[_-]?api[_-]?key$/i,
+  /^api[_-]?key$/i,
+  /^access[_-]?token$/i,
+  /^auth[_-]?token$/i,
+  /^(?:access[_-]?)?key$/i,
+  /^token$/i,
+  /^secret$/i,
+  /^password$/i,
+  /^(?:client[_-]?)?secret$/i,
+];
+
+/**
+ * Strip embedded credentials from a URL-shaped string: both the
+ * `scheme://user:token@host` userinfo segment AND credential-bearing query
+ * params (`?tavilyApiKey=…`, `?token=…`). Non-URL strings, and URLs without
+ * credentials, pass through unchanged.
+ */
 export function stripUrlUserinfo(text: string): string {
-  // scheme://userinfo@host — userinfo is everything between `://` and the `@`
-  // that precedes the host. Keep it conservative: require a scheme and a host
-  // char after the `@` so we don't maul `a@b` prose.
-  return text.replace(
+  // 1) userinfo: scheme://userinfo@host — everything between `://` and the `@`
+  //    that precedes the host. Conservative: require a scheme + a host char
+  //    after `@` so we don't maul `a@b` prose.
+  let out = text.replace(
     /([a-zA-Z][a-zA-Z0-9+.-]*:\/\/)[^/@\s]+@/g,
     (_m, scheme) => `${scheme}[redacted]@`,
   );
+  // 2) credential query params. Only attempt when the string looks like a URL
+  //    with a query; parse via URL so we touch only param VALUES, then restore.
+  if (out.includes("://") && out.includes("?")) {
+    try {
+      const u = new URL(out);
+      let changed = false;
+      for (const key of [...u.searchParams.keys()]) {
+        if (CREDENTIAL_QUERY_KEY_RE.some((re) => re.test(key))) {
+          u.searchParams.set(key, "[redacted]");
+          changed = true;
+        }
+      }
+      if (changed) {
+        // URL re-encodes `[redacted]` brackets to %5B…%5D — undo so the marker
+        // is human-legible, matching the userinfo replacement above.
+        out = u.toString().replace(/%5Bredacted%5D/gi, "[redacted]");
+      }
+    } catch {
+      // Not a parseable absolute URL → leave the userinfo-stripped form as-is.
+    }
+  }
+  return out;
 }
 
 export function redactConfigPlaintextSecrets(obj: unknown): unknown {
@@ -115,12 +177,16 @@ export function redactConfigPlaintextSecrets(obj: unknown): unknown {
       return Object.fromEntries(
         Object.entries(value as Record<string, unknown>).map(([k, v]) => {
           const key = k.toLowerCase();
-          // `env` and `headers` objects are entirely secret-bearing slots; a
-          // scalar property whose name is a known secret name is a secret slot.
-          const isEnvOrHeaderMap =
-            (key === "env" || key === "headers") && v !== null && typeof v === "object";
-          const isNamedSecretScalar = SECRET_KEY_NAMES.has(key) && typeof v === "string";
-          return [k, walk(v, inSecretSlot || isEnvOrHeaderMap || isNamedSecretScalar)];
+          // env/headers/adapters objects are entirely secret-bearing-by-location
+          // slots; a scalar property whose NAME looks like a secret is a secret
+          // slot too (substring match — apiToken, clientSecret, etc.).
+          const isSecretMap = SECRET_MAP_KEYS.has(key) && v !== null && typeof v === "object";
+          const isNamedSecretScalar = isSecretKeyName(k) && typeof v === "string";
+          // R4-LOW: a secret used as a KEY NAME (e.g. `[tokens]` with a
+          // ghp_… key) must be masked too — the walker only ever transformed
+          // values, never keys. Scrub secret-shaped key text.
+          const safeKey = redactSecretish(stripUrlUserinfo(k));
+          return [safeKey, walk(v, inSecretSlot || isSecretMap || isNamedSecretScalar)];
         }),
       );
     }
