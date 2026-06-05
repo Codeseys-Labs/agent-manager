@@ -77,25 +77,43 @@ async function rollbackMutatedFiles(stats: readonly RewrapStat[]): Promise<strin
 }
 
 /**
- * Rollback variant used when `rewrapMany` THREW (R4-BUG1): it never returned
- * stats, so we don't know which files were rewritten. Defensively try to
- * restore every target from its `${file}.bak` snapshot — tolerating files that
- * were never written (no `.bak`) or already-good files. Returns the targets
- * that could NOT be restored. Skips entirely under `--no-backup` (no snapshots
- * exist), reporting all targets as unrestored so the operator is warned.
+ * Capture the exact pre-revoke content of every target, in memory, BEFORE the
+ * live mutation begins. This is the rollback source for the throw path — we do
+ * NOT read `${file}.bak` there (R4-BUG1 fix had a stale-.bak clobber: `.bak`
+ * files are never cleaned up, so a target the failed pass never reached would
+ * be overwritten with a STALE `.bak` from a PRIOR revoke, re-introducing
+ * previously-revoked ciphertext). An in-memory snapshot is always exactly this
+ * run's pre-state. A target that does not exist maps to `null` (nothing to
+ * restore).
  */
-async function rollbackTargets(targets: readonly string[], noBackup: boolean): Promise<string[]> {
-  if (noBackup) return [...targets];
-  const failed: string[] = [];
+async function snapshotTargets(targets: readonly string[]): Promise<Map<string, string | null>> {
+  const snap = new Map<string, string | null>();
   for (const file of targets) {
-    const backupPath = `${file}.bak`;
     try {
-      const original = await readFile(backupPath, "utf-8");
+      snap.set(file, await readFile(file, "utf-8"));
+    } catch {
+      snap.set(file, null); // did not exist pre-revoke
+    }
+  }
+  return snap;
+}
+
+/**
+ * Restore every target to its captured pre-revoke content (throw-path
+ * rollback). Only writes a file whose CURRENT content differs from the snapshot
+ * (so untouched files aren't needlessly rewritten). Returns targets that could
+ * NOT be restored (read-back/write failure) so the caller can warn. Uses the
+ * in-memory snapshot, never a possibly-stale `.bak`.
+ */
+async function restoreFromSnapshot(snapshot: Map<string, string | null>): Promise<string[]> {
+  const failed: string[] = [];
+  for (const [file, original] of snapshot) {
+    if (original === null) continue; // file did not exist pre-revoke; leave as-is.
+    try {
+      const current = await readFile(file, "utf-8").catch(() => null);
+      if (current === original) continue; // untouched → nothing to restore.
       await atomicWriteFile(file, original);
     } catch {
-      // No `.bak` (file was never mutated) OR the restore failed. We cannot
-      // distinguish cheaply; report it so the operator can verify. A file that
-      // was never written is already correct, so this is conservative.
       failed.push(file);
     }
   }
@@ -374,16 +392,20 @@ export const secretsRevokeCommand = defineCommand({
       // rollback. Without this, an exception during rewrapMany would bypass the
       // skip-only rollback below and hit the outer catch, leaving the recipient
       // removed and files half-mutated.
+      // Snapshot every target's pre-revoke content IN MEMORY before mutating,
+      // so the throw-path rollback restores from this run's exact pre-state —
+      // never from a possibly-stale `${file}.bak` left by a prior revoke.
+      const preSnapshot = await snapshotTargets(targets);
       let stats: Awaited<ReturnType<typeof rewrapMany>> = [];
       await ageBackend.removeRecipient(match.id);
       try {
         stats = await rewrapMany(targets, ageBackend, { dryRun: false, noBackup });
       } catch (rewrapErr) {
         // A write threw partway through. rewrapMany does not surface partial
-        // stats on throw, so we roll back EVERY target's `.bak` defensively
-        // (rollbackTargets tolerates files that were never written / have no
-        // .bak), then re-add the recipient. This restores pre-revoke state.
-        const unrestored = await rollbackTargets(targets, noBackup);
+        // stats on throw, so restore EVERY target from the in-memory pre-revoke
+        // snapshot (only files whose content actually changed are rewritten),
+        // then re-add the recipient — restoring exact pre-revoke state.
+        const unrestored = await restoreFromSnapshot(preSnapshot);
         const reAddOk = await safeReAddRecipient(ageBackend, match);
         const why = rewrapErr instanceof Error ? rewrapErr.message : String(rewrapErr);
         const msg = buildAbortMessage(match, {
