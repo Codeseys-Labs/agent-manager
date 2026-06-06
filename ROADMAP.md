@@ -98,7 +98,7 @@ Interfaces: mcp-serve, tui, serve, completion (bash/zsh/fish)
 |-------|-------|---------|
 | core (19) | servers, profiles, skills, instructions, get_scope, status, config, doctor, add/remove/update, profile_create/delete, undo, use_profile, apply, import, push/pull | Yes |
 | registry (4) | search, install, list_installed, uninstall | No |
-| a2a (4) | discover, list, delegate, task_status | No |
+| a2a (4) | discover, list, task_status + 1 deprecated alias (delegate→invoke) | No |
 | wiki (5) | search, add, synthesize, briefing, harvest | No |
 | session (3) | list, export, search | No |
 | acp (9) | invoke, session_list, session_cancel, status, detect + 4 deprecated aliases (run_agent, acp_list_agents, acp_session_list, acp_session_cancel) | No |
@@ -331,9 +331,9 @@ entries for orientation:
 | Metric | Count |
 |--------|-------|
 | Source files | 223 |
-| Test files | 273 |
-| Tests | 3,659 |
-| Assertions | 11,443 |
+| Test files | 284 |
+| Tests | 3,660 |
+| Assertions | 11,446 |
 | IDE adapters | 13 (+community) |
 | Platform adapters | 3 |
 | CLI commands | 37 |

@@ -3553,8 +3553,12 @@ export class McpServer {
         // gated by tier/auth, not group). `this.scope` is defined only when the
         // active profile opted into scoping. (refreshSettings ran above.)
         if (this.scope && !this.isToolScoped(toolName)) {
-          const activeProfile =
-            this.connectionProfile ?? this.settings?.default_profile ?? "default";
+          // Use the name resolveActiveScope actually resolved the enforced scope
+          // from (connection am.profile → state.toml → default_profile → default).
+          // Re-deriving here would drop the state.toml term and could name a
+          // DIFFERENT profile than the one whose scope just refused the call
+          // (same no-drift rationale as am_get_scope's ToolContext.activeScope).
+          const activeProfile = this.activeProfileName;
           return {
             jsonrpc: "2.0",
             id,

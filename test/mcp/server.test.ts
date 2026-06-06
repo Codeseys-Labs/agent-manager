@@ -4,6 +4,7 @@ import { writeConfig } from "../../src/core/config";
 import { addRemote, initRepo } from "../../src/core/git";
 import type { Config } from "../../src/core/schema";
 import type { Session, SessionReader, SessionSummary } from "../../src/core/session";
+import { writeActiveProfile } from "../../src/core/state";
 import { McpServer } from "../../src/mcp/server";
 import { type TestDir, createTestDir } from "../helpers/tmp";
 
@@ -1330,6 +1331,35 @@ describe("MCP server", () => {
       if (prev === undefined) Reflect.deleteProperty(process.env, "AM_MCP_PROFILE");
       else process.env.AM_MCP_PROFILE = prev;
     }
+  });
+
+  // CodeRabbit cr2 regression: the out-of-scope -32601 error must name the
+  // profile whose scope the gate ACTUALLY enforced. The enforced scope comes
+  // from resolveActiveScope (connection am.profile → state.toml → default_profile
+  // → default); the error message must not re-derive a name that skips the
+  // state.toml term. Set state.toml="locked" with a DIFFERENT default_profile
+  // and no connection profile → the message must say "locked", not the default.
+  test("out-of-scope refusal names the state.toml-resolved profile, not the default", async () => {
+    const configDir = await setupConfig({
+      settings: { default_profile: "wideopen", mcp_serve: { tools: ["core", "registry"] } },
+      profiles: {
+        wideopen: {}, // no scope
+        locked: { scope: { tool_groups: ["core"] } }, // registry narrowed out
+      },
+    });
+    await writeActiveProfile(configDir, "locked"); // persisted `am use locked`
+    const server = new McpServer({ auth: { token: undefined, allowUnsafeLocal: true } });
+    const call = await server.handleRequest({
+      jsonrpc: "2.0",
+      id: 97,
+      method: "tools/call",
+      params: { name: "am_registry_search", arguments: { query: "x" } },
+    });
+    // Enforced by "locked"'s scope (registry out) → refused…
+    expect(call?.error?.code).toBe(-32601);
+    // …and the message names "locked" (state.toml), NOT "wideopen" (default).
+    expect(call?.error?.message).toContain('"locked"');
+    expect(call?.error?.message).not.toContain("wideopen");
   });
 
   // K6 (ADR-0055 Decision 6): am_get_scope returns the effective tool manifest,

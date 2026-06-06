@@ -170,6 +170,21 @@ the boundary is a git-diffable artifact.
   fences (test/mcp/server.test.ts, test/mcp/zod-validation.test.ts) stay green
   because the DEFAULT surface is unchanged. New behaviour is asserted only under
   a profile that SETS `scope`.
+- **Introspection follows the same enforcement rules.** `am_get_scope`
+  (Decision 6) is an ordinary `core` tool, so a profile that narrows `core` out
+  of scope (e.g. `tool_groups: ["wiki"]`) also HIDES it from `tools/list` and
+  REFUSES it at `tools/call` — a maximally-restricted agent cannot introspect
+  its own boundary over MCP. This is deliberate, not an oversight: a scope
+  exemption would let the manifest assert a tool is callable that the dispatch
+  gate would refuse, breaking the no-drift guarantee that is Decision 6's whole
+  point. Two mitigations keep this from being a sharp edge: (1) a blind agent
+  still learns its boundary from the LOUD `-32601` refusal at `tools/call` (the
+  error names the active profile — the failure IS the introspection), and (2)
+  the human operator audits any profile out-of-band via `am profile show <name>
+  --tools` (the same `buildScopeManifest`, no MCP scope applied). Considered and
+  rejected: special-casing `am_get_scope` as always-visible — it re-introduces
+  exactly the implicit carve-out the design avoids and would force a matching
+  exemption in `buildScopeManifest`, splitting enforcement from the manifest.
 
 ## Alternatives Considered
 - **Keep ADR-0021 global-only.** Rejected: directly blocks the stated vision;
