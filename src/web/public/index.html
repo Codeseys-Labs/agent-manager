@@ -393,11 +393,58 @@
 
     <h2>MCP Servers</h2>
     <div class="card">
+      <div class="actions" style="margin-top:0;margin-bottom:0.75rem;">
+        <button id="btn-add-server" class="primary">Add server</button>
+      </div>
       <table>
-        <thead><tr><th>Name</th><th>Command</th><th>Transport</th><th>Tags</th><th>Status</th></tr></thead>
-        <tbody id="servers-body"><tr><td colspan="5" class="loading">Loading...</td></tr></tbody>
+        <thead><tr><th>Name</th><th>Command</th><th>Transport</th><th>Tags</th><th>Status</th><th>Actions</th></tr></thead>
+        <tbody id="servers-body"><tr><td colspan="6" class="loading">Loading...</td></tr></tbody>
       </table>
     </div>
+
+    <!-- Add/Edit server dialog. Built with a native <dialog>; all values are
+         read from form fields and rendered into the table via the
+         textContent-only helpers — no innerHTML with user data. -->
+    <dialog id="server-dialog">
+      <form id="server-form" method="dialog" style="display:flex;flex-direction:column;gap:0.6rem;min-width:280px;">
+        <h3 id="server-dialog-title" style="margin:0 0 0.25rem;">Add server</h3>
+        <label style="display:flex;flex-direction:column;gap:0.2rem;font-size:0.8rem;color:var(--fg2);">
+          Name
+          <input type="text" id="srv-name" required>
+        </label>
+        <label style="display:flex;flex-direction:column;gap:0.2rem;font-size:0.8rem;color:var(--fg2);">
+          Command
+          <input type="text" id="srv-command" required>
+        </label>
+        <label style="display:flex;flex-direction:column;gap:0.2rem;font-size:0.8rem;color:var(--fg2);">
+          Args (space or comma separated)
+          <input type="text" id="srv-args">
+        </label>
+        <label style="display:flex;flex-direction:column;gap:0.2rem;font-size:0.8rem;color:var(--fg2);">
+          Tags (comma separated)
+          <input type="text" id="srv-tags">
+        </label>
+        <label style="display:flex;flex-direction:column;gap:0.2rem;font-size:0.8rem;color:var(--fg2);">
+          Description
+          <input type="text" id="srv-description">
+        </label>
+        <label style="display:flex;flex-direction:column;gap:0.2rem;font-size:0.8rem;color:var(--fg2);">
+          Transport
+          <select id="srv-transport">
+            <option value="stdio">stdio</option>
+            <option value="sse">sse</option>
+            <option value="http">http</option>
+          </select>
+        </label>
+        <label id="srv-enabled-row" style="display:none;align-items:center;gap:0.4rem;font-size:0.8rem;color:var(--fg2);">
+          <input type="checkbox" id="srv-enabled"> Enabled
+        </label>
+        <div class="actions" style="margin-top:0.5rem;">
+          <button type="submit" id="srv-save" class="primary">Save</button>
+          <button type="button" id="srv-cancel">Cancel</button>
+        </div>
+      </form>
+    </dialog>
 
     <h2>Tool Sync Status</h2>
     <div class="card">
@@ -545,7 +592,7 @@
       if (!data.servers || data.servers.length === 0) {
         const tr = document.createElement("tr");
         const td = document.createElement("td");
-        td.colSpan = 5;
+        td.colSpan = 6;
         td.textContent = "No servers configured";
         tr.appendChild(td);
         body.appendChild(tr);
@@ -561,9 +608,139 @@
           s.enabled ? "active" : "disabled",
           s.enabled ? "badge-active" : "badge-disabled"
         ));
+
+        // Actions cell: Edit + Delete. Buttons capture the server object so
+        // the dialog can prefill; both route through the CRUD endpoints.
+        const tdActions = document.createElement("td");
+        const actionsWrap = document.createElement("div");
+        actionsWrap.className = "actions";
+        actionsWrap.style.margin = "0";
+        const editBtn = document.createElement("button");
+        editBtn.textContent = "Edit";
+        editBtn.addEventListener("click", () => openServerDialog(s));
+        actionsWrap.appendChild(editBtn);
+        const delBtn = document.createElement("button");
+        delBtn.className = "danger";
+        delBtn.textContent = "Delete";
+        delBtn.addEventListener("click", () => deleteServer(s.name));
+        actionsWrap.appendChild(delBtn);
+        tdActions.appendChild(actionsWrap);
+        tr.appendChild(tdActions);
+
         body.appendChild(tr);
       }
     }
+
+    // --- Server CRUD (local mode) ----------------------------------------
+    // Wires the POST/PUT/DELETE /api/servers endpoints into the dashboard.
+    // editingServer holds the name being edited, or null when adding.
+    let editingServer = null;
+
+    // Split a free-text args field into an array. Accepts comma- or
+    // space-separated tokens; empty tokens are dropped.
+    function parseArgs(raw) {
+      return (raw || "")
+        .split(/[\s,]+/)
+        .map((a) => a.trim())
+        .filter((a) => a.length > 0);
+    }
+
+    function parseTags(raw) {
+      return (raw || "")
+        .split(",")
+        .map((t) => t.trim())
+        .filter((t) => t.length > 0);
+    }
+
+    // Open the dialog in add mode (no arg) or edit mode (server object).
+    function openServerDialog(server) {
+      editingServer = server ? server.name : null;
+      $("#server-dialog-title").textContent = server ? ("Edit server: " + server.name) : "Add server";
+      $("#srv-name").value = server ? server.name : "";
+      $("#srv-name").disabled = !!server; // name is the key; can't rename via PUT
+      $("#srv-command").value = server ? (server.command ?? "") : "";
+      $("#srv-args").value = server ? (server.args ?? []).join(" ") : "";
+      $("#srv-tags").value = server ? (server.tags ?? []).join(", ") : "";
+      $("#srv-description").value = server ? (server.description ?? "") : "";
+      $("#srv-transport").value = server ? (server.transport ?? "stdio") : "stdio";
+      // Enabled toggle is only meaningful when editing (add always enables).
+      $("#srv-enabled-row").style.display = server ? "flex" : "none";
+      $("#srv-enabled").checked = server ? !!server.enabled : true;
+      $("#server-dialog").showModal();
+    }
+
+    async function submitServerForm() {
+      const name = $("#srv-name").value.trim();
+      const command = $("#srv-command").value.trim();
+      const args = parseArgs($("#srv-args").value);
+      const tags = parseTags($("#srv-tags").value);
+      const description = $("#srv-description").value.trim();
+      const transport = $("#srv-transport").value;
+
+      if (editingServer === null) {
+        // Add: POST /api/servers
+        if (!name || !command) {
+          toast("Name and command are required", "error");
+          return;
+        }
+        const res = await api("/api/servers", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ name, command, args, tags, description, transport }),
+        });
+        if (res?.action) {
+          $("#server-dialog").close();
+          toast("Added server: " + res.server);
+          loadServers();
+          loadStatus();
+        } else {
+          toast(res?.error ?? "Add failed", "error");
+        }
+      } else {
+        // Edit: PUT /api/servers/:name with the editable fields.
+        const res = await api("/api/servers/" + encodeURIComponent(editingServer), {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            command,
+            args,
+            tags,
+            description,
+            transport,
+            enabled: $("#srv-enabled").checked,
+          }),
+        });
+        if (res?.action) {
+          $("#server-dialog").close();
+          toast("Updated server: " + res.server);
+          loadServers();
+          loadStatus();
+        } else {
+          toast(res?.error ?? "Update failed", "error");
+        }
+      }
+    }
+
+    async function deleteServer(name) {
+      if (!window.confirm('Delete server "' + name + '"? This cannot be undone.')) return;
+      const res = await api("/api/servers/" + encodeURIComponent(name), { method: "DELETE" });
+      if (res?.action) {
+        toast("Deleted server: " + res.server);
+        loadServers();
+        loadStatus();
+      } else {
+        toast(res?.error ?? "Delete failed", "error");
+      }
+    }
+
+    $("#btn-add-server").addEventListener("click", () => openServerDialog(null));
+    $("#srv-cancel").addEventListener("click", () => $("#server-dialog").close());
+    // The form uses method="dialog"; intercept submit to call the API and keep
+    // the dialog open on validation/server error.
+    $("#server-form").addEventListener("submit", (e) => {
+      e.preventDefault();
+      submitServerForm();
+    });
 
     async function loadProfiles() {
       const data = await api("/api/profiles");

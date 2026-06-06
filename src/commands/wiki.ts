@@ -229,7 +229,7 @@ export const searchSubcommand = defineCommand({
   },
 });
 
-const addSubcommand = defineCommand({
+export const addSubcommand = defineCommand({
   meta: { name: "add", description: "Add a wiki page or knowledge entry" },
   args: {
     json: { type: "boolean", description: "JSON output", default: false },
@@ -309,10 +309,57 @@ const addSubcommand = defineCommand({
     const catalogEntities = await resolveCatalogEntities();
     await addEntry(entry, catalogEntities.length > 0 ? { ner: { catalogEntities } } : undefined);
 
+    // ── Visibility-boundary feedback (W1-3) ──────────────────────────
+    //
+    // `addEntry` writes via `writePage` with NO wikiDir, so the page always
+    // lands at whatever `resolveWikiDir()` resolves to — a project-local
+    // `.am-wiki/` when cwd is inside a project, else the global store. Couple
+    // the scope readout to THAT same decision (not a re-derived path) so it can
+    // never drift from where the write actually landed.
+    //
+    // The cross-project enumerator (`searchAllProjects` → `listProjectWikis`)
+    // only sees `wiki/projects/*` + `wiki/global/` — never a project's local
+    // `.am-wiki/`. So a project-local entry is invisible to
+    // `am wiki search --all-projects` from other projects until it is published.
+    // Surface that boundary; do NOT auto-push (local-first is intentional —
+    // ADR-0044). NOTE: `--global` is currently a no-op for the WRITE (addEntry
+    // ignores it; threading it would require a storage change deferred under
+    // seed agent-manager-eb5c), so scope is derived from the real landing dir,
+    // not the flag — keeping the readout honest.
+    const writeDir = resolveWikiDir();
+    const globalDir = resolveWikiDir({ global: true });
+    const visibleAcrossProjects = writeDir === globalDir;
+    const scope = visibleAcrossProjects ? "global" : "project-local";
+    // R2-MED: `--global` is currently a no-op for the WRITE (addEntry ignores
+    // it; threading wikiDir through is the deferred storage fix, seed
+    // agent-manager-eb5c). When the user EXPLICITLY asked for --global but the
+    // entry still landed project-local, we must NOT stay silent (the W1-3 gate
+    // `&& !args.global` suppressed all feedback in that case). Surface a
+    // distinct warning so the request isn't silently misleading.
+    const globalRequestedButLocal = !visibleAcrossProjects && (args.global as boolean);
+
     if (args.json) {
-      output({ action: "add", entry }, opts);
+      output({ action: "add", entry, scope, visibleAcrossProjects, globalRequestedButLocal }, opts);
     } else {
       info(`Added entry ${entry.id} (${entityType})`, opts);
+    }
+
+    if (globalRequestedButLocal) {
+      // Distinct from the plain project-local nudge: the user asked for global
+      // and did not get it. Route to stderr via warn() so scripts notice.
+      warn(
+        `--global was requested but this entry landed in the project-local wiki (am wiki add does not yet route the write to the global store — see backlog). Run \`am wiki publish ${entry.id} --promote\` to push it to the global store.`,
+        opts,
+      );
+    } else if (!visibleAcrossProjects && !args.global) {
+      // Plain project-local nudge. `am wiki publish <slug>` promotes a local
+      // `.am-wiki/` entry up to the cross-project `wiki/projects/<name>/` mirror
+      // that `--all-projects` enumerates (add `--promote` to reach
+      // `wiki/global/`).
+      info(
+        `Note: this entry is project-local. Run \`am wiki publish ${entry.id}\` to make it visible to \`am wiki search --all-projects\` from other projects.`,
+        opts,
+      );
     }
   },
 });

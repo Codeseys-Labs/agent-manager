@@ -106,6 +106,90 @@ describe("am install", () => {
     expect(updated.servers?.["tavily-mcp"]._registry!.source).toBe("mcp-registry");
   });
 
+  // R4-MED2: a registry package that supplies a `url` but NO `transport` must
+  // not produce a schema-invalid stdio+url server. transport defaults to
+  // "stdio"; the url guard is keyed on the RESOLVED transport, so url is NOT
+  // set, and the persisted config round-trips through readConfig (the Wave-3
+  // ServerSchema superRefine rejects stdio+url).
+  test("registry package with url but no transport persists a schema-valid server", async () => {
+    dir = await createTestDir("am-install-");
+    const configDir = dir.path;
+    process.env.AM_CONFIG_DIR = configDir;
+    await initRepo(configDir);
+    await writeConfig(join(configDir, "config.toml"), { servers: {} });
+
+    // url present, transport ABSENT — the exact shape that bricked config reads.
+    const pkg = makePackage({
+      name: "urlonly-mcp",
+      server: { command: "", url: "https://remote.example.com/mcp" } as RegistryPackage["server"],
+    });
+    mockFetchResponse(pkg);
+
+    const { installCommand } = await import("../../src/commands/install");
+    await installCommand.run!({
+      args: {
+        packages: "urlonly-mcp",
+        "dry-run": false,
+        yes: true,
+        "no-cache": true,
+        json: true,
+        quiet: false,
+        verbose: false,
+      } as any,
+      rawArgs: [],
+      cmd: installCommand as any,
+    });
+
+    // The config must still PARSE (no stdio+url superRefine rejection).
+    const updated = await readConfig(join(configDir, "config.toml"));
+    const srv = updated.servers?.["urlonly-mcp"];
+    expect(srv).toBeDefined();
+    expect(srv?.transport).toBe("stdio");
+    // url must NOT have been set on a stdio server.
+    expect(srv?.url).toBeUndefined();
+  });
+
+  // R4-MED2 positive guard: a genuine remote package (transport supplied) STILL
+  // gets its url set — the fix must not drop url for legitimate remote servers.
+  test("registry package with streamable-http transport keeps its url", async () => {
+    dir = await createTestDir("am-install-");
+    const configDir = dir.path;
+    process.env.AM_CONFIG_DIR = configDir;
+    await initRepo(configDir);
+    await writeConfig(join(configDir, "config.toml"), { servers: {} });
+
+    const pkg = makePackage({
+      name: "remote-mcp",
+      server: {
+        command: "",
+        transport: "streamable-http",
+        url: "https://remote.example.com/mcp",
+      } as RegistryPackage["server"],
+    });
+    mockFetchResponse(pkg);
+
+    const { installCommand } = await import("../../src/commands/install");
+    await installCommand.run!({
+      args: {
+        packages: "remote-mcp",
+        "dry-run": false,
+        yes: true,
+        "no-cache": true,
+        json: true,
+        quiet: false,
+        verbose: false,
+      } as any,
+      rawArgs: [],
+      cmd: installCommand as any,
+    });
+
+    const updated = await readConfig(join(configDir, "config.toml"));
+    const srv = updated.servers?.["remote-mcp"];
+    expect(srv).toBeDefined();
+    expect(srv?.transport).toBe("streamable-http");
+    expect(srv?.url).toBe("https://remote.example.com/mcp");
+  });
+
   test("detects existing server and skips without --yes", async () => {
     dir = await createTestDir("am-install-");
     const configDir = dir.path;

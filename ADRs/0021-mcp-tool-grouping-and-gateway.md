@@ -44,6 +44,14 @@ Tool group mapping:
 | `a2a` | 4 | `am_agent_discover`, `am_agent_list`, `am_agent_delegate`, `am_agent_task_status` |
 | `wiki` | 5 | `am_wiki_search`, `am_wiki_add`, `am_wiki_synthesize`, `am_wiki_briefing`, `am_wiki_harvest` |
 
+> **Note (2026-06-04, W1-4).** The counts above are the *original* ADR-acceptance
+> snapshot. Five quick-win tools were later added (`am_list_skills`,
+> `am_list_instructions`, `am_profile_create`, `am_profile_delete` → `core`;
+> `am_registry_uninstall` → `registry`), bringing `core` to 18, `registry` to 4,
+> and the total to 43. See the addendum table at the foot of this ADR for the
+> current group enumeration. ADR-0055 (proposed) supersedes this ADR's rejection
+> of *profile-scoped* tool groups.
+
 When `settings.mcp_serve.tools` is unset, the default is `["core"]` — the
 original 14 config-management tools from ADR-0009. This ensures backward
 compatibility while reducing noise by default.
@@ -134,13 +142,13 @@ group enumeration is expanded.
 
 | Group | Count | Notes |
 |-------|-------|-------|
-| `core` | 14 | Config/catalog management (unchanged from original) |
-| `registry` | 3 | Unchanged from original |
+| `core` | 18 | Config/catalog management. **W1-4 (2026-06-04)** added `am_list_skills`, `am_list_instructions`, `am_profile_create`, `am_profile_delete` (was 14). |
+| `registry` | 4 | **W1-4 (2026-06-04)** added `am_registry_uninstall` (was 3). |
 | `a2a` | 4 | Unchanged from original |
 | `wiki` | 5 | Unchanged from original |
 | `session` | 3 | Split out from core per original Decision |
 | `acp` | 9 | **Added by ADR-0026 Phase 2 + Wave D.** `am_run_agent`, `am_acp_list_agents`, `am_acp_session_list`, `am_acp_session_cancel`, `am_agent_invoke`, `am_agent_session_list`, `am_agent_session_cancel`, `am_agent_status`, `am_agent_detect`. |
-| **Total** | **38** | Up from 26 at ADR acceptance. |
+| **Total** | **43** | Up from 26 at ADR acceptance (38 at the 2026-05-01 addendum; +5 at W1-4). |
 
 **Settings enum.** `McpToolGroup` in `src/core/schema.ts` was extended to
 include `"acp"`; `settings.mcp_serve.tools` accepts all six group names.

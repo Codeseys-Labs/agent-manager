@@ -39,6 +39,7 @@ import {
   ndJsonStream,
 } from "@agentclientprotocol/sdk";
 
+import { lstat, readlink, realpath } from "node:fs/promises";
 import path from "node:path";
 import { sandboxEnv } from "./env-sandbox";
 import { parseCommand, resolveAgent } from "./registry";
@@ -465,15 +466,116 @@ export class AmAcpClient {
 // ── Path validation (MEDIUM-3 hardening) ────────────────────────
 
 /**
- * Check whether a requested path is within any of the allowed directories.
- * Uses path.resolve() to normalize traversal sequences before comparison.
+ * Resolve a path to its canonical (symlink-dereferenced) form.
+ *
+ * R2-MED fix: `path.resolve()` is purely LEXICAL — it collapses `..`/`.` but
+ * never touches the filesystem, so a symlink living inside the sandbox that
+ * points at `/etc` would lexically still look "inside" the sandbox. We instead
+ * canonicalize via `fs.realpath`, which dereferences every symlink in the
+ * chain.
+ *
+ * The requested path frequently does not exist yet (e.g. a `writeTextFile` to a
+ * brand-new file), so `realpath` on the full path would throw. We walk UP to
+ * the nearest existing ancestor, realpath THAT (dereferencing any symlinks on
+ * the existing prefix — where an escape would have to live), then re-append the
+ * still-virtual tail.
+ *
+ * Dangling-symlink hardening: when walking up, a component that exists but is
+ * itself a SYMLINK (even one whose target does not currently exist — a dangling
+ * symlink, which a writeTextFile could materialise OUTSIDE the sandbox) is
+ * dereferenced one hop via `realpath` of its parent + readlink semantics. We
+ * detect it with `lstat`; if the failing component is a symlink we resolve its
+ * parent's realpath and treat the link target as the canonical location, so a
+ * dangling symlink can never be re-appended lexically and slip past the prefix
+ * check. If nothing on the chain exists at all (fictional paths in unit tests),
+ * we fall back to the lexical `path.resolve`.
  */
-export function isPathAllowed(requestedPath: string, allowedPaths: string[]): boolean {
-  const resolved = path.resolve(requestedPath);
-  return allowedPaths.some((allowed) => {
-    const resolvedAllowed = path.resolve(allowed);
-    return resolved === resolvedAllowed || resolved.startsWith(resolvedAllowed + path.sep);
-  });
+async function canonicalize(p: string, depth = 0): Promise<string> {
+  const resolved = path.resolve(p);
+  // Bound symlink-chain recursion so a cycle (a -> b -> a, or a -> a) can never
+  // hang the FS-containment check. 40 hops mirrors the kernel's ELOOP budget; a
+  // chain that deep is pathological — fall back to the lexical resolution, which
+  // fails closed against the sandbox prefix.
+  if (depth > 40) return resolved;
+  let existing = resolved;
+  const tail: string[] = [];
+  while (true) {
+    try {
+      const real = await realpath(existing);
+      return tail.length > 0 ? path.join(real, ...tail) : real;
+    } catch {
+      // `existing` could not be realpath'd. Before treating it as non-existent,
+      // check whether it is itself a (possibly dangling) symlink — if so, its
+      // realpath'd parent + link target is the true location and must not be
+      // re-appended lexically (that was the dangling-symlink bypass).
+      try {
+        const st = await lstat(existing);
+        if (st.isSymbolicLink()) {
+          // `existing` is a symlink whose target does not currently exist (a
+          // DANGLING symlink — realpath on the path above threw). We must
+          // resolve where the link actually POINTS, not treat it as a real
+          // file: a writeTextFile through `sandbox/link -> /outside/x` would
+          // otherwise materialise the file OUTSIDE the sandbox. (R4-CRIT: the
+          // prior version re-appended the symlink's OWN basename here, which
+          // discarded the target and let the write escape.)
+          //
+          // Read the declared target, resolve it against the link's realpath'd
+          // parent when relative, then RE-CANONICALIZE the target (it may chain
+          // through further symlinks) and re-append any virtual tail. The
+          // re-canonicalized target escapes the sandbox prefix whenever the link
+          // points outside, so isPathAllowed fails closed.
+          const parentReal = await realpath(path.dirname(existing));
+          const linkTarget = await readlink(existing);
+          const absTarget = path.isAbsolute(linkTarget)
+            ? linkTarget
+            : path.join(parentReal, linkTarget);
+          const canonTarget = await canonicalize(absTarget, depth + 1);
+          return tail.length > 0 ? path.join(canonTarget, ...tail) : canonTarget;
+        }
+      } catch {
+        // lstat failed too → the component genuinely does not exist; keep
+        // walking up.
+      }
+      const parent = path.dirname(existing);
+      if (parent === existing) {
+        // Reached the root and even it didn't resolve — nothing on this chain
+        // exists. Fall back to the lexical resolution.
+        return resolved;
+      }
+      tail.unshift(path.basename(existing));
+      existing = parent;
+    }
+  }
+}
+
+/**
+ * Check whether a requested path is within any of the allowed directories.
+ *
+ * R2-MED fix: comparison is done on REALPATHS (via `canonicalize`), not lexical
+ * resolutions, so a symlink inside the sandbox pointing outside it (e.g.
+ * `sandbox/escape -> /etc`) is rejected — its realpath escapes every allowed
+ * root. Allowed roots are canonicalized too, so a symlinked sandbox root still
+ * matches its canonical form. The `+ path.sep` sibling guard is retained: it
+ * rejects `/tmp/sandbox-evil` against the allowed root `/tmp/sandbox`.
+ *
+ * KNOWN LIMITATION (unchanged, out of scope): this validates only the path
+ * argument. It does not prevent a runtime escape where the spawned process
+ * `cd`s out of the sandbox or constructs an absolute path at execution time —
+ * defending against that requires real process isolation
+ * (chroot/container/namespaces), tracked separately.
+ */
+export async function isPathAllowed(
+  requestedPath: string,
+  allowedPaths: string[],
+): Promise<boolean> {
+  const resolved = await canonicalize(requestedPath);
+  for (const allowed of allowedPaths) {
+    const resolvedAllowed = await canonicalize(allowed);
+    if (resolved === resolvedAllowed || resolved.startsWith(resolvedAllowed + path.sep)) {
+      return true;
+    }
+  }
+  return false;
 }
 
 // ── Client handler (agent-to-client callbacks) ─────────────────
@@ -532,7 +634,7 @@ export function createClientHandler(
 
     async readTextFile(params: ReadTextFileRequest): Promise<ReadTextFileResponse> {
       // MEDIUM-3: restrict file reads to allowed paths
-      if (allowedPaths.length > 0 && !isPathAllowed(params.path, allowedPaths)) {
+      if (allowedPaths.length > 0 && !(await isPathAllowed(params.path, allowedPaths))) {
         throw new AcpClientError(
           `Path "${params.path}" is outside the allowed directories`,
           "PATH_NOT_ALLOWED",
@@ -548,7 +650,7 @@ export function createClientHandler(
 
     async writeTextFile(params: WriteTextFileRequest): Promise<WriteTextFileResponse> {
       // MEDIUM-3: restrict file writes to allowed paths
-      if (allowedPaths.length > 0 && !isPathAllowed(params.path, allowedPaths)) {
+      if (allowedPaths.length > 0 && !(await isPathAllowed(params.path, allowedPaths))) {
         throw new AcpClientError(
           `Path "${params.path}" is outside the allowed directories`,
           "PATH_NOT_ALLOWED",
@@ -567,6 +669,35 @@ export function createClientHandler(
       // `createTerminal({ command: "printenv" })` could dump every secret).
       // Now we pass the scrubbed default env; if the agent supplied explicit
       // env vars, those overlay on top via sandboxEnv's `extra` param.
+      //
+      // FS-containment fix (allowedPaths bypass via shell-out): readTextFile/
+      // writeTextFile above enforce isPathAllowed, but createTerminal spawned
+      // params.command with cwd=params.cwd and NO path check. The
+      // am_agent_invoke MCP path sets auto-approve + setAllowedPaths([cwd]) as
+      // the advertised containment boundary; without this gate a compromised
+      // ACP agent could `createTerminal({ command: "cat", cwd: "/anywhere" })`
+      // and read/write any file the am process can touch, defeating the guard.
+      // We enforce the SAME isPathAllowed helper on params.cwd that the file
+      // handlers use, refusing a cwd outside the allowed roots.
+      //
+      // LIMITATION: this only pins the *working directory*. A command can still
+      // `cd ../..`, use absolute paths, or shell out at runtime to escape the
+      // sandbox — process-level FS isolation (containers/landlock/seatbelt) is
+      // the only airtight boundary. The cwd check is the meaningful, consistent
+      // boundary the other handlers enforce; it raises the bar without claiming
+      // true containment. (A future hardening could also gate createTerminal
+      // behind the deny permission policy unless terminals are explicitly
+      // auto-approved, but that is out of scope for this fix.)
+      if (
+        allowedPaths.length > 0 &&
+        params.cwd != null &&
+        !(await isPathAllowed(params.cwd, allowedPaths))
+      ) {
+        throw new AcpClientError(
+          `Terminal cwd "${params.cwd}" is outside the allowed directories`,
+          "PATH_NOT_ALLOWED",
+        );
+      }
       const { executable, args } = parseCommand(params.command);
       const explicitEnv = params.env
         ? Object.fromEntries(params.env.map((e) => [e.name, e.value]))

@@ -1511,11 +1511,35 @@ export async function updateEntry(id: string, updates: Partial<KnowledgeEntry>):
   const updated = { ...existing, ...updates, id };
   const updatedPage = entryToPage(updated);
 
-  // Delete old page first (in case type changed)
-  await deletePage(id);
+  // R-BUG5: write the NEW page first, then prune the stale one only if the
+  // type (and therefore the on-disk path) actually changed AND the write
+  // succeeded. The previous order (deletePage THEN writePage) destroyed the
+  // source-of-truth `.md` before the rewrite, so any throw from writePage
+  // (ENOSPC, EACCES, or the wikilink/NER pass failing before the atomic
+  // rename) left the entry silently obliterated with nothing to restore.
+  //
   // writePage maintains the search index + graph on the write path (ADR-0054
   // R1); no separate updateSearchIndex call needed.
+  const oldPath = pagePath(id, page.type);
+  const newPath = pagePath(updatedPage.slug, updatedPage.type);
   await writePage(updatedPage);
+
+  // Only prune the stale file when the page moved subdirs (a type change). When
+  // the path is unchanged, writePage already overwrote it via the atomic rename.
+  // We remove the *specific* stale path rather than calling deletePage(id),
+  // because deletePage scans subdirs in PAGE_SUBDIRS order and would match — and
+  // destroy — the page we just wrote to the new type's subdir. It would also
+  // prune the graph/search entries for `id` that writePage just (re)created, so
+  // the derived-artifact maintenance is deliberately skipped here.
+  if (oldPath !== newPath) {
+    try {
+      await rm(oldPath);
+    } catch (err: unknown) {
+      // Already gone (e.g. the page never existed under the old type on disk) —
+      // nothing to clean up. Any other error is surfaced.
+      if (!isNotFound(err)) throw err;
+    }
+  }
 }
 
 /** Delete an entry by ID */

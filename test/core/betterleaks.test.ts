@@ -1,11 +1,15 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
+import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import {
   expectedBetterleaksSha256,
   getBetterleaksPath,
   getBetterleaksVersion,
   isBetterleaksAvailable,
   scanWithBetterleaks,
+  spawnFailed,
   verifyBetterleaksChecksum,
 } from "../../src/core/betterleaks";
 
@@ -127,5 +131,104 @@ describe("betterleaks checksum verification (P2-H)", () => {
     process.env.AM_BETTERLEAKS_SHA256 = "0".repeat(64);
     const res = verifyBetterleaksChecksum(payload, ASSET);
     expect(res.ok).toBe(false);
+  });
+});
+
+// Silent-failure fix: a crashed/timed-out/non-zero betterleaks run must signal
+// UNAVAILABLE (null) — NOT a false-clean empty-findings ([]) result. With
+// `--exit-code 0` passed, a non-zero status genuinely means the tool failed.
+describe("betterleaks scan failure ⇒ null (distinct from clean empty scan)", () => {
+  describe("spawnFailed classifier", () => {
+    test("clean successful run (status 0, no error/signal) is NOT a failure", () => {
+      expect(spawnFailed({ status: 0, signal: null })).toBe(false);
+    });
+
+    test("non-zero exit status IS a failure (tool error under --exit-code 0)", () => {
+      expect(spawnFailed({ status: 1, signal: null })).toBe(true);
+      expect(spawnFailed({ status: 2, signal: null })).toBe(true);
+    });
+
+    test("spawn/timeout error IS a failure", () => {
+      // Node populates result.error on spawn failure and on timeout.
+      expect(spawnFailed({ error: new Error("spawn ENOENT"), status: null })).toBe(true);
+      expect(spawnFailed({ error: new Error("ETIMEDOUT") })).toBe(true);
+    });
+
+    test("killed by signal IS a failure (timeout SIGTERM / maxBuffer overflow)", () => {
+      expect(spawnFailed({ signal: "SIGTERM", status: null })).toBe(true);
+      expect(spawnFailed({ signal: "SIGKILL", status: null })).toBe(true);
+    });
+  });
+
+  describe("scanWithBetterleaks end-to-end against a failing shim binary", () => {
+    let tmp: string;
+    const origPath = process.env.PATH;
+
+    function installShim(name: string, scriptBody: string) {
+      // On Windows the resolver looks for betterleaks.exe; these POSIX shims
+      // only exercise the failure path on Unix. The classifier tests above
+      // cover the platform-agnostic logic.
+      const binPath = join(tmp, name);
+      writeFileSync(binPath, scriptBody, { mode: 0o755 });
+      chmodSync(binPath, 0o755);
+      process.env.PATH = `${tmp}:${origPath}`;
+    }
+
+    beforeEach(() => {
+      tmp = mkdtempSync(join(tmpdir(), "am-betterleaks-shim-"));
+    });
+
+    afterEach(() => {
+      process.env.PATH = origPath;
+      try {
+        rmSync(tmp, { recursive: true, force: true });
+      } catch {
+        /* best-effort */
+      }
+    });
+
+    // Skip the PATH-shim e2e tests if a real/managed betterleaks resolves
+    // first (getBetterleaksPath() checks the managed install dir before PATH).
+    // The classifier tests above still lock the platform-agnostic logic.
+    function shimWouldResolve(): boolean {
+      return getBetterleaksPath() === "betterleaks";
+    }
+
+    test("non-zero exit (with empty stdout) returns null, NOT []", () => {
+      if (process.platform === "win32") return; // POSIX shim only
+      // `version` must exit 0 so getBetterleaksPath() resolves the shim; the
+      // real `stdin` scan exits non-zero with empty stdout — the silent-failure
+      // case. Before the fix this reported [] (false-clean).
+      installShim(
+        "betterleaks",
+        '#!/bin/sh\nif [ "$1" = "version" ]; then echo "betterleaks 1.1.1"; exit 0; fi\nexit 3\n',
+      );
+      if (!shimWouldResolve()) return; // a real managed install shadows the shim
+      const result = scanWithBetterleaks("token = abc123");
+      expect(result).toBeNull();
+    });
+
+    test("successful run with empty findings returns [] (genuinely clean, not failure)", () => {
+      if (process.platform === "win32") return; // POSIX shim only
+      installShim(
+        "betterleaks",
+        '#!/bin/sh\nif [ "$1" = "version" ]; then echo "betterleaks 1.1.1"; exit 0; fi\necho "[]"; exit 0\n',
+      );
+      if (!shimWouldResolve()) return; // a real managed install shadows the shim
+      const result = scanWithBetterleaks("hello = world");
+      expect(Array.isArray(result)).toBe(true);
+      expect(result).toEqual([]);
+    });
+
+    test("clean exit but non-JSON garbage output returns null (not false-clean [])", () => {
+      if (process.platform === "win32") return; // POSIX shim only
+      installShim(
+        "betterleaks",
+        '#!/bin/sh\nif [ "$1" = "version" ]; then echo "betterleaks 1.1.1"; exit 0; fi\necho "PANIC: not json"; exit 0\n',
+      );
+      if (!shimWouldResolve()) return; // a real managed install shadows the shim
+      const result = scanWithBetterleaks("token = abc123");
+      expect(result).toBeNull();
+    });
   });
 });

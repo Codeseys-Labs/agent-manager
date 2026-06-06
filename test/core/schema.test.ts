@@ -73,24 +73,73 @@ describe("ServerSchema", () => {
     expect(result._marketplace!.version).toBe("1.2.0");
   });
 
-  test("accepts server with both _registry and _marketplace", () => {
+  test("parses server with _registry provenance alone", () => {
     const result = ServerSchema.parse({
-      command: "node",
+      command: "my-server",
       _registry: {
         source: "mcp-registry",
         package: "my-server",
         version: "1.0.0",
-        installed_at: "2026-04-01",
-      },
-      _marketplace: {
-        source: "vscode-extension",
-        package: "pub.my-ext",
-        version: "2.0.0",
-        imported_at: "2026-04-15",
+        installed_at: "2026-04-01T00:00:00.000Z",
       },
     });
     expect(result._registry).toBeDefined();
-    expect(result._marketplace).toBeDefined();
+    expect(result._registry!.installed_at).toBe("2026-04-01T00:00:00.000Z");
+    expect(result._marketplace).toBeUndefined();
+  });
+
+  test("rejects server with both _registry and _marketplace (mutually exclusive)", () => {
+    expect(() =>
+      ServerSchema.parse({
+        command: "node",
+        _registry: {
+          source: "mcp-registry",
+          package: "my-server",
+          version: "1.0.0",
+          installed_at: "2026-04-01T00:00:00.000Z",
+        },
+        _marketplace: {
+          source: "vscode-extension",
+          package: "pub.my-ext",
+          version: "2.0.0",
+          imported_at: "2026-04-15T00:00:00.000Z",
+        },
+      }),
+    ).toThrow();
+  });
+
+  test("rejects _registry.installed_at that is a bare date (not ISO datetime)", () => {
+    expect(() =>
+      ServerSchema.parse({
+        command: "my-server",
+        _registry: {
+          source: "mcp-registry",
+          package: "my-server",
+          version: "1.0.0",
+          installed_at: "2026-04-01",
+        },
+      }),
+    ).toThrow();
+  });
+
+  test("rejects url on a stdio transport", () => {
+    expect(() =>
+      ServerSchema.parse({
+        command: "my-mcp-server",
+        transport: "stdio",
+        url: "https://example.com/mcp",
+      }),
+    ).toThrow();
+  });
+
+  test("accepts url on a remote transport", () => {
+    const result = ServerSchema.parse({
+      command: "https://example.com/mcp",
+      transport: "streamable-http",
+      url: "https://example.com/mcp",
+    });
+    expect(result.transport).toBe("streamable-http");
+    expect(result.url).toBe("https://example.com/mcp");
   });
 });
 
@@ -119,7 +168,7 @@ describe("MarketplaceProvenanceSchema", () => {
         source,
         package: "test",
         version: "1.0.0",
-        imported_at: "2026-04-15",
+        imported_at: "2026-04-15T00:00:00.000Z",
       });
       expect(result.source).toBe(source as typeof result.source);
     }
@@ -131,7 +180,7 @@ describe("MarketplaceProvenanceSchema", () => {
         source: "invalid",
         package: "test",
         version: "1.0.0",
-        imported_at: "2026-04-15",
+        imported_at: "2026-04-15T00:00:00.000Z",
       }),
     ).toThrow();
   });
@@ -141,7 +190,7 @@ describe("MarketplaceProvenanceSchema", () => {
       source: "vscode-extension",
       package: "pub.ext",
       version: "1.0.0",
-      imported_at: "2026-04-15",
+      imported_at: "2026-04-15T00:00:00.000Z",
     });
     expect(result.install_path).toBeUndefined();
   });
@@ -294,7 +343,7 @@ describe("AgentProfileSchema", () => {
         source: "kiro-extension",
         package: "kiro.agent-hybrid",
         version: "3.0.0",
-        imported_at: "2026-04-15",
+        imported_at: "2026-04-15T00:00:00.000Z",
       },
     });
     expect(result._marketplace).toBeDefined();

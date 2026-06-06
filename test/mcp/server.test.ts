@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, mock, test } from "bun:test";
 import { join } from "node:path";
 import { writeConfig } from "../../src/core/config";
-import { initRepo } from "../../src/core/git";
+import { addRemote, initRepo } from "../../src/core/git";
 import type { Config } from "../../src/core/schema";
 import type { Session, SessionReader, SessionSummary } from "../../src/core/session";
 import { McpServer } from "../../src/mcp/server";
@@ -81,7 +81,13 @@ describe("MCP server", () => {
     expect(names).toContain("am_apply");
     expect(names).toContain("am_sync_push");
     expect(names).toContain("am_sync_pull");
-    expect(names.length).toBe(14);
+    // W1-4 added 4 core tools: am_list_skills, am_list_instructions,
+    // am_profile_create, am_profile_delete (14 → 18).
+    expect(names).toContain("am_list_skills");
+    expect(names).toContain("am_list_instructions");
+    expect(names).toContain("am_profile_create");
+    expect(names).toContain("am_profile_delete");
+    expect(names.length).toBe(18);
     // Session tools are in their own group now (ADR-0021), not core
     expect(names).not.toContain("am_session_list");
     expect(names).not.toContain("am_session_export");
@@ -113,9 +119,16 @@ describe("MCP server", () => {
     const tools = (resp?.result as JsonRpcResult).tools;
     const names = tools.map((t: { name: string }) => t.name);
     expect(names).toContain("am_list_servers");
+    // Catalog read-only enumeration (W1-4)
+    expect(names).toContain("am_list_skills");
+    expect(names).toContain("am_list_instructions");
+    // Profile authoring (W1-4)
+    expect(names).toContain("am_profile_create");
+    expect(names).toContain("am_profile_delete");
     expect(names).toContain("am_registry_search");
     expect(names).toContain("am_registry_install");
     expect(names).toContain("am_registry_list_installed");
+    expect(names).toContain("am_registry_uninstall");
     // Wiki tools (ADR-0020)
     expect(names).toContain("am_wiki_search");
     expect(names).toContain("am_wiki_add");
@@ -142,7 +155,9 @@ describe("MCP server", () => {
     expect(names).toContain("am_agent_session_cancel");
     expect(names).toContain("am_agent_status");
     expect(names).toContain("am_agent_detect");
-    expect(names.length).toBe(38);
+    // W1-4: +5 quick-win tools (am_list_skills, am_list_instructions,
+    // am_profile_create, am_profile_delete, am_registry_uninstall) → 43.
+    expect(names.length).toBe(43);
   });
 
   test("tools/list respects selective group configuration (ADR-0021)", async () => {
@@ -160,11 +175,16 @@ describe("MCP server", () => {
     expect(resp).not.toBeNull();
     const tools = (resp?.result as JsonRpcResult).tools;
     const names = tools.map((t: { name: string }) => t.name);
-    // Core + wiki = 14 + 5 = 19
-    expect(names.length).toBe(19);
+    // Core + wiki = 18 + 5 = 23. W1-4 added 4 core tools (am_list_skills,
+    // am_list_instructions, am_profile_create, am_profile_delete); the 5th new
+    // tool (am_registry_uninstall) is in the registry group, excluded here.
+    expect(names.length).toBe(23);
     expect(names).toContain("am_list_servers");
+    expect(names).toContain("am_list_skills");
+    expect(names).toContain("am_profile_create");
     expect(names).toContain("am_wiki_search");
     expect(names).not.toContain("am_registry_search");
+    expect(names).not.toContain("am_registry_uninstall");
     expect(names).not.toContain("am_agent_discover");
   });
 
@@ -250,6 +270,50 @@ describe("MCP server", () => {
     expect(content.git.branch).toBeDefined();
     expect(typeof content.git.clean).toBe("boolean");
     expect(Array.isArray(content.tools)).toBe(true);
+  });
+
+  // R2-SEC1 belt-and-suspenders: am_status is read-only and tokenless, so a git
+  // remote URL with embedded credentials must never reach the client verbatim —
+  // even if a future code path bypasses getStatus's boundary redaction.
+  test("am_status strips userinfo from remote URLs", async () => {
+    const configDir = await setupConfig({});
+    const secretToken = "ghp_abcdefghijklmnopqrstuvwxyz0123456789";
+    const plainPassword = "s3cretPasswordWithNoTokenShape";
+    await addRemote(
+      configDir,
+      `https://x-access-token:${secretToken}@github.com/org/repo.git`,
+      "origin",
+    );
+    // A plain user:password URL has no recognizable token shape — only the
+    // URL-userinfo strip catches it, which is the whole point of this guard.
+    await addRemote(
+      configDir,
+      `https://alice:${plainPassword}@example.com/org/repo.git`,
+      "upstream",
+    );
+
+    const server = new McpServer({ auth: { token: undefined, allowUnsafeLocal: true } });
+    const resp = await server.handleRequest({
+      jsonrpc: "2.0",
+      id: 53,
+      method: "tools/call",
+      params: { name: "am_status", arguments: {} },
+    });
+
+    const text = (resp?.result as JsonRpcResult).content[0].text as string;
+    expect(text).not.toContain(secretToken);
+    expect(text).not.toContain(plainPassword);
+
+    const content = JSON.parse(text);
+    expect(Array.isArray(content.git.remotes)).toBe(true);
+    expect(content.git.remotes.length).toBeGreaterThanOrEqual(2);
+    for (const r of content.git.remotes) {
+      // The userinfo segment is replaced wholesale with `[redacted]@`, so the
+      // raw `user:secret@` is gone but the host is still legible for diagnostics.
+      expect(r.url).toContain("[redacted]@");
+      expect(r.url).not.toContain(secretToken);
+      expect(r.url).not.toContain(plainPassword);
+    }
   });
 
   test("am_config_show returns config", async () => {
@@ -416,8 +480,12 @@ describe("MCP server", () => {
     });
     const showContent = JSON.parse((showResp?.result as JsonRpcResult).content[0].text);
     const serverEnv = showContent.config.servers.fetch.env;
-    expect(serverEnv.API_KEY).toBe("existing");
-    expect(serverEnv.NEW_VAR).toBe("new-value");
+    // am_config_show redacts every env value by key location (defense-in-depth
+    // against plaintext-secret leaks — FIX 1). The merge is still verifiable
+    // via the KEYS: both the pre-existing and the new var must be present.
+    expect(Object.keys(serverEnv).sort()).toEqual(["API_KEY", "NEW_VAR"]);
+    expect(serverEnv.API_KEY).toBe("[redacted]");
+    expect(serverEnv.NEW_VAR).toBe("[redacted]");
   });
 
   test("am_server_update errors on nonexistent server", async () => {
@@ -517,6 +585,42 @@ describe("MCP server", () => {
 
     const configCheck = content.checks.find((c: { name: string }) => c.name === "config.toml");
     expect(configCheck?.status).toBe("ok");
+  });
+
+  // R2-LOW: am_doctor's config.toml check surfaces parse/validation errors to a
+  // read-only, tokenless client. A Zod error echoes the offending VALUE — here
+  // an invalid `transport` enum whose value is a GitHub token — so the message
+  // must pass through safeErrorMessage before it leaves the process.
+  test("am_doctor redacts secret-shaped values in config validation errors", async () => {
+    await setupConfig({});
+    const secretToken = "ghp_abcdefghijklmnopqrstuvwxyz0123456789";
+    // Overwrite config.toml with a raw, schema-invalid file. We bypass
+    // writeConfig (which would reject it) by writing the TOML text directly.
+    await dir.write(
+      "config.toml",
+      `[servers.leaky]\ncommand = "echo"\ntransport = "${secretToken}"\nenabled = true\n`,
+    );
+
+    const server = new McpServer({ auth: { token: undefined, allowUnsafeLocal: true } });
+    const resp = await server.handleRequest({
+      jsonrpc: "2.0",
+      id: 52,
+      method: "tools/call",
+      params: { name: "am_doctor", arguments: {} },
+    });
+
+    const result = resp?.result as JsonRpcResult;
+    const text = result.content[0].text as string;
+    // The raw token must not appear anywhere in the response...
+    expect(text).not.toContain(secretToken);
+
+    const content = JSON.parse(text);
+    const configCheck = content.checks.find((c: { name: string }) => c.name === "config.toml");
+    expect(configCheck?.status).toBe("fail");
+    expect(configCheck?.message).toContain("Parse/validation error:");
+    // ...and the token specifically is replaced by the redaction placeholder.
+    expect(configCheck?.message).not.toContain(secretToken);
+    expect(configCheck?.message).toContain("[REDACTED_GH_TOKEN]");
   });
 
   test("am_doctor is read-only (no opt-in needed)", async () => {
@@ -887,6 +991,174 @@ describe("MCP server", () => {
       const content = JSON.parse(searchResult.content[0].text);
       expect(content.error).not.toContain("opt-in");
     }
+  });
+
+  // ── W1-4: quick-win MCP tools (thin wrappers over controller/CLI paths) ──
+
+  test("am_profile_create then am_list_profiles shows the new profile", async () => {
+    await setupConfig({ profiles: {} });
+    const server = new McpServer({ auth: { token: undefined, allowUnsafeLocal: true } });
+
+    const createResp = await server.handleRequest({
+      jsonrpc: "2.0",
+      id: 70,
+      method: "tools/call",
+      params: {
+        name: "am_profile_create",
+        arguments: { name: "work", description: "work profile" },
+      },
+    });
+    const created = JSON.parse((createResp?.result as JsonRpcResult).content[0].text);
+    expect(created.action).toBe("create");
+    expect(created.profile).toBe("work");
+
+    const listResp = await server.handleRequest({
+      jsonrpc: "2.0",
+      id: 71,
+      method: "tools/call",
+      params: { name: "am_list_profiles", arguments: {} },
+    });
+    const list = JSON.parse((listResp?.result as JsonRpcResult).content[0].text);
+    expect(list.profiles.some((p: { name: string }) => p.name === "work")).toBe(true);
+  });
+
+  test("am_profile_create rejects a duplicate name", async () => {
+    await setupConfig({ profiles: { work: {} } });
+    const server = new McpServer({ auth: { token: undefined, allowUnsafeLocal: true } });
+    const resp = await server.handleRequest({
+      jsonrpc: "2.0",
+      id: 72,
+      method: "tools/call",
+      params: { name: "am_profile_create", arguments: { name: "work" } },
+    });
+    const result = resp?.result as JsonRpcResult;
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain("already exists");
+  });
+
+  test("am_profile_create rejects a missing parent", async () => {
+    await setupConfig({ profiles: {} });
+    const server = new McpServer({ auth: { token: undefined, allowUnsafeLocal: true } });
+    const resp = await server.handleRequest({
+      jsonrpc: "2.0",
+      id: 73,
+      method: "tools/call",
+      params: { name: "am_profile_create", arguments: { name: "child", inherits: "ghost" } },
+    });
+    const result = resp?.result as JsonRpcResult;
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain("does not exist");
+  });
+
+  test("am_profile_delete removes a profile", async () => {
+    await setupConfig({ profiles: { work: {}, play: {} } });
+    const server = new McpServer({ auth: { token: undefined, allowUnsafeLocal: true } });
+    const resp = await server.handleRequest({
+      jsonrpc: "2.0",
+      id: 74,
+      method: "tools/call",
+      params: { name: "am_profile_delete", arguments: { name: "play" } },
+    });
+    const content = JSON.parse((resp?.result as JsonRpcResult).content[0].text);
+    expect(content.action).toBe("delete");
+    expect(content.profile).toBe("play");
+  });
+
+  test("am_profile_delete refuses when another profile inherits from it", async () => {
+    await setupConfig({ profiles: { base: {}, child: { inherits: "base" } } });
+    const server = new McpServer({ auth: { token: undefined, allowUnsafeLocal: true } });
+    const resp = await server.handleRequest({
+      jsonrpc: "2.0",
+      id: 75,
+      method: "tools/call",
+      params: { name: "am_profile_delete", arguments: { name: "base" } },
+    });
+    const result = resp?.result as JsonRpcResult;
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain("inherits from it");
+  });
+
+  test("am_list_skills enumerates catalog skills", async () => {
+    await setupConfig({
+      skills: {
+        review: { path: "skills/review.md", description: "code review", tags: ["dev"] },
+      },
+    });
+    const server = new McpServer({ auth: { token: undefined, allowUnsafeLocal: true } });
+    const resp = await server.handleRequest({
+      jsonrpc: "2.0",
+      id: 76,
+      method: "tools/call",
+      params: { name: "am_list_skills", arguments: {} },
+    });
+    const content = JSON.parse((resp?.result as JsonRpcResult).content[0].text);
+    expect(content.skills.length).toBe(1);
+    expect(content.skills[0].name).toBe("review");
+    expect(content.skills[0].path).toBe("skills/review.md");
+    expect(content.skills[0].tags).toEqual(["dev"]);
+  });
+
+  test("am_list_instructions enumerates catalog instructions", async () => {
+    await setupConfig({
+      instructions: {
+        style: { content: "Use tabs", scope: "always", description: "style guide" },
+      },
+    });
+    const server = new McpServer({ auth: { token: undefined, allowUnsafeLocal: true } });
+    const resp = await server.handleRequest({
+      jsonrpc: "2.0",
+      id: 77,
+      method: "tools/call",
+      params: { name: "am_list_instructions", arguments: {} },
+    });
+    const content = JSON.parse((resp?.result as JsonRpcResult).content[0].text);
+    expect(content.instructions.length).toBe(1);
+    expect(content.instructions[0].name).toBe("style");
+    expect(content.instructions[0].scope).toBe("always");
+  });
+
+  test("am_registry_uninstall removes a server and returns its provenance", async () => {
+    await setupConfig({
+      servers: {
+        fetch: {
+          command: "uvx",
+          args: ["mcp-server-fetch"],
+          transport: "stdio",
+          enabled: true,
+          _registry: {
+            source: "mcp-registry",
+            package: "mcp-server-fetch",
+            version: "1.0.0",
+            installed_at: "2026-06-04T00:00:00.000Z",
+          },
+        },
+      },
+    });
+    const server = new McpServer({ auth: { token: undefined, allowUnsafeLocal: true } });
+    const resp = await server.handleRequest({
+      jsonrpc: "2.0",
+      id: 78,
+      method: "tools/call",
+      params: { name: "am_registry_uninstall", arguments: { name: "fetch" } },
+    });
+    const content = JSON.parse((resp?.result as JsonRpcResult).content[0].text);
+    expect(content.action).toBe("uninstall");
+    expect(content.server).toBe("fetch");
+    expect(content.provenance?.package).toBe("mcp-server-fetch");
+  });
+
+  test("am_registry_uninstall errors on a missing server", async () => {
+    await setupConfig({ servers: {} });
+    const server = new McpServer({ auth: { token: undefined, allowUnsafeLocal: true } });
+    const resp = await server.handleRequest({
+      jsonrpc: "2.0",
+      id: 79,
+      method: "tools/call",
+      params: { name: "am_registry_uninstall", arguments: { name: "ghost" } },
+    });
+    const result = resp?.result as JsonRpcResult;
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain("not found");
   });
 });
 

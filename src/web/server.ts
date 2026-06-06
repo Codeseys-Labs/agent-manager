@@ -25,6 +25,7 @@ import {
   saveKey,
 } from "../core/secrets";
 import { errorMessage } from "../lib/errors";
+import { redactConfigPlaintextSecrets, redactConfigSecrets, safeErrorMessage } from "../lib/redact";
 import { AM_VERSION } from "../lib/version";
 
 // ── Token-based authentication for local web server ─────────────
@@ -86,21 +87,6 @@ function readSessionCookie(cookieHeader: string | undefined): string | undefined
     if (rawName === SESSION_COOKIE) return rest.join("=");
   }
   return undefined;
-}
-
-// ── Redact encrypted secrets from config responses ──────────────
-
-function redactSecrets(obj: unknown): unknown {
-  if (typeof obj === "string" && obj.startsWith("enc:v1:")) return "[encrypted]";
-  if (Array.isArray(obj)) return obj.map(redactSecrets);
-  if (obj && typeof obj === "object") {
-    const result: Record<string, unknown> = {};
-    for (const [key, value] of Object.entries(obj)) {
-      result[key] = redactSecrets(value);
-    }
-    return result;
-  }
-  return obj;
 }
 
 export interface CreateAppOptions {
@@ -208,7 +194,15 @@ export async function createApp(options?: CreateAppOptions) {
   app.get("/api/config", async (c) => {
     try {
       const { config, profileName } = await getConfigAndProfile();
-      return c.json({ profile: profileName, config: redactSecrets(config) });
+      // R2-SEC2: two-pass redaction, identical to the MCP am_config_show path.
+      // redactConfigSecrets masks enc: envelopes (v1 + v2 age);
+      // redactConfigPlaintextSecrets masks PLAINTEXT secrets the envelope pass
+      // misses — env/headers maps by location, named secret scalars
+      // (a2a.auth_token etc.), and credential userinfo in URLs.
+      return c.json({
+        profile: profileName,
+        config: redactConfigPlaintextSecrets(redactConfigSecrets(config)),
+      });
     } catch {
       return c.json({ error: "Config not found. Run `am init` first." }, 500);
     }
@@ -446,11 +440,28 @@ export async function createApp(options?: CreateAppOptions) {
       const resolved = buildResolvedConfig(config, profileName, configDir);
 
       // Git status
-      let gitStatus;
+      //
+      // On ANY getStatus() fault (not-a-repo, corrupt index, IO error) we must
+      // report clean:FALSE, never clean:true — getStatus throws only on a real
+      // fault, not on a dirty tree (a dirty tree returns clean:false normally).
+      // Fabricating clean:true here would make the web sync indicator show
+      // "nothing to sync" precisely when git is broken. Surface the failure via
+      // a `gitError` field instead (matches the MCP am_status field naming).
+      let gitStatus: {
+        branch: string;
+        clean: boolean;
+        dirty: string[];
+        remotes: Array<{ remote: string; url: string }>;
+      };
+      let gitError: string | undefined;
       try {
         gitStatus = await getStatus(configDir);
-      } catch {
-        gitStatus = { branch: "unknown", clean: true, dirty: [], remotes: [] };
+      } catch (err) {
+        gitStatus = { branch: "unknown", clean: false, dirty: [], remotes: [] };
+        // safeErrorMessage (not errorMessage): a git fault message can embed a
+        // credential-bearing remote URL; scrub it before it crosses to the
+        // client (R4-MED, matches the MCP am_status path).
+        gitError = safeErrorMessage(err) || "git status unavailable";
       }
 
       // Adapter drift
@@ -489,6 +500,7 @@ export async function createApp(options?: CreateAppOptions) {
           clean: gitStatus.clean,
           dirty: gitStatus.dirty,
           remotes: gitStatus.remotes,
+          ...(gitError ? { gitError } : {}),
         },
         tools,
       });
@@ -573,7 +585,10 @@ export async function createApp(options?: CreateAppOptions) {
       await gitPush(configDir);
       return c.json({ action: "push", success: true });
     } catch (e: unknown) {
-      return c.json({ error: errorMessage(e) || "Push failed" }, 500);
+      // R3-SEC: safeErrorMessage scrubs credential userinfo (and token shapes)
+      // — a failed push to https://user:token@host would otherwise echo the
+      // token verbatim in the error body.
+      return c.json({ error: safeErrorMessage(e) || "Push failed" }, 500);
     }
   });
 
@@ -583,7 +598,8 @@ export async function createApp(options?: CreateAppOptions) {
       await gitPull(configDir);
       return c.json({ action: "pull", success: true });
     } catch (e: unknown) {
-      return c.json({ error: errorMessage(e) || "Pull failed" }, 500);
+      // R3-SEC: see push handler — scrub credential-bearing remote URLs.
+      return c.json({ error: safeErrorMessage(e) || "Pull failed" }, 500);
     }
   });
 

@@ -247,8 +247,47 @@ export interface BetterleaksFinding {
 }
 
 /**
+ * Did a spawnSync invocation fail to *complete a clean run*?
+ *
+ * We pass `--exit-code 0` so betterleaks returns 0 even when it finds secrets;
+ * therefore any of the following genuinely means the tool itself failed (it
+ * did NOT successfully scan), and an empty stdout MUST NOT be read as
+ * "no secrets found":
+ *
+ *   - result.error      → failed to spawn, or timed out (Node populates .error
+ *                         with an ETIMEDOUT-style error on timeout)
+ *   - result.signal     → killed by a signal (e.g. SIGTERM on timeout, or
+ *                         maxBuffer overflow which terminates the child)
+ *   - result.status !==0 → non-zero exit; with --exit-code 0 this can only be a
+ *                         tool-level failure (bad args, crash, panic)
+ *
+ * Returns true when the scan is UNAVAILABLE (failed) and callers should treat
+ * the result as null rather than an authoritative clean scan.
+ */
+export function spawnFailed(result: {
+  error?: Error;
+  signal?: NodeJS.Signals | null;
+  status?: number | null;
+}): boolean {
+  if (result.error) return true;
+  if (result.signal) return true;
+  // status is null when the process was signaled (covered above); a non-zero
+  // numeric status is a genuine tool failure under --exit-code 0.
+  if (typeof result.status === "number" && result.status !== 0) return true;
+  return false;
+}
+
+/**
  * Scan text content using betterleaks stdin mode.
- * Returns parsed findings or null if betterleaks is not available.
+ *
+ * Returns:
+ *   - `BetterleaksFinding[]` — successful scan (possibly empty = genuinely no
+ *     inline secrets found)
+ *   - `null` — scan UNAVAILABLE: betterleaks not installed, OR the subprocess
+ *     crashed / timed out / was signaled / exited non-zero (silent-failure
+ *     fix). Callers null-check and surface "Tier-2 scan failed" instead of
+ *     asserting a false-clean. An empty-stdout-on-success run still returns
+ *     `[]`, distinct from this failure signal.
  */
 export function scanWithBetterleaks(content: string): BetterleaksFinding[] | null {
   const bin = getBetterleaksPath();
@@ -266,14 +305,22 @@ export function scanWithBetterleaks(content: string): BetterleaksFinding[] | nul
       },
     );
 
+    // Silent-failure fix: a crashed/timed-out/non-zero run leaves stdout empty.
+    // Returning [] here would report ZERO findings — indistinguishable from a
+    // genuinely clean scan. Signal unavailable (null) so callers don't assert
+    // false-clean Tier-2 coverage.
+    if (spawnFailed(result)) return null;
+
     const stdout = result.stdout?.toString().trim();
     if (!stdout || stdout === "[]" || stdout === "null") return [];
 
     try {
       return JSON.parse(stdout) as BetterleaksFinding[];
     } catch {
-      // Couldn't parse JSON output
-      return [];
+      // Ran cleanly (exit 0) but emitted non-JSON output we can't interpret as
+      // findings. Treat as unavailable rather than asserting "no secrets" — a
+      // garbled report is not evidence of a clean config.
+      return null;
     }
   } catch {
     return null;
@@ -282,6 +329,11 @@ export function scanWithBetterleaks(content: string): BetterleaksFinding[] | nul
 
 /**
  * Scan a TOML config file using betterleaks dir mode.
+ *
+ * Same return contract as `scanWithBetterleaks`: `BetterleaksFinding[]` on a
+ * successful scan (empty = no findings), `null` when the scan is UNAVAILABLE
+ * (binary missing, or the subprocess crashed / timed out / was signaled /
+ * exited non-zero). Distinguishes failure from a genuinely clean scan.
  */
 export function scanFileWithBetterleaks(filePath: string): BetterleaksFinding[] | null {
   const bin = getBetterleaksPath();
@@ -307,13 +359,17 @@ export function scanFileWithBetterleaks(filePath: string): BetterleaksFinding[] 
       },
     );
 
+    // Silent-failure fix: signal unavailable (null) rather than false-clean ([])
+    // when the run did not complete successfully.
+    if (spawnFailed(result)) return null;
+
     const stdout = result.stdout?.toString().trim();
     if (!stdout || stdout === "[]" || stdout === "null") return [];
 
     try {
       return JSON.parse(stdout) as BetterleaksFinding[];
     } catch {
-      return [];
+      return null;
     }
   } catch {
     return null;

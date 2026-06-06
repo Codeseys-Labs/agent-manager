@@ -28,8 +28,13 @@ import type { Config, McpToolGroup, Settings } from "../core/schema";
 import { interpolateEnvAsync, legacyKeyPath, loadKey, resolveKeyPath } from "../core/secrets";
 import { filterMessages, formatJson, formatMarkdown } from "../core/session";
 import type { SessionSummary } from "../core/session";
-import { errorMessage } from "../lib/errors";
-import { redactConfigSecrets, redactSecretish, safeErrorMessage } from "../lib/redact";
+import {
+  redactConfigPlaintextSecrets,
+  redactConfigSecrets,
+  redactSecretish,
+  safeErrorMessage,
+  stripUrlUserinfo,
+} from "../lib/redact";
 import { AM_VERSION } from "../lib/version";
 
 // ── JSON-RPC types ──────────────────────────────────────────────
@@ -382,6 +387,51 @@ export function checkWriteAuth(
   };
 }
 
+/**
+ * Read-only tools that disclose the FULL merged config (which may carry
+ * secrets the redactor cannot guarantee it caught). When an operator has gone
+ * to the trouble of configuring AM_MCP_TOKEN, a tokenless client should not be
+ * able to pull the merged config wholesale — even redacted, it leaks server
+ * names, internal URLs, and the shape of the deployment.
+ *
+ * This is a defense-in-depth gate layered ON TOP OF the two-pass redaction in
+ * `redactSecrets`: redaction is the last line, this gate is the first.
+ */
+const SENSITIVE_READONLY_TOOLS = new Set<string>(["am_config_show"]);
+
+/**
+ * Decide whether a SENSITIVE read-only tool (full-config disclosure) may
+ * proceed. Distinct from `checkWriteAuth` so the default local-dev experience
+ * is preserved:
+ *   - No token configured  → allowed (local dev, unchanged behaviour).
+ *   - Token configured     → require a matching bearer token, exactly like a
+ *                            write-tier call. A tokenless client is refused.
+ *
+ * `allowUnsafeLocal` is irrelevant here: it only relaxes WRITE tooling. A
+ * token, once configured, always gates these reads.
+ */
+export function checkSensitiveReadAuth(
+  toolName: string,
+  auth: AuthConfig,
+  req: JsonRpcRequest,
+): { allowed: true } | { allowed: false; reason: string } {
+  if (!SENSITIVE_READONLY_TOOLS.has(toolName)) return { allowed: true };
+  if (!auth.token) return { allowed: true };
+  const supplied = extractBearerToken(req);
+  if (!supplied) {
+    return {
+      allowed: false,
+      reason:
+        "Authentication required. Full-config disclosure is gated when AM_MCP_TOKEN is set. " +
+        "Pass params._meta.authorization = 'Bearer <token>' matching AM_MCP_TOKEN.",
+    };
+  }
+  if (!constantTimeEq(supplied, auth.token)) {
+    return { allowed: false, reason: "Invalid bearer token." };
+  }
+  return { allowed: true };
+}
+
 /** Default tool groups exposed when settings.mcp_serve.tools is unset. */
 const DEFAULT_TOOL_GROUPS: McpToolGroup[] = ["core"];
 
@@ -394,6 +444,7 @@ const TOOL_GROUP_MAP: Record<string, McpToolGroup> = {
   am_registry_search: "registry",
   am_registry_install: "registry",
   am_registry_list_installed: "registry",
+  am_registry_uninstall: "registry",
   // a2a group
   am_agent_discover: "a2a",
   am_agent_list: "a2a",
@@ -456,10 +507,17 @@ function checkPermission(
 }
 
 // ── Secret redaction ───────────────────────────────────────────
-// Thin shim kept for call-site stability; logic lives in src/lib/redact.ts.
+// Logic lives in src/lib/redact.ts. Two passes, defense-in-depth:
+//   1. redactConfigSecrets — masks `enc:` envelopes (v1 AES-GCM, v2 age).
+//   2. redactConfigPlaintextSecrets — masks PLAINTEXT secrets that the
+//      envelope pass cannot see: every value under any `env` map is redacted
+//      by key location, and all other string leaves run through the
+//      secret-shape backstop. A bare `sk-...`/`tvly-...` added by hand or
+//      imported before the encryption key existed would otherwise leak
+//      verbatim through `am_config_show` to a tokenless MCP client.
 
 function redactSecrets(obj: unknown): unknown {
-  return redactConfigSecrets(obj);
+  return redactConfigPlaintextSecrets(redactConfigSecrets(obj));
 }
 
 // ── Path traversal guard ────────────────────────────────────────
@@ -543,6 +601,15 @@ interface A2aActiveSession {
   kind: "a2a";
   agent: string;
   baseUrl: string;
+  // CODEX-11 parity for A2A: the server-authoritative task id. A strict A2A
+  // v0.3 server (which am's OWN server enforces via resolveSendTarget) mints
+  // its own task id, ignoring the client-supplied one. cancelTask/getTask MUST
+  // use the server's id — using the locally-minted sessionId silently no-ops
+  // the cancel (-32001 swallowed) and errors the final getTask. Populated from
+  // the Task.id returned by sendTask / the final sendSubscribe event. May be
+  // undefined briefly before the first server response; callers fall back to
+  // the lookup key (sessionId) for compatibility with non-strict servers.
+  serverTaskId?: string;
 }
 
 type ActiveSession = AcpActiveSession | A2aActiveSession;
@@ -656,6 +723,8 @@ const TOOL_SCHEMAS: Record<string, z.ZodTypeAny> = {
   // ── core read-only ────────────────────────────────────────
   am_list_servers: withAuth({ active: zBool.optional() }),
   am_list_profiles: withAuth({}),
+  am_list_skills: withAuth({}),
+  am_list_instructions: withAuth({}),
   am_status: withAuth({}),
   am_config_show: withAuth({}),
   am_doctor: withAuth({}),
@@ -686,6 +755,12 @@ const TOOL_SCHEMAS: Record<string, z.ZodTypeAny> = {
     env: zStrMap.optional(),
   }),
   am_remove_server: withAuth({ name: zStrNonEmpty }),
+  am_profile_create: withAuth({
+    name: zStrNonEmpty,
+    inherits: zStr.optional(),
+    description: zStr.optional(),
+  }),
+  am_profile_delete: withAuth({ name: zStrNonEmpty }),
   am_server_update: withAuth({
     name: zStrNonEmpty,
     enabled: zBool.optional(),
@@ -716,6 +791,7 @@ const TOOL_SCHEMAS: Record<string, z.ZodTypeAny> = {
   }),
   am_registry_install: withAuth({ name: zStrNonEmpty, env: zStrMap.optional() }),
   am_registry_list_installed: withAuth({}),
+  am_registry_uninstall: withAuth({ name: zStrNonEmpty }),
 
   // ── a2a ───────────────────────────────────────────────────
   am_agent_discover: withAuth({ url: zStrNonEmpty.url() }),
@@ -860,6 +936,47 @@ function defineTools(): ToolEntry[] {
     },
     {
       def: {
+        name: "am_list_skills",
+        description:
+          "List skills registered in the agent-manager catalog. Returns name, path, description, and tags for each skill.",
+        inputSchema: { type: "object", properties: {} },
+      },
+      tier: "read-only",
+      handler: async () => {
+        const { config } = await loadConfigAndProfile();
+        const skills = config.skills ?? {};
+        const entries = Object.entries(skills).map(([name, skill]) => ({
+          name,
+          path: skill.path,
+          description: skill.description ?? "",
+          tags: skill.tags ?? [],
+        }));
+        return { skills: entries };
+      },
+    },
+    {
+      def: {
+        name: "am_list_instructions",
+        description:
+          "List instructions registered in the agent-manager catalog. Returns name, scope, description, globs, and target adapters for each instruction.",
+        inputSchema: { type: "object", properties: {} },
+      },
+      tier: "read-only",
+      handler: async () => {
+        const { config } = await loadConfigAndProfile();
+        const instructions = config.instructions ?? {};
+        const entries = Object.entries(instructions).map(([name, instruction]) => ({
+          name,
+          scope: instruction.scope,
+          description: instruction.description ?? "",
+          globs: instruction.globs ?? [],
+          targets: instruction.targets ?? [],
+        }));
+        return { instructions: entries };
+      },
+    },
+    {
+      def: {
         name: "am_status",
         description:
           "Check if IDE tool configs are in sync with the agent-manager catalog. Use after adding/removing servers to see if am_apply is needed. Returns profile, server count, git status, and per-tool drift status.",
@@ -868,11 +985,24 @@ function defineTools(): ToolEntry[] {
       tier: "read-only",
       handler: async () => {
         const { config, configDir, profileName } = await loadConfigAndProfile();
-        let gitStatus;
+        // getStatus returns clean:false for a normal dirty tree and only THROWS
+        // on a real fault (not-a-repo, corrupt index, IO error). Defaulting a
+        // throw to clean:true would report "working tree clean" precisely when
+        // git is broken, leading an agent to conclude there's nothing to sync.
+        // Mirror am_doctor's fail handling: on throw report clean:FALSE and
+        // surface the fault in `gitError` so the caller sees something is wrong.
+        let gitStatus: {
+          branch: string;
+          clean: boolean;
+          dirty: string[];
+          remotes: Array<{ remote: string; url: string }>;
+        };
+        let gitError: string | undefined;
         try {
           gitStatus = await getStatus(configDir);
-        } catch {
-          gitStatus = { branch: "unknown", clean: true, dirty: [], remotes: [] };
+        } catch (err: unknown) {
+          gitStatus = { branch: "unknown", clean: false, dirty: [], remotes: [] };
+          gitError = safeErrorMessage(err);
         }
         const resolved = buildResolvedConfig(config, profileName, configDir);
         const serverCount = Object.keys(resolved.servers).length;
@@ -897,7 +1027,14 @@ function defineTools(): ToolEntry[] {
             branch: gitStatus.branch,
             clean: gitStatus.clean,
             dirty: gitStatus.dirty,
-            remotes: gitStatus.remotes,
+            // Belt-and-suspenders (R2-SEC1): getStatus already strips userinfo
+            // at the git boundary, but scrub each remote URL again here so a raw
+            // credential URL can never leak to a tokenless client via am_status.
+            remotes: gitStatus.remotes.map((r) => ({
+              remote: r.remote,
+              url: stripUrlUserinfo(r.url),
+            })),
+            ...(gitError !== undefined ? { gitError } : {}),
           },
           tools: toolStatuses,
         };
@@ -965,7 +1102,10 @@ function defineTools(): ToolEntry[] {
           checks.push({
             name: "config.toml",
             status: "fail",
-            message: `Parse/validation error: ${errorMessage(err)}`,
+            // safeErrorMessage (not errorMessage): a malformed config can echo a
+            // secret value back inside a Zod/TOML parse error; am_doctor is
+            // read-only and reachable by a tokenless client (R2-LOW).
+            message: `Parse/validation error: ${safeErrorMessage(err)}`,
           });
         }
 
@@ -994,7 +1134,12 @@ function defineTools(): ToolEntry[] {
         try {
           const gitStatus = await getStatus(configDir);
           if (gitStatus.remotes.length > 0) {
-            checks.push({ name: "Git remote", status: "ok", message: gitStatus.remotes[0].url });
+            checks.push({
+              name: "Git remote",
+              status: "ok",
+              // Belt-and-suspenders userinfo scrub (R2-SEC1).
+              message: stripUrlUserinfo(gitStatus.remotes[0].url),
+            });
           } else {
             checks.push({ name: "Git remote", status: "warn", message: "No remote configured" });
           }
@@ -1368,6 +1513,121 @@ function defineTools(): ToolEntry[] {
           return {
             result: { action: "remove", server: name },
             commitMessage: `remove server: ${name}`,
+            changed: true,
+          };
+        });
+      },
+    },
+    {
+      def: {
+        name: "am_profile_create",
+        description:
+          "Create a new profile in the agent-manager catalog. A profile is a named subset of the catalog (servers, skills, agents, instructions) selected at apply time. Optionally inherit from a parent profile.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            name: { type: "string", description: "Profile name (unique identifier)" },
+            inherits: { type: "string", description: "Parent profile to inherit from" },
+            description: { type: "string", description: "Human-readable description" },
+          },
+          required: ["name"],
+        },
+      },
+      tier: "write-local",
+      handler: async (args) => {
+        const configDir = resolveConfigDir();
+        const name = args.name as string;
+        return withConfig(configDir, async (config) => {
+          if (!config) throw new Error("Config not found. Run `am init` first.");
+          if (config.profiles?.[name]) {
+            throw new Error(
+              `Profile "${name}" already exists. Use am_list_profiles to see existing profiles.`,
+            );
+          }
+          const inherits = args.inherits as string | undefined;
+          if (inherits && !config.profiles?.[inherits]) {
+            throw new Error(`Parent profile "${inherits}" does not exist.`);
+          }
+          if (!config.profiles) config.profiles = {};
+          config.profiles[name] = {
+            ...(args.description ? { description: args.description as string } : {}),
+            ...(inherits ? { inherits } : {}),
+          };
+          return {
+            result: { action: "create", profile: name },
+            commitMessage: `add profile: ${name}`,
+            changed: true,
+          };
+        });
+      },
+    },
+    {
+      def: {
+        name: "am_profile_delete",
+        description:
+          "Delete a profile from the agent-manager catalog. Refuses if another profile inherits from it. This does not prompt for confirmation; the change is recoverable via am_undo.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            name: { type: "string", description: "Profile name to delete" },
+          },
+          required: ["name"],
+        },
+      },
+      tier: "write-local",
+      handler: async (args) => {
+        const configDir = resolveConfigDir();
+        const name = args.name as string;
+        return withConfig(configDir, async (config) => {
+          if (!config) throw new Error("Config not found. Run `am init` first.");
+          if (!config.profiles?.[name]) {
+            throw new Error(
+              `Profile "${name}" does not exist. Use am_list_profiles to see existing profiles.`,
+            );
+          }
+          for (const [otherName, otherProfile] of Object.entries(config.profiles)) {
+            if (otherProfile.inherits === name) {
+              throw new Error(`Cannot delete "${name}": profile "${otherName}" inherits from it.`);
+            }
+          }
+          delete config.profiles[name];
+          return {
+            result: { action: "delete", profile: name },
+            commitMessage: `delete profile: ${name}`,
+            changed: true,
+          };
+        });
+      },
+    },
+    {
+      def: {
+        name: "am_registry_uninstall",
+        description:
+          "Remove an MCP server from the catalog, returning its registry provenance (null if it was not registry-installed). Intended for registry packages; for a plain server use am_remove_server. Run am_apply afterward to update native IDE configs.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            name: { type: "string", description: "Server name to uninstall" },
+          },
+          required: ["name"],
+        },
+      },
+      tier: "write-local",
+      handler: async (args) => {
+        const configDir = resolveConfigDir();
+        const name = args.name as string;
+        return withConfig(configDir, async (config) => {
+          if (!config) throw new Error("Config not found. Run `am init` first.");
+          if (!config.servers?.[name]) {
+            throw new Error(
+              `Server "${name}" not found. Use am_list_servers to see available server names.`,
+            );
+          }
+          const provenance = config.servers[name]._registry ?? null;
+          delete config.servers[name];
+          return {
+            result: { action: "uninstall", server: name, provenance },
+            commitMessage: `uninstall server: ${name}`,
             changed: true,
           };
         });
@@ -1996,7 +2256,7 @@ function defineTools(): ToolEntry[] {
       },
       tier: "write-local",
       handler: async (args) => {
-        const { addEntry } = await import("../wiki/storage");
+        const { addEntry, resolveWikiDir } = await import("../wiki/storage");
         const now = new Date().toISOString();
         const entry = {
           id: crypto.randomUUID(),
@@ -2029,11 +2289,24 @@ function defineTools(): ToolEntry[] {
           },
         };
         await addEntry(entry);
+        // W1-3: surface the local-first visibility boundary (ADR-0044). When the
+        // entry landed in a PROJECT-local wiki, it is NOT visible to
+        // `am wiki search --all-projects` until `am wiki publish <slug>` mirrors
+        // it into wiki/projects/<name>/. Agents are the primary wiki writers, so
+        // they get the same {scope, visibleAcrossProjects} signal the CLI emits.
+        const visibleAcrossProjects = resolveWikiDir() === resolveWikiDir({ global: true });
         return {
           action: "add",
           id: entry.id,
           entity_type: entry.entity_type,
           title: entry.content.split("\n")[0].slice(0, 120),
+          scope: visibleAcrossProjects ? "global" : "project-local",
+          visibleAcrossProjects,
+          ...(visibleAcrossProjects
+            ? {}
+            : {
+                hint: "This entry is project-local. Run `am wiki publish <slug>` to make it visible to `am wiki search --all-projects` from other projects.",
+              }),
         };
       },
     },
@@ -2557,17 +2830,30 @@ async function invokeAgentImpl(args: Record<string, unknown>, ctx: ToolContext):
     const client = new A2AClient({ timeout });
     const sessionId =
       sessionName ?? `am-a2a-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const baseUrl = entry.a2a.url;
+    // CODEX-11 parity for A2A: register on the local sessionId, then re-set the
+    // entry with the server-authoritative task id once the server responds. A
+    // strict A2A v0.3 server mints its own task id and ignores the one we send;
+    // cancelTask/getTask MUST then use the server's id or they silently target
+    // a task the remote never saw. Helper keeps the activeSessions entry in
+    // sync as we learn the id.
+    const rememberServerTaskId = (serverTaskId: string | undefined) => {
+      if (!serverTaskId) return;
+      activeSessions.set(sessionId, { kind: "a2a", agent: agentName, baseUrl, serverTaskId });
+    };
     activeSessions.set(sessionId, {
       kind: "a2a",
       agent: agentName,
-      baseUrl: entry.a2a.url,
+      baseUrl,
     });
 
     try {
       if (streamRequested) {
         // sendSubscribe streams SSE events — forward each as a progress notif.
-        await client.sendSubscribe(
-          entry.a2a.url,
+        // Its resolved value is the final TaskStatusUpdateEvent, whose `.id` is
+        // the server-authoritative task id.
+        const finalEvent = await client.sendSubscribe(
+          baseUrl,
           {
             id: sessionId,
             message: { role: "user", parts: [{ type: "text", text: promptText }] },
@@ -2579,22 +2865,29 @@ async function invokeAgentImpl(args: Record<string, unknown>, ctx: ToolContext):
               ctx.emitProgress({ message: { kind: "a2a.artifact", sessionId, data: ev } }),
           },
         );
-        // sendSubscribe resolves on stream close; fetch final task state for result body.
-        const finalTask = await client.getTask(entry.a2a.url, { id: sessionId });
+        const serverTaskId = finalEvent.id;
+        rememberServerTaskId(serverTaskId);
+        // sendSubscribe resolves on stream close; fetch final task state for
+        // result body. Use the SERVER task id — a strict server never knew our
+        // local sessionId, so getTask({id:sessionId}) would 404/-32001.
+        const finalTask = await client.getTask(baseUrl, { id: serverTaskId ?? sessionId });
         return {
           sessionId,
+          serverTaskId,
           agent: agentName,
           protocol: "a2a",
           result: JSON.stringify(finalTask),
           streamed: true,
         };
       }
-      const task = await client.sendTask(entry.a2a.url, {
+      const task = await client.sendTask(baseUrl, {
         id: sessionId,
         message: { role: "user", parts: [{ type: "text", text: promptText }] },
       });
+      rememberServerTaskId(task.id);
       return {
         sessionId,
+        serverTaskId: task.id,
         agent: agentName,
         protocol: "a2a",
         result: JSON.stringify(task),
@@ -2704,7 +2997,13 @@ async function cancelSessionImpl(
       try {
         const { A2AClient } = await import("../protocols/a2a/client");
         const client = new A2AClient({ timeout: 30_000 });
-        await client.cancelTask(entry.baseUrl, { id: sessionId });
+        // CODEX-11 parity: cancel with the server-authoritative task id when we
+        // captured one (strict A2A v0.3 mints its own id). Fall back to the
+        // local sessionId only for non-strict servers / pre-response entries —
+        // using sessionId against a strict server makes cancelTask a silent
+        // no-op (the remote never saw that id and swallows -32001).
+        const cancelId = entry.serverTaskId ?? sessionId;
+        await client.cancelTask(entry.baseUrl, { id: cancelId });
         cancelled = true;
       } catch {
         cancelled = false;
@@ -3087,6 +3386,24 @@ export class McpServer {
             id,
             result: {
               content: [{ type: "text", text: JSON.stringify({ error: authDecision.reason }) }],
+              isError: true,
+            },
+          };
+        }
+
+        // Sensitive read-only gate: full-config disclosure (am_config_show) is
+        // token-gated whenever AM_MCP_TOKEN is configured, so a tokenless
+        // client can't read the merged config even though it's a read-only
+        // tier. No-op when no token is set (local-dev default unchanged).
+        const sensitiveDecision = checkSensitiveReadAuth(toolName, this.auth, req);
+        if (!sensitiveDecision.allowed) {
+          return {
+            jsonrpc: "2.0",
+            id,
+            result: {
+              content: [
+                { type: "text", text: JSON.stringify({ error: sensitiveDecision.reason }) },
+              ],
               isError: true,
             },
           };

@@ -19,12 +19,13 @@ this serve?** Features orthogonal to all six are flagged for reconsideration.
 
 1. **Catalog + git sync** — define once, sync via user's choice of git.
    Includes brownfield import (ADR-0028), drift detection (ADR-0006), secret
-   hygiene (AES-256-GCM + 24-provider detection), MCP Package Registry
+   hygiene (AES-256-GCM + 40+ provider-pattern detection), MCP Package Registry
    (ADR-0024).
 2. **MCP gateway** — `am mcp-serve` as the stable endpoint any agent plumbs
-   into. 38 tools (33 active + 5 deprecated aliases), concurrency-safe writers
-   (iter4 Wave B), bearer auth (iter2 Wave B), streaming via MCP progress
-   notifications (iter4 Wave D).
+   into. 43 tools (38 canonical + 5 deprecated aliases that still dispatch to
+   their replacements; alias removal targeted for v1.0), concurrency-safe
+   writers (iter4 Wave B), bearer auth (iter2 Wave B), streaming via MCP
+   progress notifications (iter4 Wave D).
 3. **Protocol router** — ACP local, A2A remote, A2A-ACP bridge, unified agent
    registry (ADR-0030), **auto-detection of installed agents** (iter4 Wave C),
    flows (ADR-0026) scoped to pillar 3 composition.
@@ -104,7 +105,7 @@ in TOML, decrypted at apply time.
 
 ```
 src/
-  cli.ts                    # Entry point -- 36 subcommands via citty
+  cli.ts                    # Entry point -- 37 subcommands via citty
   commands/                 # One file per CLI command (includes session.ts, wiki.ts, agents.ts, run.ts, flow.ts, completion.ts)
   core/
     schema.ts               # Zod schemas (Server, Instruction, Skill, AgentProfile, Profile, Config)
@@ -117,6 +118,7 @@ src/
     instructions.ts         # Shared instruction generation for all formats + wiki context injection
     session.ts              # Cross-tool session harvest: types, reader interface, filter/format
     agent-registry.ts       # Unified agent registry: config + tiered ACP built-in + A2A roster (ADR-0030, ADR-0033)
+    controller.ts           # shared write path: withConfig (serialized RMW) + applyResolved + APPLY_SAFE_DEFAULTS (ADR-0040)
   adapters/
     types.ts                # Adapter interface + all type definitions
     registry.ts             # Lazy factory adapter registry (13 adapters)
@@ -161,7 +163,7 @@ src/
     registry.ts             # Platform detection (GitHub > GitLab > bare)
     github.ts, gitlab.ts, bare.ts
   mcp/
-    server.ts               # MCP server: JSON-RPC 2.0, 38 tools (33 active + 5 deprecated aliases), 6 groups, 3 permission tiers (ADR-0009, ADR-0021)
+    server.ts               # MCP server: JSON-RPC 2.0, 43 tools (38 canonical + 5 deprecated aliases that still dispatch; removal targeted v1.0), 6 groups, 3 permission tiers (ADR-0009, ADR-0021, ADR-0055 proposed)
   tui/
     index.tsx, App.tsx      # Silvery/React terminal UI with dashboard, server management (D/E/I/P keys)
   web/
@@ -170,8 +172,8 @@ src/
     git-providers.ts        # Git provider abstraction: GitHub, GitLab, Codeberg/Gitea (ADR-0025)
     public/                 # Static HTML
   lib/                      # Shared utilities (errors.ts, output.ts)
-test/                       # 273 files, 3503 tests, 10862 assertions
-ADRs/                       # 55 architectural decision records (0001-0054, incl. 0031a)
+test/                       # 273 files, 3520 tests, 11002 assertions
+ADRs/                       # 57 architectural decision records (0001-0056, incl. 0031a)
 scripts/
   build.ts                  # Cross-platform build (5 targets)
 install.sh                  # curl-based installer (repo root, not scripts/)
@@ -181,6 +183,7 @@ install.sh                  # curl-based installer (repo root, not scripts/)
 
 | Command | Description |
 |---------|-------------|
+| `am setup` | Guided first-run wizard (ADR-0053): detect → import → key + profile → apply → health check. Idempotent; `--yes`/`--json`/`--from <git-url>` for CI/onboarding |
 | `am init` | First-time setup: detect tools, init git (run `am import auto` to import existing configs) |
 | `am add server <name>` | Add an MCP server (auto-commits) |
 | `am list servers` | List all servers (`--active`, `--json`) |
@@ -201,6 +204,7 @@ install.sh                  # curl-based installer (repo root, not scripts/)
 | `am adapter list` | Show registered adapters with install status |
 | `am version` | Print version |
 | `am mcp-serve` | Run as MCP server (JSON-RPC over stdio) |
+| `am mcp-superset` | Reconcile the project `.mcp.json` to be a superset of global `~/.claude.json` MCP servers |
 | `am session list/export/search` | Cross-tool session harvest |
 | `am tui` | Interactive terminal dashboard (Silvery/React) |
 | `am serve` | Local web UI server (Hono) |
@@ -213,6 +217,8 @@ install.sh                  # curl-based installer (repo root, not scripts/)
 | `am run <agent> "<prompt>"` | ACP agent orchestration: drive coding agents headlessly |
 | `am run session list\|cancel` | Manage active ACP sessions |
 | `am flow run\|list\|status` | Multi-step workflow orchestration (flows engine) |
+| `am marketplace …` | **Deferred to v2** (kept, not deleted — supersedes ADR-0039/0052). Deprecated commands print a notice; prefer `am search/install` + git-vendored bundles |
+| `am pair` | Cross-device age-key handoff via git-native rendezvous (ADR-0047) |
 | `am completion bash\|zsh\|fish` | Generate shell completion scripts |
 
 Global flags: `--profile <name>`, `--json`, `--verbose`, `--quiet`
@@ -356,7 +362,7 @@ Workflow: `am wiki ingest --session <id>` → `am wiki search <query>` → `am w
 
 ```bash
 bun install              # Install dependencies
-bun test                 # Run all 3503 tests
+bun test                 # Run all 3520 tests
 bun test --watch         # Watch mode
 bun run dev              # Run CLI in dev mode
 bun run build            # Single binary (macOS arm64)

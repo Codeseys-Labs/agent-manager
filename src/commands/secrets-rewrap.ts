@@ -25,7 +25,33 @@ import { getDefaultBackend } from "../core/secrets";
 import type { AgeSecretsBackend } from "../core/secrets-age";
 import { amError, info, output } from "../lib/output";
 import { bestEffortCommitSecretsChanges } from "./secrets-commit-helper";
-import { discoverTomlFiles, resolveSingleFile, rewrapMany } from "./secrets-rewrap-helpers";
+import {
+  type RewrapStat,
+  discoverTomlFiles,
+  resolveSingleFile,
+  rewrapMany,
+} from "./secrets-rewrap-helpers";
+
+/**
+ * Build the operator-facing warning for a partial rewrap. A skipped
+ * envelope means `backend.rewrap()` threw and the ORIGINAL ciphertext —
+ * still wrapped to the old recipient set — was written back, so the
+ * config is now out of sync with `recipients/`. Names the offending
+ * files so the operator can inspect them and re-run. Matches the
+ * message style of `rotate --finalize`'s abort path.
+ */
+function rewrapSkipMessage(
+  stats: readonly RewrapStat[],
+  totalFound: number,
+  totalRewrapped: number,
+  totalSkipped: number,
+): string {
+  const offenders = stats
+    .filter((s) => s.skipped > 0 || s.rewrapped < s.found)
+    .map((s) => `${s.file} (${s.rewrapped}/${s.found} rewrapped, ${s.skipped} skipped)`)
+    .join("; ");
+  return `WARN: rewrap incomplete — ${totalSkipped} skipped and ${totalFound - totalRewrapped} unrewrapped envelope(s) across ${stats.length} file(s) remain wrapped to the OLD recipient set and are now out of sync with recipients/. Offending file(s): ${offenders}. Inspect the offending envelopes (corrupt payload, or your identity can no longer decrypt them) and re-run \`am secrets rewrap\`.`;
+}
 
 export const secretsRewrapCommand = defineCommand({
   meta: {
@@ -86,6 +112,14 @@ export const secretsRewrapCommand = defineCommand({
 
       const totalFound = stats.reduce((n, s) => n + s.found, 0);
       const totalRewrapped = stats.reduce((n, s) => n + s.rewrapped, 0);
+      const totalSkipped = stats.reduce((n, s) => n + s.skipped, 0);
+      // A skip means `backend.rewrap()` threw for that envelope and the
+      // ORIGINAL (still-wrapped-to-the-old-recipient-set) ciphertext was
+      // written back verbatim. Those envelopes are now OUT OF SYNC with the
+      // current recipient list — exactly the silent failure rotate --finalize
+      // guards against. Don't report a partial rewrap as success. (Dry-run
+      // never mutates anything, so a skip there is purely informational.)
+      const hasSkips = !dryRun && (totalSkipped > 0 || totalRewrapped < totalFound);
 
       if (!dryRun) {
         await bestEffortCommitSecretsChanges(
@@ -123,11 +157,17 @@ export const secretsRewrapCommand = defineCommand({
               dryRun,
               backend: backend.name,
               files: stats,
-              totals: { found: totalFound, rewrapped: totalRewrapped },
+              // `totals.skipped` makes the partial-rewrap signal explicit
+              // alongside the already-present per-file `skipped` in `files`.
+              totals: { found: totalFound, rewrapped: totalRewrapped, skipped: totalSkipped },
+              ...(hasSkips && {
+                error: rewrapSkipMessage(stats, totalFound, totalRewrapped, totalSkipped),
+              }),
             },
             opts,
           );
         }
+        if (hasSkips) process.exitCode = 1;
         return;
       }
 
@@ -139,7 +179,8 @@ export const secretsRewrapCommand = defineCommand({
       for (const s of stats) {
         if (s.found === 0) continue;
         const action = dryRun ? "would rewrap" : "rewrapped";
-        info(`${s.file}: ${action} ${s.rewrapped}/${s.found} envelope(s).`, opts);
+        const skipNote = !dryRun && s.skipped > 0 ? ` (${s.skipped} skipped)` : "";
+        info(`${s.file}: ${action} ${s.rewrapped}/${s.found} envelope(s)${skipNote}.`, opts);
         if (s.backupPath) info(`  backup: ${s.backupPath}`, opts);
       }
       info("", opts);
@@ -147,6 +188,13 @@ export const secretsRewrapCommand = defineCommand({
         `Total: ${totalRewrapped}/${totalFound} envelope(s) ${dryRun ? "would be " : ""}rewrapped.`,
         opts,
       );
+
+      if (hasSkips) {
+        // Mirror rotate --finalize's abort message: a skipped envelope is
+        // still wrapped to the OLD recipient set and is now out of sync.
+        info(rewrapSkipMessage(stats, totalFound, totalRewrapped, totalSkipped), opts);
+        process.exitCode = 1;
+      }
     } catch (err) {
       amError(err, opts);
       process.exitCode = 1;

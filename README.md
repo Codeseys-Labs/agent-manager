@@ -7,10 +7,10 @@ skills/instructions/agents via git. Remember sessions in an LLM-wiki. Edit from
 terminal, local web, or cloud.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Tests: 3503 pass](https://img.shields.io/badge/tests-3503%20pass-green.svg)](#development)
+[![Tests: 3520 pass](https://img.shields.io/badge/tests-3520%20pass-green.svg)](#development)
 [![Coverage](https://img.shields.io/badge/coverage-see%20CI%20summary-blue.svg)](https://github.com/Codeseys-Labs/agent-manager/actions/workflows/ci.yml)
 [![Adapters: 13](https://img.shields.io/badge/adapters-13-purple.svg)](#adapter-support-matrix)
-[![MCP Tools: 38](https://img.shields.io/badge/MCP%20tools-38-orange.svg)](#mcp-server-mode)
+[![MCP Tools: 43](https://img.shields.io/badge/MCP%20tools-43-orange.svg)](#mcp-server-mode)
 [![Bun](https://img.shields.io/badge/runtime-Bun-f9f1e1.svg)](https://bun.sh)
 
 ```bash
@@ -37,20 +37,26 @@ a control plane for AI agents, built on six composing pillars:
    sub-features worth naming: **brownfield import** (`am import` reads native
    IDE configs with intelligent merge), **drift detection** (`am status` catches
    when any of the 13 tools diverged from your catalog), **secret hygiene**
-   (AES-256-GCM at rest + 24-provider detection on import), and the **MCP
+   (AES-256-GCM at rest + 40+ provider-pattern detection on import), and the **MCP
    Package Registry** (`am search/install/update/uninstall` browses the
    upstream package index).
 2. **MCP gateway.** `am mcp-serve` exposes the catalog as a stable MCP
-   endpoint. 38 tools (33 active + 5 deprecation aliases), concurrency-safe writers, bearer auth, progress
-   notifications for streaming agent invocations.
-3. **Protocol router.** ACP for local subprocess agents (Claude Code, Codex,
-   Gemini, Cursor, Kiro, Copilot…). A2A for remote. Bridge routes remote
-   delegations into local ACP. **Agent auto-detection** now shows which
+   endpoint. 43 tools (38 canonical + 5 deprecated aliases that still dispatch),
+   concurrency-safe writers, bearer auth, progress notifications for streaming
+   agent invocations.
+3. **Protocol router.** ACP for local subprocess agents (spawnable tier-1:
+   Claude Code, Codex, Gemini, Kiro; Cursor and Copilot are catalog-only —
+   config is written but they are not spawned). A2A for remote. Bridge routes
+   remote delegations into local ACP. **Agent auto-detection** now shows which
    agents are actually installed. Unified `am agent list` + `am_agent_invoke`.
-4. **MCP Registry + git-vendored bundles.** Marketplace v1 is retired per
-   [ADR-0039](ADRs/0039-marketplace-v1-scope-decision.md). Use the MCP Package
-   Registry for servers and git subtree/submodule vendoring for skills,
-   instructions, and agent-profile bundles.
+4. **Marketplace (deferred to v2) + git-vendored bundles.** The marketplace
+   (pillar 4) is **deferred to v2** — it pairs with the hosted web platform and
+   is kept out of the v1 CLI's advertised surface, but it is **not** deleted:
+   `src/marketplace/*` still ships. This product decision supersedes the
+   ADR-0039 retire / ADR-0052 deletion target — do NOT execute that deletion.
+   For v1, use the MCP Package Registry (`am search`/`am install`) for servers
+   and git subtree/submodule vendoring for skills, instructions, and
+   agent-profile bundles.
 5. **LLM-wiki.** Karpathy-style session context. **Session harvest**
    (`am session` + `am wiki ingest`) is the cross-tool read pipeline that
    feeds the wiki — without it, this pillar is an empty shelf. Globally
@@ -189,11 +195,13 @@ am uninstall tavily                     # remove a package
 
 ### Bundles from git
 
-Marketplace v1 is deprecated and frozen per
-[ADR-0039](ADRs/0039-marketplace-v1-scope-decision.md). Use the MCP Registry
-commands above for MCP servers. For skills, instructions, and agent profiles,
-vendor a trusted git repository into your config repo with `git subtree add` or
-`git submodule add`, then run `am import`/`am apply` as appropriate.
+The marketplace (pillar 4) is **deferred to v2**, where it pairs with the hosted
+web platform — its surface is kept out of the v1 CLI, but the code still ships
+(this supersedes the ADR-0039 retire / ADR-0052 deletion target; the deletion
+will NOT happen). For v1, use the MCP Registry commands above for MCP servers.
+For skills, instructions, and agent profiles, vendor a trusted git repository
+into your config repo with `git subtree add` or `git submodule add`, then run
+`am import`/`am apply` as appropriate.
 
 ### LLM-Wiki (pillar 5)
 
@@ -313,7 +321,7 @@ Switch with `am use work`. The active profile is stored locally (never committed
 
 AES-256-GCM encryption for secrets in TOML. Encrypted values are stored as `enc:v1:nonce:ciphertext` and decrypted at apply time.
 
-Dynamic secret detection scans server configs for inline API keys using patterns derived from [gitleaks](https://github.com/gitleaks/gitleaks), extended with AI/LLM provider-specific patterns. Detects keys for 24+ services including OpenAI, Anthropic, AWS, GitHub, Stripe, Tavily, and more.
+Dynamic secret detection scans server configs for inline API keys using patterns derived from [gitleaks](https://github.com/gitleaks/gitleaks), extended with AI/LLM provider-specific patterns. Detects keys across 40+ provider patterns (60 key-name regexes) including OpenAI, Anthropic, AWS, GitHub, Stripe, Tavily, and more.
 
 ```bash
 am secret init             # generate encryption key
@@ -559,26 +567,31 @@ See ADR-0027 for the loading architecture.
 
 ## MCP Server Mode
 
-`am mcp-serve` turns agent-manager into an MCP server that AI agents can call to manage their own configuration. 38 tools (33 active + 5 deprecation aliases) across 3 permission tiers, grouped by function:
+`am mcp-serve` turns agent-manager into an MCP server that AI agents can call to manage their own configuration. 43 tools (38 canonical + 5 deprecated aliases) across 3 permission tiers, grouped by function:
 
 ### Tool Grouping
 
-Control which tools are exposed via `settings.mcp_serve.tools`. Default: `["core"]` (14 tools).
+Control which tools are exposed via `settings.mcp_serve.tools`. Default: `["core"]` (18 tools).
 
 ```toml
 [settings.mcp_serve]
 allow_push = false
-tools = ["core", "registry", "a2a", "wiki", "session", "acp"]   # expose all 38 tools (33 active + 5 deprecation aliases)
+tools = ["core", "registry", "a2a", "wiki", "session", "acp"]   # expose all 43 tools (38 canonical + 5 deprecated aliases)
 ```
 
 | Group | Tools | Tier |
 |-------|-------|------|
-| **core** (14) | `am_list_servers`, `am_list_profiles`, `am_status`, `am_config_show`, `am_doctor`, `am_add_server`, `am_remove_server`, `am_server_update`, `am_undo`, `am_use_profile`, `am_import`, `am_apply`, `am_sync_push`, `am_sync_pull` | read/write-local/write-remote |
-| **registry** (3) | `am_registry_search`, `am_registry_install`, `am_registry_list_installed` | read/write-local |
+| **core** (18) | `am_list_servers`, `am_list_profiles`, `am_list_skills`, `am_list_instructions`, `am_status`, `am_config_show`, `am_doctor`, `am_add_server`, `am_remove_server`, `am_server_update`, `am_profile_create`, `am_profile_delete`, `am_undo`, `am_use_profile`, `am_import`, `am_apply`, `am_sync_push`, `am_sync_pull` | read/write-local/write-remote |
+| **registry** (4) | `am_registry_search`, `am_registry_install`, `am_registry_list_installed`, `am_registry_uninstall` | read/write-local |
 | **a2a** (4) | `am_agent_discover`, `am_agent_list`, `am_agent_delegate`, `am_agent_task_status` | read/write-remote |
 | **wiki** (5) | `am_wiki_search`, `am_wiki_add`, `am_wiki_synthesize`, `am_wiki_briefing`, `am_wiki_harvest` | read/write-local |
 | **session** (3) | `am_session_list`, `am_session_export`, `am_session_search` | read-only |
-| **acp** (4) | `am_run_agent`, `am_acp_list_agents`, `am_acp_session_list`, `am_acp_session_cancel` | write-local |
+| **acp** (9) | **Canonical:** `am_agent_invoke`, `am_agent_session_list`, `am_agent_session_cancel`, `am_agent_status`, `am_agent_detect`. **Deprecated aliases** (still dispatch; removal v1.0): `am_run_agent`→`am_agent_invoke`, `am_acp_list_agents`→`am_agent_list`, `am_acp_session_list`→`am_agent_session_list`, `am_acp_session_cancel`→`am_agent_session_cancel` | write-local |
+
+> **Tool count: 43** = 38 canonical + 5 deprecated aliases (the `am_run_agent`,
+> `am_acp_list_agents`, `am_acp_session_list`, `am_acp_session_cancel`, and
+> `am_agent_delegate` aliases still dispatch to their `am_agent_*` replacements
+> and are slated for removal in v1.0). Prefer the canonical `am_agent_*` tools.
 
 Add to any tool's MCP config:
 
@@ -783,12 +796,13 @@ case without the injection surface.
 | `am flow list` | List recent flow runs |
 | `am flow status <id>` | Show status of a flow run |
 
-### Marketplace (deprecated)
+### Marketplace (deferred to v2)
 
-Marketplace v1 commands are retained only for compatibility and print a
-deprecation warning. They are frozen per
-[ADR-0039](ADRs/0039-marketplace-v1-scope-decision.md) and scheduled for future
-removal; prefer MCP Registry commands and git-vendored bundles.
+The marketplace (pillar 4) is **deferred to v2**: its commands are kept out of
+the v1 advertised surface and currently print a notice, but the surface is
+**not** being removed — it returns with the hosted web platform in v2. This
+supersedes the ADR-0039 retire / ADR-0052 deletion target. For v1, prefer the
+MCP Registry commands and git-vendored bundles.
 
 | Command | Description |
 |---------|-------------|
@@ -819,6 +833,8 @@ removal; prefer MCP Registry commands and git-vendored bundles.
 | `am secret init` | Generate encryption key |
 | `am secret set\|get <key>` | Encrypt/decrypt secrets |
 | `am secret scan` | Audit servers for exposed secrets (`--fix` to auto-encrypt) |
+| `am pair accept\|finalize\|add` | Cross-device encryption-key handoff — rewrap secret envelopes for a new device (ADR-0047) |
+| `am mcp-superset check\|apply` | Enforce that a project `.mcp.json` is a superset of global `~/.claude.json` (CI-gateable) |
 | `am session list\|export\|search` | Cross-tool session discovery and export |
 | `am version` | Print version (`--json`) |
 
@@ -873,8 +889,8 @@ bun run deploy:web
 
 ```mermaid
 graph LR
-    CLI["CLI (31 commands)"] --> Core["Core Engine<br/>(TOML + Zod + Git)"]
-    MCP["MCP Server<br/>(38 tools, 6 groups)"] --> Core
+    CLI["CLI (37 commands)"] --> Core["Core Engine<br/>(TOML + Zod + Git)"]
+    MCP["MCP Server<br/>(43 tools, 6 groups)"] --> Core
     TUI["TUI (Silvery)"] --> Core
     Web["Web UI"] --> Hono["Hono (local) /<br/>CF Workers"]
 
@@ -896,7 +912,7 @@ graph LR
     A2A <--> Bridge["A2A-ACP Bridge"] <--> ACP
 ```
 
-Design decisions documented in [54 ADRs](ADRs/README.md).
+Design decisions documented in [57 ADRs](ADRs/README.md).
 
 ---
 
@@ -904,7 +920,7 @@ Design decisions documented in [54 ADRs](ADRs/README.md).
 
 ```bash
 bun install                       # install dependencies
-bun test                          # run all tests (3503)
+bun test                          # run all tests (3520)
 bun test --coverage --coverage-reporter=text --coverage-reporter=lcov --config=/dev/null
                                   # run coverage locally; writes coverage/lcov.info
 bun test --watch                  # watch mode
@@ -932,7 +948,7 @@ cache for faster downloads.
 **CI pipeline** (`.github/workflows/ci.yml` — triggers on push to main + PRs):
 1. Type check — `tsc --noEmit` filtered to `src/` errors only
 2. Lint — `biome check`
-3. Test with coverage — `bun test --coverage --coverage-reporter=text --coverage-reporter=lcov --config=/dev/null` (3503 tests)
+3. Test with coverage — `bun test --coverage --coverage-reporter=text --coverage-reporter=lcov --config=/dev/null` (3520 tests)
    and publish `coverage/lcov.info` to the GitHub Actions job summary/artifact
 4. Build smoke test — all 5 platform targets
 5. Cross-platform build verify — Ubuntu + macOS + Windows
@@ -966,13 +982,13 @@ today. It auto-activates if a token is ever added. GitHub Releases (consumed by
 |--------|-------|
 | Source files | 223 |
 | Test files | 273 |
-| Tests | 3,503 |
-| Assertions | 10,862 |
+| Tests | 3,520 |
+| Assertions | 11,002 |
 | IDE adapters | 13 (+community) |
 | Platform adapters | 3 |
 | CLI commands | 37 |
-| MCP tools | 38 (33 active + 5 deprecated aliases) |
-| ADRs | 55 |
+| MCP tools | 43 (38 canonical + 5 deprecated aliases) |
+| ADRs | 57 |
 <!-- stats:end -->
 
 ### Tech Stack
@@ -988,7 +1004,7 @@ today. It auto-activates if a token is ever added. GitHub Releases (consumed by
 | TUI | Silvery + React |
 | Encryption | Web Crypto API (AES-256-GCM) |
 | Search | MiniSearch (BM25 for wiki) |
-| Secret detection | gitleaks-derived patterns (24+ services) |
+| Secret detection | gitleaks-derived patterns (40+ providers, 60 key-name regexes) |
 | Testing | bun:test |
 | Linting | Biome |
 

@@ -22,12 +22,18 @@ import { createHash } from "node:crypto";
 import { readFile, readdir } from "node:fs/promises";
 import { join } from "node:path";
 import { defineCommand } from "citty";
+import { atomicWriteFile } from "../core/atomic-write";
 import { resolveConfigDir } from "../core/config";
 import { getDefaultBackend } from "../core/secrets";
 import type { AgeSecretsBackend } from "../core/secrets-age";
-import { amError, info, output } from "../lib/output";
+import { amError, info, output, warn } from "../lib/output";
 import { bestEffortCommitSecretsChanges } from "./secrets-commit-helper";
-import { discoverTomlFiles, resolveSingleFile, rewrapMany } from "./secrets-rewrap-helpers";
+import {
+  type RewrapStat,
+  discoverTomlFiles,
+  resolveSingleFile,
+  rewrapMany,
+} from "./secrets-rewrap-helpers";
 
 interface RecipientMatch {
   filePath: string;
@@ -39,6 +45,144 @@ interface RecipientMatch {
 
 function shortFingerprint(publicKey: string): string {
   return createHash("sha256").update(publicKey).digest("hex").slice(0, 10);
+}
+
+/**
+ * Restore each file that the live rewrap mutated back to its pre-revoke
+ * contents from the `.bak` snapshot `rewrapTomlFile` wrote. Returns the
+ * list of files that could NOT be restored (no backup recorded, or the
+ * restore itself failed) so the caller can warn about residual mutation.
+ *
+ * A `.bak` is only present when a file was actually rewritten (rewrapped > 0)
+ * AND `--no-backup` was not passed. Files whose envelopes were all skipped
+ * (rewrapped === 0) were never written, so they need no restoration.
+ */
+async function rollbackMutatedFiles(stats: readonly RewrapStat[]): Promise<string[]> {
+  const failed: string[] = [];
+  for (const s of stats) {
+    if (s.rewrapped === 0) continue; // file was never written → nothing to undo.
+    if (!s.backupPath) {
+      // --no-backup: no snapshot to restore from.
+      failed.push(s.file);
+      continue;
+    }
+    try {
+      const original = await readFile(s.backupPath, "utf-8");
+      await atomicWriteFile(s.file, original);
+    } catch {
+      failed.push(s.file);
+    }
+  }
+  return failed;
+}
+
+/**
+ * Capture the exact pre-revoke content of every target, in memory, BEFORE the
+ * live mutation begins. This is the rollback source for the throw path — we do
+ * NOT read `${file}.bak` there (R4-BUG1 fix had a stale-.bak clobber: `.bak`
+ * files are never cleaned up, so a target the failed pass never reached would
+ * be overwritten with a STALE `.bak` from a PRIOR revoke, re-introducing
+ * previously-revoked ciphertext). An in-memory snapshot is always exactly this
+ * run's pre-state. A target that does not exist maps to `null` (nothing to
+ * restore).
+ */
+async function snapshotTargets(targets: readonly string[]): Promise<Map<string, string | null>> {
+  const snap = new Map<string, string | null>();
+  for (const file of targets) {
+    try {
+      snap.set(file, await readFile(file, "utf-8"));
+    } catch {
+      snap.set(file, null); // did not exist pre-revoke
+    }
+  }
+  return snap;
+}
+
+/**
+ * Restore every target to its captured pre-revoke content (throw-path
+ * rollback). Only writes a file whose CURRENT content differs from the snapshot
+ * (so untouched files aren't needlessly rewritten). Returns targets that could
+ * NOT be restored (read-back/write failure) so the caller can warn. Uses the
+ * in-memory snapshot, never a possibly-stale `.bak`.
+ */
+async function restoreFromSnapshot(snapshot: Map<string, string | null>): Promise<string[]> {
+  const failed: string[] = [];
+  for (const [file, original] of snapshot) {
+    if (original === null) continue; // file did not exist pre-revoke; leave as-is.
+    try {
+      const current = await readFile(file, "utf-8").catch(() => null);
+      if (current === original) continue; // untouched → nothing to restore.
+      await atomicWriteFile(file, original);
+    } catch {
+      failed.push(file);
+    }
+  }
+  return failed;
+}
+
+/**
+ * Re-add the recipient that was removed at the start of the live revoke, so an
+ * aborted/rolled-back revoke leaves the recipient set intact. Fault-tolerant:
+ * a failing re-add must NOT abort the (already-completed) file rollback
+ * (R4-BUG2) — we report it via the returned boolean instead of throwing.
+ */
+async function safeReAddRecipient(
+  ageBackend: AgeSecretsBackend,
+  match: RecipientMatch,
+): Promise<boolean> {
+  try {
+    await ageBackend.addRecipient({
+      id: match.id,
+      publicKey: match.publicKey,
+      addedAt: new Date().toISOString(),
+    });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** Build the single human-readable abort message for a rolled-back revoke. */
+function buildAbortMessage(
+  match: RecipientMatch,
+  parts: { reason: string; reAddOk: boolean; unrestored: string[] },
+): string {
+  const head = `Aborted revoke of ${match.id} (${match.fingerprint}): ${parts.reason}.`;
+  const reAdd = parts.reAddOk
+    ? " Recipient re-added."
+    : " WARNING: recipient could NOT be re-added — re-add it manually (the .pub is missing from recipients/).";
+  const files =
+    parts.unrestored.length === 0
+      ? " All modified files were rolled back to their pre-revoke contents."
+      : ` WARNING: ${parts.unrestored.length} file(s) could NOT be rolled back (no backup — re-run WITHOUT --no-backup, or restore from version control): ${parts.unrestored.join(", ")}.`;
+  return head + reAdd + files;
+}
+
+/**
+ * Emit exactly ONE final result for an aborted revoke: a single JSON document
+ * on stdout (--json) OR a single stderr warning (R2-BUG3 — never both, never
+ * two JSON docs).
+ */
+function emitAbort(
+  json: boolean,
+  opts: { json: boolean; quiet: boolean; verbose: boolean },
+  msg: string,
+  match: RecipientMatch,
+  extra: Record<string, unknown>,
+): void {
+  if (json) {
+    output(
+      {
+        action: "revoke",
+        aborted: true,
+        recipient: { id: match.id, publicKey: match.publicKey, fingerprint: match.fingerprint },
+        ...extra,
+      },
+      opts,
+    );
+  } else {
+    warn(msg, opts);
+  }
 }
 
 async function findRecipient(
@@ -192,11 +336,122 @@ export const secretsRevokeCommand = defineCommand({
         return;
       }
 
-      // Live revoke: drop the .pub file, then rewrap.
+      // Live revoke must be all-or-nothing. Removing the recipient and then
+      // rewrapping leaves on-disk state half-mutated if any envelope is
+      // skipped (the local identity can't decrypt it): `rewrapTomlFile`
+      // PERSISTS any file with rewrapped > 0 — so a file with both rewrapped
+      // and skipped envelopes is written with the good envelopes re-encrypted
+      // WITHOUT the revoked recipient (de-facto partial revoke), while we'd
+      // claim the recipient was NOT revoked. (R2-BUG1.)
+      //
+      // SAFE-ABORT: scan first (a read-only dry-run). Whether an envelope is
+      // skipped depends only on whether the LOCAL identity can decrypt it —
+      // removing a *peer* recipient never changes that — so a pre-removal scan
+      // faithfully predicts post-removal skips. If the scan is not perfectly
+      // clean (any skip, or not every found envelope would rewrap) we abort
+      // BEFORE touching the recipient set or any file: nothing is mutated, the
+      // recipient stays registered, exit non-zero, and (in --json) exactly ONE
+      // JSON document is emitted. This also makes the abort safe under
+      // `--no-backup`, where there would be no `.bak` to roll back from.
+      const scan = await rewrapMany(targets, ageBackend, { dryRun: true, noBackup });
+      const scanFound = scan.reduce((n, s) => n + s.found, 0);
+      const scanSkipped = scan.reduce((n, s) => n + s.skipped, 0);
+
+      if (scanSkipped > 0) {
+        const skippedFiles = scan.filter((s) => s.skipped > 0).map((s) => s.file);
+        const msg = `Aborting revoke of ${match.id} (${match.fingerprint}): ${scanSkipped} of ${scanFound} envelope(s) cannot be rewrapped (the local identity cannot decrypt them). No files were modified and the recipient remains registered. Rotate the underlying secret values, then retry.`;
+        if (args.json) {
+          output(
+            {
+              action: "revoke",
+              aborted: true,
+              error: msg,
+              recipient: {
+                id: match.id,
+                publicKey: match.publicKey,
+                fingerprint: match.fingerprint,
+              },
+              files: scan.length,
+              envelopes: scanFound,
+              skipped: scanSkipped,
+              skipped_files: skippedFiles,
+            },
+            opts,
+          );
+        } else {
+          info(msg, opts);
+        }
+        process.exitCode = 1;
+        return;
+      }
+
+      // Scan is clean → commit to the mutation. Drop the .pub file, then rewrap.
+      // The whole mutation window (removeRecipient + the file rewrites) is
+      // wrapped so that EITHER a per-envelope skip (TOCTOU) OR a thrown write
+      // error (ENOSPC/EACCES/EIO mid-walk — R4-BUG1) triggers the SAME full
+      // rollback. Without this, an exception during rewrapMany would bypass the
+      // skip-only rollback below and hit the outer catch, leaving the recipient
+      // removed and files half-mutated.
+      // Snapshot every target's pre-revoke content IN MEMORY before mutating,
+      // so the throw-path rollback restores from this run's exact pre-state —
+      // never from a possibly-stale `${file}.bak` left by a prior revoke.
+      const preSnapshot = await snapshotTargets(targets);
+      let stats: Awaited<ReturnType<typeof rewrapMany>> = [];
       await ageBackend.removeRecipient(match.id);
-      const stats = await rewrapMany(targets, ageBackend, { dryRun: false, noBackup });
+      try {
+        stats = await rewrapMany(targets, ageBackend, { dryRun: false, noBackup });
+      } catch (rewrapErr) {
+        // A write threw partway through. rewrapMany does not surface partial
+        // stats on throw, so restore EVERY target from the in-memory pre-revoke
+        // snapshot (only files whose content actually changed are rewritten),
+        // then re-add the recipient — restoring exact pre-revoke state.
+        const unrestored = await restoreFromSnapshot(preSnapshot);
+        const reAddOk = await safeReAddRecipient(ageBackend, match);
+        const why = rewrapErr instanceof Error ? rewrapErr.message : String(rewrapErr);
+        const msg = buildAbortMessage(match, {
+          reason: `the rewrap pass threw before completing (${why})`,
+          reAddOk,
+          unrestored,
+        });
+        emitAbort(args.json, opts, msg, match, {
+          error: msg,
+          reAdded: reAddOk,
+          unrestored_files: unrestored,
+        });
+        process.exitCode = 1;
+        return;
+      }
       const totalRewrapped = stats.reduce((n, s) => n + s.rewrapped, 0);
       const totalFound = stats.reduce((n, s) => n + s.found, 0);
+      const totalSkipped = stats.reduce((n, s) => n + s.skipped, 0);
+
+      // Defensive TRUE ROLLBACK: the clean scan should guarantee a complete
+      // rewrap, but a file could change on disk between scan and live pass
+      // (TOCTOU). If anything was skipped, undo every mutation so on-disk state
+      // matches pre-revoke. Restore FILES FIRST (the de-facto-revoke is the file
+      // mutation), THEN re-add the recipient — and a failing re-add must not
+      // abort the file rollback (R4-BUG2).
+      if (totalSkipped > 0) {
+        const unrestored = await rollbackMutatedFiles(stats);
+        const reAddOk = await safeReAddRecipient(ageBackend, match);
+        const msg = buildAbortMessage(match, {
+          reason: `${totalSkipped} of ${totalFound} envelope(s) could not be rewrapped after the recipient set changed`,
+          reAddOk,
+          unrestored,
+        });
+        // R2-BUG3: emit exactly ONE JSON document; human warning to stderr.
+        emitAbort(args.json, opts, msg, match, {
+          error: msg,
+          files: stats.length,
+          envelopes: totalFound,
+          skipped: totalSkipped,
+          reAdded: reAddOk,
+          rolled_back: stats.filter((s) => s.rewrapped > 0).length - unrestored.length,
+          unrestored_files: unrestored,
+        });
+        process.exitCode = 1;
+        return;
+      }
 
       await bestEffortCommitSecretsChanges(
         configDir,

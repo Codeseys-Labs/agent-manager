@@ -1,7 +1,15 @@
 ---
-status: accepted
+status: superseded
 date: 2026-05-05
+superseded_by: product-scope decision (AGENTS.md, 2026-06-04)
 ---
+
+> **Superseded 2026-06-04 by the product-scope decision (AGENTS.md): the
+> marketplace (pillar 4) is DEFERRED to v2, not retired/deleted. It pairs with
+> the hosted web platform and returns in the v2 era. `src/marketplace/*` still
+> ships. Do NOT execute the retirement/deletion described below.** This ADR is
+> retained for its decision history; the retire-pillar-4 outcome is no longer in
+> force.
 
 # ADR-0039: Marketplace v1 Scope Decision — Retire pillar 4 in favor of MCP Registry + git-subtree bundles
 

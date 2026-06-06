@@ -747,47 +747,188 @@ describe("AmAcpClient permission policy", () => {
 // ── MEDIUM-3: Path restriction for readTextFile/writeTextFile ────
 
 describe("isPathAllowed (MEDIUM-3)", () => {
-  test("allows path within allowed directory", () => {
-    expect(isPathAllowed("/home/user/project/src/file.ts", ["/home/user/project"])).toBe(true);
+  // R2-MED: isPathAllowed is now async (it dereferences symlinks via realpath).
+  // For fictional/non-existent paths it falls back to lexical resolution, so
+  // these original lexical-behavior assertions still hold — they just await.
+  test("allows path within allowed directory", async () => {
+    expect(await isPathAllowed("/home/user/project/src/file.ts", ["/home/user/project"])).toBe(
+      true,
+    );
   });
 
-  test("allows path that is exactly the allowed directory", () => {
-    expect(isPathAllowed("/home/user/project", ["/home/user/project"])).toBe(true);
+  test("allows path that is exactly the allowed directory", async () => {
+    expect(await isPathAllowed("/home/user/project", ["/home/user/project"])).toBe(true);
   });
 
-  test("rejects path outside allowed directory", () => {
-    expect(isPathAllowed("/etc/passwd", ["/home/user/project"])).toBe(false);
+  test("rejects path outside allowed directory", async () => {
+    expect(await isPathAllowed("/etc/passwd", ["/home/user/project"])).toBe(false);
   });
 
-  test("rejects path traversal attack (../)", () => {
-    expect(isPathAllowed("/home/user/project/../../../etc/passwd", ["/home/user/project"])).toBe(
+  test("rejects path traversal attack (../)", async () => {
+    expect(
+      await isPathAllowed("/home/user/project/../../../etc/passwd", ["/home/user/project"]),
+    ).toBe(false);
+  });
+
+  test("rejects path that is a prefix but not a child directory", async () => {
+    // /home/user/project-evil is not a child of /home/user/project
+    expect(await isPathAllowed("/home/user/project-evil/file.ts", ["/home/user/project"])).toBe(
       false,
     );
   });
 
-  test("rejects path that is a prefix but not a child directory", () => {
-    // /home/user/project-evil is not a child of /home/user/project
-    expect(isPathAllowed("/home/user/project-evil/file.ts", ["/home/user/project"])).toBe(false);
-  });
-
-  test("allows paths in any of multiple allowed directories", () => {
+  test("allows paths in any of multiple allowed directories", async () => {
     const allowed = ["/home/user/project", "/tmp/scratch"];
-    expect(isPathAllowed("/tmp/scratch/output.txt", allowed)).toBe(true);
-    expect(isPathAllowed("/home/user/project/src/main.ts", allowed)).toBe(true);
+    expect(await isPathAllowed("/tmp/scratch/output.txt", allowed)).toBe(true);
+    expect(await isPathAllowed("/home/user/project/src/main.ts", allowed)).toBe(true);
   });
 
-  test("rejects all paths when allowed list is empty", () => {
-    expect(isPathAllowed("/home/user/project/file.ts", [])).toBe(false);
+  test("rejects all paths when allowed list is empty", async () => {
+    expect(await isPathAllowed("/home/user/project/file.ts", [])).toBe(false);
   });
 
-  test("handles deeply nested allowed paths", () => {
-    expect(isPathAllowed("/a/b/c/d/e/f.txt", ["/a/b/c"])).toBe(true);
+  test("handles deeply nested allowed paths", async () => {
+    expect(await isPathAllowed("/a/b/c/d/e/f.txt", ["/a/b/c"])).toBe(true);
   });
 
-  test("handles relative path resolution", () => {
+  test("handles relative path resolution", async () => {
     // path.resolve will resolve relative paths against cwd
     const cwd = process.cwd();
-    expect(isPathAllowed("./file.ts", [cwd])).toBe(true);
+    expect(await isPathAllowed("./file.ts", [cwd])).toBe(true);
+  });
+});
+
+// ── R2-MED: isPathAllowed dereferences symlinks (realpath, not lexical) ──
+//
+// The pre-fix code used path.resolve(), which is purely lexical: a symlink
+// placed INSIDE the sandbox that points OUTSIDE it (e.g. sandbox/escape -> /etc)
+// passes the lexical prefix check because `sandbox/escape/...` textually starts
+// with the sandbox root — even though reads/writes land in /etc. These tests
+// build a real sandbox on disk with a symlink that escapes and assert the
+// realpath comparison REJECTS it, while a genuine in-sandbox path still passes.
+// Skipped on win32 (symlink creation needs elevated privileges there).
+
+describe("isPathAllowed symlink escape (R2-MED)", () => {
+  const isWin = process.platform === "win32";
+  const fs = require("node:fs");
+  const os = require("node:os");
+  const nodePath = require("node:path");
+
+  let root: string | null = null;
+
+  beforeEach(() => {
+    if (isWin) return;
+    root = fs.mkdtempSync(nodePath.join(os.tmpdir(), "acp-realpath-"));
+  });
+
+  test.skipIf(isWin)("rejects a symlink inside the sandbox that points outside it", async () => {
+    const sandbox = nodePath.join(root as string, "sandbox");
+    const outside = nodePath.join(root as string, "outside");
+    fs.mkdirSync(sandbox, { recursive: true });
+    fs.mkdirSync(outside, { recursive: true });
+    // A real secret living OUTSIDE the sandbox.
+    fs.writeFileSync(nodePath.join(outside, "secret.txt"), "TOP SECRET");
+
+    // The escape hatch: a symlink inside the sandbox pointing at the outside dir.
+    const escapeLink = nodePath.join(sandbox, "escape");
+    fs.symlinkSync(outside, escapeLink);
+
+    // Lexically, `<sandbox>/escape/secret.txt` starts with `<sandbox>/`, so the
+    // old path.resolve() check would WRONGLY allow it. With realpath it resolves
+    // to `<outside>/secret.txt`, which escapes the sandbox → must be rejected.
+    const target = nodePath.join(escapeLink, "secret.txt");
+    expect(await isPathAllowed(target, [sandbox])).toBe(false);
+  });
+
+  // R4-CRIT: a DANGLING symlink (target does not yet exist) inside the sandbox
+  // must also be rejected — otherwise a writeTextFile through it would create
+  // the file OUTSIDE the sandbox. The leaf itself is the symlink (no tail).
+  test.skipIf(isWin)("rejects a dangling symlink leaf pointing outside the sandbox", async () => {
+    const sandbox = nodePath.join(root as string, "sandbox");
+    const outside = nodePath.join(root as string, "outside");
+    fs.mkdirSync(sandbox, { recursive: true });
+    fs.mkdirSync(outside, { recursive: true });
+    // `sandbox/wc -> outside/pwned.txt`, where pwned.txt does NOT exist yet.
+    const danglingLink = nodePath.join(sandbox, "wc");
+    const danglingTarget = nodePath.join(outside, "pwned.txt");
+    fs.symlinkSync(danglingTarget, danglingLink);
+    // The write would land at outside/pwned.txt → must be rejected.
+    expect(await isPathAllowed(danglingLink, [sandbox])).toBe(false);
+  });
+
+  // R4-CRIT: a dangling symlink to a DIRECTORY outside the sandbox, with a file
+  // tail appended (the write target is link/<file>) must also be rejected.
+  test.skipIf(isWin)(
+    "rejects a dangling symlink-to-dir outside the sandbox with a tail",
+    async () => {
+      const sandbox = nodePath.join(root as string, "sandbox");
+      const outside = nodePath.join(root as string, "outside-nonexistent");
+      fs.mkdirSync(sandbox, { recursive: true });
+      // outside dir does NOT exist (dangling); link points at it.
+      const ghostLink = nodePath.join(sandbox, "ghostdir");
+      fs.symlinkSync(outside, ghostLink);
+      const target = nodePath.join(ghostLink, "new-file.txt");
+      expect(await isPathAllowed(target, [sandbox])).toBe(false);
+    },
+  );
+
+  // A dangling symlink whose target stays INSIDE the sandbox is still allowed
+  // (write case) — the fix must not over-reject legitimate in-bounds writes.
+  test.skipIf(isWin)("allows a dangling symlink that points inside the sandbox", async () => {
+    const sandbox = nodePath.join(root as string, "sandbox");
+    fs.mkdirSync(sandbox, { recursive: true });
+    const inLink = nodePath.join(sandbox, "pending");
+    // target inside the sandbox, not yet created.
+    fs.symlinkSync(nodePath.join(sandbox, "subdir", "out.txt"), inLink);
+    expect(await isPathAllowed(inLink, [sandbox])).toBe(true);
+  });
+
+  test.skipIf(isWin)("still allows a genuine path inside the sandbox", async () => {
+    const sandbox = nodePath.join(root as string, "sandbox");
+    fs.mkdirSync(sandbox, { recursive: true });
+    fs.writeFileSync(nodePath.join(sandbox, "real.txt"), "in-bounds");
+
+    const target = nodePath.join(sandbox, "real.txt");
+    expect(await isPathAllowed(target, [sandbox])).toBe(true);
+  });
+
+  test.skipIf(isWin)("allows a not-yet-existing file inside the sandbox (write case)", async () => {
+    // writeTextFile targets a brand-new file; canonicalize() must walk up to the
+    // nearest existing ancestor (the sandbox) and still treat the tail as inside.
+    const sandbox = nodePath.join(root as string, "sandbox");
+    fs.mkdirSync(sandbox, { recursive: true });
+
+    const target = nodePath.join(sandbox, "subdir", "new-file.txt");
+    expect(await isPathAllowed(target, [sandbox])).toBe(true);
+  });
+
+  test.skipIf(isWin)(
+    "matches when the allowed root itself is a symlink (root realpathed too)",
+    async () => {
+      // The sandbox root is reached via a symlink; the requested path uses the
+      // real directory. Because BOTH sides are realpathed, they must still match.
+      const realDir = nodePath.join(root as string, "real-sandbox");
+      fs.mkdirSync(realDir, { recursive: true });
+      fs.writeFileSync(nodePath.join(realDir, "f.txt"), "x");
+      const linkedRoot = nodePath.join(root as string, "linked-sandbox");
+      fs.symlinkSync(realDir, linkedRoot);
+
+      const target = nodePath.join(realDir, "f.txt");
+      // Allowed root given via the symlink; requested path via the real dir.
+      expect(await isPathAllowed(target, [linkedRoot])).toBe(true);
+    },
+  );
+
+  test.skipIf(isWin)("rejects a sibling dir sharing a prefix (sep guard retained)", async () => {
+    const sandbox = nodePath.join(root as string, "sandbox");
+    const sibling = nodePath.join(root as string, "sandbox-evil");
+    fs.mkdirSync(sandbox, { recursive: true });
+    fs.mkdirSync(sibling, { recursive: true });
+    fs.writeFileSync(nodePath.join(sibling, "f.txt"), "evil");
+
+    const target = nodePath.join(sibling, "f.txt");
+    // `<root>/sandbox-evil` must NOT be considered inside `<root>/sandbox`.
+    expect(await isPathAllowed(target, [sandbox])).toBe(false);
   });
 });
 
@@ -801,6 +942,120 @@ describe("AmAcpClient allowed paths", () => {
     const client = new AmAcpClient();
     client.setAllowedPaths(["/home/user/project", "/tmp"]);
     expect((client as any).allowedPaths).toEqual(["/home/user/project", "/tmp"]);
+  });
+});
+
+// ── FS containment: createTerminal must enforce allowedPaths on cwd ──────
+//
+// readTextFile/writeTextFile already reject a path outside allowedPaths, but
+// createTerminal previously spawned params.command with cwd=params.cwd and NO
+// path check — letting a compromised ACP agent run `cat`/`curl`/`tar` with a
+// cwd anywhere on disk, bypassing the am_agent_invoke setAllowedPaths([cwd])
+// boundary. These tests mirror the readTextFile/writeTextFile path-traversal
+// setup and assert createTerminal refuses an out-of-sandbox cwd.
+describe("createTerminal allowedPaths containment", () => {
+  // Use a temp dir as the sandbox root so a benign command can actually spawn.
+  const fs = require("node:fs");
+  const os = require("node:os");
+  const nodePath = require("node:path");
+  let sandbox: string;
+
+  beforeEach(() => {
+    sandbox = fs.mkdtempSync(nodePath.join(os.tmpdir(), "am-acp-term-"));
+  });
+
+  test("refuses createTerminal with cwd OUTSIDE allowedPaths", async () => {
+    const handler = createClientHandler(null, "auto-approve", [sandbox]);
+    let threw: unknown;
+    try {
+      // A read-only command that, without the cwd gate, would happily run in
+      // an arbitrary directory the am process can touch.
+      await handler.createTerminal!({
+        sessionId: "s1",
+        command: "true",
+        cwd: "/etc",
+      });
+    } catch (err) {
+      threw = err;
+    }
+    expect(threw).toBeInstanceOf(AcpClientError);
+    expect((threw as AcpClientError).code).toBe("PATH_NOT_ALLOWED");
+    expect((threw as AcpClientError).message).toContain("outside the allowed directories");
+  });
+
+  test("rejects a traversal cwd that escapes the sandbox", async () => {
+    const handler = createClientHandler(null, "auto-approve", [sandbox]);
+    let threw: unknown;
+    try {
+      await handler.createTerminal!({
+        sessionId: "s1",
+        command: "true",
+        cwd: nodePath.join(sandbox, "..", "..", "..", "etc"),
+      });
+    } catch (err) {
+      threw = err;
+    }
+    expect(threw).toBeInstanceOf(AcpClientError);
+    expect((threw as AcpClientError).code).toBe("PATH_NOT_ALLOWED");
+  });
+
+  // `true` is a POSIX builtin/binary; these tests actually spawn so they only
+  // run on Unix. The cwd-rejection tests above throw BEFORE spawning, so they
+  // are platform-independent and run everywhere.
+  test("allows createTerminal with cwd INSIDE allowedPaths", async () => {
+    if (process.platform === "win32") return;
+    const handler = createClientHandler(null, "auto-approve", [sandbox]);
+    const res = await handler.createTerminal!({
+      sessionId: "s1",
+      command: "true",
+      cwd: sandbox,
+    });
+    expect(typeof res.terminalId).toBe("string");
+    expect(res.terminalId.length).toBeGreaterThan(0);
+    // Clean up the spawned process.
+    await handler.killTerminal!({ sessionId: "s1", terminalId: res.terminalId });
+  });
+
+  test("allows createTerminal with cwd in a nested subdir of allowedPaths", async () => {
+    if (process.platform === "win32") return;
+    const nested = nodePath.join(sandbox, "src", "deep");
+    fs.mkdirSync(nested, { recursive: true });
+    const handler = createClientHandler(null, "auto-approve", [sandbox]);
+    const res = await handler.createTerminal!({
+      sessionId: "s1",
+      command: "true",
+      cwd: nested,
+    });
+    expect(typeof res.terminalId).toBe("string");
+    await handler.killTerminal!({ sessionId: "s1", terminalId: res.terminalId });
+  });
+
+  test("unrestricted (empty allowedPaths) still allows any cwd (backwards-compat)", async () => {
+    if (process.platform === "win32") return;
+    // When allowedPaths is empty the gate is a no-op — matching readTextFile/
+    // writeTextFile behavior. This preserves the documented default.
+    const handler = createClientHandler(null, "auto-approve", []);
+    const res = await handler.createTerminal!({
+      sessionId: "s1",
+      command: "true",
+      cwd: sandbox,
+    });
+    expect(typeof res.terminalId).toBe("string");
+    await handler.killTerminal!({ sessionId: "s1", terminalId: res.terminalId });
+  });
+
+  test("no cwd provided + allowedPaths set does not throw (cwd defaults to am process dir)", async () => {
+    if (process.platform === "win32") return;
+    // params.cwd is optional in ACP; when omitted we can't pin it, so we don't
+    // reject — the spawn inherits the am process cwd. (A stricter policy could
+    // require cwd be inside the sandbox; left as documented limitation.)
+    const handler = createClientHandler(null, "auto-approve", [sandbox]);
+    const res = await handler.createTerminal!({
+      sessionId: "s1",
+      command: "true",
+    });
+    expect(typeof res.terminalId).toBe("string");
+    await handler.killTerminal!({ sessionId: "s1", terminalId: res.terminalId });
   });
 });
 

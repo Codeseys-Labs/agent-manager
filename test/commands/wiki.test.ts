@@ -10,6 +10,7 @@ import {
   pathSubcommand,
   searchSubcommand,
   showSubcommand,
+  wikiCommand,
 } from "../../src/commands/wiki";
 import { addPageToGraph, loadGraph, saveGraph } from "../../src/wiki/graph";
 import {
@@ -866,5 +867,160 @@ describe("am wiki show: supersession + coverage read surfaces (WAVE G-WIKIREAD)"
     const joined = consoleOutput.join("\n");
     expect(joined).toContain("Supersedes: ancestor-page");
     expect(joined).not.toContain("Superseded by:");
+  });
+});
+
+// ── W1-3: `am wiki add` surfaces the project-local visibility boundary ──
+//
+// A project-local `am wiki add` writes only into the project's `.am-wiki/`
+// copy (ADR-0044 local-first). The cross-project enumerator
+// (`searchAllProjects` → `listProjectWikis`) only walks `wiki/projects/*` +
+// `wiki/global/`, so a fresh local entry is invisible to
+// `am wiki search --all-projects` from other projects until it's published.
+// The add command must SURFACE that boundary (not auto-push): a one-line notice
+// in text mode + `scope` / `visibleAcrossProjects` fields in --json. With no
+// project wiki present (global-only context) the write IS cross-project-visible,
+// so scope is "global" and no notice is emitted.
+
+describe("am wiki add: visibility-boundary feedback (W1-3)", () => {
+  let dir: TestDir;
+  let projectDir: string;
+  const origCwd = process.cwd();
+
+  async function getAdd(): Promise<{
+    run: (ctx: { args: Record<string, unknown> }) => Promise<void>;
+  }> {
+    const subs = (wikiCommand as unknown as { subCommands: Record<string, () => Promise<unknown>> })
+      .subCommands;
+    return (await subs.add()) as { run: (ctx: { args: Record<string, unknown> }) => Promise<void> };
+  }
+
+  function addArgs(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+    return {
+      json: false,
+      quiet: false,
+      verbose: false,
+      global: false,
+      type: "fact",
+      content: "The CI runner is bun on ubuntu-latest.",
+      context: "",
+      tags: "",
+      confidence: "0.7",
+      ...overrides,
+    };
+  }
+
+  beforeEach(async () => {
+    dir = await createTestDir("am-wiki-add-vis-");
+    process.env.AM_CONFIG_DIR = dir.path;
+
+    // Global store exists but is a DIFFERENT directory than the project wiki,
+    // so resolveWikiDir() (project) !== resolveWikiDir({global:true}).
+    await ensureWikiDirs(resolveWikiDir({ global: true }));
+
+    // A project with .agent-manager.toml + an EMPTY .am-wiki/, so the un-flagged
+    // resolveWikiDir() lands in the project-local copy.
+    projectDir = join(dir.path, "proj");
+    mkdirSync(projectDir, { recursive: true });
+    writeFileSync(join(projectDir, ".agent-manager.toml"), "[settings]\n", "utf-8");
+    await ensureWikiDirs(join(projectDir, WIKI_PROJECT_DIRNAME));
+    process.chdir(projectDir);
+
+    captureConsole();
+    process.exitCode = undefined;
+  });
+
+  afterEach(async () => {
+    restoreConsole();
+    process.chdir(origCwd);
+    process.exitCode = undefined;
+    if (origConfigDir === undefined) {
+      // biome-ignore lint/performance/noDelete: env var cleanup
+      delete process.env.AM_CONFIG_DIR;
+    } else {
+      process.env.AM_CONFIG_DIR = origConfigDir;
+    }
+    if (dir) await dir.cleanup();
+  });
+
+  test("project-local add (--json) reports scope:project-local + visibleAcrossProjects:false", async () => {
+    const add = await getAdd();
+    await add.run({ args: addArgs({ json: true }) });
+    const payload = JSON.parse(consoleOutput.join("\n"));
+    expect(payload.action).toBe("add");
+    expect(payload.scope).toBe("project-local");
+    expect(payload.visibleAcrossProjects).toBe(false);
+  });
+
+  test("project-local add (text) prints the publish notice naming `am wiki publish`", async () => {
+    const add = await getAdd();
+    await add.run({ args: addArgs() });
+    const joined = consoleOutput.join("\n");
+    expect(joined).toContain("project-local");
+    expect(joined).toContain("am wiki publish");
+    expect(joined).toContain("am wiki search --all-projects");
+  });
+
+  test("project-local add --quiet suppresses the notice (respects opts.quiet)", async () => {
+    const add = await getAdd();
+    await add.run({ args: addArgs({ quiet: true }) });
+    // quiet routes info() to nothing — no notice, no "Added entry" line.
+    expect(consoleOutput.join("\n")).not.toContain("project-local");
+  });
+
+  test("global-only context (no project wiki) yields scope:global + no notice", async () => {
+    // Step OUT of the project so resolveWikiDir() falls back to the global store
+    // — there is no .am-wiki/ above dir.path, so project === global path.
+    process.chdir(dir.path);
+    const add = await getAdd();
+    await add.run({ args: addArgs({ json: true }) });
+    const payload = JSON.parse(consoleOutput.join("\n"));
+    expect(payload.scope).toBe("global");
+    expect(payload.visibleAcrossProjects).toBe(true);
+
+    // And in text mode from the same context: no project-local notice.
+    consoleOutput.length = 0;
+    const add2 = await getAdd();
+    await add2.run({ args: addArgs() });
+    const joined = consoleOutput.join("\n");
+    expect(joined).toContain("Added entry");
+    expect(joined).not.toContain("project-local");
+  });
+
+  // R2-MED: when --global is requested but the write still lands project-local
+  // (addEntry ignores --global — deferred under seed agent-manager-eb5c), the
+  // user must NOT be silently misled. Instead of suppressing all feedback, the
+  // add command emits a DISTINCT warning pointing at the documented workaround.
+  test("--global requested but landed local emits a distinct warning (stderr)", async () => {
+    const add = await getAdd();
+    await add.run({ args: addArgs({ global: true }) });
+    // warn() routes to console.error → consoleErrors (NOT consoleOutput).
+    const warned = consoleErrors.join("\n");
+    expect(warned).toContain("--global was requested");
+    expect(warned).toContain("does not yet route the write to the global store");
+    expect(warned).toContain("--promote");
+    // It is NOT the plain project-local nudge (that fires only without --global).
+    expect(consoleOutput.join("\n")).not.toContain("visible to `am wiki search --all-projects`");
+  });
+
+  test("--global requested but landed local sets globalRequestedButLocal in --json", async () => {
+    const add = await getAdd();
+    await add.run({ args: addArgs({ global: true, json: true }) });
+    const payload = JSON.parse(consoleOutput.join("\n"));
+    expect(payload.action).toBe("add");
+    expect(payload.scope).toBe("project-local");
+    expect(payload.visibleAcrossProjects).toBe(false);
+    expect(payload.globalRequestedButLocal).toBe(true);
+  });
+
+  test("--global in a true global context does NOT warn (request honored)", async () => {
+    // No project wiki above dir.path → resolveWikiDir() IS the global store, so
+    // --global is effectively satisfied; no warning, globalRequestedButLocal false.
+    process.chdir(dir.path);
+    const add = await getAdd();
+    await add.run({ args: addArgs({ global: true, json: true }) });
+    const payload = JSON.parse(consoleOutput.join("\n"));
+    expect(payload.visibleAcrossProjects).toBe(true);
+    expect(payload.globalRequestedButLocal).toBe(false);
   });
 });
