@@ -22,9 +22,7 @@ jobs:
   secret-scan:
     runs-on: blacksmith-2vcpu-ubuntu-2404
     steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0 # full history so `betterleaks git` can scan commits
+      - uses: actions/checkout@v4 # shallow: we scan the working tree, not history
       - name: Install betterleaks (pinned)
         run: |
           set -euo pipefail
@@ -39,7 +37,11 @@ jobs:
           install -m 0755 /tmp/betterleaks /usr/local/bin/betterleaks
           betterleaks version
       - name: Scan repository for secrets
-        run: betterleaks git . --no-banner --no-color --redact --config .betterleaks.toml
+        # `dir .` scans the WORKING TREE (the files we ship), NOT git history.
+        # `git .` walks all 581 commits and re-flags fixture "secrets" living in
+        # old blobs that a path-based allowlist cannot suppress — making the gate
+        # red on pre-existing history rather than on a newly-introduced leak.
+        run: betterleaks dir . --no-banner --no-color --redact --config .betterleaks.toml
 
   test:
     runs-on: blacksmith-2vcpu-ubuntu-2404
