@@ -95,7 +95,9 @@ describe("ADR-0037 Phase 1 — x-am tool metadata", () => {
     }
   });
 
-  test("auth_required matches tier (write-tiers require auth, read-only doesn't)", async () => {
+  test("auth_required matches tier when NO token is configured (write-tiers require auth, read-only doesn't)", async () => {
+    // Tokenless server: every read-only tool — including the sensitive
+    // am_config_show — is truthfully auth_required:false (no gate is active).
     const server = new McpServer({ auth: { token: undefined, allowUnsafeLocal: true } });
     const resp = await server.handleRequest({
       jsonrpc: "2.0",
@@ -114,6 +116,40 @@ describe("ADR-0037 Phase 1 — x-am tool metadata", () => {
         expect(xam.auth_required, `${tool.name} is ${xam.tier} but auth_required=false`).toBe(true);
       }
     }
+  });
+
+  // Regression (CodeRabbit #42 f7): when a token IS configured, the sensitive
+  // read-only tool am_config_show is token-gated by checkSensitiveReadAuth at
+  // tools/call — so tools/list MUST advertise auth_required:true for it, while
+  // ordinary read-only tools stay false. Otherwise the discovery metadata lies
+  // about the call contract and forces a failed probe.
+  test("auth_required:true for sensitive read-only tools WHEN a token is configured", async () => {
+    const server = new McpServer({ auth: { token: "secret-token", allowUnsafeLocal: false } });
+    const resp = await server.handleRequest({
+      jsonrpc: "2.0",
+      id: 1,
+      method: "tools/list",
+      // Authenticate the list call itself so we can SEE the metadata.
+      params: { _meta: { authorization: "Bearer secret-token" } },
+    });
+    const tools = (resp?.result as JsonRpcResult).tools as Array<{
+      name: string;
+      "x-am": AmToolMetadata;
+    }>;
+    const byName = new Map(tools.map((t) => [t.name, t["x-am"]]));
+
+    const cfg = byName.get("am_config_show");
+    expect(cfg, "am_config_show should be visible in core").toBeDefined();
+    expect(cfg?.tier).toBe("read-only");
+    // The sensitive read-only tool now advertises the gate it actually enforces.
+    expect(cfg?.auth_required, "am_config_show must advertise auth_required when token set").toBe(
+      true,
+    );
+
+    // A NON-sensitive read-only tool stays auth_required:false even with a token.
+    const list = byName.get("am_list_servers");
+    expect(list?.tier).toBe("read-only");
+    expect(list?.auth_required, "am_list_servers is not sensitive — stays false").toBe(false);
   });
 
   test("deprecated aliases carry deprecation={replacement,removal_version}", async () => {

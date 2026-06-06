@@ -153,7 +153,7 @@ Search, install, uninstall, update with provenance tracking. ADR-0024.
 | ACP registry | Done | Agent resolution from config + auto-detection |
 | CLI (am run) | Done | `am run <agent> "<prompt>"` + session subcommands |
 | Per-agent variants (multi-provider routing) | Done | ADR-0036 — `src/core/variant-resolver.ts`, `--variant` flag (rollout gate `AM_VARIANTS=1` removed in commit 203d967) |
-| MCP tools (4) | Done | run_agent, list_agents, session_list, session_cancel |
+| MCP tools (9) | Done | invoke, session_list, session_cancel, status, detect + 4 deprecated aliases (run_agent, acp_list_agents, acp_session_list, acp_session_cancel) |
 
 ### Distribution — Complete
 
@@ -332,8 +332,8 @@ entries for orientation:
 |--------|-------|
 | Source files | 223 |
 | Test files | 284 |
-| Tests | 3,660 |
-| Assertions | 11,446 |
+| Tests | 3,661 |
+| Assertions | 11,451 |
 | IDE adapters | 13 (+community) |
 | Platform adapters | 3 |
 | CLI commands | 37 |

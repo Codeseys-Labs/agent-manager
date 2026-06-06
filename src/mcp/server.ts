@@ -684,20 +684,30 @@ export function _getActiveSession(sessionId: string): ActiveSession | undefined 
  * no surprises. Takes `toolName` + `tier` because alias tools share a
  * handler but have distinct names in tools/list.
  *
- * `auth_required` is scoped to whether THIS TOOL would be gated by
- * `AM_MCP_TOKEN` when configured. It does NOT depend on whether the
- * server currently has a token set — a read-only tool stays
- * `auth_required: false` either way; a write-tier tool stays
- * `auth_required: true` either way. Clients use this at discovery
- * time to decide whether to include `_meta.authorization` on the call.
+ * `auth_required` tells a client whether THIS TOOL would be gated by
+ * `AM_MCP_TOKEN`. Write-tier tools are always `true`. Read-only tools are
+ * normally `false` — EXCEPT a SENSITIVE read-only tool (full-config disclosure,
+ * e.g. `am_config_show`) IS token-gated by `checkSensitiveReadAuth` once a token
+ * is configured. So when `tokenConfigured` is true we advertise
+ * `auth_required: true` for those tools, matching what `tools/call` actually
+ * enforces — otherwise `tools/list` would lie about the contract and force the
+ * client into a failed probe before it learns it needs a token. With no token
+ * configured (local-dev default) every read-only tool stays truthfully `false`.
+ * Clients use this at discovery time to decide whether to include
+ * `_meta.authorization` on the call.
  */
-export function buildToolMetadata(toolName: string, tier: ToolTier): AmToolMetadata {
+export function buildToolMetadata(
+  toolName: string,
+  tier: ToolTier,
+  tokenConfigured = false,
+): AmToolMetadata {
   const group = getToolGroup(toolName);
   const deprecationInfo = DEPRECATED_ALIASES[toolName];
   const meta: AmToolMetadata = {
     group,
     tier,
-    auth_required: tier !== "read-only",
+    auth_required:
+      tier !== "read-only" || (tokenConfigured && SENSITIVE_READONLY_TOOLS.has(toolName)),
     deprecated: deprecationInfo !== undefined,
     progress_supported: PROGRESS_SUPPORTED.has(toolName),
   };
@@ -3520,7 +3530,7 @@ export class McpServer {
             // fields — clients that don't read x-am simply ignore it.
             tools: visibleTools.map((t) => ({
               ...t.def,
-              "x-am": buildToolMetadata(t.def.name, t.tier),
+              "x-am": buildToolMetadata(t.def.name, t.tier, this.auth.token !== undefined),
             })),
           },
         };
