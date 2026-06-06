@@ -12,6 +12,33 @@ a unified MCP gateway. Delegate locally via ACP or remotely via A2A. Install MCP
 servers from the registry and vendor skills/instructions/agents via git. Remember
 sessions in an LLM-wiki. Edit from terminal, local web, or cloud.
 
+### North star (evaluate every change against this)
+
+`am` is a **one-stop-shop control plane** that works **both outside AND inside the
+agent** — a CLI a developer uses to manage agents (a2a remote / acp local / plain
+CLI), AND the MCP server those agents call to use `am`'s functionality *from inside
+a session*. "Inside and outside the agent, `am` helps." Audience: **individual
+developers first.** The load-bearing pillars of that vision:
+
+1. **MCP gateway + runtime access-scoping.** Profiles scope a user's **access** to
+   everything they have — tools (live, ADR-0055), and progressively skills / agents
+   / knowledge — and the gateway optimizes operational **token** usage. Scope is a
+   runtime boundary, not just apply-time config.
+2. **Git-backed superset with CLI ⇄ UI parity.** One canonical git-backed config a
+   UI operates on the **same repo**, so onboard/offboard of tools/skills/agents/
+   profiles works **identically** via CLI and UI. The shared `core/controller.ts`
+   write path is what makes parity a reach-problem, not an architecture one.
+3. **Project- AND user-level LLM-wiki** knowledge, readable by humans **and** agents.
+4. **Absorb single-purpose tools** (ContextHub / seeds / mulch-class) into one tool
+   for end users (note: seeds/mulch/canopy are `am`'s OWN dev tooling today).
+5. **Future:** AWS AgentCore Gateway + Registry interop (greenfield; needs a remote
+   MCP transport — ADR-0056).
+
+When weighing a feature or a review comment, ask: *does this advance the git-backed
+superset that CLI+UI both operate on, for an individual dev managing inside-and-
+outside-agent workflows?* See `ADRs/0031` (scope/pillars) and `ADRs/0055` (the
+access-scoping keystone).
+
 ## Core tenets (per [ADR-0031](ADRs/0031-product-scope-and-pillars.md))
 
 Every feature decision and audit must answer: **which of the six pillars does
@@ -22,7 +49,7 @@ this serve?** Features orthogonal to all six are flagged for reconsideration.
    hygiene (AES-256-GCM + 40+ provider-pattern detection), MCP Package Registry
    (ADR-0024).
 2. **MCP gateway** — `am mcp-serve` as the stable endpoint any agent plumbs
-   into. 43 tools (38 canonical + 5 deprecated aliases that still dispatch to
+   into. 44 tools (39 canonical + 5 deprecated aliases that still dispatch to
    their replacements; alias removal targeted for v1.0), concurrency-safe
    writers (iter4 Wave B), bearer auth (iter2 Wave B), streaming via MCP
    progress notifications (iter4 Wave D).
@@ -163,7 +190,7 @@ src/
     registry.ts             # Platform detection (GitHub > GitLab > bare)
     github.ts, gitlab.ts, bare.ts
   mcp/
-    server.ts               # MCP server: JSON-RPC 2.0, 43 tools (38 canonical + 5 deprecated aliases that still dispatch; removal targeted v1.0), 6 groups, 3 permission tiers (ADR-0009, ADR-0021, ADR-0055 proposed)
+    server.ts               # MCP server: JSON-RPC 2.0, 44 tools (39 canonical + 5 deprecated aliases that still dispatch; removal targeted v1.0), 6 groups, 3 permission tiers, runtime access-scoping (ADR-0009, ADR-0055 supersedes ADR-0021)
   tui/
     index.tsx, App.tsx      # Silvery/React terminal UI with dashboard, server management (D/E/I/P keys)
   web/
@@ -172,7 +199,7 @@ src/
     git-providers.ts        # Git provider abstraction: GitHub, GitLab, Codeberg/Gitea (ADR-0025)
     public/                 # Static HTML
   lib/                      # Shared utilities (errors.ts, output.ts)
-test/                       # 273 files, 3520 tests, 11002 assertions
+test/                       # 284 files, 3661 tests, 11451 assertions
 ADRs/                       # 57 architectural decision records (0001-0056, incl. 0031a)
 scripts/
   build.ts                  # Cross-platform build (5 targets)
@@ -253,10 +280,26 @@ push/pull auth handling.
 storage. Config accessed via git provider API. Wiki browsing + server CRUD from
 both local and worker web UIs.
 
-**MCP tool grouping (ADR-0021):** `settings.mcp_serve.tools` controls which MCP tools
-are exposed per profile. Enables fine-grained tool selection when running as an MCP
-server gateway -- profiles can restrict tools to a subset without modifying the
-underlying server definitions.
+**MCP tool grouping (ADR-0021):** `settings.mcp_serve.tools` is the GLOBAL tool-group
+ceiling — a discovery-time filter over the 6 groups (core/registry/a2a/wiki/session/acp).
+
+**Runtime access-scoping profiles (ADR-0055, supersedes ADR-0021's global-only model):**
+the active profile's optional `[profiles.<name>.scope]` projects a RUNTIME access
+boundary over the MCP tool surface, intersected with the global ceiling (the ceiling is
+absolute — scope can only NARROW, never widen):
+
+```toml
+[profiles.locked.scope]
+tool_groups = ["core", "wiki"]   # narrow within the global ceiling
+allow_tools = ["am_registry_search"]  # re-include a specific tool (still within ceiling)
+deny_tools  = ["am_apply"]       # remove a specific tool (deny wins)
+```
+
+Enforced at BOTH `tools/list` (hide) AND `tools/call` (refuse with -32601) — hiding alone
+is not a boundary. A profile WITHOUT `scope` is unchanged (global ceiling). The connection
+selects its profile via the `initialize` param `capabilities.experimental["am.profile"]`
+or the `AM_MCP_PROFILE` env var (stdio is one-client-per-process). Per-session scoping over
+a shared HTTP transport is Phase 2 (depends on ADR-0056's remote transport).
 
 **Wiki dual location (ADR-0022):** Wiki pages live in two locations: global
 (`~/.config/agent-manager/wiki/`) for cross-project knowledge, and project-level
@@ -362,7 +405,7 @@ Workflow: `am wiki ingest --session <id>` → `am wiki search <query>` → `am w
 
 ```bash
 bun install              # Install dependencies
-bun test                 # Run all 3520 tests
+bun test                 # Run all 3661 tests
 bun test --watch         # Watch mode
 bun run dev              # Run CLI in dev mode
 bun run build            # Single binary (macOS arm64)
@@ -504,11 +547,21 @@ open branches rebase onto `main` (a sync, not a conflict-resolution, because of 
 disjoint write-sets). The full rule lives in
 `docs/audit/assessment-2026-05-31/INTEGRATION-PLAN.md` — follow it when fanning out.
 
-### 4. Stacked PRs + automated review
+### 4. Stacked PRs + layered review (local codex + CodeRabbit)
 Land work as focused, independently-reviewable PRs (one per wave) so
 [CodeRabbit](.coderabbit.yaml) can review a tight diff. Stack a PR on another only
 when it genuinely depends on the other's new code; otherwise target `main`. Keep the
 stack rebased per the integration plan.
+
+Every PR gets **two review layers before merge**:
+1. **Local review with codex** — before pushing, run a codex review pass over the
+   diff locally and address what it surfaces. (This is in addition to the
+   concurrent adversarial-review team from §2 — local codex is the fast pre-flight.)
+2. **CodeRabbit on the PR** — once the PR is open, CodeRabbit reviews the diff.
+   **Act on its comments**: triage each, fix the real ones, and reply/resolve the
+   rest with a reason. Do not merge a PR with unaddressed CodeRabbit findings.
+Both layers feed the same backlog loop (§5) — a review comment that surfaces a real
+defect becomes a tracked item, fixed, and re-verified, exactly like §2's findings.
 
 ### 5. Goal-driven backlog loop
 Track work in **Seeds** (`sd`), not ad-hoc lists. Drive toward an explicit goal:
@@ -523,6 +576,17 @@ Evidence before assertions. Run `bun test`, `bun run lint`, and `bun x tsc --noE
 project's `feat:`/`fix:`/`docs:`/`refactor:` style (no co-author trailers). Keep
 `docs/` stats and the README stats block honest — they are generated by
 `bun run scripts/stats.ts`, not hand-edited.
+
+**Secret hygiene at the commit boundary.** Install the git hooks once per clone
+(`bunx lefthook install`, run automatically by the `prepare` script on
+`bun install`). Pre-commit runs **betterleaks** (the same scanner `am` shells out
+to for Tier-2 detection) over staged changes and Biome over staged source; it
+blocks a commit that introduces a real secret-shaped string. Deliberate
+redaction-test fixtures (fake `ghp_…` / `user:pass@host` strings that exercise the
+scrubbing code) are allowlisted in `.betterleaks.toml` — keep that list TIGHT and
+review every addition. CI re-runs the same secret scan as a **hard gate**
+(`.github/workflows/ci.yml` `secret-scan` job), so the local hook is convenience,
+not the enforcing layer. Never commit a real credential; if one lands, rotate it.
 
 ### Non-negotiables
 - **Scope:** marketplace (pillar 4) is **deferred to v2**, not deleted — keep

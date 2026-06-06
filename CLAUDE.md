@@ -19,6 +19,22 @@
 
 Follow the existing pattern: `feat:`, `fix:`, `test:`, `docs:`, `refactor:` prefix followed by a concise description. No attribution lines or co-author tags.
 
+## Before you start / before you ship (pointers — details in AGENTS.md)
+
+- **Vision is the yardstick.** Read AGENTS.md "North star" and weigh every change
+  against it: the git-backed superset that CLI+UI both operate on, profiles that
+  scope **access** at runtime (ADR-0055), inside-and-outside-agent workflows, for
+  an individual dev. (Not duplicated here — it lives in AGENTS.md by design.)
+- **Secret hygiene.** Run `bunx lefthook install` once per clone (the `prepare`
+  script does this on `bun install`). Pre-commit runs betterleaks over staged
+  changes; CI enforces the same scan as a hard gate. Deliberate redaction-test
+  fixtures are allowlisted in `.betterleaks.toml` — keep it tight. Never commit a
+  real credential.
+- **PR review = two layers.** Before pushing, review the diff locally with codex
+  and address what it finds. After the PR is open, **act on CodeRabbit's comments**
+  — fix the real ones, reply/resolve the rest — before merge. See AGENTS.md
+  "How We Work §4".
+
 <!-- mulch:start -->
 ## Project Expertise (Mulch)
 <!-- mulch-onboard:v0.10.0 -->

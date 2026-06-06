@@ -1,0 +1,39 @@
+# Lefthook — git hooks for agent-manager.
+#
+# Why: PR #42 tripped GitGuardian on FAKE test fixtures (ghp_… / user:pass@host
+# strings that exercise the redaction code). Real secrets should never reach a
+# commit either. This runs betterleaks (the same scanner `am` shells out to for
+# Tier-2 detection) on staged changes BEFORE the commit leaves the machine.
+#
+# Install once per clone:  bunx lefthook install   (or: lefthook install)
+# Bypass a single commit:  LEFTHOOK=0 git commit …  (use sparingly)
+#
+# betterleaks is OPTIONAL on a dev box: the pre-commit secret-scan skips with a
+# notice if the binary is absent (so contributors aren't hard-blocked), but CI
+# runs the same scan as a HARD gate (see .github/workflows/ci.yml) — that is the
+# enforcing layer. Install the scanner locally with:  am secret install-scanner
+# or:  go install github.com/betterleaks/betterleaks@latest
+
+pre-commit:
+  parallel: true
+  commands:
+    secret-scan:
+      # Scan only what is staged. betterleaks exits non-zero on findings, which
+      # blocks the commit. `.betterleaks.toml` allowlists the known test
+      # fixtures. If betterleaks is not installed, warn and pass (CI enforces).
+      run: |
+        if command -v betterleaks >/dev/null 2>&1; then
+          betterleaks git . --pre-commit --staged --no-banner --redact --config .betterleaks.toml
+        else
+          echo "lefthook: betterleaks not found — skipping local secret scan (CI will enforce). Install: am secret install-scanner" >&2
+        fi
+    lint:
+      # Lint only staged source/test files. Biome is fast; scope to staged.
+      glob: "*.{ts,tsx,js,jsx,json}"
+      run: bunx @biomejs/biome check {staged_files}
+
+pre-push:
+  parallel: true
+  commands:
+    typecheck:
+      run: bun run typecheck

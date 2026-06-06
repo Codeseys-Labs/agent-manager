@@ -12,6 +12,37 @@ permissions:
   contents: read
 
 jobs:
+  # Secret scan (PR #42 / GitGuardian follow-up). The ENFORCING layer for the
+  # lefthook pre-commit hook (which is best-effort locally — it skips if a dev
+  # hasn't installed betterleaks). Here it is a HARD gate: a real secret-shaped
+  # string in a non-allowlisted file fails the build. `.betterleaks.toml`
+  # allowlists the deliberate redaction-test fixtures (fake ghp_/user:pass URLs
+  # that EXIST to prove we scrub secrets). Pinned version per the project's
+  # supply-chain posture (consistent with the pinned actionlint below).
+  secret-scan:
+    runs-on: blacksmith-2vcpu-ubuntu-2404
+    steps:
+      - uses: actions/checkout@v4 # shallow: we scan the working tree, not history
+      - name: Install betterleaks (pinned)
+        run: |
+          set -euo pipefail
+          VER="1.1.1"
+          # Release assets are named `_linux_x64` (NOT `_amd64`). The old amd64
+          # URL 404'd, and `curl -f` under `set -e` hard-failed this job on every
+          # run — so the HARD secret gate never actually executed on CI. Pin the
+          # correct asset name (verified against the v1.1.1 release manifest).
+          URL="https://github.com/betterleaks/betterleaks/releases/download/v${VER}/betterleaks_${VER}_linux_x64.tar.gz"
+          curl -fsSL "$URL" -o /tmp/betterleaks.tar.gz
+          tar -xzf /tmp/betterleaks.tar.gz -C /tmp betterleaks
+          install -m 0755 /tmp/betterleaks /usr/local/bin/betterleaks
+          betterleaks version
+      - name: Scan repository for secrets
+        # `dir .` scans the WORKING TREE (the files we ship), NOT git history.
+        # `git .` walks all 581 commits and re-flags fixture "secrets" living in
+        # old blobs that a path-based allowlist cannot suppress — making the gate
+        # red on pre-existing history rather than on a newly-introduced leak.
+        run: betterleaks dir . --no-banner --no-color --redact --config .betterleaks.toml
+
   test:
     runs-on: blacksmith-2vcpu-ubuntu-2404
     steps:

@@ -26,7 +26,7 @@ This folder contains the architectural decisions for agent-manager.
 | [0018](0018-tui-framework-silvery.md) | Terminal UI Framework -- Ink to Silvery Migration | Accepted | 2026-04-08 |
 | [0019](0019-security-hardening.md) | Security Hardening -- Threat Model and Fixes | Accepted | 2026-04-08 |
 | [0020](0020-session-knowledge-synthesis.md) | Session Knowledge Synthesis — LLM Wiki from Agent Sessions | Accepted | 2026-04-09 |
-| [0021](0021-mcp-tool-grouping-and-gateway.md) | MCP Tool Grouping via Profiles and Gateway Mode | Proposed supersession by [0055](0055-runtime-access-scoping-profiles.md) | 2026-04-09 |
+| [0021](0021-mcp-tool-grouping-and-gateway.md) | MCP Tool Grouping via Profiles and Gateway Mode | Superseded by [0055](0055-runtime-access-scoping-profiles.md) | 2026-04-09 |
 | [0022](0022-wiki-location-strategy.md) | Wiki Location Strategy — Global Store with Project Symlinks | Superseded in part by [0044](0044-wiki-two-tier-copy-materialisation.md) | 2026-04-09 |
 | [0023](0023-tiered-secret-detection.md) | Tiered Secret Detection with BetterLeaks Integration | Accepted | 2026-04-10 |
 | [0024](0024-mcp-registry-integration.md) | MCP Registry Integration | Accepted | 2026-04-10 |
@@ -61,8 +61,8 @@ This folder contains the architectural decisions for agent-manager.
 | [0052](0052-marketplace-v1-code-removal-target.md) | Marketplace v1 Code Removal Target (removal deferred to v2 — deprecated surface kept, not deleted) | Superseded by product-scope decision (AGENTS.md) — removal deferred to v2, code kept | 2026-05-16 |
 | [0053](0053-am-setup-first-run-wizard.md) | `am setup` — First-Run Setup Wizard | Accepted | 2026-05-31 |
 | [0054](0054-knowledge-as-first-class-peer.md) | Knowledge as a First-Class Peer — Live Write-Path, Cross-Project Index, Context-Hub Boundary | Accepted | 2026-06-01 |
-| [0055](0055-runtime-access-scoping-profiles.md) | Runtime Access-Scoping Profiles for the MCP Server (Scopes) — supersedes [0021](0021-mcp-tool-grouping-and-gateway.md) | Proposed | 2026-06-04 |
-| [0056](0056-remote-streamable-http-mcp-transport.md) | Remote Streamable-HTTP MCP Transport (Hono sub-app on the existing listener) | Proposed | 2026-06-04 |
+| [0055](0055-runtime-access-scoping-profiles.md) | Runtime Access-Scoping Profiles for the MCP Server (Scopes) — supersedes [0021](0021-mcp-tool-grouping-and-gateway.md) | Accepted | 2026-06-04 |
+| [0056](0056-remote-streamable-http-mcp-transport.md) | Remote Streamable-HTTP MCP Transport (Hono sub-app on the existing listener) | Accepted | 2026-06-04 |
 
 ## Template
 

@@ -7,10 +7,10 @@ skills/instructions/agents via git. Remember sessions in an LLM-wiki. Edit from
 terminal, local web, or cloud.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Tests: 3520 pass](https://img.shields.io/badge/tests-3520%20pass-green.svg)](#development)
+[![Tests: 3661 pass](https://img.shields.io/badge/tests-3661%20pass-green.svg)](#development)
 [![Coverage](https://img.shields.io/badge/coverage-see%20CI%20summary-blue.svg)](https://github.com/Codeseys-Labs/agent-manager/actions/workflows/ci.yml)
 [![Adapters: 13](https://img.shields.io/badge/adapters-13-purple.svg)](#adapter-support-matrix)
-[![MCP Tools: 43](https://img.shields.io/badge/MCP%20tools-43-orange.svg)](#mcp-server-mode)
+[![MCP Tools: 44](https://img.shields.io/badge/MCP%20tools-44-orange.svg)](#mcp-server-mode)
 [![Bun](https://img.shields.io/badge/runtime-Bun-f9f1e1.svg)](https://bun.sh)
 
 ```bash
@@ -41,7 +41,7 @@ a control plane for AI agents, built on six composing pillars:
    Package Registry** (`am search/install/update/uninstall` browses the
    upstream package index).
 2. **MCP gateway.** `am mcp-serve` exposes the catalog as a stable MCP
-   endpoint. 43 tools (38 canonical + 5 deprecated aliases that still dispatch),
+   endpoint. 44 tools (39 canonical + 5 deprecated aliases that still dispatch),
    concurrency-safe writers, bearer auth, progress notifications for streaming
    agent invocations.
 3. **Protocol router.** ACP for local subprocess agents (spawnable tier-1:
@@ -567,28 +567,28 @@ See ADR-0027 for the loading architecture.
 
 ## MCP Server Mode
 
-`am mcp-serve` turns agent-manager into an MCP server that AI agents can call to manage their own configuration. 43 tools (38 canonical + 5 deprecated aliases) across 3 permission tiers, grouped by function:
+`am mcp-serve` turns agent-manager into an MCP server that AI agents can call to manage their own configuration. 44 tools (39 canonical + 5 deprecated aliases) across 3 permission tiers, grouped by function:
 
 ### Tool Grouping
 
-Control which tools are exposed via `settings.mcp_serve.tools`. Default: `["core"]` (18 tools).
+Control which tools are exposed via `settings.mcp_serve.tools`. Default: `["core"]` (19 tools).
 
 ```toml
 [settings.mcp_serve]
 allow_push = false
-tools = ["core", "registry", "a2a", "wiki", "session", "acp"]   # expose all 43 tools (38 canonical + 5 deprecated aliases)
+tools = ["core", "registry", "a2a", "wiki", "session", "acp"]   # expose all 44 tools (39 canonical + 5 deprecated aliases)
 ```
 
 | Group | Tools | Tier |
 |-------|-------|------|
-| **core** (18) | `am_list_servers`, `am_list_profiles`, `am_list_skills`, `am_list_instructions`, `am_status`, `am_config_show`, `am_doctor`, `am_add_server`, `am_remove_server`, `am_server_update`, `am_profile_create`, `am_profile_delete`, `am_undo`, `am_use_profile`, `am_import`, `am_apply`, `am_sync_push`, `am_sync_pull` | read/write-local/write-remote |
+| **core** (19) | `am_list_servers`, `am_list_profiles`, `am_list_skills`, `am_list_instructions`, `am_get_scope`, `am_status`, `am_config_show`, `am_doctor`, `am_add_server`, `am_remove_server`, `am_server_update`, `am_profile_create`, `am_profile_delete`, `am_undo`, `am_use_profile`, `am_import`, `am_apply`, `am_sync_push`, `am_sync_pull` | read/write-local/write-remote |
 | **registry** (4) | `am_registry_search`, `am_registry_install`, `am_registry_list_installed`, `am_registry_uninstall` | read/write-local |
-| **a2a** (4) | `am_agent_discover`, `am_agent_list`, `am_agent_delegate`, `am_agent_task_status` | read/write-remote |
+| **a2a** (4) | **Canonical:** `am_agent_discover`, `am_agent_list`, `am_agent_task_status`. **Deprecated alias** (still dispatches; removal v1.0): `am_agent_delegate`→`am_agent_invoke` | read/write-remote |
 | **wiki** (5) | `am_wiki_search`, `am_wiki_add`, `am_wiki_synthesize`, `am_wiki_briefing`, `am_wiki_harvest` | read/write-local |
 | **session** (3) | `am_session_list`, `am_session_export`, `am_session_search` | read-only |
 | **acp** (9) | **Canonical:** `am_agent_invoke`, `am_agent_session_list`, `am_agent_session_cancel`, `am_agent_status`, `am_agent_detect`. **Deprecated aliases** (still dispatch; removal v1.0): `am_run_agent`→`am_agent_invoke`, `am_acp_list_agents`→`am_agent_list`, `am_acp_session_list`→`am_agent_session_list`, `am_acp_session_cancel`→`am_agent_session_cancel` | write-local |
 
-> **Tool count: 43** = 38 canonical + 5 deprecated aliases (the `am_run_agent`,
+> **Tool count: 44** = 39 canonical + 5 deprecated aliases (the `am_run_agent`,
 > `am_acp_list_agents`, `am_acp_session_list`, `am_acp_session_cancel`, and
 > `am_agent_delegate` aliases still dispatch to their `am_agent_*` replacements
 > and are slated for removal in v1.0). Prefer the canonical `am_agent_*` tools.
@@ -890,7 +890,7 @@ bun run deploy:web
 ```mermaid
 graph LR
     CLI["CLI (37 commands)"] --> Core["Core Engine<br/>(TOML + Zod + Git)"]
-    MCP["MCP Server<br/>(43 tools, 6 groups)"] --> Core
+    MCP["MCP Server<br/>(44 tools, 6 groups)"] --> Core
     TUI["TUI (Silvery)"] --> Core
     Web["Web UI"] --> Hono["Hono (local) /<br/>CF Workers"]
 
@@ -920,7 +920,7 @@ Design decisions documented in [57 ADRs](ADRs/README.md).
 
 ```bash
 bun install                       # install dependencies
-bun test                          # run all tests (3520)
+bun test                          # run all tests (3661)
 bun test --coverage --coverage-reporter=text --coverage-reporter=lcov --config=/dev/null
                                   # run coverage locally; writes coverage/lcov.info
 bun test --watch                  # watch mode
@@ -948,7 +948,7 @@ cache for faster downloads.
 **CI pipeline** (`.github/workflows/ci.yml` — triggers on push to main + PRs):
 1. Type check — `tsc --noEmit` filtered to `src/` errors only
 2. Lint — `biome check`
-3. Test with coverage — `bun test --coverage --coverage-reporter=text --coverage-reporter=lcov --config=/dev/null` (3520 tests)
+3. Test with coverage — `bun test --coverage --coverage-reporter=text --coverage-reporter=lcov --config=/dev/null` (3661 tests)
    and publish `coverage/lcov.info` to the GitHub Actions job summary/artifact
 4. Build smoke test — all 5 platform targets
 5. Cross-platform build verify — Ubuntu + macOS + Windows
@@ -981,13 +981,13 @@ today. It auto-activates if a token is ever added. GitHub Releases (consumed by
 | Metric | Count |
 |--------|-------|
 | Source files | 223 |
-| Test files | 273 |
-| Tests | 3,520 |
-| Assertions | 11,002 |
+| Test files | 284 |
+| Tests | 3,661 |
+| Assertions | 11,451 |
 | IDE adapters | 13 (+community) |
 | Platform adapters | 3 |
 | CLI commands | 37 |
-| MCP tools | 43 (38 canonical + 5 deprecated aliases) |
+| MCP tools | 44 (39 canonical + 5 deprecated aliases) |
 | ADRs | 57 |
 <!-- stats:end -->
 

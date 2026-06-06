@@ -1,10 +1,33 @@
 ---
-status: proposed
+status: accepted
 date: 2026-06-04
+accepted: 2026-06-05
 supersedes: 0021
 ---
 
 # ADR-0055: Runtime Access-Scoping Profiles for the MCP Server (Scopes)
+
+> **Accepted 2026-06-05. Phase 1 shipped as-built (branch `keystone-runtime-scoping`):**
+> Decision 1 (`Profile.scope` schema + `resolveProfile`/`ResolvedProfile` +
+> `isToolInScope` composition in `src/core/resolver.ts`), Decision 2 (gate BOTH
+> `tools/list` HIDE and `tools/call` REFUSE in `src/mcp/server.ts` — the global
+> `settings.mcp_serve.tools` ceiling stays a discovery-only filter for
+> backward-compat; the **profile scope** is the dispatch-enforced boundary), and
+> Decision 3 Phase-1 (connection profile via `initialize`
+> `capabilities.experimental["am.profile"]` + `AM_MCP_PROFILE` env fallback,
+> stdio = one-process-one-profile) and **Decision 6** (auditability — `am profile
+> show --tools` + the read-only `am_get_scope` MCP tool, both built via the SAME
+> `buildScopeManifest`/`isToolInScope` the gateway enforces, so the manifest can
+> never drift from enforcement) are LIVE and tested. Over the MCP transport,
+> `am_get_scope` reports the CONNECTION's resolved scope (the gateway hands the
+> handler its already-resolved `{profileName, scope, ceiling}` via `ToolContext`,
+> so the audit answer is the exact one `tools/list`/`tools/call` enforced —
+> connection `am.profile` included; a post-merge review caught and closed a
+> first-cut bug where the tool re-derived the default profile and could
+> disagree with the connection's). **Deferred:** Decision 4
+> (`listChanged` notification on `am_use_profile`) and Decision 5 (per-session
+> scope over a shared connection) both depend on ADR-0056's HTTP transport.
+> A profile without `scope` is unchanged.
 
 ## Context
 
@@ -147,6 +170,21 @@ the boundary is a git-diffable artifact.
   fences (test/mcp/server.test.ts, test/mcp/zod-validation.test.ts) stay green
   because the DEFAULT surface is unchanged. New behaviour is asserted only under
   a profile that SETS `scope`.
+- **Introspection follows the same enforcement rules.** `am_get_scope`
+  (Decision 6) is an ordinary `core` tool, so a profile that narrows `core` out
+  of scope (e.g. `tool_groups: ["wiki"]`) also HIDES it from `tools/list` and
+  REFUSES it at `tools/call` — a maximally-restricted agent cannot introspect
+  its own boundary over MCP. This is deliberate, not an oversight: a scope
+  exemption would let the manifest assert a tool is callable that the dispatch
+  gate would refuse, breaking the no-drift guarantee that is Decision 6's whole
+  point. Two mitigations keep this from being a sharp edge: (1) a blind agent
+  still learns its boundary from the LOUD `-32601` refusal at `tools/call` (the
+  error names the active profile — the failure IS the introspection), and (2)
+  the human operator audits any profile out-of-band via `am profile show <name>
+  --tools` (the same `buildScopeManifest`, no MCP scope applied). Considered and
+  rejected: special-casing `am_get_scope` as always-visible — it re-introduces
+  exactly the implicit carve-out the design avoids and would force a matching
+  exemption in `buildScopeManifest`, splitting enforcement from the manifest.
 
 ## Alternatives Considered
 - **Keep ADR-0021 global-only.** Rejected: directly blocks the stated vision;

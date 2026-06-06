@@ -1064,6 +1064,11 @@
             s.enabled ? "active" : "disabled",
             s.enabled ? "badge-active" : "badge-disabled"
           ));
+          // 6th cell to match the 6-column header (Actions). Cloud mode is
+          // read-only (no CRUD endpoints), so this is an empty placeholder
+          // rather than Edit/Delete buttons — without it the row is short a
+          // column and misaligns under the header.
+          tr.appendChild(createCell("-"));
           body.appendChild(tr);
         }
         document.getElementById("server-count").textContent = serversData.servers.length;
@@ -1121,6 +1126,12 @@
         // Hide graph tab in cloud mode (no endpoint)
         const graphTab = document.querySelector('.tab[data-tab="graph"]');
         if (graphTab) graphTab.style.display = "none";
+        // Hide the local-only "Add server" control: cloud mode has no
+        // POST /api/servers endpoint (server CRUD is read-only there), so the
+        // button would 404. Edit/Delete are already absent because cloud rows
+        // omit the Actions cell (see loadCloudDashboard).
+        const addBtn = document.getElementById("btn-add-server");
+        if (addBtn) addBtn.style.display = "none";
       } else {
         // Local mode — load everything directly
         loadAll();

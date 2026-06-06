@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -187,11 +188,29 @@ describe("betterleaks scan failure ⇒ null (distinct from clean empty scan)", (
       }
     });
 
-    // Skip the PATH-shim e2e tests if a real/managed betterleaks resolves
-    // first (getBetterleaksPath() checks the managed install dir before PATH).
-    // The classifier tests above still lock the platform-agnostic logic.
-    function shimWouldResolve(): boolean {
-      return getBetterleaksPath() === "betterleaks";
+    // We PREPEND our tmp dir to PATH (installShim), so our shim should win the
+    // bare-name resolution. Run the e2e assertions ONLY when our shim is what
+    // actually resolves — and SKIP when something else shadows it: a managed
+    // install (getBetterleaksPath checks resolveConfigDir()/bin FIRST), or a
+    // real `betterleaks` that out-resolves the shim. We can't tell shim-from-real
+    // by the bare "betterleaks" return value, so we PROBE: the shim prints a
+    // unique sentinel on `version`; only if `betterleaks version` echoes it do we
+    // proceed. IMPORTANT: the probe (like getBetterleaksPath, post-fix) MUST pass
+    // `env: process.env` — Bun's spawnSync resolves a bare name against the
+    // launch-time PATH snapshot, not the live process.env.PATH, so without `env`
+    // the prepended shim is invisible and these tests would silently skip
+    // EVERYWHERE (the bug this probe + the production env-fix jointly close). The
+    // 4 spawnFailed classifier unit tests above lock the decision logic
+    // regardless of whether this integration layer runs.
+    const SHIM_SENTINEL = "am-shim-betterleaks-2f1c";
+    function shimResolves(): boolean {
+      if (getBetterleaksPath() === null) return false;
+      const probe = spawnSync("betterleaks", ["version"], {
+        stdio: "pipe",
+        timeout: 5000,
+        env: process.env,
+      });
+      return (probe.stdout?.toString() ?? "").includes(SHIM_SENTINEL);
     }
 
     test("non-zero exit (with empty stdout) returns null, NOT []", () => {
@@ -201,9 +220,9 @@ describe("betterleaks scan failure ⇒ null (distinct from clean empty scan)", (
       // case. Before the fix this reported [] (false-clean).
       installShim(
         "betterleaks",
-        '#!/bin/sh\nif [ "$1" = "version" ]; then echo "betterleaks 1.1.1"; exit 0; fi\nexit 3\n',
+        `#!/bin/sh\nif [ "$1" = "version" ]; then echo "betterleaks 1.1.1 ${SHIM_SENTINEL}"; exit 0; fi\nexit 3\n`,
       );
-      if (!shimWouldResolve()) return; // a real managed install shadows the shim
+      if (!shimResolves()) return; // a real managed/base-PATH install shadows the shim
       const result = scanWithBetterleaks("token = abc123");
       expect(result).toBeNull();
     });
@@ -212,9 +231,9 @@ describe("betterleaks scan failure ⇒ null (distinct from clean empty scan)", (
       if (process.platform === "win32") return; // POSIX shim only
       installShim(
         "betterleaks",
-        '#!/bin/sh\nif [ "$1" = "version" ]; then echo "betterleaks 1.1.1"; exit 0; fi\necho "[]"; exit 0\n',
+        `#!/bin/sh\nif [ "$1" = "version" ]; then echo "betterleaks 1.1.1 ${SHIM_SENTINEL}"; exit 0; fi\necho "[]"; exit 0\n`,
       );
-      if (!shimWouldResolve()) return; // a real managed install shadows the shim
+      if (!shimResolves()) return; // a real managed/base-PATH install shadows the shim
       const result = scanWithBetterleaks("hello = world");
       expect(Array.isArray(result)).toBe(true);
       expect(result).toEqual([]);
@@ -224,9 +243,9 @@ describe("betterleaks scan failure ⇒ null (distinct from clean empty scan)", (
       if (process.platform === "win32") return; // POSIX shim only
       installShim(
         "betterleaks",
-        '#!/bin/sh\nif [ "$1" = "version" ]; then echo "betterleaks 1.1.1"; exit 0; fi\necho "PANIC: not json"; exit 0\n',
+        `#!/bin/sh\nif [ "$1" = "version" ]; then echo "betterleaks 1.1.1 ${SHIM_SENTINEL}"; exit 0; fi\necho "PANIC: not json"; exit 0\n`,
       );
-      if (!shimWouldResolve()) return; // a real managed install shadows the shim
+      if (!shimResolves()) return; // a real managed/base-PATH install shadows the shim
       const result = scanWithBetterleaks("token = abc123");
       expect(result).toBeNull();
     });

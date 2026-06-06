@@ -24,6 +24,13 @@ import {
 } from "../core/config";
 import { APPLY_SAFE_DEFAULTS, applyResolved, withConfig } from "../core/controller";
 import { commitAll, getStatus, log as gitLog, pull, push, revertHead } from "../core/git";
+import {
+  type ResolvedScope,
+  buildScopeManifest,
+  isToolInScope,
+  resolveProfile,
+} from "../core/resolver";
+import { DEFAULT_MCP_TOOL_GROUPS } from "../core/schema";
 import type { Config, McpToolGroup, Settings } from "../core/schema";
 import { interpolateEnvAsync, legacyKeyPath, loadKey, resolveKeyPath } from "../core/secrets";
 import { filterMessages, formatJson, formatMarkdown } from "../core/session";
@@ -167,6 +174,21 @@ export const PROGRESS_SUPPORTED = new Set<string>([
 export interface ToolContext {
   emitProgress: (payload: { progress?: number; total?: number; message?: unknown }) => void;
   progressToken: string | number | undefined;
+  /**
+   * ADR-0055 Decision 6: the gateway's ALREADY-RESOLVED active scope for this
+   * connection — the exact `{ profileName, scope, ceiling }` that `tools/list`
+   * and `tools/call` enforce (including the connection-supplied `am.profile`
+   * and the K-CRIT fail-closed branch). `am_get_scope` builds its manifest from
+   * THIS so the audit surface can never drift from enforcement. Undefined for
+   * in-process callers that invoke a handler without going through the gateway
+   * dispatch (e.g. some unit tests) — those fall back to persisted-profile
+   * resolution.
+   */
+  activeScope?: {
+    profileName: string;
+    scope: ResolvedScope | undefined;
+    ceiling: McpToolGroup[];
+  };
 }
 
 interface ToolEntry {
@@ -432,8 +454,10 @@ export function checkSensitiveReadAuth(
   return { allowed: true };
 }
 
-/** Default tool groups exposed when settings.mcp_serve.tools is unset. */
-const DEFAULT_TOOL_GROUPS: McpToolGroup[] = ["core"];
+/** Default tool groups exposed when settings.mcp_serve.tools is unset.
+ * Canonical definition lives in core/schema (DEFAULT_MCP_TOOL_GROUPS); re-exported
+ * here under the original local name to avoid churning every call site. */
+const DEFAULT_TOOL_GROUPS: McpToolGroup[] = DEFAULT_MCP_TOOL_GROUPS;
 
 /**
  * Map each MCP tool name to its tool group (ADR-0021).
@@ -479,6 +503,31 @@ const TOOL_GROUP_MAP: Record<string, McpToolGroup> = {
 /** Resolve the tool group for a given tool name. */
 function getToolGroup(toolName: string): McpToolGroup {
   return TOOL_GROUP_MAP[toolName] ?? "core";
+}
+
+/** One entry in the MCP tool catalog (ADR-0055 auditability, Decision 6). */
+export interface ToolCatalogEntry {
+  name: string;
+  group: McpToolGroup;
+  tier: ToolTier;
+  deprecated: boolean;
+}
+
+/**
+ * The full MCP tool catalog: every tool's name, group, tier, and deprecation
+ * flag. Lightweight (no McpServer instance, no I/O) so the CLI (`am profile
+ * show --tools`) and the `am_get_scope` MCP tool can both build a profile's
+ * effective-scope manifest via the SAME `isToolInScope` decision the gateway
+ * enforces — the explanation can never drift from enforcement (the ADR-0055
+ * differentiator: the access boundary is an inspectable, git-diffable artifact).
+ */
+export function toolGroupCatalog(): ToolCatalogEntry[] {
+  return defineTools().map((t) => ({
+    name: t.def.name,
+    group: getToolGroup(t.def.name),
+    tier: t.tier,
+    deprecated: t.def.name in DEPRECATED_ALIASES,
+  }));
 }
 
 // ── Permission check ────────────────────────────────────────────
@@ -635,20 +684,30 @@ export function _getActiveSession(sessionId: string): ActiveSession | undefined 
  * no surprises. Takes `toolName` + `tier` because alias tools share a
  * handler but have distinct names in tools/list.
  *
- * `auth_required` is scoped to whether THIS TOOL would be gated by
- * `AM_MCP_TOKEN` when configured. It does NOT depend on whether the
- * server currently has a token set — a read-only tool stays
- * `auth_required: false` either way; a write-tier tool stays
- * `auth_required: true` either way. Clients use this at discovery
- * time to decide whether to include `_meta.authorization` on the call.
+ * `auth_required` tells a client whether THIS TOOL would be gated by
+ * `AM_MCP_TOKEN`. Write-tier tools are always `true`. Read-only tools are
+ * normally `false` — EXCEPT a SENSITIVE read-only tool (full-config disclosure,
+ * e.g. `am_config_show`) IS token-gated by `checkSensitiveReadAuth` once a token
+ * is configured. So when `tokenConfigured` is true we advertise
+ * `auth_required: true` for those tools, matching what `tools/call` actually
+ * enforces — otherwise `tools/list` would lie about the contract and force the
+ * client into a failed probe before it learns it needs a token. With no token
+ * configured (local-dev default) every read-only tool stays truthfully `false`.
+ * Clients use this at discovery time to decide whether to include
+ * `_meta.authorization` on the call.
  */
-export function buildToolMetadata(toolName: string, tier: ToolTier): AmToolMetadata {
+export function buildToolMetadata(
+  toolName: string,
+  tier: ToolTier,
+  tokenConfigured = false,
+): AmToolMetadata {
   const group = getToolGroup(toolName);
   const deprecationInfo = DEPRECATED_ALIASES[toolName];
   const meta: AmToolMetadata = {
     group,
     tier,
-    auth_required: tier !== "read-only",
+    auth_required:
+      tier !== "read-only" || (tokenConfigured && SENSITIVE_READONLY_TOOLS.has(toolName)),
     deprecated: deprecationInfo !== undefined,
     progress_supported: PROGRESS_SUPPORTED.has(toolName),
   };
@@ -725,6 +784,7 @@ const TOOL_SCHEMAS: Record<string, z.ZodTypeAny> = {
   am_list_profiles: withAuth({}),
   am_list_skills: withAuth({}),
   am_list_instructions: withAuth({}),
+  am_get_scope: withAuth({}),
   am_status: withAuth({}),
   am_config_show: withAuth({}),
   am_doctor: withAuth({}),
@@ -973,6 +1033,44 @@ function defineTools(): ToolEntry[] {
           targets: instruction.targets ?? [],
         }));
         return { instructions: entries };
+      },
+    },
+    {
+      def: {
+        name: "am_get_scope",
+        description:
+          "Show the MCP tool-access scope the active profile grants (ADR-0055): the global tool-group ceiling, the profile's scope (groups/allow/deny), and the effective + excluded tool names. This is the same decision the gateway enforces at tools/list and tools/call — use it to see exactly which tools you can call under the current profile.",
+        inputSchema: { type: "object", properties: {} },
+      },
+      tier: "read-only",
+      handler: async (_args, ctx) => {
+        const catalog = toolGroupCatalog();
+        // PRIMARY PATH (gateway dispatch): use the connection's ALREADY-resolved
+        // scope — the exact view tools/list/tools/call enforce, including the
+        // connection-supplied am.profile and the K-CRIT fail-closed scope. This
+        // is what guarantees the manifest can NEVER drift from enforcement
+        // (ADR-0055 Decision 6): same profile name, same scope object, same
+        // ceiling the dispatch gate just used.
+        if (ctx?.activeScope) {
+          const { profileName, scope, ceiling } = ctx.activeScope;
+          return buildScopeManifest(profileName, catalog, ceiling, scope);
+        }
+        // FALLBACK (no gateway context — e.g. a direct in-process handler call
+        // in a unit test): resolve the persisted/default profile with the SAME
+        // fail-safe directions as resolveActiveScope — unknown profile →
+        // undefined (ceiling); a profile that EXISTS but whose chain throws →
+        // fail CLOSED (empty groups), never fail open to the full ceiling.
+        const { config, profileName } = await loadConfigAndProfile();
+        const ceiling = config.settings?.mcp_serve?.tools ?? DEFAULT_MCP_TOOL_GROUPS;
+        let scope: ResolvedScope | undefined;
+        if (config.profiles?.[profileName]) {
+          try {
+            scope = resolveProfile(profileName, config).scope;
+          } catch {
+            scope = { toolGroups: [], allowTools: [], denyTools: [] };
+          }
+        }
+        return buildScopeManifest(profileName, catalog, ceiling, scope);
       },
     },
     {
@@ -3044,6 +3142,27 @@ export class McpServer {
   /** Auth config (Wave 2.B): tokens + unsafe-local flag. */
   private auth: AuthConfig;
   /**
+   * ADR-0055 Decision 3: the profile name supplied by THIS connection, read at
+   * `initialize` time from `params.capabilities.experimental['am.profile']`
+   * (spec-legal experimental capability) or the `AM_MCP_PROFILE` env fallback.
+   * stdio is one-client-per-process, so a connection-scoped profile is a
+   * process-scoped profile. `undefined` ⇒ fall back to the active/default
+   * profile resolved from state.toml + settings.default_profile.
+   */
+  private connectionProfile?: string;
+  /**
+   * ADR-0055: the resolved runtime Scope for the active profile, recomputed by
+   * `refreshSettings`. `undefined` ⇒ no profile narrowing (global ceiling only).
+   */
+  private scope?: ResolvedScope;
+  /**
+   * ADR-0055 Decision 6: the active profile NAME that `this.scope` was resolved
+   * from (connection `am.profile` → state.toml → default). Recorded alongside
+   * `this.scope` by `resolveActiveScope` so the `am_get_scope` audit tool can
+   * report the SAME profile the gateway gated on, not a re-derived guess.
+   */
+  private activeProfileName = "default";
+  /**
    * Wave D: sink for `notifications/progress` emitted during tool calls.
    * Default sink writes newline-delimited JSON-RPC to stdout — matches the
    * format of the `serve()` loop. Tests override this to capture
@@ -3128,16 +3247,72 @@ export class McpServer {
     return this.auth;
   }
 
-  /** Re-read settings from config for fresh permission checks. */
+  /** Re-read settings from config for fresh permission checks, and recompute
+   * the active profile's runtime Scope (ADR-0055). */
   private async refreshSettings(): Promise<void> {
     try {
       const configDir = resolveConfigDir();
       const projectFile = resolveProjectConfig(process.cwd());
       const config = await loadResolvedConfig({ configDir, projectFile });
       this.settings = config.settings;
+      this.scope = await this.resolveActiveScope(config, configDir);
     } catch {
       // Keep existing settings if re-read fails
     }
+  }
+
+  /**
+   * ADR-0055: resolve the runtime Scope for the active profile. Active profile
+   * precedence: this connection's `am.profile` (initialize) → the persisted
+   * active profile (state.toml) → settings.default_profile → "default".
+   *
+   * Fail-safe directions (an access boundary must NEVER widen):
+   *  - Profile NAME absent from config.profiles (typo, implicit "default" with
+   *    no profiles table, removed profile): return `undefined` = the global
+   *    ceiling unchanged (today's behaviour). There is no declared boundary to
+   *    enforce, so we don't invent a narrower one.
+   *  - Profile EXISTS but `resolveProfile` THROWS (unknown `inherits` parent, or
+   *    circular inheritance — K-CRIT): the profile is structurally broken. We do
+   *    NOT fail open to `undefined` (that would expose the full ceiling and
+   *    silently void a confinement profile whose `inherits` has a typo). Fail
+   *    CLOSED to a maximally-restrictive scope so a broken boundary enforces
+   *    EVERYTHING-denied, never nothing.
+   *  - Profile resolves cleanly: use its declared scope (`undefined` if it
+   *    declares none).
+   */
+  private async resolveActiveScope(
+    config: Config,
+    configDir: string,
+  ): Promise<ResolvedScope | undefined> {
+    const profileName =
+      this.connectionProfile ??
+      (await readActiveProfile(configDir)) ??
+      config.settings?.default_profile ??
+      "default";
+    // Record the resolved name so am_get_scope reports the SAME active profile
+    // the gateway gated on (Decision 6 no-drift), regardless of which branch
+    // below produces the scope.
+    this.activeProfileName = profileName;
+    if (!config.profiles?.[profileName]) {
+      // No such profile → no declared boundary → global ceiling (never wider).
+      return undefined;
+    }
+    try {
+      return resolveProfile(profileName, config).scope;
+    } catch {
+      // The named profile exists but its inheritance chain is broken. Fail
+      // CLOSED: an empty tool_groups narrows every group out (isToolInScope
+      // rule 4), so the broken confinement profile exposes nothing rather than
+      // the full ceiling. K-CRIT: never widen on a resolve failure.
+      return { toolGroups: [], allowTools: [], denyTools: [] };
+    }
+  }
+
+  /** ADR-0055: is a tool visible/callable under the global ceiling intersected
+   * with the active profile's Scope? Used by both tools/list and tools/call. */
+  private isToolScoped(toolName: string): boolean {
+    const ceiling = this.settings?.mcp_serve?.tools ?? DEFAULT_TOOL_GROUPS;
+    return isToolInScope(toolName, getToolGroup(toolName), ceiling, this.scope);
   }
 
   /**
@@ -3291,6 +3466,20 @@ export class McpServer {
             };
           }
         }
+        // ADR-0055 Decision 3: capture a connection-supplied profile name from
+        // the spec-legal `capabilities.experimental['am.profile']` channel (or
+        // the AM_MCP_PROFILE env fallback). stdio is one-client-per-process, so
+        // this scopes the whole process. The Scope itself is resolved lazily in
+        // refreshSettings (which runs before tools/list and tools/call).
+        const caps = params.capabilities as Record<string, unknown> | undefined;
+        const experimental = caps?.experimental as Record<string, unknown> | undefined;
+        const expProfile = experimental?.["am.profile"];
+        const envProfile = process.env.AM_MCP_PROFILE;
+        if (typeof expProfile === "string" && expProfile.length > 0) {
+          this.connectionProfile = expProfile;
+        } else if (typeof envProfile === "string" && envProfile.length > 0) {
+          this.connectionProfile = envProfile;
+        }
         // Flip the init flag AFTER we've decided this is a valid initialize.
         // A failed negotiation (above) does NOT mark the session initialized.
         this.initialized = true;
@@ -3319,12 +3508,12 @@ export class McpServer {
         return null;
 
       case "tools/list": {
-        // Filter tools by configured tool groups (ADR-0021)
+        // Filter by the active profile's runtime Scope intersected with the
+        // global tool-group ceiling (ADR-0055, superseding ADR-0021's
+        // global-only filter). A profile without `scope` resolves to the global
+        // ceiling, so the default surface is unchanged.
         await this.refreshSettings();
-        const enabledGroups = new Set<McpToolGroup>(
-          this.settings?.mcp_serve?.tools ?? DEFAULT_TOOL_GROUPS,
-        );
-        let visibleTools = this.tools.filter((t) => enabledGroups.has(getToolGroup(t.def.name)));
+        let visibleTools = this.tools.filter((t) => this.isToolScoped(t.def.name));
         // Auth gate (Wave 2.B): if no token is configured AND unsafe-local is
         // not enabled, hide write-tier tools from discovery. Read-only stays
         // visible for unauthenticated clients.
@@ -3341,7 +3530,7 @@ export class McpServer {
             // fields — clients that don't read x-am simply ignore it.
             tools: visibleTools.map((t) => ({
               ...t.def,
-              "x-am": buildToolMetadata(t.def.name, t.tier),
+              "x-am": buildToolMetadata(t.def.name, t.tier, this.auth.token !== undefined),
             })),
           },
         };
@@ -3360,6 +3549,32 @@ export class McpServer {
             error: {
               code: -32601,
               message: `Unknown tool: ${toolName}. Use tools/list to see available tools.`,
+            },
+          };
+        }
+
+        // ADR-0055 Decision 2: when a profile declares a `scope`, it is an
+        // access boundary enforced at DISPATCH too, not only at discovery —
+        // hiding a tool from tools/list is not a boundary (an agent can call a
+        // name it saw before switching profile, or hallucinated). We gate calls
+        // ONLY when a Scope is active: the global `settings.mcp_serve.tools`
+        // groups remain a DISCOVERY-only filter (ADR-0021 semantics — calling a
+        // non-core tool without configuring groups has always worked and is
+        // gated by tier/auth, not group). `this.scope` is defined only when the
+        // active profile opted into scoping. (refreshSettings ran above.)
+        if (this.scope && !this.isToolScoped(toolName)) {
+          // Use the name resolveActiveScope actually resolved the enforced scope
+          // from (connection am.profile → state.toml → default_profile → default).
+          // Re-deriving here would drop the state.toml term and could name a
+          // DIFFERENT profile than the one whose scope just refused the call
+          // (same no-drift rationale as am_get_scope's ToolContext.activeScope).
+          const activeProfile = this.activeProfileName;
+          return {
+            jsonrpc: "2.0",
+            id,
+            error: {
+              code: -32601,
+              message: `Tool "${toolName}" is not available in the active profile "${activeProfile}". Its tool group is outside the profile's scope. Use tools/list to see the tools this profile exposes.`,
             },
           };
         }
@@ -3435,8 +3650,18 @@ export class McpServer {
           const progressToken: string | number | undefined =
             typeof rawToken === "string" || typeof rawToken === "number" ? rawToken : undefined;
           const sink = this.progressSink;
+          // ADR-0055 Decision 6: hand am_get_scope the gateway's own resolved
+          // view (refreshSettings ran above for tools/call), so its manifest is
+          // built from the exact scope the dispatch gate enforces — including
+          // the connection-supplied am.profile and the K-CRIT fail-closed scope.
+          const activeScope = {
+            profileName: this.activeProfileName,
+            scope: this.scope,
+            ceiling: this.settings?.mcp_serve?.tools ?? DEFAULT_TOOL_GROUPS,
+          };
           const ctx: ToolContext = {
             progressToken,
+            activeScope,
             emitProgress: (payload) => {
               if (progressToken === undefined) return;
               // REV-2 HIGH-1 fix: redact secret-shaped content in the progress

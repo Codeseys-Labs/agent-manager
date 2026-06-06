@@ -1,6 +1,7 @@
 ---
-status: proposed
+status: accepted
 date: 2026-06-04
+accepted: 2026-06-05
 ---
 
 # ADR-0056: Remote Streamable-HTTP MCP Transport

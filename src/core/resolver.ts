@@ -1,4 +1,18 @@
-import type { Config, Profile, Server } from "./schema";
+import type { Config, McpToolGroup, Profile, Server } from "./schema";
+
+/**
+ * ADR-0055: the resolved runtime access Scope for a profile. `tool_groups`
+ * (when defined) narrows the global MCP tool-group ceiling; allow/deny adjust
+ * at the individual-tool grain. `undefined` for a field means "inherit the
+ * ceiling" (no narrowing); an empty `tool_groups` array means "no groups"
+ * (deliberately restrictive). See `resolveScopedToolGroups` /
+ * `isToolInScope` for how this composes with `settings.mcp_serve.tools`.
+ */
+export interface ResolvedScope {
+  toolGroups?: McpToolGroup[];
+  allowTools: string[];
+  denyTools: string[];
+}
 
 /** A fully resolved profile with all inheritance applied. */
 export interface ResolvedProfile {
@@ -9,6 +23,10 @@ export interface ResolvedProfile {
   instructions: string[];
   env: Record<string, string>;
   adapters: Record<string, unknown>;
+  /** ADR-0055 runtime access Scope. Present only when some profile in the
+   * inheritance chain declared a `scope` subtable; otherwise undefined, which
+   * the gateway treats as "use the global ceiling unchanged". */
+  scope?: ResolvedScope;
 }
 
 /** A server entry resolved from the catalog. */
@@ -56,8 +74,33 @@ export function resolveProfile(name: string, config: Config): ResolvedProfile {
   const serverTags: string[] = [];
   let env: Record<string, string> = {};
   let adapters: Record<string, unknown> = {};
+  // ADR-0055 Scope accumulation. `scopeDeclared` flips true the moment ANY
+  // profile in the chain sets a `scope` subtable, so a profile without scope
+  // resolves to `scope: undefined` (= global ceiling unchanged). tool_groups is
+  // child-wins (last non-undefined in parent→child order); allow/deny union
+  // parent-first (matching the array semantics used for servers/skills/etc).
+  let scopeDeclared = false;
+  let scopeToolGroups: McpToolGroup[] | undefined;
+  const scopeAllow: string[] = [];
+  const scopeDeny: string[] = [];
 
   for (const { profile } of chain) {
+    if (profile.scope) {
+      scopeDeclared = true;
+      if (profile.scope.tool_groups !== undefined) {
+        scopeToolGroups = [...profile.scope.tool_groups];
+      }
+      if (profile.scope.allow_tools) {
+        for (const t of profile.scope.allow_tools) {
+          if (!scopeAllow.includes(t)) scopeAllow.push(t);
+        }
+      }
+      if (profile.scope.deny_tools) {
+        for (const t of profile.scope.deny_tools) {
+          if (!scopeDeny.includes(t)) scopeDeny.push(t);
+        }
+      }
+    }
     if (profile.servers) {
       for (const s of profile.servers) {
         if (!servers.includes(s)) servers.push(s);
@@ -97,7 +140,96 @@ export function resolveProfile(name: string, config: Config): ResolvedProfile {
     if (!servers.includes(s)) servers.push(s);
   }
 
-  return { name, servers, skills, agents, instructions, env, adapters };
+  const scope: ResolvedScope | undefined = scopeDeclared
+    ? { toolGroups: scopeToolGroups, allowTools: scopeAllow, denyTools: scopeDeny }
+    : undefined;
+
+  return { name, servers, skills, agents, instructions, env, adapters, scope };
+}
+
+/**
+ * ADR-0055 Scope composition. Decide whether a single MCP tool is visible/
+ * callable under the active profile's resolved Scope, given the GLOBAL ceiling
+ * (the groups from `settings.mcp_serve.tools`) and the tool's own group.
+ *
+ * Composition (deny wins, ceiling never widened):
+ *   1. The tool's group MUST be in the global ceiling — Scope can only NARROW,
+ *      never widen beyond what the global settings already expose.
+ *   2. deny_tools removes the tool outright (highest precedence).
+ *   3. allow_tools re-includes a tool whose GROUP was narrowed out by
+ *      scope.tool_groups — but still only if its group is within the ceiling
+ *      (rule 1 holds: allow cannot escape the global ceiling).
+ *   4. Otherwise the tool's group must be in scope.tool_groups (when defined);
+ *      if scope.tool_groups is undefined, the group-level filter is the ceiling.
+ *
+ * `scope` undefined ⇒ no profile narrowing ⇒ visible iff group ∈ ceiling
+ * (identical to today's global-only behaviour).
+ */
+export function isToolInScope(
+  toolName: string,
+  toolGroup: McpToolGroup,
+  ceiling: readonly McpToolGroup[],
+  scope: ResolvedScope | undefined,
+): boolean {
+  // Rule 1: the global ceiling is absolute — a tool whose group is not exposed
+  // globally is never in scope, regardless of profile allow lists.
+  if (!ceiling.includes(toolGroup)) return false;
+  if (!scope) return true; // no profile narrowing → ceiling decides.
+  // Rule 2: explicit deny wins over everything below.
+  if (scope.denyTools.includes(toolName)) return false;
+  // Rule 3: explicit allow re-includes (still within the ceiling per rule 1).
+  if (scope.allowTools.includes(toolName)) return true;
+  // Rule 4: group-level narrowing (undefined tool_groups = inherit ceiling).
+  if (scope.toolGroups === undefined) return true;
+  return scope.toolGroups.includes(toolGroup);
+}
+
+/** A profile's effective MCP-scope manifest (ADR-0055 Decision 6). */
+export interface ScopeManifest {
+  profile: string;
+  /** The global ceiling (settings.mcp_serve.tools) the scope is intersected with. */
+  ceiling: McpToolGroup[];
+  /** Whether the profile declares any narrowing (false ⇒ ceiling-only). */
+  scoped: boolean;
+  /** Declared narrowing, when scoped. */
+  toolGroups?: McpToolGroup[];
+  allowTools: string[];
+  denyTools: string[];
+  /** Tool names visible/callable under ceiling ∩ scope (sorted). */
+  effectiveTools: string[];
+  /** Tool names present in the catalog but excluded by ceiling ∩ scope (sorted). */
+  excludedTools: string[];
+}
+
+/**
+ * Build the effective-scope manifest for a profile from the full tool catalog
+ * (name+group pairs), the global ceiling, and the resolved scope — using the
+ * SAME `isToolInScope` the gateway enforces, so `am profile show --tools` /
+ * `am_get_scope` can never disagree with what `tools/list`/`tools/call` do.
+ */
+export function buildScopeManifest(
+  profile: string,
+  catalog: ReadonlyArray<{ name: string; group: McpToolGroup }>,
+  ceiling: readonly McpToolGroup[],
+  scope: ResolvedScope | undefined,
+): ScopeManifest {
+  const effective: string[] = [];
+  const excluded: string[] = [];
+  for (const { name, group } of catalog) {
+    (isToolInScope(name, group, ceiling, scope) ? effective : excluded).push(name);
+  }
+  effective.sort();
+  excluded.sort();
+  return {
+    profile,
+    ceiling: [...ceiling],
+    scoped: scope !== undefined,
+    ...(scope?.toolGroups !== undefined ? { toolGroups: [...scope.toolGroups] } : {}),
+    allowTools: scope ? [...scope.allowTools] : [],
+    denyTools: scope ? [...scope.denyTools] : [],
+    effectiveTools: effective,
+    excludedTools: excluded,
+  };
 }
 
 /**

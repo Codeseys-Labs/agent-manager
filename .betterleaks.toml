@@ -1,0 +1,66 @@
+# betterleaks config — keeps all default detection rules, and SKIPS findings in
+# the handful of files whose "secrets" are deliberate redaction/detection test
+# fixtures or documentation examples (fake ghp_…/sk_live_…/tvly-…/user:pass@host
+# strings that EXIST to prove the credential-scrubbing & detection code works).
+# Keep this list TIGHT — every path was reviewed against the actual matched
+# content, and a real secret OUTSIDE these paths must still FAIL the scan
+# (verified: a planted ghp_-shaped string in a non-allowlisted file → exit 1).
+#
+# SYNTAX NOTE: betterleaks (gitleaks-derived) honors gitleaks-style
+# `[[allowlists]]` tables with a `paths` regex array. The earlier CEL
+# `filter = '''filter.matchesAny(attributes[?"path"]...)'''` form was a silent
+# NO-OP under the pinned v1.1.1 — scanning WITH and WITHOUT the config both
+# yielded the same 16 findings. Do NOT reintroduce the CEL filter.
+#
+# SCAN MODE:
+#   - CI secret-scan job scans the WORKING TREE:  betterleaks dir . --config …
+#     (NOT `git .`, which walks all commits and re-flags fixtures in old blobs a
+#      path allowlist can't reach — the gate would go red on history, not on a
+#      newly-introduced leak.)
+#   - lefthook pre-commit scans only STAGED changes:
+#       betterleaks git . --pre-commit --staged --config …
+#     (correct for a commit gate — it checks what you're about to commit.)
+# Both honor the [[allowlists]] paths below.
+
+betterleaksMinVersion = "1.1.0"
+
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Deliberate secret-shaped test fixtures & documentation examples (reviewed; not real credentials)"
+# Matched against the finding's file path (regex, anchored to end-of-path).
+paths = [
+  # Redaction / scrubbing tests — feed fake secrets to prove they get masked
+  '''test/lib/redact\.test\.ts$''',
+  '''test/mcp/error-redaction\.test\.ts$''',
+  '''test/web/config-redaction\.test\.ts$''',
+  '''test/web/sync-push-pull\.test\.ts$''',
+  '''test/web/servers-secret-encryption\.test\.ts$''',
+  '''test/core/git\.test\.ts$''',
+  '''test/mcp/server\.test\.ts$''',
+  '''test/commands/secrets-rewrap\.test\.ts$''',
+  '''test/commands/secrets-revoke\.test\.ts$''',
+  # Credential-detection / refusal tests — fake api_key/token URLs as inputs
+  '''test/core/url-credentials\.test\.ts$''',
+  '''test/core/apply-url-credential-refuse\.test\.ts$''',
+  '''test/core/secret-detection\.test\.ts$''',
+  '''test/commands/mcp-superset\.test\.ts$''',
+  # Source files that embed example secret-shaped strings in docs/patterns
+  '''src/core/git\.ts$''',
+  '''src/lib/redact\.ts$''',
+  # Research/design docs with illustrative (fake) API-key examples
+  '''research/adapters/secrets-encryption-strategies\.md$''',
+  '''docs/research/.*/lens-c-per-server-secret-indirection\.md$''',
+]
+
+[[allowlists]]
+description = "Vendored / generated / local-only trees — never part of the shipped source (dir mode does not honor .gitignore)"
+paths = [
+  '''(^|/)node_modules/''',
+  '''(^|/)dist/''',
+  '''(^|/)coverage/''',
+  '''(^|/)\.git/''',
+  '''(^|/)\.claude/''',
+  '''(^|/)worktree-[^/]+/''',
+]

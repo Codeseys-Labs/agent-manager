@@ -257,6 +257,73 @@ describe("Web API", () => {
     expect(updated.description).toBe("Updated fetch server");
   });
 
+  // R2-LOW (#39): the write path must validate against ServerSchema. A
+  // malformed body used to be TOML-serialized as-is, then the NEXT readConfig
+  // threw on the invalid shape → config.toml bricked (a 201/200 followed by
+  // permanent 500s). Validate first; reject with 400; never persist.
+  it("POST /api/servers rejects an invalid transport with 400 (no write)", async () => {
+    const res = await request(app, "/api/servers", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: "bad-transport", command: "x", transport: "bogus" }),
+    });
+    expect(res.status).toBe(400);
+    const data = await res.json();
+    expect(data.error).toContain("Invalid server");
+    // Not persisted.
+    const listRes = await request(app, "/api/servers");
+    const listData = await listRes.json();
+    expect(
+      listData.servers.find((s: { name: string }) => s.name === "bad-transport"),
+    ).toBeUndefined();
+  });
+
+  it("POST /api/servers rejects a wrong-typed args field with 400", async () => {
+    // args must be string[]; a bare string is the kind of malformed body that
+    // previously serialized straight into config.toml and broke the next read.
+    const res = await request(app, "/api/servers", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: "bad-args", command: "x", args: "not-an-array" }),
+    });
+    expect(res.status).toBe(400);
+    const data = await res.json();
+    expect(data.error).toContain("Invalid server");
+  });
+
+  it("PUT /api/servers/:name rejects an invalid transport with 400 (no mutation)", async () => {
+    const res = await request(app, "/api/servers/fetch", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ transport: "grpc" }),
+    });
+    expect(res.status).toBe(400);
+    const data = await res.json();
+    expect(data.error).toContain("Invalid server");
+  });
+
+  // The whole point of validating BEFORE write: prove a rejected body leaves a
+  // STILL-LOADABLE config. readConfig throws on a poisoned config, so a clean
+  // resolve after the rejected mutations is the regression guard.
+  it("a rejected mutation leaves config.toml loadable (no poisoning)", async () => {
+    // Fire several bad bodies at both endpoints.
+    await request(app, "/api/servers", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: "poison1", command: "x", transport: "nope" }),
+    });
+    await request(app, "/api/servers/fetch", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ transport: "also-nope" }),
+    });
+    // Config still resolves (would throw if any bad body had been persisted).
+    const { readConfig } = await import("../../src/core/config");
+    const cfg = await readConfig(join(tmpDir, "config.toml"));
+    expect(cfg).toBeDefined();
+    expect(cfg?.servers?.fetch).toBeDefined();
+  });
+
   it("DELETE /api/servers/:name removes server", async () => {
     // First create a server to delete
     await request(app, "/api/servers", {

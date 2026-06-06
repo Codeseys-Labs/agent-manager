@@ -92,13 +92,13 @@ Marketplace: marketplace (7 subcommands)
 Tools: import, adapter (5 subcommands), doctor, secret (6 subcommands), session, version
 Interfaces: mcp-serve, tui, serve, completion (bash/zsh/fish)
 
-### MCP Server (43 tools: 38 canonical + 5 deprecated aliases, 6 groups) — Complete
+### MCP Server (44 tools: 39 canonical + 5 deprecated aliases, 6 groups) — Complete
 
 | Group | Tools | Default |
 |-------|-------|---------|
-| core (18) | servers, profiles, skills, instructions, status, config, doctor, add/remove/update, profile_create/delete, undo, use_profile, apply, import, push/pull | Yes |
+| core (19) | servers, profiles, skills, instructions, get_scope, status, config, doctor, add/remove/update, profile_create/delete, undo, use_profile, apply, import, push/pull | Yes |
 | registry (4) | search, install, list_installed, uninstall | No |
-| a2a (4) | discover, list, delegate, task_status | No |
+| a2a (4) | discover, list, task_status + 1 deprecated alias (delegate→invoke) | No |
 | wiki (5) | search, add, synthesize, briefing, harvest | No |
 | session (3) | list, export, search | No |
 | acp (9) | invoke, session_list, session_cancel, status, detect + 4 deprecated aliases (run_agent, acp_list_agents, acp_session_list, acp_session_cancel) | No |
@@ -153,7 +153,7 @@ Search, install, uninstall, update with provenance tracking. ADR-0024.
 | ACP registry | Done | Agent resolution from config + auto-detection |
 | CLI (am run) | Done | `am run <agent> "<prompt>"` + session subcommands |
 | Per-agent variants (multi-provider routing) | Done | ADR-0036 — `src/core/variant-resolver.ts`, `--variant` flag (rollout gate `AM_VARIANTS=1` removed in commit 203d967) |
-| MCP tools (4) | Done | run_agent, list_agents, session_list, session_cancel |
+| MCP tools (9) | Done | invoke, session_list, session_cancel, status, detect + 4 deprecated aliases (run_agent, acp_list_agents, acp_session_list, acp_session_cancel) |
 
 ### Distribution — Complete
 
@@ -171,7 +171,7 @@ Search, install, uninstall, update with provenance tracking. ADR-0024.
 | Interface | Status | Notes |
 |-----------|--------|-------|
 | CLI (citty + clack) | Done | 37 commands, --json/--quiet everywhere |
-| MCP Server | Done | 43 tools (38 canonical + 5 aliases), 3 permission tiers, 6 groups |
+| MCP Server | Done | 44 tools (39 canonical + 5 aliases), 3 permission tiers, 6 groups |
 | TUI (Silvery + React) | Done | Dashboard, server management (D/E/I/P keys), status, profiles |
 | Local Web (Hono + Bearer auth) | Done | REST API + SSE, server CRUD, wiki endpoints |
 | Stateless Web (CF Workers) | Done | Multi-backend git auth (ADR-0025), wiki browsing, git-backed config |
@@ -331,13 +331,13 @@ entries for orientation:
 | Metric | Count |
 |--------|-------|
 | Source files | 223 |
-| Test files | 273 |
-| Tests | 3,520 |
-| Assertions | 11,002 |
+| Test files | 284 |
+| Tests | 3,661 |
+| Assertions | 11,451 |
 | IDE adapters | 13 (+community) |
 | Platform adapters | 3 |
 | CLI commands | 37 |
-| MCP tools | 43 (38 canonical + 5 deprecated aliases) |
+| MCP tools | 44 (39 canonical + 5 deprecated aliases) |
 | ADRs | 57 |
 | `as any` in src/ | 0 |
 | `err: any` in src/ | 0 |

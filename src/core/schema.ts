@@ -173,7 +173,34 @@ export const AgentProfileSchema = z
   });
 export type AgentProfile = z.infer<typeof AgentProfileSchema>;
 
+// --- MCP tool groups (used by both ProfileSchema.scope and SettingsSchema) ---
+/** Available MCP tool groups for settings.mcp_serve.tools and profile.scope. */
+export const MCP_TOOL_GROUPS = ["core", "registry", "a2a", "wiki", "session", "acp"] as const;
+export type McpToolGroup = (typeof MCP_TOOL_GROUPS)[number];
+
+/** Default global tool-group ceiling when settings.mcp_serve.tools is unset
+ * (ADR-0021): just the core config-management tools. */
+export const DEFAULT_MCP_TOOL_GROUPS: McpToolGroup[] = ["core"];
+
 // --- Profile Schema ---
+/**
+ * ADR-0055: a Profile's `scope` projects a RUNTIME access boundary over the MCP
+ * tool surface (and, later, skills/agents/knowledge). It composes with the
+ * global `settings.mcp_serve.tools` by INTERSECTION — the global setting is the
+ * CEILING; `scope.tool_groups` (if set) narrows it; `allow_tools`/`deny_tools`
+ * adjust at the individual-tool grain (deny wins). A profile that omits `scope`
+ * preserves today's behaviour (the global surface), so the default tool set is
+ * unchanged. "Scope" is the BEHAVIOUR name (the access boundary the active
+ * Profile projects) — deliberately NOT a third schema type, to avoid colliding
+ * with AgentProfile (agent execution scope) and Profile (catalog subset).
+ */
+export const ProfileScopeSchema = z.object({
+  tool_groups: z.array(z.enum(MCP_TOOL_GROUPS)).optional(),
+  allow_tools: z.array(z.string()).optional(),
+  deny_tools: z.array(z.string()).optional(),
+});
+export type ProfileScope = z.infer<typeof ProfileScopeSchema>;
+
 export const ProfileSchema = z.object({
   description: z.string().optional(),
   inherits: z.string().optional(),
@@ -183,14 +210,12 @@ export const ProfileSchema = z.object({
   agents: z.array(z.string()).optional(),
   instructions: z.array(z.string()).optional(),
   env: z.record(z.string(), z.string()).optional(),
+  scope: ProfileScopeSchema.optional(),
   adapters: adaptersPassthrough,
 });
 export type Profile = z.infer<typeof ProfileSchema>;
 
 // --- Settings Schema ---
-/** Available MCP tool groups for settings.mcp_serve.tools */
-export const MCP_TOOL_GROUPS = ["core", "registry", "a2a", "wiki", "session", "acp"] as const;
-export type McpToolGroup = (typeof MCP_TOOL_GROUPS)[number];
 
 export const SettingsSchema = z
   .object({
