@@ -239,7 +239,7 @@ function loadExtensionServers(home: string, warnings: string[]): ImportedServer[
   try {
     parsed = JSON.parse(text);
   } catch {
-    warnings.push(`Malformed JSON: ${file}`);
+    if (text.trim() !== "") warnings.push(`Malformed JSON: ${file}`);
     return [];
   }
   const entries = parsed?.mcpServers;
@@ -302,7 +302,7 @@ function readJsoncFile(filePath: string, warnings: string[]): unknown | null {
   try {
     return parseJsonc(text);
   } catch {
-    warnings.push(`Malformed JSONC: ${filePath}`);
+    if (text.trim() !== "") warnings.push(`Malformed JSONC: ${filePath}`);
     return null;
   }
 }

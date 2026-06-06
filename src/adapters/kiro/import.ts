@@ -106,7 +106,7 @@ function readServersFromFile(
   try {
     json = JSON.parse(text);
   } catch {
-    warnings.push(`Malformed JSON: ${filePath}`);
+    if (text.trim() !== "") warnings.push(`Malformed JSON: ${filePath}`);
     return [];
   }
 

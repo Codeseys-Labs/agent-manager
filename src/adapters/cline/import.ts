@@ -70,7 +70,7 @@ function loadMcpSettings(home: string, warnings: string[]): ClineMcpSettings | n
   try {
     return JSON.parse(text) as ClineMcpSettings;
   } catch {
-    warnings.push(`Malformed JSON: ${settingsPath}`);
+    if (text.trim() !== "") warnings.push(`Malformed JSON: ${settingsPath}`);
     return null;
   }
 }

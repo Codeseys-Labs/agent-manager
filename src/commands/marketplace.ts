@@ -17,15 +17,21 @@ import { installPlugin, listInstalled, uninstallPlugin } from "../marketplace/in
 import { scanAllMarketplaces, searchPlugins } from "../marketplace/scanner";
 import { formatValidateSummary, validateMarketplace } from "../marketplace/validate";
 
-const MARKETPLACE_DEPRECATION_WARNING =
-  "WARNING: am marketplace is deprecated per ADR-0039 and will be removed. See ADRs/0039 for migration path.";
+// ADR-0039/0052 are SUPERSEDED: marketplace is DEFERRED to v2 (it pairs with the
+// hosted web platform), NOT deleted. The runtime notice must match that product
+// decision — "deprecated, will be removed" was a stale message that contradicted
+// AGENTS.md / ROADMAP.md and read as the feature dying.
+const MARKETPLACE_DEFERRED_NOTICE =
+  "NOTE: am marketplace is deferred to v2 (it pairs with the hosted web platform). " +
+  "For v1, use `am search` / `am install` for MCP servers and a git submodule/subtree " +
+  "(`am add skill --path …`) to vendor skills and agents.";
 
-let marketplaceDeprecationWarned = false;
+let marketplaceDeferredNoticeShown = false;
 
 function warnMarketplaceDeprecated(): void {
-  if (marketplaceDeprecationWarned) return;
-  marketplaceDeprecationWarned = true;
-  console.error(MARKETPLACE_DEPRECATION_WARNING);
+  if (marketplaceDeferredNoticeShown) return;
+  marketplaceDeferredNoticeShown = true;
+  console.error(MARKETPLACE_DEFERRED_NOTICE);
 }
 
 // ── Subcommands ──────────────────────────────────────────────────

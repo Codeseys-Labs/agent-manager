@@ -97,7 +97,9 @@ function readServersFromFile(
   try {
     json = JSON.parse(text);
   } catch {
-    warnings.push(`Malformed JSON: ${filePath}`);
+    // An empty/whitespace-only file is "no config", not malformed — many tools
+    // (e.g. VS Code) ship a 0-byte default mcp.json. Don't alarm the user.
+    if (text.trim() !== "") warnings.push(`Malformed JSON: ${filePath}`);
     return [];
   }
 

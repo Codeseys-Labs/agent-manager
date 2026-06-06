@@ -332,8 +332,8 @@ entries for orientation:
 |--------|-------|
 | Source files | 223 |
 | Test files | 284 |
-| Tests | 3,661 |
-| Assertions | 11,451 |
+| Tests | 3,663 |
+| Assertions | 11,455 |
 | IDE adapters | 13 (+community) |
 | Platform adapters | 3 |
 | CLI commands | 37 |
