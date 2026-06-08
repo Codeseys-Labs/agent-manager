@@ -274,7 +274,9 @@ export async function createApp(options?: CreateAppOptions) {
           enabled: true,
         };
 
-        const { scanServerForSecrets, substituteSecret } = await import("../core/secret-detection");
+        const { scanServerForSecrets, substituteSecret, pickEnvVarName } = await import(
+          "../core/secret-detection"
+        );
         const scanResult = await scanServerForSecrets(name, config.servers[name]);
         if (scanResult.secrets.length > 0) {
           let key = await loadKey(dir);
@@ -284,10 +286,14 @@ export async function createApp(options?: CreateAppOptions) {
             key = await importKey(b64);
           }
           for (const secret of scanResult.secrets) {
-            substituteSecret(config.servers[name], secret, secret.suggestedEnvVar);
             if (!config.settings) config.settings = {};
             if (!config.settings.env) config.settings.env = {};
-            config.settings.env[secret.suggestedEnvVar] = await encryptValue(secret.value, key);
+            const envVarName =
+              secret.source === "url-credential"
+                ? pickEnvVarName(config.settings.env, secret.suggestedEnvVar, name)
+                : secret.suggestedEnvVar;
+            substituteSecret(config.servers[name], secret, envVarName);
+            config.settings.env[envVarName] = await encryptValue(secret.value, key);
           }
         }
         return {
@@ -432,7 +438,7 @@ export async function createApp(options?: CreateAppOptions) {
         }
 
         if (imported.servers) {
-          const { scanServerForSecrets, substituteSecret } = await import(
+          const { scanServerForSecrets, substituteSecret, pickEnvVarName } = await import(
             "../core/secret-detection"
           );
           for (const [name, srv] of Object.entries(imported.servers)) {
@@ -445,10 +451,14 @@ export async function createApp(options?: CreateAppOptions) {
                 key = await importKey(b64);
               }
               for (const secret of scanResult.secrets) {
-                substituteSecret(config.servers![name], secret, secret.suggestedEnvVar);
                 if (!config.settings) config.settings = {};
                 if (!config.settings.env) config.settings.env = {};
-                config.settings.env[secret.suggestedEnvVar] = await encryptValue(secret.value, key);
+                const envVarName =
+                  secret.source === "url-credential"
+                    ? pickEnvVarName(config.settings.env, secret.suggestedEnvVar, name)
+                    : secret.suggestedEnvVar;
+                substituteSecret(config.servers![name], secret, envVarName);
+                config.settings.env[envVarName] = await encryptValue(secret.value, key);
               }
             }
           }

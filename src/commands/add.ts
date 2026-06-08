@@ -4,7 +4,7 @@ import { defineCommand } from "citty";
 import { resolveConfigDir } from "../core/config";
 import { withConfig } from "../core/controller";
 import type { AgentProfile, Instruction, Server, Skill } from "../core/schema";
-import { scanServerForSecrets, substituteSecret } from "../core/secret-detection";
+import { pickEnvVarName, scanServerForSecrets, substituteSecret } from "../core/secret-detection";
 import {
   encryptValue,
   generateKey,
@@ -185,10 +185,17 @@ async function addServer(
       }
 
       for (const secret of actionableSecrets) {
-        substituteSecret(server, secret, secret.suggestedEnvVar);
         if (!config.settings) config.settings = {};
         if (!config.settings.env) config.settings.env = {};
-        config.settings.env[secret.suggestedEnvVar] = await encryptValue(secret.value, key);
+        // URL creds derive a generic name (api_key→API_KEY) that can collide
+        // across servers; pick a collision-safe key so we never clobber a
+        // different secret. Env-var secrets reuse their original key name.
+        const envVarName =
+          secret.source === "url-credential"
+            ? pickEnvVarName(config.settings.env, secret.suggestedEnvVar, name)
+            : secret.suggestedEnvVar;
+        substituteSecret(server, secret, envVarName);
+        config.settings.env[envVarName] = await encryptValue(secret.value, key);
         secretsEncrypted++;
       }
     }

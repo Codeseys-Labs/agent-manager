@@ -4,8 +4,10 @@ import { join } from "node:path";
 import type { Config } from "../../src/core/schema";
 import {
   isSecretKeyName,
+  pickEnvVarName,
   scanConfigEnvVars,
   scanServerEnvVars,
+  scanServerForSecrets,
   substituteSecret,
 } from "../../src/core/secret-detection";
 import {
@@ -515,6 +517,68 @@ describe("secret pipeline integration", () => {
       );
 
       expect(server.env.OPENAI_API_KEY).toBe("${OPENAI_API_KEY}");
+    });
+  });
+
+  // ── URL-embedded credentials: same obfuscate→encrypt→decrypt lifecycle ──
+  describe("URL-embedded credential round-trip", () => {
+    test("detects a ?tavilyApiKey= in command, substitutes ${VAR}, encrypts, and decrypts at apply", async () => {
+      const { key } = await makeEncryptionKey();
+      const rawKey = "tvly-FAKEFIXTURE1234567890";
+      const server = {
+        command: `https://mcp.tavily.com/mcp/?tavilyApiKey=${rawKey}`,
+      };
+
+      // Step 1: the UNIFIED scanner surfaces the URL credential (Tier 1.5).
+      const scan = await scanServerForSecrets("tavily", server);
+      const urlSecret = scan.secrets.find((s) => s.source === "url-credential");
+      expect(urlSecret).toBeDefined();
+      expect(urlSecret?.location).toBe("command");
+      expect(urlSecret?.key).toBe("tavilyApiKey");
+      expect(urlSecret?.value).toBe(rawKey); // raw value, for encryption
+      expect(urlSecret?.suggestedEnvVar).toBe("TAVILYAPIKEY"); // bare name
+
+      // Step 2: obfuscate the command + encrypt the value into settings.env.
+      if (!urlSecret) throw new Error("url secret not detected");
+      const settingsEnv: Record<string, string> = {};
+      const envVarName = pickEnvVarName(settingsEnv, urlSecret.suggestedEnvVar, "tavily");
+      substituteSecret(server, urlSecret, envVarName);
+      settingsEnv[envVarName] = await encryptValue(urlSecret.value, key);
+
+      // Command now references ${VAR}; plaintext key is gone.
+      expect(server.command).toBe("https://mcp.tavily.com/mcp/?tavilyApiKey=${TAVILYAPIKEY}");
+      expect(server.command).not.toContain(rawKey);
+      expect(isEncrypted(settingsEnv.TAVILYAPIKEY)).toBe(true);
+
+      // Step 3: at APPLY, interpolateEnvAsync must decrypt settings.env and
+      // resolve the ${VAR} INSIDE the command URL — the round-trip that was
+      // broken before (extraEnv was never seeded from settings.env).
+      const config: Config = {
+        servers: { tavily: { ...server, transport: "stdio", enabled: true } },
+        settings: { env: settingsEnv },
+      };
+      const { config: resolved } = await interpolateEnvAsync(config, { encryptionKey: key });
+      expect(resolved.servers?.tavily.command).toBe(
+        `https://mcp.tavily.com/mcp/?tavilyApiKey=${rawKey}`,
+      );
+    });
+
+    test("collision-safe env var naming when two servers derive the same name", () => {
+      // Two servers both with ?api_key= would both derive API_KEY; the second
+      // must NOT clobber the first's encrypted value.
+      const existing: Record<string, string> = { API_KEY: "enc:v1:firstserver" };
+      const picked = pickEnvVarName(existing, "API_KEY", "second-server");
+      expect(picked).toBe("SECOND_SERVER_API_KEY");
+      expect(picked).not.toBe("API_KEY");
+    });
+
+    test("a properly-obfuscated ${VAR} URL is NOT re-flagged as a secret", async () => {
+      const server = {
+        command: "https://mcp.tavily.com/mcp/?tavilyApiKey=${TAVILYAPIKEY}",
+      };
+      const scan = await scanServerForSecrets("tavily", server);
+      // The ${VAR} placeholder is exempt — no url-credential finding.
+      expect(scan.secrets.filter((s) => s.source === "url-credential")).toHaveLength(0);
     });
   });
 });

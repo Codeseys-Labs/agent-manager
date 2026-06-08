@@ -11,6 +11,7 @@ export { extractServerIdentity } from "../core/identity";
 import {
   type SecretScanResult,
   formatScanReport,
+  pickEnvVarName,
   redactSecret,
   scanConfigForSecrets,
   substituteSecret,
@@ -335,10 +336,14 @@ export const importCommand = defineCommand({
               const server = config.servers[result.serverName];
               if (!server) continue;
               for (const secret of result.secrets) {
-                substituteSecret(server, secret, secret.suggestedEnvVar);
                 if (!config.settings) config.settings = {};
                 if (!config.settings.env) config.settings.env = {};
-                config.settings.env[secret.suggestedEnvVar] = await encryptValue(secret.value, key);
+                const envVarName =
+                  secret.source === "url-credential"
+                    ? pickEnvVarName(config.settings.env, secret.suggestedEnvVar, result.serverName)
+                    : secret.suggestedEnvVar;
+                substituteSecret(server, secret, envVarName);
+                config.settings.env[envVarName] = await encryptValue(secret.value, key);
                 totalEncrypted++;
               }
             }

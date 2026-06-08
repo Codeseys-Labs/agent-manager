@@ -44,7 +44,10 @@ const CREDENTIAL_QUERY_KEYS = [
  * `{{TOKEN}}` are explicitly NOT credentials. Users use these for env
  * interpolation; flagging them defeats the entire purpose.
  */
-const PLACEHOLDER_VALUE = /^(?:\$\{[A-Z0-9_]+\}|\{\{[A-Z0-9_]+\}\}|<[A-Z0-9_]+>)$/;
+// `${VAR}` / `$${VAR}` (TOML escape for a literal `${VAR}`) / `{{VAR}}` / `<VAR>`.
+// Case-insensitive var names. A placeholder is never a leaked credential, so we
+// exempt all of these — including the `$$`-escaped literal form — from the scan.
+const PLACEHOLDER_VALUE = /^(?:\$\$?\{[A-Za-z0-9_]+\}|\{\{[A-Za-z0-9_]+\}\}|<[A-Za-z0-9_]+>)$/;
 
 export interface CredentialHit {
   /** Server name in the catalog */
@@ -53,9 +56,15 @@ export interface CredentialHit {
   url: string;
   /** Query param key that triggered the rule */
   queryKey: string;
-  /** Redacted preview of the value (first 6 chars + …) */
+  /** Redacted preview of the value (first 6 chars + …) — for display/errors. */
   redactedValue: string;
-  /** Suggested env-var name to replace it with */
+  /**
+   * The RAW credential value. Used by the obfuscate-on-ingest write path to
+   * encrypt-and-store the secret under `suggestedEnvVar`. NEVER log/print this —
+   * use `redactedValue` for any user-facing output.
+   */
+  rawValue: string;
+  /** Suggested env-var name to replace it with (wrapped `${VAR}` form). */
   suggestedEnvVar: string;
 }
 
@@ -63,6 +72,35 @@ export interface ServerLike {
   command?: string;
   args?: string[];
   env?: Record<string, string>;
+}
+
+/**
+ * Derive a bare (un-wrapped) POSIX env-var name from a query-param key, e.g.
+ * `tavilyApiKey` → `TAVILYAPIKEY`, `api_key` → `API_KEY`. The result is a valid
+ * `settings.env` key and the base of the `${VAR}` placeholder. Bare (not
+ * `${...}`) because the encryption/catalog path stores under this name.
+ */
+export function deriveBareEnvName(queryKey: string): string {
+  return queryKey.replace(/[^A-Za-z0-9]/g, "_").toUpperCase();
+}
+
+/**
+ * Rewrite ONLY the named query param of `url` to `replacement`, leaving every
+ * other param (including sibling credentials) untouched. This is the
+ * write-path-safe core: unlike `buildSuggestedReplacementUrl`, it does NOT mask
+ * sibling credential params — the ingest pipeline rewrites each hit in its own
+ * pass, so masking siblings here would destroy a value we still need to encrypt.
+ * `${VAR}`-style replacements are de-percent-encoded so the stored command is
+ * literally `?key=${VAR}` (what the interpolation engine expects).
+ */
+export function rewriteUrlParam(url: string, queryKey: string, replacement: string): string {
+  try {
+    const u = new URL(url);
+    u.searchParams.set(queryKey, replacement);
+    return u.toString().replace(encodeURIComponent(replacement), replacement);
+  } catch {
+    return url; // not a URL — leave as-is
+  }
 }
 
 /**
@@ -87,7 +125,8 @@ export function scanUrlForCredentials(url: string): Array<Omit<CredentialHit, "s
       url,
       queryKey: key,
       redactedValue: `${value.slice(0, 6)}…`,
-      suggestedEnvVar: `\${${key.replace(/[^A-Za-z0-9]/g, "_").toUpperCase()}}`,
+      rawValue: value,
+      suggestedEnvVar: `\${${deriveBareEnvName(key)}}`,
     });
   }
   return hits;
@@ -141,19 +180,18 @@ export function buildSuggestedReplacementUrl(
 ): string {
   try {
     const u = new URL(url);
-    u.searchParams.set(queryKey, envVar);
     // Mask every OTHER credential-shaped param so the displayed URL is
-    // safe to copy verbatim.
+    // safe to copy verbatim. (Display-only — the write path uses the
+    // non-masking `rewriteUrlParam` instead.)
     for (const [k, _v] of u.searchParams.entries()) {
       if (k === queryKey) continue;
       if (CREDENTIAL_QUERY_KEYS.some((re) => re.test(k))) {
         u.searchParams.set(k, "***REDACTED***");
       }
     }
-    // searchParams.set percent-encodes `${VAR}` → `%24%7BVAR%7D`. Undo
-    // that for the human-readable hint — ${VAR} is what the user has to
-    // type into their TOML verbatim.
-    return u.toString().replace(encodeURIComponent(envVar), envVar);
+    // Rewrite the target param last, via the shared core (handles the
+    // `${VAR}` de-percent-encoding).
+    return rewriteUrlParam(u.toString(), queryKey, envVar);
   } catch {
     return url; // fallback: show original if URL parse fails
   }

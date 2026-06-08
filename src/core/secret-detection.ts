@@ -15,6 +15,13 @@
  * detection (regex + entropy + tokenization on arbitrary strings).
  */
 
+import {
+  type CredentialHit,
+  deriveBareEnvName,
+  rewriteUrlParam,
+  scanServersForUrlCredentials,
+} from "./url-credentials";
+
 // ── Tier 1: Env var key name patterns ────────────────────────────────────────
 // If a key matches ANY of these, we treat the value as a secret.
 
@@ -87,15 +94,20 @@ const SECRET_KEY_PATTERNS: RegExp[] = [
 export interface DetectedSecret {
   /** Where the secret was found */
   location: "env" | "args" | "command";
-  /** Env var name (if location is env) */
+  /** Env var name (if location is env) OR query-param key (if url-credential) */
   key?: string;
   /** The actual secret value */
   value: string;
-  /** Arg index (if location is args) */
+  /** Arg index (if location is args, including a url-credential found in args) */
   index?: number;
   /** How it was detected */
-  source: "key-name" | "betterleaks";
-  /** Suggested ${VAR} replacement name */
+  source: "key-name" | "betterleaks" | "url-credential";
+  /**
+   * For a url-credential: where the credential-bearing URL lives. `substituteSecret`
+   * uses this to pick the right field to rewrite via `rewriteUrlParam`.
+   */
+  urlSource?: "command" | "args";
+  /** Suggested ${VAR} replacement name (bare name, e.g. TAVILYAPIKEY) */
   suggestedEnvVar: string;
 }
 
@@ -214,7 +226,41 @@ export async function scanServerWithBetterleaks(
 // ── Combined scan (Tier 1 + optional Tier 2) ─────────────────────────────────
 
 /**
- * Full scan: Tier 1 (key names) always, Tier 2 (betterleaks) when available.
+ * Tier 1.5: URL-embedded credentials (e.g. `?tavilyApiKey=tvly-…` in a server's
+ * command/args/adapter url). Tier-1 only looks at env KEY NAMES and Tier-2's
+ * betterleaks rules don't reliably match query-param creds, so these would
+ * otherwise slip past every audit/ingest path while the apply guard refuses
+ * them. We reuse the SAME detector the apply guard uses
+ * (`scanServersForUrlCredentials`) and map each hit to a DetectedSecret so URL
+ * creds flow through the identical substitute+encrypt+scan lifecycle as env
+ * secrets. Bare `suggestedEnvVar` (e.g. TAVILYAPIKEY) matches the env-secret
+ * contract (`substituteSecret` wraps it in `${…}`).
+ */
+export function scanServerForUrlCredentials(
+  name: string,
+  server: { command: string; args?: string[]; env?: Record<string, string> },
+): DetectedSecret[] {
+  const hits: CredentialHit[] = scanServersForUrlCredentials({ [name]: server });
+  return hits.map((h) => {
+    // Determine whether the credential URL is the command or an arg, so
+    // substituteSecret rewrites the right field.
+    const argIndex = (server.args ?? []).findIndex((a) => a === h.url);
+    return {
+      location: "command" as const,
+      key: h.queryKey,
+      value: h.rawValue,
+      ...(argIndex >= 0
+        ? { index: argIndex, urlSource: "args" as const }
+        : { urlSource: "command" as const }),
+      source: "url-credential" as const,
+      suggestedEnvVar: deriveBareEnvName(h.queryKey),
+    };
+  });
+}
+
+/**
+ * Full scan: Tier 1 (key names) always, Tier 1.5 (URL query-param creds), and
+ * Tier 2 (betterleaks) when available.
  */
 export async function scanServerForSecrets(
   name: string,
@@ -222,6 +268,9 @@ export async function scanServerForSecrets(
 ): Promise<SecretScanResult> {
   // Tier 1: always runs, zero dependencies
   const tier1 = scanServerEnvVars(name, server);
+
+  // Tier 1.5: URL-embedded query-param credentials (zero dependencies)
+  const urlSecrets = scanServerForUrlCredentials(name, server);
 
   // Tier 2: only if betterleaks is installed
   let tier2: SecretScanResult | null = null;
@@ -231,12 +280,16 @@ export async function scanServerForSecrets(
     // betterleaks not available, that's fine
   }
 
-  // Merge: Tier 1 results + any Tier 2 findings not already covered
+  // Merge: Tier 1 + Tier 1.5 (URL) + any Tier 2 findings not already covered by value.
   const allSecrets = [...tier1.secrets];
+  for (const s of urlSecrets) {
+    if (!allSecrets.some((e) => e.value === s.value)) allSecrets.push(s);
+  }
   if (tier2) {
     for (const secret of tier2.secrets) {
-      // Skip if Tier 1 already found this value
-      const alreadyCovered = tier1.secrets.some((s) => s.value === secret.value);
+      // Skip if an earlier tier already found this value (e.g. betterleaks
+      // re-flags a tavily key the URL tier already mapped to a ${VAR}).
+      const alreadyCovered = allSecrets.some((s) => s.value === secret.value);
       if (!alreadyCovered) {
         allSecrets.push(secret);
       }
@@ -260,6 +313,34 @@ export async function scanConfigForSecrets(
     }
   }
   return results;
+}
+
+/**
+ * Pick a collision-safe `settings.env` key for a URL-credential secret.
+ *
+ * Two unrelated servers can derive the SAME bare name (both have `?api_key=…` →
+ * `API_KEY`) yet hold DIFFERENT secrets. Because `encryptValue` is
+ * non-deterministic (random nonce), we cannot compare ciphertexts to tell
+ * "same secret, fine to reuse" from "different secret, must not clobber". So we
+ * fail safe: if the bare name is already taken, namespace by server name
+ * (`<SERVER>_<bare>`), and append a numeric suffix if even that is taken.
+ * Over-namespacing is harmless; clobbering a different secret is not.
+ *
+ * Env-var (Tier-1) secrets intentionally reuse the original key name (same
+ * provider, same var) and are NOT routed through this — only URL creds are.
+ */
+export function pickEnvVarName(
+  existingEnv: Record<string, string> | undefined,
+  bareName: string,
+  serverName: string,
+): string {
+  if (!existingEnv || !(bareName in existingEnv)) return bareName;
+  const prefix = serverName.replace(/[^A-Za-z0-9]/g, "_").toUpperCase();
+  const namespaced = `${prefix}_${bareName}`;
+  if (!(namespaced in existingEnv)) return namespaced;
+  let n = 2;
+  while (`${namespaced}_${n}` in existingEnv) n++;
+  return `${namespaced}_${n}`;
 }
 
 // ── Substitution + Display Utilities ─────────────────────────────────────────
@@ -287,6 +368,23 @@ export function substituteSecret(
       break;
     }
     case "command": {
+      // URL-embedded credential: rewrite ONLY the offending query param to the
+      // placeholder, via rewriteUrlParam (URL.searchParams-safe; does not touch
+      // sibling params). The credential URL may live in command OR an arg.
+      if (secret.source === "url-credential" && secret.key) {
+        const placeholder = `\${${envVarName}}`;
+        if (secret.urlSource === "args" && server.args && secret.index !== undefined) {
+          server.args[secret.index] = rewriteUrlParam(
+            server.args[secret.index],
+            secret.key,
+            placeholder,
+          );
+        } else {
+          server.command = rewriteUrlParam(server.command, secret.key, placeholder);
+        }
+        break;
+      }
+      // Legacy inline `key=value` form in the command string (non-URL).
       if (secret.key) {
         server.command = server.command.replace(
           `${secret.key}=${secret.value}`,

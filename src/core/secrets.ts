@@ -320,7 +320,6 @@ export async function interpolateEnvAsync(
   } = {},
 ): Promise<InterpolateResult> {
   const { encryptionKey, ageBackend, ...interpolateOpts } = options;
-  const result = interpolateEnv(config, interpolateOpts);
 
   const backends: DecodeBackends = {
     legacyKey: encryptionKey ?? null,
@@ -331,6 +330,29 @@ export async function interpolateEnvAsync(
     // and unknown envelopes still fail loud (that was the actual P0-3 leak).
     allowV1PassthroughWithoutKey: !encryptionKey,
   };
+
+  // Seed `${VAR}` interpolation from the DECRYPTED `settings.env` catalog so a
+  // reference like `?tavilyApiKey=${TAVILYAPIKEY}` inside a server command/url
+  // resolves from the encrypted catalog — not only from process.env. Without
+  // this, obfuscate-on-ingest (which stores the value encrypted under
+  // settings.env and rewrites the URL to ${VAR}) would render an UNRESOLVED
+  // placeholder into native configs. Caller-supplied extraEnv still wins (test
+  // overrides / explicit env take precedence over the catalog).
+  const settingsEnv = config.settings?.env;
+  const decryptedSettingsEnv: Record<string, string> = {};
+  if (settingsEnv) {
+    for (const [k, v] of Object.entries(settingsEnv)) {
+      if (typeof v !== "string") continue;
+      // Route enc: envelopes through the same fail-loud dispatcher; plaintext
+      // (or a ${VAR} pointing elsewhere) passes through unchanged.
+      decryptedSettingsEnv[k] = v.startsWith("enc:") ? await decodeEnvelope(v, backends) : v;
+    }
+  }
+  const mergedOpts: InterpolateOptions = {
+    ...interpolateOpts,
+    extraEnv: { ...decryptedSettingsEnv, ...(interpolateOpts.extraEnv ?? {}) },
+  };
+  const result = interpolateEnv(config, mergedOpts);
 
   // Walk the interpolated config and decode any encrypted envelopes via the
   // format-aware, fail-loud dispatcher. `decodeEnvelope` returns plaintext

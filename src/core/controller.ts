@@ -333,13 +333,17 @@ export async function applyResolved(
     const notices: string[] = [];
     const profileScoped = interpolated.profiles?.[profileName] !== undefined;
 
-    // Issue #3 URL-credential guard: scan the post-interpolation resolved
-    // config for credential-bearing query params before any adapter.export
-    // writes to disk. `interpolateEnvAsync` has already expanded `${VAR}`
-    // so what we scan is what would land in the user's native configs.
-    // On a hit we refuse the whole apply — catching one leak late is worse
-    // than catching all of them early.
-    const credentialHits = scanServersForUrlCredentials(resolved.servers ?? {});
+    // Issue #3 URL-credential guard: refuse to write native configs that would
+    // leak a credential embedded in a URL query param. We scan the RAW
+    // (pre-interpolation) profile-resolved servers, NOT the post-interpolation
+    // ones: `scanUrlForCredentials` exempts `${VAR}`-shaped values, so a
+    // properly obfuscated server (`?tavilyApiKey=${TAVILYAPIKEY}`, value stored
+    // encrypted in settings.env) PASSES, while a genuinely hardcoded raw key
+    // (`?tavilyApiKey=tvly-…`) is still refused. Scanning post-interpolation
+    // would wrongly refuse the obfuscated case too, since `${VAR}` has by then
+    // been decrypted to the real value — defeating obfuscate-on-ingest.
+    const rawResolved = buildResolvedConfig(config, profileName, configDir);
+    const credentialHits = scanServersForUrlCredentials(rawResolved.servers ?? {});
     if (credentialHits.length > 0) {
       throw new Error(formatCredentialHits(credentialHits));
     }

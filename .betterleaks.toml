@@ -46,6 +46,8 @@ paths = [
   '''test/core/apply-url-credential-refuse\.test\.ts$''',
   '''test/core/secret-detection\.test\.ts$''',
   '''test/commands/mcp-superset\.test\.ts$''',
+  # Secret detection→encryption pipeline integration (fake tvly-/sk- fixtures)
+  '''test/integration/secret-pipeline\.test\.ts$''',
   # Source files that embed example secret-shaped strings in docs/patterns
   '''src/core/git\.ts$''',
   '''src/lib/redact\.ts$''',
