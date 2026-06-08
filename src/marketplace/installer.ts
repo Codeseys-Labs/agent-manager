@@ -154,11 +154,12 @@ export function applyPlugin(
         `plugin "${manifest.name}".servers["${name}"].command`,
         { trustCommands: opts.trustCommands },
       );
+      const transport = serverDef.transport ?? "stdio";
       const server: Server = {
         command: serverDef.command,
         args: serverDef.args,
         env: serverDef.env,
-        transport: serverDef.transport ?? "stdio",
+        transport,
         enabled: true,
         description: `From plugin: ${manifest.name}`,
         _marketplace: {
@@ -169,7 +170,13 @@ export function applyPlugin(
           install_path: plugin.pluginDir,
         },
       };
-      if (serverDef.url) server.url = serverDef.url;
+      // Guard `url` on the RESOLVED transport (mirrors install.ts): the
+      // ServerSchema discriminated union (ADR-0057) forbids `url` on a stdio
+      // server, and writeConfig does NOT validate — so an unguarded copy here
+      // would silently persist a stdio+url server that bricks the config on the
+      // next read (ConfigSchema.parse throws). A plugin manifest may set `url`
+      // with `transport` absent, which resolves to stdio.
+      if (serverDef.url && transport !== "stdio") server.url = serverDef.url;
       config.servers[name] = server;
       result.servers.push(name);
     }
