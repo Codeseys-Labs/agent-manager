@@ -598,10 +598,12 @@ describe("MCP server", () => {
     const secretToken = "ghp_abcdefghijklmnopqrstuvwxyz0123456789";
     // Overwrite config.toml with a raw, schema-invalid file. We bypass
     // writeConfig (which would reject it) by writing the TOML text directly.
-    await dir.write(
-      "config.toml",
-      `[servers.leaky]\ncommand = "echo"\ntransport = "${secretToken}"\nenabled = true\n`,
-    );
+    // The secret-shaped value is the SERVER NAME and the server is invalid
+    // (missing `command`), so the Zod error echoes the token in the issue path
+    // — exercising the redactor. (ADR-0057: a secret in `transport` no longer
+    // leaks at all — the discriminated-union error names only the valid options,
+    // never the bad value — so we place the token where the error DOES echo it.)
+    await dir.write("config.toml", `[servers."${secretToken}"]\ntransport = "stdio"\n`);
 
     const server = new McpServer({ auth: { token: undefined, allowUnsafeLocal: true } });
     const resp = await server.handleRequest({
