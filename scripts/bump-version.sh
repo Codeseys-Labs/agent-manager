@@ -45,14 +45,15 @@ if [ -z "$VERSION" ]; then
   exit 1
 fi
 
-# Validate version format (semver: X.Y.Z with optional pre-release)
-case "$VERSION" in
-  [0-9]*.[0-9]*.[0-9]*) ;;
-  *)
-    printf "Error: invalid version format '%s' (expected X.Y.Z)\n" "$VERSION" >&2
-    exit 1
-    ;;
-esac
+# Validate version format. Strict SemVer X.Y.Z with an optional DOTTED
+# prerelease (-rc.N / -alpha.N / -beta.N). The dot makes N a numeric SemVer
+# identifier so rc.8 < rc.10; the old loose glob accepted "-rc8", which sorts
+# rc.10 < rc.7 in ASCII and breaks every semver-aware tool (and CI's
+# assert-version mirrors this exact ERE).
+if ! printf '%s' "$VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+(-(rc|alpha|beta)\.[0-9]+)?$'; then
+  printf "Error: invalid version format '%s' (expected X.Y.Z or X.Y.Z-(rc|alpha|beta).N, e.g. 0.5.0-rc.8)\n" "$VERSION" >&2
+  exit 1
+fi
 
 TAG="v${VERSION}"
 

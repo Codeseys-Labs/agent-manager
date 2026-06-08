@@ -415,6 +415,19 @@ bun run typecheck        # TypeScript checking
 bun run dev:web          # Local web UI dev (Wrangler)
 ```
 
+## Releasing
+
+Tag-triggered: pushing `vX.Y.Z[-rc.N]` runs
+[`.github/workflows/release.yml`](.github/workflows/release.yml), which builds
+the 5 platform binaries, publishes a GitHub Release (consumed by `install.sh`),
+regenerates the Homebrew formula, and stamps the CHANGELOG. The build bakes the
+version from the tag (`GITHUB_REF_NAME`), so the tag is the source of truth and
+CI's `assert-version` job fails the run if `package.json`, the CHANGELOG
+`[Unreleased]` section, or the dotted-prerelease (`-rc.N`, not `-rc8`) shape
+disagree. **npm is deferred** (unscoped name taken). Full runbook —
+pre-flight, the `scripts/bump-version.sh` driver, verification, and recovery —
+is in **[`RELEASING.md`](RELEASING.md)**.
+
 ## Adding a New Adapter
 
 Each adapter follows a 5-file core pattern under `src/adapters/<name>/`, plus
