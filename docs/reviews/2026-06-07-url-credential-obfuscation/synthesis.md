@@ -58,6 +58,26 @@ sense of safety — the worst failure mode for a secret pipeline).
 7. **G** — `formatScanReport`: add a `url-credential` → "url" label.
 8. Tests for every above (adapter.url ingest, betterleaks-only inline, 2× `?api_key=` via `scan --fix`, `${VAR}`-tag guard bypass, missing-key fail-loud), + `.betterleaks.toml` allowlist for new fixtures.
 
+## RESOLUTION (commit 628d9a5)
+
+All 6 findings fixed and re-verified. A second adversarial pass (6 agents,
+re-running each original attack + probing for fix-introduced regressions)
+returned **allClean: true — 6 confirmed-fixed, 0 problems**.
+
+| Finding | Fix | Re-verified |
+|---|---|---|
+| A adapter.url leak | thread `source`/`adapterName` through CredentialHit→DetectedSecret; `substituteSecret` rewrites `adapters[name].url` | ✅ |
+| F betterleaks no-op | `substituteSecret` returns bool; locates value across args/command; callers check return | ✅ |
+| C `scan --fix`/TUI collision | route url-creds through `pickEnvVarName` | ✅ |
+| D guard membership | membership from interpolated `resolved`, values from raw `config.servers[name]` | ✅ |
+| E missing-key leak | STRICT (`allowV1PassthroughWithoutKey:false`) backend for the interpolation catalog | ✅ |
+| G report label | `formatScanReport` → "url" + real location | ✅ |
+| Invariant (A+F) | never encrypt+count unless substitution provably removed plaintext | ✅ |
+
+Regression probes that held: happy-path round-trip (with key), ADR-0012 env-block
+passthrough (opaque, no key), age v2 envelopes, stdio servers pass, boolean-return
+consumers, redaction surfaces. 3674 tests / 0 fail.
+
 ## Executive verdict
 
 **6/10.** The core lifecycle and the audit-surface fix are sound and validated, but the
