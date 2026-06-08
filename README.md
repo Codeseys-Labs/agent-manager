@@ -129,7 +129,7 @@ bun run build -- --target bun-linux-x64    # build YOUR host target (see targets
 > `bun-darwin-arm64`, `bun-darwin-x64`, `bun-windows-x64`) or `--all` for every
 > target. When running from source via `bun run dev`, `am version` reports
 > `0.0.0-dev` (the real version is stamped into released binaries).
-
+>
 > **Homebrew and npm are coming at v1.0.** They are intentionally not published
 > yet — the unscoped npm name `agent-manager` is owned by an unrelated package,
 > and the Homebrew tap is not yet live. Until then use the `curl | sh` installer

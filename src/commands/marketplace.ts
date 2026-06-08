@@ -1,11 +1,13 @@
 /**
- * @deprecated Marketplace v1 is retired per ADR-0039. This command surface is
- * frozen for compatibility and scheduled for removal; use the MCP Registry for
- * servers and git-subtree/git-submodule bundles for skills/instructions/agents.
- * See ADRs/0039-marketplace-v1-scope-decision.md.
+ * Marketplace is DEFERRED to v2 (it pairs with the hosted web platform), NOT
+ * deleted — ADR-0039 (retire) and ADR-0052 (deletion) are superseded by that
+ * product decision (see AGENTS.md pillar 4 / ROADMAP.md). The command surface
+ * is retained but kept out of the v1 CLI's advertised path. For v1, use the MCP
+ * Registry (`am search`/`am install`) for servers and git submodule/subtree
+ * bundles for skills/instructions/agents.
  */
 import { defineCommand } from "citty";
-import { amError, debug, error, info, output } from "../lib/output";
+import { type OutputOptions, amError, debug, error, info, output, warn } from "../lib/output";
 import {
   addMarketplace,
   deriveMarketplaceName,
@@ -22,16 +24,18 @@ import { formatValidateSummary, validateMarketplace } from "../marketplace/valid
 // decision — "deprecated, will be removed" was a stale message that contradicted
 // AGENTS.md / ROADMAP.md and read as the feature dying.
 const MARKETPLACE_DEFERRED_NOTICE =
-  "NOTE: am marketplace is deferred to v2 (it pairs with the hosted web platform). " +
+  "am marketplace is deferred to v2 (it pairs with the hosted web platform). " +
   "For v1, use `am search` / `am install` for MCP servers and a git submodule/subtree " +
   "(`am add skill --path …`) to vendor skills and agents.";
 
 let marketplaceDeferredNoticeShown = false;
 
-function warnMarketplaceDeprecated(): void {
+// Route through the output helper (not console.error) so the notice respects
+// --quiet / --json output modes (CLI convention; CodeRabbit MD on #44).
+function warnMarketplaceDeprecated(opts: OutputOptions): void {
   if (marketplaceDeferredNoticeShown) return;
   marketplaceDeferredNoticeShown = true;
-  console.error(MARKETPLACE_DEFERRED_NOTICE);
+  warn(MARKETPLACE_DEFERRED_NOTICE, opts);
 }
 
 // ── Subcommands ──────────────────────────────────────────────────
@@ -75,8 +79,8 @@ const addCommand = defineCommand({
     verbose: { type: "boolean", alias: "v", default: false },
   },
   async run({ args }) {
-    warnMarketplaceDeprecated();
     const opts = { json: args.json, quiet: args.quiet, verbose: args.verbose };
+    warnMarketplaceDeprecated(opts);
     try {
       debug(`Adding marketplace from ${args.url}`, opts);
       const maxBytes = args["max-clone-bytes"]
@@ -118,8 +122,8 @@ const listCommand = defineCommand({
     verbose: { type: "boolean", alias: "v", default: false },
   },
   async run({ args }) {
-    warnMarketplaceDeprecated();
     const opts = { json: args.json, quiet: args.quiet, verbose: args.verbose };
+    warnMarketplaceDeprecated(opts);
     try {
       if (args.installed) {
         const installed = await listInstalled();
@@ -204,8 +208,8 @@ const installCommand = defineCommand({
     verbose: { type: "boolean", alias: "v", default: false },
   },
   async run({ args }) {
-    warnMarketplaceDeprecated();
     const opts = { json: args.json, quiet: args.quiet, verbose: args.verbose };
+    warnMarketplaceDeprecated(opts);
     try {
       const result = await installPlugin(args.plugin, { yes: args.yes });
       info(`Installed plugin "${result.plugin}" from marketplace "${result.marketplace}"`, opts);
@@ -241,8 +245,8 @@ const updateCommand = defineCommand({
     verbose: { type: "boolean", alias: "v", default: false },
   },
   async run({ args }) {
-    warnMarketplaceDeprecated();
     const opts = { json: args.json, quiet: args.quiet, verbose: args.verbose };
+    warnMarketplaceDeprecated(opts);
     try {
       const updated = await updateMarketplace(args.name as string | undefined, { yes: args.yes });
       for (const entry of updated) {
@@ -268,8 +272,8 @@ const removeCommand = defineCommand({
     verbose: { type: "boolean", alias: "v", default: false },
   },
   async run({ args }) {
-    warnMarketplaceDeprecated();
     const opts = { json: args.json, quiet: args.quiet, verbose: args.verbose };
+    warnMarketplaceDeprecated(opts);
     try {
       await removeMarketplace(args.name);
       info(`Removed marketplace "${args.name}"`, opts);
@@ -290,8 +294,8 @@ const searchCommand = defineCommand({
     verbose: { type: "boolean", alias: "v", default: false },
   },
   async run({ args }) {
-    warnMarketplaceDeprecated();
     const opts = { json: args.json, quiet: args.quiet, verbose: args.verbose };
+    warnMarketplaceDeprecated(opts);
     try {
       const results = await searchPlugins(args.query);
       if (args.json) {
@@ -339,8 +343,8 @@ const uninstallCommand = defineCommand({
     verbose: { type: "boolean", alias: "v", default: false },
   },
   async run({ args }) {
-    warnMarketplaceDeprecated();
     const opts = { json: args.json, quiet: args.quiet, verbose: args.verbose };
+    warnMarketplaceDeprecated(opts);
     try {
       const result = await uninstallPlugin(args.plugin);
       info(`Uninstalled plugin "${result.plugin}"`, opts);
@@ -373,8 +377,8 @@ const validateCommand = defineCommand({
     verbose: { type: "boolean", alias: "v", default: false },
   },
   async run({ args }) {
-    warnMarketplaceDeprecated();
     const opts = { json: args.json, quiet: args.quiet, verbose: args.verbose };
+    warnMarketplaceDeprecated(opts);
     try {
       const result = await validateMarketplace(args.path);
       if (args.json) {
