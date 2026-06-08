@@ -111,4 +111,34 @@ describe("applyResolved — URL-credential refusal (issue #3)", () => {
     });
     await expect(applyResolved(dir.path, { dryRun: true })).resolves.toBeTruthy();
   });
+
+  // Review finding D: a credential-bearing server activated into the profile via
+  // an interpolated `${VAR}` server tag is EXPORTED, so the guard must catch it.
+  // The old guard scanned the RAW resolved membership (raw tag != profile tag) and
+  // missed it, letting the plaintext key reach the native config.
+  test("refuses a credential server activated by a ${VAR}-interpolated server tag (finding D)", async () => {
+    if (!dir) throw new Error("test setup failed");
+    const prev = process.env.PROD_TAG;
+    process.env.PROD_TAG = "prod";
+    try {
+      await writeConfig(join(dir.path, "config.toml"), {
+        settings: { default_profile: "work" },
+        servers: {
+          tavily: {
+            command: "https://mcp.tavily.com/mcp/?tavilyApiKey=tvly-VARTAGLEAK1234567890",
+            transport: "streamable-http",
+            enabled: true,
+            tags: ["${PROD_TAG}"],
+          },
+        },
+        profiles: { work: { server_tags: ["prod"] } },
+      });
+      // The server's tag interpolates to "prod" → activated by the profile →
+      // exported. The guard must see it and refuse.
+      await expect(applyResolved(dir.path, { dryRun: true })).rejects.toThrow(/URL credential/);
+    } finally {
+      if (prev === undefined) Reflect.deleteProperty(process.env, "PROD_TAG");
+      else process.env.PROD_TAG = prev;
+    }
+  });
 });

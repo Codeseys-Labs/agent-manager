@@ -165,7 +165,7 @@ export async function launchTui(): Promise<void> {
 
         // Secret detection + encryption (runs under the lock so a second
         // importer can't race on settings.env writes).
-        const { scanConfigForSecrets, substituteSecret } = await import(
+        const { scanConfigForSecrets, substituteSecret, pickEnvVarName } = await import(
           "../core/secret-detection.ts"
         );
         const {
@@ -187,10 +187,16 @@ export async function launchTui(): Promise<void> {
             const server = config.servers[result.serverName];
             if (!server) continue;
             for (const secret of result.secrets) {
-              substituteSecret(server, secret, secret.suggestedEnvVar);
               if (!config.settings) config.settings = {};
               if (!config.settings.env) config.settings.env = {};
-              config.settings.env[secret.suggestedEnvVar] = await encryptValue(secret.value, key);
+              // Collision-safe env-var name for URL creds (review C), and only
+              // encrypt+store once the plaintext is provably removed (review A+F).
+              const envVar =
+                secret.source === "url-credential"
+                  ? pickEnvVarName(config.settings.env, secret.suggestedEnvVar, result.serverName)
+                  : secret.suggestedEnvVar;
+              if (!substituteSecret(server, secret, envVar)) continue;
+              config.settings.env[envVar] = await encryptValue(secret.value, key);
             }
           }
         }

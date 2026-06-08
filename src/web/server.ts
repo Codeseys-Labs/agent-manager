@@ -292,7 +292,9 @@ export async function createApp(options?: CreateAppOptions) {
               secret.source === "url-credential"
                 ? pickEnvVarName(config.settings.env, secret.suggestedEnvVar, name)
                 : secret.suggestedEnvVar;
-            substituteSecret(config.servers[name], secret, envVarName);
+            // Only store the encrypted copy once the plaintext is provably gone
+            // (review A+F). Otherwise skip — the apply guard refuses it later.
+            if (!substituteSecret(config.servers[name], secret, envVarName)) continue;
             config.settings.env[envVarName] = await encryptValue(secret.value, key);
           }
         }
@@ -457,7 +459,9 @@ export async function createApp(options?: CreateAppOptions) {
                   secret.source === "url-credential"
                     ? pickEnvVarName(config.settings.env, secret.suggestedEnvVar, name)
                     : secret.suggestedEnvVar;
-                substituteSecret(config.servers![name], secret, envVarName);
+                // Only store the encrypted copy once the plaintext is provably
+                // gone (review A+F); else skip — the apply guard refuses later.
+                if (!substituteSecret(config.servers![name], secret, envVarName)) continue;
                 config.settings.env[envVarName] = await encryptValue(secret.value, key);
               }
             }

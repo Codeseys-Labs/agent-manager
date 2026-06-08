@@ -580,5 +580,64 @@ describe("secret pipeline integration", () => {
       // The ${VAR} placeholder is exempt — no url-credential finding.
       expect(scan.secrets.filter((s) => s.source === "url-credential")).toHaveLength(0);
     });
+
+    // Review finding A: a credential in adapters.<x>.url must be SUBSTITUTED in
+    // the adapter url (not the command), or the plaintext survives in config.toml.
+    test("adapter.url credential is detected AND rewritten in the adapter url (finding A)", async () => {
+      const raw = "tvly-ADAPTERURLLEAK1234567890";
+      const server = {
+        command: "npx",
+        args: ["some-mcp"],
+        adapters: { cursor: { url: `https://mcp.tavily.com/mcp/?tavilyApiKey=${raw}` } },
+      };
+      const secrets = await scanServerForSecrets("tav", server).then((r) => r.secrets);
+      const hit = secrets.find((s) => s.source === "url-credential");
+      expect(hit?.urlSource).toBe("adapter");
+      expect(hit?.adapterName).toBe("cursor");
+      if (!hit) throw new Error("adapter url credential not detected");
+      const removed = substituteSecret(server, hit, hit.suggestedEnvVar);
+      expect(removed).toBe(true);
+      expect(server.adapters.cursor.url as string).toBe(
+        "https://mcp.tavily.com/mcp/?tavilyApiKey=${TAVILYAPIKEY}",
+      );
+      expect(JSON.stringify(server)).not.toContain(raw); // no plaintext anywhere
+    });
+
+    // Review finding A+F: substituteSecret returns false when it CANNOT remove
+    // the plaintext, so callers refuse instead of encrypting a decoy copy.
+    test("substituteSecret returns false when it cannot rewrite the location (finding A+F)", () => {
+      // url-credential pointing at an adapter that no longer exists.
+      const server = { command: "npx", adapters: {} };
+      const phantom = {
+        location: "command" as const,
+        key: "tavilyApiKey",
+        value: "tvly-PHANTOM1234567890",
+        source: "url-credential" as const,
+        urlSource: "adapter" as const,
+        adapterName: "cursor",
+        suggestedEnvVar: "TAVILYAPIKEY",
+      };
+      expect(substituteSecret(server, phantom, "TAVILYAPIKEY")).toBe(false);
+    });
+
+    // Review finding E: missing key at apply must FAIL LOUD, never splice an
+    // enc:v1: envelope into a command URL as if it were the plaintext key.
+    test("apply with a missing key fails loud instead of leaking ciphertext into the URL (finding E)", async () => {
+      const { key } = await makeEncryptionKey();
+      const env = await encryptValue("tvly-REALSECRET1234567890", key);
+      const config: Config = {
+        servers: {
+          tavily: {
+            command: "https://mcp.tavily.com/mcp/?tavilyApiKey=${TAVILYAPIKEY}",
+            transport: "streamable-http",
+            enabled: true,
+          },
+        },
+        settings: { env: { TAVILYAPIKEY: env } },
+      };
+      // No encryptionKey supplied → the catalog decode must throw, not pass
+      // the enc:v1: ciphertext through into the interpolated command.
+      await expect(interpolateEnvAsync(config, { encryptionKey: undefined })).rejects.toThrow();
+    });
   });
 });

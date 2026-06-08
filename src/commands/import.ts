@@ -342,7 +342,13 @@ export const importCommand = defineCommand({
                   secret.source === "url-credential"
                     ? pickEnvVarName(config.settings.env, secret.suggestedEnvVar, result.serverName)
                     : secret.suggestedEnvVar;
-                substituteSecret(server, secret, envVarName);
+                // INVARIANT: never encrypt+count unless the plaintext was removed
+                // (review A+F). If substitution can't rewrite the location, do
+                // NOT store an encrypted copy beside surviving plaintext — leave
+                // it for the apply guard to refuse loudly (fail-closed at apply).
+                if (!substituteSecret(server, secret, envVarName)) {
+                  continue;
+                }
                 config.settings.env[envVarName] = await encryptValue(secret.value, key);
                 totalEncrypted++;
               }

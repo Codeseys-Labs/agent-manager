@@ -341,11 +341,20 @@ export async function interpolateEnvAsync(
   const settingsEnv = config.settings?.env;
   const decryptedSettingsEnv: Record<string, string> = {};
   if (settingsEnv) {
+    // STRICT decode for the interpolation catalog (review finding E): a
+    // settings.env value is about to be SPLICED into a command/url, so it MUST
+    // become usable plaintext or the apply must abort. We therefore disable the
+    // ADR-0012 v1-passthrough here — without a key, an `enc:v1:` value would
+    // otherwise pass through verbatim and render `?apiKey=enc:v1:…` into the
+    // native config (a broken server reported as a clean apply). The lenient
+    // passthrough remains for the env-BLOCK walk below (an opaque env-map entry
+    // that is never interpolated is allowed to stay ciphertext).
+    const catalogBackends: DecodeBackends = { ...backends, allowV1PassthroughWithoutKey: false };
     for (const [k, v] of Object.entries(settingsEnv)) {
       if (typeof v !== "string") continue;
-      // Route enc: envelopes through the same fail-loud dispatcher; plaintext
+      // enc: envelopes decode (fail-loud on missing/wrong backend); plaintext
       // (or a ${VAR} pointing elsewhere) passes through unchanged.
-      decryptedSettingsEnv[k] = v.startsWith("enc:") ? await decodeEnvelope(v, backends) : v;
+      decryptedSettingsEnv[k] = v.startsWith("enc:") ? await decodeEnvelope(v, catalogBackends) : v;
     }
   }
   const mergedOpts: InterpolateOptions = {

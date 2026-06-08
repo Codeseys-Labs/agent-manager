@@ -157,6 +157,7 @@ describe("formatCredentialHits", () => {
         redactedValue: "tvly-F…",
         rawValue: "tvly-FAKEFIXTURE1234567890",
         suggestedEnvVar: "${TAVILYAPIKEY}",
+        source: "command",
       },
     ]);
     expect(msg).not.toContain("tvly-FAKEFIXTURE1234567890");
@@ -183,6 +184,7 @@ describe("formatCredentialHits", () => {
         redactedValue: "first-…",
         rawValue: "first-raw-credential",
         suggestedEnvVar: "${API_KEY}",
+        source: "command",
       },
     ]);
     // api_key should be placeholdered.

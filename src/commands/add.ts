@@ -13,7 +13,7 @@ import {
   resolveKeyPath,
   saveKey,
 } from "../core/secrets";
-import { requireConfig } from "../lib/errors";
+import { AmError, requireConfig } from "../lib/errors";
 import { amError, error, info, output } from "../lib/output";
 
 const ENTITY_TYPES = ["server", "instruction", "skill", "agent"] as const;
@@ -194,7 +194,16 @@ async function addServer(
           secret.source === "url-credential"
             ? pickEnvVarName(config.settings.env, secret.suggestedEnvVar, name)
             : secret.suggestedEnvVar;
-        substituteSecret(server, secret, envVarName);
+        // INVARIANT: only encrypt+count once the plaintext is provably removed.
+        // If substitution could not rewrite the value (unknown location), refuse
+        // rather than store an encrypted copy beside surviving plaintext.
+        if (!substituteSecret(server, secret, envVarName)) {
+          throw new AmError(
+            `Could not obfuscate a detected secret in server "${name}".`,
+            "Remove the credential from the server definition manually, or report this as a bug.",
+            "SECRET_SUBSTITUTION_FAILED",
+          );
+        }
         config.settings.env[envVarName] = await encryptValue(secret.value, key);
         secretsEncrypted++;
       }

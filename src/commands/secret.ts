@@ -6,6 +6,7 @@ import { resolveConfigDir, tryReadConfig } from "../core/config";
 import { withConfig } from "../core/controller";
 import {
   formatScanReport,
+  pickEnvVarName,
   redactSecret,
   scanConfigForSecrets,
   substituteSecret,
@@ -381,11 +382,21 @@ const scanCommand = defineCommand({
           if (!server) continue;
 
           for (const secret of result.secrets) {
-            const envVar = secret.suggestedEnvVar;
-            substituteSecret(server, secret, envVar);
-
             if (!config.settings) config.settings = {};
             if (!config.settings.env) config.settings.env = {};
+            // URL creds derive generic names (api_key→API_KEY) that collide
+            // across servers; pick a collision-safe key (review finding C — this
+            // --fix path previously used the bare name and clobbered).
+            const envVar =
+              secret.source === "url-credential"
+                ? pickEnvVarName(config.settings.env, secret.suggestedEnvVar, result.serverName)
+                : secret.suggestedEnvVar;
+            // INVARIANT: only encrypt+count once the plaintext is provably gone
+            // (review A+F). If substitution can't rewrite the location, skip —
+            // do not store an encrypted copy beside surviving plaintext.
+            if (!substituteSecret(server, secret, envVar)) {
+              continue;
+            }
             config.settings.env[envVar] = await encryptValue(secret.value, encryptionKey);
 
             fixedSecrets.push({

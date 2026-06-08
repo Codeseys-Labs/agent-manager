@@ -104,9 +104,12 @@ export interface DetectedSecret {
   source: "key-name" | "betterleaks" | "url-credential";
   /**
    * For a url-credential: where the credential-bearing URL lives. `substituteSecret`
-   * uses this to pick the right field to rewrite via `rewriteUrlParam`.
+   * uses this to pick the right field to rewrite via `rewriteUrlParam`. `"adapter"`
+   * means it lives in `server.adapters[adapterName].url`.
    */
-  urlSource?: "command" | "args";
+  urlSource?: "command" | "args" | "adapter";
+  /** Adapter name when urlSource === "adapter". */
+  adapterName?: string;
   /** Suggested ${VAR} replacement name (bare name, e.g. TAVILYAPIKEY) */
   suggestedEnvVar: string;
 }
@@ -238,24 +241,28 @@ export async function scanServerWithBetterleaks(
  */
 export function scanServerForUrlCredentials(
   name: string,
-  server: { command: string; args?: string[]; env?: Record<string, string> },
+  server: {
+    command: string;
+    args?: string[];
+    env?: Record<string, string>;
+    adapters?: Record<string, unknown>;
+  },
 ): DetectedSecret[] {
   const hits: CredentialHit[] = scanServersForUrlCredentials({ [name]: server });
-  return hits.map((h) => {
-    // Determine whether the credential URL is the command or an arg, so
-    // substituteSecret rewrites the right field.
-    const argIndex = (server.args ?? []).findIndex((a) => a === h.url);
-    return {
-      location: "command" as const,
-      key: h.queryKey,
-      value: h.rawValue,
-      ...(argIndex >= 0
-        ? { index: argIndex, urlSource: "args" as const }
-        : { urlSource: "command" as const }),
-      source: "url-credential" as const,
-      suggestedEnvVar: deriveBareEnvName(h.queryKey),
-    };
-  });
+  // The hit now carries its exact location (command/args/adapter) from the
+  // detector — map it straight through so substituteSecret rewrites the RIGHT
+  // field. (Previously this guessed via findIndex and collapsed adapter-url
+  // hits to "command", leaving the adapter plaintext — review finding A.)
+  return hits.map((h) => ({
+    location: "command" as const, // DetectedSecret.location stays "command" for url-credential; urlSource disambiguates
+    key: h.queryKey,
+    value: h.rawValue,
+    source: "url-credential" as const,
+    urlSource: h.source,
+    ...(h.source === "args" ? { index: h.argIndex } : {}),
+    ...(h.source === "adapter" ? { adapterName: h.adapterName } : {}),
+    suggestedEnvVar: deriveBareEnvName(h.queryKey),
+  }));
 }
 
 /**
@@ -345,53 +352,100 @@ export function pickEnvVarName(
 
 // ── Substitution + Display Utilities ─────────────────────────────────────────
 
+/** A server shape substituteSecret can mutate, including adapter url fields.
+ * `adapters` is `Record<string, unknown>` to match the schema's passthrough
+ * type; the adapter url branch narrows each entry at the point of use. */
+type SubstitutableServer = {
+  command: string;
+  args?: string[];
+  env?: Record<string, string>;
+  adapters?: Record<string, unknown>;
+};
+
 /**
- * Replace a detected secret's value with a ${VAR} reference.
+ * Replace a detected secret's value with a ${VAR} reference, IN PLACE.
+ *
+ * Returns `true` if the substitution removed the plaintext, `false` if it could
+ * NOT (e.g. an arg/betterleaks finding with no index, or a location this fn
+ * doesn't know how to rewrite). Callers MUST check the return: encrypting +
+ * counting a secret as "fixed" while the plaintext survives is the worst
+ * failure mode (review findings A + F). On `false`, the caller must refuse
+ * rather than store an encrypted copy alongside the surviving plaintext.
  */
 export function substituteSecret(
-  server: { command: string; args?: string[]; env?: Record<string, string> },
+  server: SubstitutableServer,
   secret: DetectedSecret,
   envVarName: string,
-): void {
+): boolean {
+  const placeholder = `\${${envVarName}}`;
   switch (secret.location) {
     case "env": {
       if (server.env && secret.key) {
-        server.env[secret.key] = `\${${envVarName}}`;
+        server.env[secret.key] = placeholder;
+        return true;
       }
-      break;
+      return false;
     }
     case "args": {
-      if (server.args && secret.index !== undefined) {
+      // Includes betterleaks findings (source:"betterleaks") that point at an
+      // arg. Without a resolvable index we CANNOT rewrite — return false so the
+      // caller refuses instead of falsely reporting it encrypted (finding F).
+      if (server.args && secret.index !== undefined && secret.index < server.args.length) {
         const arg = server.args[secret.index];
-        server.args[secret.index] = arg.replace(secret.value, `\${${envVarName}}`);
+        const next = arg.replace(secret.value, placeholder);
+        if (next === arg) return false; // value not present at that index → no-op
+        server.args[secret.index] = next;
+        return true;
       }
-      break;
+      // Betterleaks finding with no index: try to locate the value in any arg
+      // or the command so we still obfuscate it rather than silently no-op.
+      if (server.args) {
+        for (let i = 0; i < server.args.length; i++) {
+          if (server.args[i].includes(secret.value)) {
+            server.args[i] = server.args[i].replaceAll(secret.value, placeholder);
+            return true;
+          }
+        }
+      }
+      if (server.command.includes(secret.value)) {
+        server.command = server.command.replaceAll(secret.value, placeholder);
+        return true;
+      }
+      return false;
     }
     case "command": {
       // URL-embedded credential: rewrite ONLY the offending query param to the
       // placeholder, via rewriteUrlParam (URL.searchParams-safe; does not touch
-      // sibling params). The credential URL may live in command OR an arg.
+      // sibling params). The credential URL may live in command, an arg, or an
+      // adapter url field.
       if (secret.source === "url-credential" && secret.key) {
-        const placeholder = `\${${envVarName}}`;
         if (secret.urlSource === "args" && server.args && secret.index !== undefined) {
-          server.args[secret.index] = rewriteUrlParam(
-            server.args[secret.index],
-            secret.key,
-            placeholder,
-          );
-        } else {
-          server.command = rewriteUrlParam(server.command, secret.key, placeholder);
+          const before = server.args[secret.index];
+          server.args[secret.index] = rewriteUrlParam(before, secret.key, placeholder);
+          return !server.args[secret.index].includes(secret.value);
         }
-        break;
+        if (secret.urlSource === "adapter" && secret.adapterName) {
+          const adapter = server.adapters?.[secret.adapterName] as { url?: unknown } | undefined;
+          if (adapter && typeof adapter.url === "string") {
+            const rewritten = rewriteUrlParam(adapter.url, secret.key, placeholder);
+            adapter.url = rewritten;
+            return !rewritten.includes(secret.value);
+          }
+          return false; // adapter/url vanished — cannot rewrite
+        }
+        server.command = rewriteUrlParam(server.command, secret.key, placeholder);
+        return !server.command.includes(secret.value);
       }
       // Legacy inline `key=value` form in the command string (non-URL).
       if (secret.key) {
+        const before = server.command;
         server.command = server.command.replace(
           `${secret.key}=${secret.value}`,
-          `${secret.key}=\${${envVarName}}`,
+          `${secret.key}=${placeholder}`,
         );
+        return server.command !== before;
       }
-      break;
+      return false;
     }
   }
 }
@@ -417,12 +471,23 @@ export function formatScanReport(results: SecretScanResult[]): string {
     for (const secret of result.secrets) {
       total++;
       const loc =
-        secret.location === "env"
-          ? `env.${secret.key}`
-          : secret.location === "args"
-            ? `args[${secret.index ?? "?"}]`
-            : "command";
-      const tier = secret.source === "key-name" ? "key-name" : "betterleaks";
+        secret.source === "url-credential"
+          ? secret.urlSource === "adapter"
+            ? `adapters.${secret.adapterName}.url`
+            : secret.urlSource === "args"
+              ? `args[${secret.index ?? "?"}].url`
+              : "command.url"
+          : secret.location === "env"
+            ? `env.${secret.key}`
+            : secret.location === "args"
+              ? `args[${secret.index ?? "?"}]`
+              : "command";
+      const tier =
+        secret.source === "key-name"
+          ? "key-name"
+          : secret.source === "url-credential"
+            ? "url"
+            : "betterleaks";
       lines.push(
         `  ${result.serverName.padEnd(20)} ${loc.padEnd(25)} ${redactSecret(secret.value).padEnd(20)} ${tier}`,
       );
