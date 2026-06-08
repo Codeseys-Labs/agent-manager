@@ -7,17 +7,26 @@ interface CacheEntry<T> {
   expiresAt: number;
 }
 
-class LRUCache<T> {
+// Exported (seed 06d8) so tests can construct an instance with an injected
+// clock and drive TTL expiry deterministically — no real waits, no global
+// Date mutation. Production callers omit `now` and get the system clock.
+export class LRUCache<T> {
   private map = new Map<string, CacheEntry<T>>();
   constructor(
     private maxSize: number,
     private ttlMs: number,
+    // Injectable clock seam: defaults to the system clock; tests pass a
+    // controllable `() => number`. Bind the reference (not a closure) so it's
+    // captured once at construction.
+    private now: () => number = Date.now,
   ) {}
 
   get(key: string): T | undefined {
     const entry = this.map.get(key);
     if (!entry) return undefined;
-    if (Date.now() > entry.expiresAt) {
+    // Strict `>`: an entry is still valid at exactly expiresAt and expires one
+    // tick later (test boundary: advance by ttlMs + 1 to cross it).
+    if (this.now() > entry.expiresAt) {
       this.map.delete(key);
       return undefined;
     }
@@ -33,7 +42,7 @@ class LRUCache<T> {
       const oldest = this.map.keys().next().value;
       if (oldest !== undefined) this.map.delete(oldest);
     }
-    this.map.set(key, { value, expiresAt: Date.now() + this.ttlMs });
+    this.map.set(key, { value, expiresAt: this.now() + this.ttlMs });
   }
 }
 

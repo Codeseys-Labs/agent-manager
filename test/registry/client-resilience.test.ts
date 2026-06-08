@@ -20,17 +20,12 @@
  *    so retry/backoff paths run in milliseconds instead of seconds, while still
  *    counting the fetch attempts. Restored in afterEach.
  *
- * == Missing seam (flagged as backlog) ==
- *  TTL EXPIRY: LRUCache.get() compares `Date.now() > entry.expiresAt`, and
- *  `expiresAt` is stamped via `Date.now() + CACHE_TTL_MS` (5 min) at set()-time.
- *  There is NO injectable clock — the cache reads `Date.now()` inline and the
- *  module-level `cache` singleton is not exported for inspection. We exercise
- *  TTL expiry by snapshotting and overriding `globalThis.Date.now` (restored in
- *  afterEach), which is the least-invasive way to drive the clock without a real
- *  5-minute wait. A first-class clock seam on LRUCache (constructor-injected
- *  `now()`) would make this deterministic without monkey-patching a global
- *  (tracked: seed agent-manager-06d8). The cache singleton is also process-global, so each
- *  test uses a UNIQUE base URL to keep cache keys from colliding across cases.
+ * == TTL ==
+ *  TTL expiry is covered deterministically in test/registry/lru-cache.test.ts
+ *  via LRUCache's injected-clock seam (constructor-injected `now()`, ADR seed
+ *  agent-manager-06d8 — now implemented). This file covers only network/retry/
+ *  fallback/eviction. The cache singleton is process-global, so each test uses a
+ *  UNIQUE base URL to keep cache keys from colliding across cases.
  */
 
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
@@ -73,7 +68,6 @@ function jsonResponse(body: unknown, init?: ResponseInit): Response {
 describe("registry/client resilience", () => {
   const originalFetch = globalThis.fetch;
   const originalSetTimeout = globalThis.setTimeout;
-  const originalDateNow = Date.now;
   let urlCounter = 0;
 
   beforeEach(() => {
@@ -94,7 +88,6 @@ describe("registry/client resilience", () => {
   afterEach(() => {
     globalThis.fetch = originalFetch;
     globalThis.setTimeout = originalSetTimeout;
-    Date.now = originalDateNow;
     Reflect.deleteProperty(process.env, "AM_REGISTRY_URL");
   });
 
@@ -206,33 +199,12 @@ describe("registry/client resilience", () => {
     });
   });
 
-  // ── TTL expiry (clock-stubbed; see missing-seam note at top) ─────
-
-  describe("TTL expiry", () => {
-    test("a cached entry past its TTL is re-fetched", async () => {
-      // No injectable clock on LRUCache — drive `Date.now` directly. See the
-      // file header's missing-seam note: a constructor-injected `now()` on
-      // LRUCache would remove the need to monkey-patch a global here.
-      let fakeNow = 1_000_000;
-      Date.now = () => fakeNow;
-
-      const liveFetch = mock(() => Promise.resolve(jsonResponse(["2.0.0"])));
-      globalThis.fetch = liveFetch as unknown as typeof fetch;
-
-      await getVersions("ttl-pkg"); // cached with expiresAt = fakeNow + 5min
-      expect(liveFetch.mock.calls.length).toBe(1);
-
-      // Still within TTL → served from cache, no new fetch.
-      fakeNow += 60_000; // +1 min
-      await getVersions("ttl-pkg");
-      expect(liveFetch.mock.calls.length).toBe(1);
-
-      // Advance past the 5-minute TTL → cache miss → re-fetch.
-      fakeNow += 5 * 60 * 1000 + 1;
-      await getVersions("ttl-pkg");
-      expect(liveFetch.mock.calls.length).toBe(2);
-    });
-  });
+  // TTL expiry is covered deterministically by the injected-clock unit tests in
+  // test/registry/lru-cache.test.ts (seed 06d8). The previous integration test
+  // here monkey-patched globalThis.Date.now, which the module-singleton cache's
+  // construction-time-captured `now` reference no longer observes — exactly the
+  // import-time-capture footgun the clock seam removes. This file now covers
+  // network/retry/fallback/eviction only.
 
   // ── getVersions ─────────────────────────────────────────────────
 
