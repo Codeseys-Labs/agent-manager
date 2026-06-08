@@ -7,7 +7,7 @@ skills/instructions/agents via git. Remember sessions in an LLM-wiki. Edit from
 terminal, local web, or cloud.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Tests: 3661 pass](https://img.shields.io/badge/tests-3661%20pass-green.svg)](#development)
+[![Tests: 3663 pass](https://img.shields.io/badge/tests-3663%20pass-green.svg)](#development)
 [![Coverage](https://img.shields.io/badge/coverage-see%20CI%20summary-blue.svg)](https://github.com/Codeseys-Labs/agent-manager/actions/workflows/ci.yml)
 [![Adapters: 13](https://img.shields.io/badge/adapters-13-purple.svg)](#adapter-support-matrix)
 [![MCP Tools: 44](https://img.shields.io/badge/MCP%20tools-44-orange.svg)](#mcp-server-mode)
@@ -118,10 +118,18 @@ curl -fsSL https://raw.githubusercontent.com/Codeseys-Labs/agent-manager/main/in
 
 # From source (requires Bun)
 git clone https://github.com/Codeseys-Labs/agent-manager.git
-cd agent-manager && bun install && bun run build
-# compiled binary -> dist/am-<platform>; add it to your PATH
+cd agent-manager && bun install
+bun run build -- --target bun-linux-x64    # build YOUR host target (see targets below)
+# compiled binary -> dist/am-linux-x64; add it to your PATH
+# Or skip the build and run directly:  bun run dev -- <command>   (e.g. bun run dev -- doctor)
 ```
 
+> **Build targets:** bare `bun run build` defaults to `bun-darwin-arm64` only. Pass
+> `--target <t>` for your platform (`bun-linux-x64`, `bun-linux-arm64`,
+> `bun-darwin-arm64`, `bun-darwin-x64`, `bun-windows-x64`) or `--all` for every
+> target. When running from source via `bun run dev`, `am version` reports
+> `0.0.0-dev` (the real version is stamped into released binaries).
+>
 > **Homebrew and npm are coming at v1.0.** They are intentionally not published
 > yet — the unscoped npm name `agent-manager` is owned by an unrelated package,
 > and the Homebrew tap is not yet live. Until then use the `curl | sh` installer
@@ -317,6 +325,32 @@ agents = ["researcher"]
 
 Switch with `am use work`. The active profile is stored locally (never committed), so each machine can use a different profile from the same config.
 
+#### Runtime tool-access scope (ADR-0055)
+
+A profile can also **scope which MCP tools an agent may use** at runtime — the same
+profile that subsets your catalog can narrow the live tool surface of `am mcp-serve`.
+Add a `[profiles.<name>.scope]` block:
+
+```toml
+[profiles.locked.scope]
+tool_groups = ["core", "wiki"]   # only these groups are exposed…
+deny_tools  = ["am_apply"]       # …minus specific tools (deny always wins)
+allow_tools = ["am_registry_search"]  # …plus specific re-includes (within the ceiling)
+```
+
+Scope only ever **narrows** the global `settings.mcp_serve.tools` ceiling — it can
+never widen it, and it's enforced at BOTH tool discovery (`tools/list` hides) and
+dispatch (`tools/call` refuses). Inspect exactly what a profile grants:
+
+```bash
+am profile show locked --tools          # human-readable manifest
+am profile show locked --tools --json   # machine-readable
+```
+
+Agents can introspect their own boundary over MCP via the read-only `am_get_scope`
+tool. The manifest is built from the same decision the gateway enforces, so it can
+never drift from what's actually allowed.
+
 ### Encryption and Secret Detection
 
 AES-256-GCM encryption for secrets in TOML. Encrypted values are stored as `enc:v1:nonce:ciphertext` and decrypted at apply time.
@@ -324,7 +358,7 @@ AES-256-GCM encryption for secrets in TOML. Encrypted values are stored as `enc:
 Dynamic secret detection scans server configs for inline API keys using patterns derived from [gitleaks](https://github.com/gitleaks/gitleaks), extended with AI/LLM provider-specific patterns. Detects keys across 40+ provider patterns (60 key-name regexes) including OpenAI, Anthropic, AWS, GitHub, Stripe, Tavily, and more.
 
 ```bash
-am secret init             # generate encryption key
+am secret generate-key     # generate encryption key
 am secret scan             # audit all servers for exposed secrets
 am secret scan --fix       # auto-substitute with ${VAR} + encrypt
 am secret set API_KEY      # encrypt and store a secret
@@ -920,7 +954,7 @@ Design decisions documented in [57 ADRs](ADRs/README.md).
 
 ```bash
 bun install                       # install dependencies
-bun test                          # run all tests (3661)
+bun test                          # run all tests (3663)
 bun test --coverage --coverage-reporter=text --coverage-reporter=lcov --config=/dev/null
                                   # run coverage locally; writes coverage/lcov.info
 bun test --watch                  # watch mode
@@ -948,7 +982,7 @@ cache for faster downloads.
 **CI pipeline** (`.github/workflows/ci.yml` — triggers on push to main + PRs):
 1. Type check — `tsc --noEmit` filtered to `src/` errors only
 2. Lint — `biome check`
-3. Test with coverage — `bun test --coverage --coverage-reporter=text --coverage-reporter=lcov --config=/dev/null` (3661 tests)
+3. Test with coverage — `bun test --coverage --coverage-reporter=text --coverage-reporter=lcov --config=/dev/null` (3663 tests)
    and publish `coverage/lcov.info` to the GitHub Actions job summary/artifact
 4. Build smoke test — all 5 platform targets
 5. Cross-platform build verify — Ubuntu + macOS + Windows
@@ -982,8 +1016,8 @@ today. It auto-activates if a token is ever added. GitHub Releases (consumed by
 |--------|-------|
 | Source files | 223 |
 | Test files | 284 |
-| Tests | 3,661 |
-| Assertions | 11,451 |
+| Tests | 3,663 |
+| Assertions | 11,455 |
 | IDE adapters | 13 (+community) |
 | Platform adapters | 3 |
 | CLI commands | 37 |

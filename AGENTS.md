@@ -199,7 +199,7 @@ src/
     git-providers.ts        # Git provider abstraction: GitHub, GitLab, Codeberg/Gitea (ADR-0025)
     public/                 # Static HTML
   lib/                      # Shared utilities (errors.ts, output.ts)
-test/                       # 284 files, 3661 tests, 11451 assertions
+test/                       # 284 files, 3663 tests, 11455 assertions
 ADRs/                       # 57 architectural decision records (0001-0056, incl. 0031a)
 scripts/
   build.ts                  # Cross-platform build (5 targets)
@@ -223,9 +223,9 @@ install.sh                  # curl-based installer (repo root, not scripts/)
 | `am undo` | Git revert HEAD |
 | `am log` | Git log with am formatting |
 | `am config` | View/edit configuration settings |
-| `am profile` | Manage profiles (list, show, create) |
+| `am profile` | Manage profiles (list, show, create, delete); `am profile show <name> --tools` prints the MCP access scope the profile grants (ADR-0055) |
 | `am doctor` | Health check: config validation, adapter status, git state |
-| `am secret set/get/init` | Manage AES-256-GCM encrypted secrets |
+| `am secret set/get/list/generate-key` | Manage AES-256-GCM encrypted secrets (`generate-key` creates the key; also `import-key`) |
 | `am secret scan` | Audit config for unencrypted secrets (`--fix` to auto-substitute) |
 | `am secret install-scanner` | Download BetterLeaks binary for Tier 2 scanning |
 | `am adapter list` | Show registered adapters with install status |
@@ -405,7 +405,7 @@ Workflow: `am wiki ingest --session <id>` → `am wiki search <query>` → `am w
 
 ```bash
 bun install              # Install dependencies
-bun test                 # Run all 3661 tests
+bun test                 # Run all 3663 tests
 bun test --watch         # Watch mode
 bun run dev              # Run CLI in dev mode
 bun run build            # Single binary (macOS arm64)

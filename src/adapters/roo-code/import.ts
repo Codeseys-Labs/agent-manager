@@ -91,7 +91,7 @@ function loadMcpSettings(home: string, warnings: string[]): Record<string, RooMc
   try {
     parsed = JSON.parse(text);
   } catch {
-    warnings.push(`Malformed JSON: ${settingsPath}`);
+    if (text.trim() !== "") warnings.push(`Malformed JSON: ${settingsPath}`);
     return null;
   }
 
@@ -123,7 +123,7 @@ function loadProjectMcp(
   try {
     parsed = JSON.parse(text);
   } catch {
-    warnings.push(`Malformed JSON: ${mcpPath}`);
+    if (text.trim() !== "") warnings.push(`Malformed JSON: ${mcpPath}`);
     return null;
   }
 

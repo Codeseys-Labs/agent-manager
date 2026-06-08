@@ -255,7 +255,7 @@ function readJsonConfig(filePath: string, warnings: string[]): ContinueConfig | 
   try {
     return JSON.parse(text) as ContinueConfig;
   } catch {
-    warnings.push(`Malformed JSON: ${filePath}`);
+    if (text.trim() !== "") warnings.push(`Malformed JSON: ${filePath}`);
     return null;
   }
 }

@@ -112,6 +112,29 @@ describe("copilot importConfig()", () => {
     expect(result.warnings.some((w) => w.includes("Malformed JSON"))).toBe(true);
   });
 
+  // Regression: an empty/whitespace-only mcp.json is "no config", NOT malformed.
+  // VS Code ships a 0-byte default mcp.json; warning "Malformed JSON" on it
+  // alarms users on every first-run import/detect/doctor.
+  test("treats an empty mcp.json as no-config, not malformed", async () => {
+    dir = await createTestDir("am-cp-import-");
+    const projectDir = `${dir.path}/project`;
+    await dir.write("project/.vscode/mcp.json", "");
+
+    const result = importConfig({ projectPath: projectDir }, dir.path);
+    expect(result.servers).toHaveLength(0);
+    expect(result.warnings.some((w) => w.includes("Malformed JSON"))).toBe(false);
+  });
+
+  test("treats a whitespace-only mcp.json as no-config, not malformed", async () => {
+    dir = await createTestDir("am-cp-import-");
+    const projectDir = `${dir.path}/project`;
+    await dir.write("project/.vscode/mcp.json", "  \n\t\n");
+
+    const result = importConfig({ projectPath: projectDir }, dir.path);
+    expect(result.servers).toHaveLength(0);
+    expect(result.warnings.some((w) => w.includes("Malformed JSON"))).toBe(false);
+  });
+
   test("ignores non-.instructions.md files in instructions dir", async () => {
     dir = await createTestDir("am-cp-import-");
     const projectDir = `${dir.path}/project`;

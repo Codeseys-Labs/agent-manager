@@ -2,6 +2,46 @@
 
 ## [Unreleased]
 
+### Added
+- **Runtime access-scoping profiles — the keystone (ADR-0055, supersedes ADR-0021).**
+  A `Profile` now projects a runtime **Scope** over the MCP tool surface: a
+  `[profiles.<name>.scope]` block (`tool_groups` / `allow_tools` / `deny_tools`)
+  narrows which tools `am mcp-serve` exposes. Scope composes with the global
+  `settings.mcp_serve.tools` ceiling by INTERSECTION — it can never widen the
+  ceiling, deny always wins — and is enforced at BOTH `tools/list` (hide) and
+  `tools/call` (refuse with `-32601`). The connection selects its profile via the
+  `initialize` capability `experimental["am.profile"]` or the `AM_MCP_PROFILE`
+  env var. A profile without `scope` behaves exactly as before.
+- **Scope auditability (ADR-0055 Decision 6).** `am profile show <name> --tools`
+  prints the effective access manifest (ceiling, scope, effective + excluded tool
+  names), and a read-only `am_get_scope` MCP tool returns the same manifest to an
+  agent — both built from the SAME decision the gateway enforces, so the manifest
+  can never drift from what is actually allowed (now 44 MCP tools).
+
+### Security
+- **Scope boundary fails CLOSED on a broken profile chain (K-CRIT).** An
+  unknown-`inherits` or circular profile resolves to an empty (deny-all) scope
+  rather than silently exposing the full ceiling.
+- **Working pre-commit + CI secret-scanning gate.** lefthook runs betterleaks on
+  staged changes; the CI `secret-scan` job scans the working tree
+  (`betterleaks dir .`) with a `[[allowlists]]`-based `.betterleaks.toml` that
+  allowlists the deliberate redaction-test fixtures while still failing on a real
+  secret in any other file. (Repairs a gate that was previously a no-op: a wrong
+  release-asset URL hard-failed the job, and the prior CEL allowlist syntax was
+  inert under the pinned betterleaks v1.1.1.)
+- **Web `POST`/`PUT /api/servers` validate against `ServerSchema` before write**,
+  so a malformed request body can no longer persist an unloadable `config.toml`.
+
+### Fixed
+- Several review-driven correctness fixes: `am_get_scope`/out-of-scope errors now
+  report the connection-resolved profile (not a re-derived default); betterleaks
+  `spawnSync` passes `env: process.env` so an in-process `PATH` change is honored;
+  cloud-mode web UI table column alignment + hidden local-only CRUD controls;
+  `am_config_show` advertises `auth_required` truthfully when a token is set.
+- Documentation/stat coherence: tool counts, ROADMAP/AGENTS drift, the marketplace
+  runtime notice (now "deferred to v2", matching ADR-0039/0052 supersession), and
+  the `am secret generate-key` command name.
+
 ## [0.5.0-rc7] - 2026-06-04
 
 ### Added
