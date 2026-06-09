@@ -70,16 +70,31 @@ if (existsSync(createAppPath)) {
   if (!existsSync(createAppBackup)) {
     copyFileSync(createAppPath, createAppBackup);
   }
+  // The stub we inject; also our "already-patched" marker. A unique-enough
+  // fragment of it tells a no-op replace apart from a genuine format change.
+  const stub = '({ cellEquals: () => true, bufferToText: () => "" } as any)';
+  const stubMarker = "cellEquals: () => true";
   const patched = src.replace(
     /require\("@silvery\/ag-term\/buffer"\)\s*as\s*typeof\s*import\("@silvery\/ag-term\/buffer"\)/g,
-    '({ cellEquals: () => true, bufferToText: () => "" } as any)',
+    stub,
   );
   if (patched !== src) {
     writeFileSync(createAppPath, patched);
     console.log("  Patched @silvery/create for bun --compile compatibility");
+  } else if (src.includes(stubMarker)) {
+    // Idempotent rebuild: the file is already stubbed (node_modules persisted
+    // from a prior build). NOT an error — the previous warning fired here on
+    // every rebuild and falsely implied the build was about to break.
+    console.log("  @silvery/create already patched — skipping");
   } else {
+    // Neither the require pattern NOR our stub is present: the upstream source
+    // shape changed and the regex no longer locates the dynamic require. THIS
+    // is the real failure mode — the binary will crash at runtime on the
+    // unresolved @silvery/ag-term/buffer require.
     console.warn("  ⚠ WARNING: Silvery patch regex did not match — build may fail at runtime");
-    console.warn("    Check if @silvery/create source format changed");
+    console.warn(
+      "    @silvery/create source format changed; update the patch regex in scripts/build.ts",
+    );
   }
 }
 

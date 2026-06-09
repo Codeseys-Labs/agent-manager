@@ -32,7 +32,22 @@ jobs:
           # run — so the HARD secret gate never actually executed on CI. Pin the
           # correct asset name (verified against the v1.1.1 release manifest).
           URL="https://github.com/betterleaks/betterleaks/releases/download/v${VER}/betterleaks_${VER}_linux_x64.tar.gz"
-          curl -fsSL "$URL" -o /tmp/betterleaks.tar.gz
+          # Retry the download: GitHub's release CDN intermittently returns 504
+          # (observed on this job), and a single `curl -f` failure would hard-red
+          # the whole HARD secret gate on a transient blip. 5 attempts, linear
+          # backoff. --retry covers curl's own transient HTTP/transport errors;
+          # the outer loop covers the gaps curl's flag doesn't (e.g. a 504 body).
+          for attempt in 1 2 3 4 5; do
+            if curl -fsSL --retry 3 --retry-delay 2 --retry-all-errors "$URL" -o /tmp/betterleaks.tar.gz; then
+              break
+            fi
+            if [ "$attempt" = 5 ]; then
+              echo "::error::failed to download betterleaks after 5 attempts ($URL)"
+              exit 1
+            fi
+            echo "betterleaks download attempt $attempt failed; retrying in $((attempt * 3))s…"
+            sleep "$((attempt * 3))"
+          done
           tar -xzf /tmp/betterleaks.tar.gz -C /tmp betterleaks
           install -m 0755 /tmp/betterleaks /usr/local/bin/betterleaks
           betterleaks version
