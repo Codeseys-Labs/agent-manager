@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.5.0-rc.8] - 2026-06-09
+
 ### Added
 - **Runtime access-scoping profiles — the keystone (ADR-0055, supersedes ADR-0021).**
   A `Profile` now projects a runtime **Scope** over the MCP tool surface: a

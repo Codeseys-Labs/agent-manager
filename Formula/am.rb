@@ -1,13 +1,13 @@
 class Am < Formula
   desc "control plane for AI agents — catalog, MCP gateway, protocol router (ACP/A2A), marketplace"
   homepage "https://github.com/Codeseys-Labs/agent-manager"
-  version "0.5.0-rc7"
+  version "0.5.0-rc.8"
   license "MIT"
 
   on_macos do
     on_arm do
       url "https://github.com/Codeseys-Labs/agent-manager/releases/download/v#{version}/am-darwin-arm64"
-      sha256 "b388e2f7688f1ff6d9838b04a268313ce5ab2668e0921c6005702df37a9b5519"
+      sha256 "0f3d5eaa740de95d11305af484ea6ef51ca54b732949f951776e06c22c7419f5"
       resource "am-acp-shell" do
         url "https://github.com/Codeseys-Labs/agent-manager/releases/download/v#{version}/am-acp-shell-darwin-arm64"
         sha256 "8d1f1d4e812c02abbe9ff40fc86c6d9db1659238d8c0ef27eaed8c017d5a9f0f"
@@ -15,7 +15,7 @@ class Am < Formula
     end
     on_intel do
       url "https://github.com/Codeseys-Labs/agent-manager/releases/download/v#{version}/am-darwin-x64"
-      sha256 "f1e7c9697079ef988e5570c4e0ef9c031ad98a4c16fe026fec97c26c526d7cbc"
+      sha256 "86728e24440413971ac2eb3297484dd6b4928f72d86ba2e49de5c1fc29f6101b"
       resource "am-acp-shell" do
         url "https://github.com/Codeseys-Labs/agent-manager/releases/download/v#{version}/am-acp-shell-darwin-x64"
         sha256 "0fc3537d9a725022efcf169edf34be9a7f5515c4356413d849a5947516cb0c33"
@@ -26,7 +26,7 @@ class Am < Formula
   on_linux do
     on_arm do
       url "https://github.com/Codeseys-Labs/agent-manager/releases/download/v#{version}/am-linux-arm64"
-      sha256 "b8f302e996f3686e653e2557e8b3b131127773951bc3714e79c603dea51acdb8"
+      sha256 "e7d7adb305222e8f308066f35044e14346d695d6409fb53eed1fcbfedf1a1051"
       resource "am-acp-shell" do
         url "https://github.com/Codeseys-Labs/agent-manager/releases/download/v#{version}/am-acp-shell-linux-arm64"
         sha256 "192eb6bf9d38d8b3c62c78cf274aa41b067cc8d6974ee499975ddec8464cab24"
@@ -34,7 +34,7 @@ class Am < Formula
     end
     on_intel do
       url "https://github.com/Codeseys-Labs/agent-manager/releases/download/v#{version}/am-linux-x64"
-      sha256 "78f951cbade223a651dcfb018111660644ad8e69a74ddc88ed025fac22ab8650"
+      sha256 "78bf1f167cdabf55f388b0ea236c5efd280e2adf7684bd47b16d3dbfc3a0a2a9"
       resource "am-acp-shell" do
         url "https://github.com/Codeseys-Labs/agent-manager/releases/download/v#{version}/am-acp-shell-linux-x64"
         sha256 "28dd4bcdaac5128b135849c296bf80915f333222e311dcee5a070ccb77e45fd6"
