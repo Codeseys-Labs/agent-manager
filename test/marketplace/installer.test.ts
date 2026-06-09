@@ -202,6 +202,83 @@ describe("marketplace/installer", () => {
       await expect(installPlugin("nonexistent-plugin")).rejects.toThrow(MarketplaceError);
     });
 
+    // Regression (ADR-0057): a plugin manifest may set `url` with `transport`
+    // absent, which resolves to stdio. The ServerSchema discriminated union
+    // forbids `url` on a stdio server, and writeConfig does NOT validate — so
+    // an unguarded `url` copy would silently persist a stdio+url server that
+    // bricks the config on the NEXT readConfig (ConfigSchema.parse throws).
+    // The installer must guard `url` on the resolved transport (mirrors
+    // install.ts). This test fails (config un-readable) before the guard.
+    test("does NOT write url onto a stdio server when manifest url has no transport", async () => {
+      const configDir = dir.path;
+      await initRepo(configDir);
+      await writeConfig(join(configDir, "config.toml"), {
+        settings: { default_profile: "default" },
+        servers: {},
+      });
+
+      const mpDir = join(dir.path, "url-no-transport-mp");
+      await createMockPlugin(mpDir, "url-plugin", {
+        name: "url-plugin",
+        description: "server with url but no transport",
+        version: "1.0.0",
+        servers: {
+          // url set, transport ABSENT → resolves to stdio
+          "url-server": {
+            command: "https://mcp.example.com/sse",
+            url: "https://mcp.example.com/sse",
+          },
+        },
+      } as PluginManifest);
+      await addMarketplace(mpDir, "url-mp");
+
+      // trustCommands: the command is URL-shaped (has a path separator), which
+      // the security layer otherwise refuses — that gate is orthogonal to the
+      // stdio+url schema guard under test here.
+      const result = await installPlugin("url-plugin", { trustCommands: true });
+      expect(result.servers).toEqual(["url-server"]);
+
+      // The persisted config MUST round-trip: readConfig runs ConfigSchema.parse,
+      // which throws on a stdio+url server. A clean read proves the guard held.
+      const updated = await readConfig(join(configDir, "config.toml"));
+      const srv = updated.servers?.["url-server"];
+      expect(srv).toBeDefined();
+      expect(srv?.transport).toBe("stdio");
+      // url must NOT have been copied onto the stdio server.
+      expect((srv as { url?: string }).url).toBeUndefined();
+    });
+
+    test("preserves url on a remote (streamable-http) plugin server", async () => {
+      const configDir = dir.path;
+      await initRepo(configDir);
+      await writeConfig(join(configDir, "config.toml"), {
+        settings: { default_profile: "default" },
+        servers: {},
+      });
+
+      const mpDir = join(dir.path, "remote-mp");
+      await createMockPlugin(mpDir, "remote-plugin", {
+        name: "remote-plugin",
+        description: "remote server with explicit transport + url",
+        version: "1.0.0",
+        servers: {
+          "remote-server": {
+            command: "https://mcp.example.com/mcp",
+            transport: "streamable-http",
+            url: "https://mcp.example.com/mcp",
+          },
+        },
+      } as PluginManifest);
+      await addMarketplace(mpDir, "remote-mp");
+
+      await installPlugin("remote-plugin", { trustCommands: true });
+
+      const updated = await readConfig(join(configDir, "config.toml"));
+      const srv = updated.servers?.["remote-server"];
+      expect(srv?.transport).toBe("streamable-http");
+      expect((srv as { url?: string }).url).toBe("https://mcp.example.com/mcp");
+    });
+
     test("registers community adapter in adapters.toml when manifest has adapter field", async () => {
       const configDir = dir.path;
       await initRepo(configDir);
