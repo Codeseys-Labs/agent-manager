@@ -29,7 +29,13 @@ pre-commit:
         fi
     lint:
       # Lint only staged source/test files. Biome is fast; scope to staged.
-      glob: "*.{ts,tsx,js,jsx,json}"
+      # Glob must match what biome actually processes: biome.json ignores
+      # *.json / *.toml / *.md, so including `json` here meant a json-only
+      # commit (e.g. a `package.json` version bump during a release) passed
+      # ONLY package.json to biome, which errored "No files were processed"
+      # and BLOCKED the commit. Scope the glob to biome's real languages so a
+      # bump/lockfile-only commit isn't falsely rejected.
+      glob: "*.{ts,tsx,js,mjs,cjs}"
       run: bunx @biomejs/biome check {staged_files}
 
 pre-push:
