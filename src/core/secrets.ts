@@ -320,7 +320,6 @@ export async function interpolateEnvAsync(
   } = {},
 ): Promise<InterpolateResult> {
   const { encryptionKey, ageBackend, ...interpolateOpts } = options;
-  const result = interpolateEnv(config, interpolateOpts);
 
   const backends: DecodeBackends = {
     legacyKey: encryptionKey ?? null,
@@ -331,6 +330,38 @@ export async function interpolateEnvAsync(
     // and unknown envelopes still fail loud (that was the actual P0-3 leak).
     allowV1PassthroughWithoutKey: !encryptionKey,
   };
+
+  // Seed `${VAR}` interpolation from the DECRYPTED `settings.env` catalog so a
+  // reference like `?tavilyApiKey=${TAVILYAPIKEY}` inside a server command/url
+  // resolves from the encrypted catalog — not only from process.env. Without
+  // this, obfuscate-on-ingest (which stores the value encrypted under
+  // settings.env and rewrites the URL to ${VAR}) would render an UNRESOLVED
+  // placeholder into native configs. Caller-supplied extraEnv still wins (test
+  // overrides / explicit env take precedence over the catalog).
+  const settingsEnv = config.settings?.env;
+  const decryptedSettingsEnv: Record<string, string> = {};
+  if (settingsEnv) {
+    // STRICT decode for the interpolation catalog (review finding E): a
+    // settings.env value is about to be SPLICED into a command/url, so it MUST
+    // become usable plaintext or the apply must abort. We therefore disable the
+    // ADR-0012 v1-passthrough here — without a key, an `enc:v1:` value would
+    // otherwise pass through verbatim and render `?apiKey=enc:v1:…` into the
+    // native config (a broken server reported as a clean apply). The lenient
+    // passthrough remains for the env-BLOCK walk below (an opaque env-map entry
+    // that is never interpolated is allowed to stay ciphertext).
+    const catalogBackends: DecodeBackends = { ...backends, allowV1PassthroughWithoutKey: false };
+    for (const [k, v] of Object.entries(settingsEnv)) {
+      if (typeof v !== "string") continue;
+      // enc: envelopes decode (fail-loud on missing/wrong backend); plaintext
+      // (or a ${VAR} pointing elsewhere) passes through unchanged.
+      decryptedSettingsEnv[k] = v.startsWith("enc:") ? await decodeEnvelope(v, catalogBackends) : v;
+    }
+  }
+  const mergedOpts: InterpolateOptions = {
+    ...interpolateOpts,
+    extraEnv: { ...decryptedSettingsEnv, ...(interpolateOpts.extraEnv ?? {}) },
+  };
+  const result = interpolateEnv(config, mergedOpts);
 
   // Walk the interpolated config and decode any encrypted envelopes via the
   // format-aware, fail-loud dispatcher. `decodeEnvelope` returns plaintext

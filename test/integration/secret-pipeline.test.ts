@@ -4,8 +4,10 @@ import { join } from "node:path";
 import type { Config } from "../../src/core/schema";
 import {
   isSecretKeyName,
+  pickEnvVarName,
   scanConfigEnvVars,
   scanServerEnvVars,
+  scanServerForSecrets,
   substituteSecret,
 } from "../../src/core/secret-detection";
 import {
@@ -515,6 +517,195 @@ describe("secret pipeline integration", () => {
       );
 
       expect(server.env.OPENAI_API_KEY).toBe("${OPENAI_API_KEY}");
+    });
+  });
+
+  // ── URL-embedded credentials: same obfuscate→encrypt→decrypt lifecycle ──
+  describe("URL-embedded credential round-trip", () => {
+    test("detects a ?tavilyApiKey= in command, substitutes ${VAR}, encrypts, and decrypts at apply", async () => {
+      const { key } = await makeEncryptionKey();
+      const rawKey = "tvly-FAKEFIXTURE1234567890";
+      const server = {
+        command: `https://mcp.tavily.com/mcp/?tavilyApiKey=${rawKey}`,
+      };
+
+      // Step 1: the UNIFIED scanner surfaces the URL credential (Tier 1.5).
+      const scan = await scanServerForSecrets("tavily", server);
+      const urlSecret = scan.secrets.find((s) => s.source === "url-credential");
+      expect(urlSecret).toBeDefined();
+      expect(urlSecret?.location).toBe("command");
+      expect(urlSecret?.key).toBe("tavilyApiKey");
+      expect(urlSecret?.value).toBe(rawKey); // raw value, for encryption
+      expect(urlSecret?.suggestedEnvVar).toBe("TAVILYAPIKEY"); // bare name
+
+      // Step 2: obfuscate the command + encrypt the value into settings.env.
+      if (!urlSecret) throw new Error("url secret not detected");
+      const settingsEnv: Record<string, string> = {};
+      const envVarName = pickEnvVarName(settingsEnv, urlSecret.suggestedEnvVar, "tavily");
+      substituteSecret(server, urlSecret, envVarName);
+      settingsEnv[envVarName] = await encryptValue(urlSecret.value, key);
+
+      // Command now references ${VAR}; plaintext key is gone.
+      expect(server.command).toBe("https://mcp.tavily.com/mcp/?tavilyApiKey=${TAVILYAPIKEY}");
+      expect(server.command).not.toContain(rawKey);
+      expect(isEncrypted(settingsEnv.TAVILYAPIKEY)).toBe(true);
+
+      // Step 3: at APPLY, interpolateEnvAsync must decrypt settings.env and
+      // resolve the ${VAR} INSIDE the command URL — the round-trip that was
+      // broken before (extraEnv was never seeded from settings.env).
+      const config: Config = {
+        servers: { tavily: { ...server, transport: "stdio", enabled: true } },
+        settings: { env: settingsEnv },
+      };
+      const { config: resolved } = await interpolateEnvAsync(config, { encryptionKey: key });
+      expect(resolved.servers?.tavily.command).toBe(
+        `https://mcp.tavily.com/mcp/?tavilyApiKey=${rawKey}`,
+      );
+    });
+
+    test("collision-safe env var naming when two servers derive the same name", () => {
+      // Two servers both with ?api_key= would both derive API_KEY; the second
+      // must NOT clobber the first's encrypted value.
+      const existing: Record<string, string> = { API_KEY: "enc:v1:firstserver" };
+      const picked = pickEnvVarName(existing, "API_KEY", "second-server");
+      expect(picked).toBe("SECOND_SERVER_API_KEY");
+      expect(picked).not.toBe("API_KEY");
+    });
+
+    test("a properly-obfuscated ${VAR} URL is NOT re-flagged as a secret", async () => {
+      const server = {
+        command: "https://mcp.tavily.com/mcp/?tavilyApiKey=${TAVILYAPIKEY}",
+      };
+      const scan = await scanServerForSecrets("tavily", server);
+      // The ${VAR} placeholder is exempt — no url-credential finding.
+      expect(scan.secrets.filter((s) => s.source === "url-credential")).toHaveLength(0);
+    });
+
+    // Review finding A: a credential in adapters.<x>.url must be SUBSTITUTED in
+    // the adapter url (not the command), or the plaintext survives in config.toml.
+    test("adapter.url credential is detected AND rewritten in the adapter url (finding A)", async () => {
+      const raw = "tvly-ADAPTERURLLEAK1234567890";
+      const server = {
+        command: "npx",
+        args: ["some-mcp"],
+        adapters: { cursor: { url: `https://mcp.tavily.com/mcp/?tavilyApiKey=${raw}` } },
+      };
+      const secrets = await scanServerForSecrets("tav", server).then((r) => r.secrets);
+      const hit = secrets.find((s) => s.source === "url-credential");
+      expect(hit?.urlSource).toBe("adapter");
+      expect(hit?.adapterName).toBe("cursor");
+      if (!hit) throw new Error("adapter url credential not detected");
+      const removed = substituteSecret(server, hit, hit.suggestedEnvVar);
+      expect(removed).toBe(true);
+      expect(server.adapters.cursor.url as string).toBe(
+        "https://mcp.tavily.com/mcp/?tavilyApiKey=${TAVILYAPIKEY}",
+      );
+      expect(JSON.stringify(server)).not.toContain(raw); // no plaintext anywhere
+    });
+
+    // Review finding A+F: substituteSecret returns false when it CANNOT remove
+    // the plaintext, so callers refuse instead of encrypting a decoy copy.
+    test("substituteSecret returns false when it cannot rewrite the location (finding A+F)", () => {
+      // url-credential pointing at an adapter that no longer exists.
+      const server = { command: "npx", adapters: {} };
+      const phantom = {
+        location: "command" as const,
+        key: "tavilyApiKey",
+        value: "tvly-PHANTOM1234567890",
+        source: "url-credential" as const,
+        urlSource: "adapter" as const,
+        adapterName: "cursor",
+        suggestedEnvVar: "TAVILYAPIKEY",
+      };
+      expect(substituteSecret(server, phantom, "TAVILYAPIKEY")).toBe(false);
+    });
+
+    // CodeRabbit: a secret repeated within ONE arg/command must be fully
+    // scrubbed (replaceAll, not replace) before returning true — else a
+    // plaintext copy survives while we report it obfuscated.
+    test("substituteSecret scrubs ALL occurrences of a value repeated in one arg", () => {
+      const dup = "sk-DUPLICATEVALUE1234567890";
+      const server = {
+        command: "npx",
+        // betterleaks-style finding at a specific index; value appears twice.
+        args: [`--key=${dup} --backup=${dup}`],
+      };
+      const secret = {
+        location: "args" as const,
+        key: "STRIPE_SECRET_KEY",
+        value: dup,
+        source: "betterleaks" as const,
+        index: 0,
+        suggestedEnvVar: "STRIPE_SECRET_KEY",
+      };
+      const ok = substituteSecret(server, secret, "STRIPE_SECRET_KEY");
+      expect(ok).toBe(true);
+      // BOTH occurrences gone — no plaintext residue.
+      expect(server.args[0]).not.toContain(dup);
+      expect(server.args[0]).toBe("--key=${STRIPE_SECRET_KEY} --backup=${STRIPE_SECRET_KEY}");
+    });
+
+    // CodeRabbit: the ingest WRITE PATHS (import.ts / web/server.ts) must fail
+    // CLOSED when substituteSecret returns false — not `continue` past it,
+    // leaving the raw secret in the server AND skipping encryption. The apply
+    // guard only re-checks URL-query credentials, so a non-URL finding that
+    // can't be rewritten would otherwise persist plaintext and report success.
+    // This pins the handler-level contract (the invariant the fix enforces):
+    // on a false return, the loop throws and NO encrypted copy is recorded.
+    test("ingest loop throws and stores no encrypted copy when substitution fails (substitute-before-encrypt)", async () => {
+      const { key } = await makeEncryptionKey();
+      // A url-credential finding pointing at an adapter that no longer exists →
+      // substituteSecret cannot rewrite → returns false.
+      const server: { command: string; adapters: Record<string, unknown> } = {
+        command: "npx",
+        adapters: {},
+      };
+      const unrewritable = {
+        location: "command" as const,
+        key: "tavilyApiKey",
+        value: "tvly-PHANTOM1234567890",
+        source: "url-credential" as const,
+        urlSource: "adapter" as const,
+        adapterName: "cursor",
+        suggestedEnvVar: "TAVILYAPIKEY",
+      };
+
+      const settingsEnv: Record<string, string> = {};
+      // Mirror the import.ts / web/server.ts ingest loop's invariant exactly.
+      const ingestOne = async () => {
+        if (!substituteSecret(server, unrewritable, "TAVILYAPIKEY")) {
+          throw new Error("Refused: a detected secret could not be obfuscated");
+        }
+        settingsEnv.TAVILYAPIKEY = await encryptValue(unrewritable.value, key);
+      };
+
+      await expect(ingestOne()).rejects.toThrow(/could not be obfuscated/);
+      // The decisive assertion: NO encrypted copy was stored beside the
+      // surviving plaintext (the fail-open bug would have populated this).
+      expect(settingsEnv.TAVILYAPIKEY).toBeUndefined();
+      // And the plaintext is still present in the server (so a downstream write
+      // MUST be aborted — which the throw guarantees).
+      expect(JSON.stringify(server)).toContain("npx");
+    });
+
+    // Review finding E: missing key at apply must FAIL LOUD, never splice an
+    // enc:v1: envelope into a command URL as if it were the plaintext key.
+    test("apply with a missing key fails loud instead of leaking ciphertext into the URL (finding E)", async () => {
+      const { key } = await makeEncryptionKey();
+      const env = await encryptValue("tvly-REALSECRET1234567890", key);
+      const config: Config = {
+        servers: {
+          tavily: {
+            command: "https://mcp.tavily.com/mcp/?tavilyApiKey=${TAVILYAPIKEY}",
+            transport: "streamable-http",
+            enabled: true,
+          },
+        },
+        settings: { env: { TAVILYAPIKEY: env } },
+      };
+      // No encryptionKey supplied → the catalog decode must throw, not pass
+      // the enc:v1: ciphertext through into the interpolated command.
+      await expect(interpolateEnvAsync(config, { encryptionKey: undefined })).rejects.toThrow();
     });
   });
 });

@@ -25,7 +25,7 @@ import {
   loadKey,
   saveKey,
 } from "../core/secrets";
-import { errorMessage } from "../lib/errors";
+import { AmError, errorMessage } from "../lib/errors";
 import { redactConfigPlaintextSecrets, redactConfigSecrets, safeErrorMessage } from "../lib/redact";
 import { AM_VERSION } from "../lib/version";
 
@@ -274,7 +274,9 @@ export async function createApp(options?: CreateAppOptions) {
           enabled: true,
         };
 
-        const { scanServerForSecrets, substituteSecret } = await import("../core/secret-detection");
+        const { scanServerForSecrets, substituteSecret, pickEnvVarName } = await import(
+          "../core/secret-detection"
+        );
         const scanResult = await scanServerForSecrets(name, config.servers[name]);
         if (scanResult.secrets.length > 0) {
           let key = await loadKey(dir);
@@ -284,10 +286,26 @@ export async function createApp(options?: CreateAppOptions) {
             key = await importKey(b64);
           }
           for (const secret of scanResult.secrets) {
-            substituteSecret(config.servers[name], secret, secret.suggestedEnvVar);
             if (!config.settings) config.settings = {};
             if (!config.settings.env) config.settings.env = {};
-            config.settings.env[secret.suggestedEnvVar] = await encryptValue(secret.value, key);
+            const envVarName =
+              secret.source === "url-credential"
+                ? pickEnvVarName(config.settings.env, secret.suggestedEnvVar, name)
+                : secret.suggestedEnvVar;
+            // Fail CLOSED: never store an encrypted copy unless the plaintext
+            // was provably removed (review A+F). A `continue` would leave the
+            // raw secret in config.servers; the apply guard only re-checks
+            // URL-query credentials, so a non-URL finding would persist plaintext
+            // and still return 201. Throw → withConfig aborts the write, handler
+            // returns 500 (CodeRabbit: substitute-before-encrypt).
+            if (!substituteSecret(config.servers[name], secret, envVarName)) {
+              throw new AmError(
+                `Refused to add "${name}": a detected secret could not be obfuscated to a \${VAR} reference`,
+                "Remove or manually rewrite the plaintext value before saving.",
+                "SECRET_SUBSTITUTION_FAILED",
+              );
+            }
+            config.settings.env[envVarName] = await encryptValue(secret.value, key);
           }
         }
         return {
@@ -432,7 +450,7 @@ export async function createApp(options?: CreateAppOptions) {
         }
 
         if (imported.servers) {
-          const { scanServerForSecrets, substituteSecret } = await import(
+          const { scanServerForSecrets, substituteSecret, pickEnvVarName } = await import(
             "../core/secret-detection"
           );
           for (const [name, srv] of Object.entries(imported.servers)) {
@@ -445,10 +463,26 @@ export async function createApp(options?: CreateAppOptions) {
                 key = await importKey(b64);
               }
               for (const secret of scanResult.secrets) {
-                substituteSecret(config.servers![name], secret, secret.suggestedEnvVar);
                 if (!config.settings) config.settings = {};
                 if (!config.settings.env) config.settings.env = {};
-                config.settings.env[secret.suggestedEnvVar] = await encryptValue(secret.value, key);
+                const envVarName =
+                  secret.source === "url-credential"
+                    ? pickEnvVarName(config.settings.env, secret.suggestedEnvVar, name)
+                    : secret.suggestedEnvVar;
+                // Fail CLOSED: never store an encrypted copy unless the
+                // plaintext was provably removed (review A+F). The apply guard
+                // only re-checks URL-query credentials, so a non-URL finding
+                // that can't be rewritten would persist plaintext and still
+                // succeed. Throw → withConfig aborts the import write
+                // (CodeRabbit: substitute-before-encrypt).
+                if (!substituteSecret(config.servers![name], secret, envVarName)) {
+                  throw new AmError(
+                    `Refused to import "${name}": a detected secret could not be obfuscated to a \${VAR} reference`,
+                    "Remove or manually rewrite the plaintext value before importing.",
+                    "SECRET_SUBSTITUTION_FAILED",
+                  );
+                }
+                config.settings.env[envVarName] = await encryptValue(secret.value, key);
               }
             }
           }

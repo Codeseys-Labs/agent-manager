@@ -46,8 +46,10 @@ this serve?** Features orthogonal to all six are flagged for reconsideration.
 
 1. **Catalog + git sync** — define once, sync via user's choice of git.
    Includes brownfield import (ADR-0028), drift detection (ADR-0006), secret
-   hygiene (AES-256-GCM + 40+ provider-pattern detection), MCP Package Registry
-   (ADR-0024).
+   hygiene (AES-256-GCM + 40+ provider-pattern detection — covering env vars,
+   inline command/arg secrets, AND URL query-param credentials like
+   `?tavilyApiKey=…`, all auto-obfuscated to `${VAR}` + encrypted on
+   add/import and decrypted at apply), MCP Package Registry (ADR-0024).
 2. **MCP gateway** — `am mcp-serve` as the stable endpoint any agent plumbs
    into. 44 tools (39 canonical + 5 deprecated aliases that still dispatch to
    their replacements; alias removal targeted for v1.0), concurrency-safe
@@ -199,7 +201,7 @@ src/
     git-providers.ts        # Git provider abstraction: GitHub, GitLab, Codeberg/Gitea (ADR-0025)
     public/                 # Static HTML
   lib/                      # Shared utilities (errors.ts, output.ts)
-test/                       # 284 files, 3663 tests, 11455 assertions
+test/                       # 284 files, 3676 tests, 11494 assertions
 ADRs/                       # 57 architectural decision records (0001-0056, incl. 0031a)
 scripts/
   build.ts                  # Cross-platform build (5 targets)
@@ -405,7 +407,7 @@ Workflow: `am wiki ingest --session <id>` → `am wiki search <query>` → `am w
 
 ```bash
 bun install              # Install dependencies
-bun test                 # Run all 3663 tests
+bun test                 # Run all 3676 tests
 bun test --watch         # Watch mode
 bun run dev              # Run CLI in dev mode
 bun run build            # Single binary (macOS arm64)

@@ -17,7 +17,10 @@
 
 import { describe, expect, test } from "bun:test";
 import {
+  buildSuggestedReplacementUrl,
+  deriveBareEnvName,
   formatCredentialHits,
+  rewriteUrlParam,
   scanServersForUrlCredentials,
   scanUrlForCredentials,
 } from "../../src/core/url-credentials";
@@ -152,7 +155,9 @@ describe("formatCredentialHits", () => {
         url: "https://mcp.tavily.com/mcp/?tavilyApiKey=tvly-FAKEFIXTURE1234567890",
         queryKey: "tavilyApiKey",
         redactedValue: "tvly-F…",
+        rawValue: "tvly-FAKEFIXTURE1234567890",
         suggestedEnvVar: "${TAVILYAPIKEY}",
+        source: "command",
       },
     ]);
     expect(msg).not.toContain("tvly-FAKEFIXTURE1234567890");
@@ -177,7 +182,9 @@ describe("formatCredentialHits", () => {
         url: `https://example.com/?api_key=first-raw-credential&token=${rawTwo}`,
         queryKey: "api_key",
         redactedValue: "first-…",
+        rawValue: "first-raw-credential",
         suggestedEnvVar: "${API_KEY}",
+        source: "command",
       },
     ]);
     // api_key should be placeholdered.
@@ -185,5 +192,60 @@ describe("formatCredentialHits", () => {
     // The second raw credential (in a DIFFERENT param) must not leak
     // into the suggested-fix line.
     expect(msg).not.toContain(rawTwo);
+  });
+});
+
+// ── Obfuscate-on-ingest support: rawValue + deriveBareEnvName + rewriteUrlParam ──
+
+describe("scanUrlForCredentials — rawValue (for the encrypt-on-ingest path)", () => {
+  test("exposes the FULL raw credential value (not just the redacted preview)", () => {
+    const hits = scanUrlForCredentials(
+      "https://mcp.tavily.com/mcp/?tavilyApiKey=tvly-FAKEFIXTURE1234567890",
+    );
+    expect(hits).toHaveLength(1);
+    expect(hits[0].rawValue).toBe("tvly-FAKEFIXTURE1234567890");
+    // redactedValue stays truncated for display.
+    expect(hits[0].redactedValue).toBe("tvly-F…");
+    expect(hits[0].redactedValue).not.toBe(hits[0].rawValue);
+  });
+});
+
+describe("deriveBareEnvName", () => {
+  test("derives a bare POSIX env-var name from the query key", () => {
+    expect(deriveBareEnvName("tavilyApiKey")).toBe("TAVILYAPIKEY");
+    expect(deriveBareEnvName("api_key")).toBe("API_KEY");
+    expect(deriveBareEnvName("my-access-key")).toBe("MY_ACCESS_KEY");
+  });
+  test("result is a valid POSIX env-var identifier", () => {
+    for (const k of ["tavilyApiKey", "api_key", "exa_key", "x-token"]) {
+      expect(deriveBareEnvName(k)).toMatch(/^[A-Za-z_][A-Za-z0-9_]*$/);
+    }
+  });
+});
+
+describe("rewriteUrlParam (write-path-safe, non-masking)", () => {
+  test("rewrites ONLY the target param and leaves siblings (incl. credentials) intact", () => {
+    const url = "https://example.com/mcp?api_key=SECRETONE12345&token=SECRETTWO67890&tools=x,y";
+    const out = rewriteUrlParam(url, "api_key", "${API_KEY}");
+    expect(out).toContain("api_key=${API_KEY}");
+    // Sibling credential is NOT masked (the ingest loop encrypts it in its own pass).
+    expect(out).toContain("token=SECRETTWO67890");
+    expect(out).toContain("tools=x%2Cy"); // other params preserved (encoded)
+  });
+  test("emits a literal ${VAR} (de-percent-encoded), what the interpolator expects", () => {
+    const out = rewriteUrlParam(
+      "https://x/?tavilyApiKey=tvly-aaaaaaaa",
+      "tavilyApiKey",
+      "${TAVILYAPIKEY}",
+    );
+    expect(out).toContain("tavilyApiKey=${TAVILYAPIKEY}");
+    expect(out).not.toContain("%24%7B");
+  });
+  test("contrast: buildSuggestedReplacementUrl DOES mask sibling creds (display-only)", () => {
+    const url = "https://example.com/mcp?api_key=SECRETONE12345&token=SECRETTWO67890";
+    const display = buildSuggestedReplacementUrl(url, "api_key", "${API_KEY}");
+    expect(display).toContain("api_key=${API_KEY}");
+    expect(display).not.toContain("SECRETTWO67890"); // masked for safe copy-paste
+    expect(display).toContain("REDACTED");
   });
 });

@@ -44,7 +44,10 @@ const CREDENTIAL_QUERY_KEYS = [
  * `{{TOKEN}}` are explicitly NOT credentials. Users use these for env
  * interpolation; flagging them defeats the entire purpose.
  */
-const PLACEHOLDER_VALUE = /^(?:\$\{[A-Z0-9_]+\}|\{\{[A-Z0-9_]+\}\}|<[A-Z0-9_]+>)$/;
+// `${VAR}` / `$${VAR}` (TOML escape for a literal `${VAR}`) / `{{VAR}}` / `<VAR>`.
+// Case-insensitive var names. A placeholder is never a leaked credential, so we
+// exempt all of these — including the `$$`-escaped literal form — from the scan.
+const PLACEHOLDER_VALUE = /^(?:\$\$?\{[A-Za-z0-9_]+\}|\{\{[A-Za-z0-9_]+\}\}|<[A-Za-z0-9_]+>)$/;
 
 export interface CredentialHit {
   /** Server name in the catalog */
@@ -53,10 +56,27 @@ export interface CredentialHit {
   url: string;
   /** Query param key that triggered the rule */
   queryKey: string;
-  /** Redacted preview of the value (first 6 chars + …) */
+  /** Redacted preview of the value (first 6 chars + …) — for display/errors. */
   redactedValue: string;
-  /** Suggested env-var name to replace it with */
+  /**
+   * The RAW credential value. Used by the obfuscate-on-ingest write path to
+   * encrypt-and-store the secret under `suggestedEnvVar`. NEVER log/print this —
+   * use `redactedValue` for any user-facing output.
+   */
+  rawValue: string;
+  /** Suggested env-var name to replace it with (wrapped `${VAR}` form). */
   suggestedEnvVar: string;
+  /**
+   * Which field the credential URL lives in, so the write path can rewrite the
+   * RIGHT location: `"command"`, `"args"` (with `argIndex`), or `"adapter"`
+   * (with `adapterName`). Without this, an adapter-url hit was mis-rewritten as
+   * the command and the plaintext survived (review finding A).
+   */
+  source: "command" | "args" | "adapter";
+  /** Arg index when `source === "args"`. */
+  argIndex?: number;
+  /** Adapter name when `source === "adapter"` (e.g. "cursor"). */
+  adapterName?: string;
 }
 
 export interface ServerLike {
@@ -66,12 +86,47 @@ export interface ServerLike {
 }
 
 /**
- * Scan one URL string for credential-bearing query params. Returns [] when
- * the URL is credential-free (or not a URL at all). The caller (scanServers)
- * tacks on the server name.
+ * Derive a bare (un-wrapped) POSIX env-var name from a query-param key, e.g.
+ * `tavilyApiKey` → `TAVILYAPIKEY`, `api_key` → `API_KEY`. The result is a valid
+ * `settings.env` key and the base of the `${VAR}` placeholder. Bare (not
+ * `${...}`) because the encryption/catalog path stores under this name.
  */
-export function scanUrlForCredentials(url: string): Array<Omit<CredentialHit, "serverName">> {
-  const hits: Array<Omit<CredentialHit, "serverName">> = [];
+export function deriveBareEnvName(queryKey: string): string {
+  return queryKey.replace(/[^A-Za-z0-9]/g, "_").toUpperCase();
+}
+
+/**
+ * Rewrite ONLY the named query param of `url` to `replacement`, leaving every
+ * other param (including sibling credentials) untouched. This is the
+ * write-path-safe core: unlike `buildSuggestedReplacementUrl`, it does NOT mask
+ * sibling credential params — the ingest pipeline rewrites each hit in its own
+ * pass, so masking siblings here would destroy a value we still need to encrypt.
+ * `${VAR}`-style replacements are de-percent-encoded so the stored command is
+ * literally `?key=${VAR}` (what the interpolation engine expects).
+ */
+export function rewriteUrlParam(url: string, queryKey: string, replacement: string): string {
+  try {
+    const u = new URL(url);
+    u.searchParams.set(queryKey, replacement);
+    return u.toString().replace(encodeURIComponent(replacement), replacement);
+  } catch {
+    return url; // not a URL — leave as-is
+  }
+}
+
+/** A bare URL-credential finding before the caller tags server + location. */
+export type UrlCredentialMatch = Pick<
+  CredentialHit,
+  "url" | "queryKey" | "redactedValue" | "rawValue" | "suggestedEnvVar"
+>;
+
+/**
+ * Scan one URL string for credential-bearing query params. Returns [] when
+ * the URL is credential-free (or not a URL at all). The caller
+ * (scanServersForUrlCredentials) tacks on the server name and location source.
+ */
+export function scanUrlForCredentials(url: string): UrlCredentialMatch[] {
+  const hits: UrlCredentialMatch[] = [];
   let parsed: URL;
   try {
     parsed = new URL(url);
@@ -87,7 +142,8 @@ export function scanUrlForCredentials(url: string): Array<Omit<CredentialHit, "s
       url,
       queryKey: key,
       redactedValue: `${value.slice(0, 6)}…`,
-      suggestedEnvVar: `\${${key.replace(/[^A-Za-z0-9]/g, "_").toUpperCase()}}`,
+      rawValue: value,
+      suggestedEnvVar: `\${${deriveBareEnvName(key)}}`,
     });
   }
   return hits;
@@ -99,26 +155,46 @@ export function scanUrlForCredentials(url: string): Array<Omit<CredentialHit, "s
  * and (b) any `adapters.<name>.url` field (cursor/copilot/kiro style).
  */
 export function scanServersForUrlCredentials(
-  servers: Record<string, ServerLike & { adapters?: Record<string, Record<string, unknown>> }>,
+  servers: Record<string, ServerLike & { adapters?: Record<string, unknown> }>,
 ): CredentialHit[] {
   const hits: CredentialHit[] = [];
+  // Each candidate URL carries WHERE it lives, so the write path rewrites the
+  // exact field (review finding A: an adapter url was previously mis-tagged as
+  // the command and the plaintext survived).
+  type Candidate =
+    | { url: string; source: "command" }
+    | { url: string; source: "args"; argIndex: number }
+    | { url: string; source: "adapter"; adapterName: string };
   for (const [serverName, server] of Object.entries(servers ?? {})) {
-    const urls: string[] = [];
-    if (server.command && /^https?:\/\//i.test(server.command)) urls.push(server.command);
+    const candidates: Candidate[] = [];
+    if (server.command && /^https?:\/\//i.test(server.command)) {
+      candidates.push({ url: server.command, source: "command" });
+    }
     // REV-NB-2 (2026-05-03): the Codex-CLI style passes the MCP URL via
     // `args`, not `command` (e.g. `{ command: "npx", args: ["mcp-remote",
     // "https://…?api_key=…"] }`). Walk every arg that parses as a URL.
-    for (const arg of server.args ?? []) {
-      if (typeof arg === "string" && /^https?:\/\//i.test(arg)) urls.push(arg);
-    }
-    // Adapter-specific url fields
-    for (const adapter of Object.values(server.adapters ?? {})) {
+    (server.args ?? []).forEach((arg, argIndex) => {
+      if (typeof arg === "string" && /^https?:\/\//i.test(arg)) {
+        candidates.push({ url: arg, source: "args", argIndex });
+      }
+    });
+    // Adapter-specific url fields (cursor/copilot/kiro style).
+    for (const [adapterName, rawAdapter] of Object.entries(server.adapters ?? {})) {
+      const adapter = rawAdapter as { url?: unknown } | null | undefined;
       if (typeof adapter?.url === "string" && /^https?:\/\//i.test(adapter.url)) {
-        urls.push(adapter.url);
+        candidates.push({ url: adapter.url, source: "adapter", adapterName });
       }
     }
-    for (const url of urls) {
-      for (const h of scanUrlForCredentials(url)) hits.push({ ...h, serverName });
+    for (const cand of candidates) {
+      for (const h of scanUrlForCredentials(cand.url)) {
+        hits.push({
+          ...h,
+          serverName,
+          source: cand.source,
+          ...(cand.source === "args" ? { argIndex: cand.argIndex } : {}),
+          ...(cand.source === "adapter" ? { adapterName: cand.adapterName } : {}),
+        });
+      }
     }
   }
   return hits;
@@ -141,19 +217,18 @@ export function buildSuggestedReplacementUrl(
 ): string {
   try {
     const u = new URL(url);
-    u.searchParams.set(queryKey, envVar);
     // Mask every OTHER credential-shaped param so the displayed URL is
-    // safe to copy verbatim.
+    // safe to copy verbatim. (Display-only — the write path uses the
+    // non-masking `rewriteUrlParam` instead.)
     for (const [k, _v] of u.searchParams.entries()) {
       if (k === queryKey) continue;
       if (CREDENTIAL_QUERY_KEYS.some((re) => re.test(k))) {
         u.searchParams.set(k, "***REDACTED***");
       }
     }
-    // searchParams.set percent-encodes `${VAR}` → `%24%7BVAR%7D`. Undo
-    // that for the human-readable hint — ${VAR} is what the user has to
-    // type into their TOML verbatim.
-    return u.toString().replace(encodeURIComponent(envVar), envVar);
+    // Rewrite the target param last, via the shared core (handles the
+    // `${VAR}` de-percent-encoding).
+    return rewriteUrlParam(u.toString(), queryKey, envVar);
   } catch {
     return url; // fallback: show original if URL parse fails
   }
@@ -174,12 +249,16 @@ export function formatCredentialHits(hits: CredentialHit[]): string {
   }
   lines.push("", "Fix: replace each credential with an env-var placeholder in config.toml:");
   for (const h of hits) {
+    // Point at the ACTUAL field the credential lives in, not always .command
+    // (an adapter-url or args credential lives elsewhere — review finding A).
+    const field =
+      h.source === "adapter"
+        ? `servers.${h.serverName}.adapters.${h.adapterName}.url`
+        : h.source === "args"
+          ? `servers.${h.serverName}.args[${h.argIndex}]`
+          : `servers.${h.serverName}.command`;
     lines.push(
-      `  servers.${h.serverName}.command = "${buildSuggestedReplacementUrl(
-        h.url,
-        h.queryKey,
-        h.suggestedEnvVar,
-      )}"`,
+      `  ${field} = "${buildSuggestedReplacementUrl(h.url, h.queryKey, h.suggestedEnvVar)}"`,
     );
   }
   lines.push("", "Then set the env var at run time (never commit the real value).");

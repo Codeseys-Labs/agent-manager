@@ -312,7 +312,21 @@ export function scanWithBetterleaks(content: string): BetterleaksFinding[] | nul
   try {
     const result = spawnSync(
       bin,
-      ["stdin", "--no-banner", "--no-color", "--report-format", "json", "--exit-code", "0"],
+      // `--report-path -` is REQUIRED: without it betterleaks writes findings to
+      // a default report FILE and emits nothing on stdout, so the `if (!stdout)`
+      // check below silently returns [] even when a secret IS present — the
+      // Tier-2 scan was dead. `-` directs the JSON report to stdout.
+      [
+        "stdin",
+        "--no-banner",
+        "--no-color",
+        "--report-format",
+        "json",
+        "--report-path",
+        "-",
+        "--exit-code",
+        "0",
+      ],
       {
         input: content,
         stdio: ["pipe", "pipe", "pipe"],
@@ -367,6 +381,10 @@ export function scanFileWithBetterleaks(filePath: string): BetterleaksFinding[] 
         "--no-color",
         "--report-format",
         "json",
+        // See scanWithBetterleaks: `-` sends the JSON report to stdout instead
+        // of a default report file (without it, findings never reach us).
+        "--report-path",
+        "-",
         "--exit-code",
         "0",
       ],

@@ -7,7 +7,7 @@ skills/instructions/agents via git. Remember sessions in an LLM-wiki. Edit from
 terminal, local web, or cloud.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Tests: 3663 pass](https://img.shields.io/badge/tests-3663%20pass-green.svg)](#development)
+[![Tests: 3676 pass](https://img.shields.io/badge/tests-3676%20pass-green.svg)](#development)
 [![Coverage](https://img.shields.io/badge/coverage-see%20CI%20summary-blue.svg)](https://github.com/Codeseys-Labs/agent-manager/actions/workflows/ci.yml)
 [![Adapters: 13](https://img.shields.io/badge/adapters-13-purple.svg)](#adapter-support-matrix)
 [![MCP Tools: 44](https://img.shields.io/badge/MCP%20tools-44-orange.svg)](#mcp-server-mode)
@@ -357,15 +357,21 @@ AES-256-GCM encryption for secrets in TOML. Encrypted values are stored as `enc:
 
 Dynamic secret detection scans server configs for inline API keys using patterns derived from [gitleaks](https://github.com/gitleaks/gitleaks), extended with AI/LLM provider-specific patterns. Detects keys across 40+ provider patterns (60 key-name regexes) including OpenAI, Anthropic, AWS, GitHub, Stripe, Tavily, and more.
 
+Detection covers three shapes, and all three follow the **same obfuscate-on-ingest lifecycle** — auto-detected on `am add`/`am import`, the value rewritten to a `${VAR}` reference and stored **encrypted** in `settings.env`, then decrypted only at apply time:
+
+- **named env vars** — a `[servers.x.env]` key like `API_KEY` / `OPENAI_API_KEY`;
+- **inline command/arg secrets** — caught by the betterleaks tier;
+- **URL query-param credentials** — e.g. an HTTP MCP server whose `command` is `https://mcp.tavily.com/mcp/?tavilyApiKey=tvly-…`. The key is rewritten to `?tavilyApiKey=${TAVILYAPIKEY}` and encrypted, so the committed config never holds the plaintext.
+
 ```bash
 am secret generate-key     # generate encryption key
-am secret scan             # audit all servers for exposed secrets
-am secret scan --fix       # auto-substitute with ${VAR} + encrypt
+am secret scan             # audit all servers for exposed secrets (env, inline, AND url)
+am secret scan --fix       # auto-substitute with ${VAR} + encrypt (incl. already-committed url creds)
 am secret set API_KEY      # encrypt and store a secret
 am secret get API_KEY      # decrypt and display
 ```
 
-Secrets detected during `am import` and `am add server` are flagged automatically with confidence levels (high/medium/low) and the user is prompted to encrypt them.
+Secrets detected during `am import` and `am add server` are flagged automatically with confidence levels (high/medium/low) and encrypted in place. `am apply` refuses (fail-closed) to write a native config that would leak a **plaintext** URL credential, and points you at the `${VAR}` fix — but a properly-obfuscated `${VAR}` server applies cleanly, with the value decrypted into the rendered native config at runtime.
 
 ### Git Sync
 
@@ -864,7 +870,7 @@ MCP Registry commands and git-vendored bundles.
 |---------|-------------|
 | `am import <adapter>` | Import native config (`--auto`, `--report`, `--marketplace` for tool-native plugins/extensions) |
 | `am doctor` | Health check -- config, adapters, git, secret audit |
-| `am secret init` | Generate encryption key |
+| `am secret generate-key` | Generate encryption key |
 | `am secret set\|get <key>` | Encrypt/decrypt secrets |
 | `am secret scan` | Audit servers for exposed secrets (`--fix` to auto-encrypt) |
 | `am pair accept\|finalize\|add` | Cross-device encryption-key handoff — rewrap secret envelopes for a new device (ADR-0047) |
@@ -954,7 +960,7 @@ Design decisions documented in [57 ADRs](ADRs/README.md).
 
 ```bash
 bun install                       # install dependencies
-bun test                          # run all tests (3663)
+bun test                          # run all tests (3676)
 bun test --coverage --coverage-reporter=text --coverage-reporter=lcov --config=/dev/null
                                   # run coverage locally; writes coverage/lcov.info
 bun test --watch                  # watch mode
@@ -982,7 +988,7 @@ cache for faster downloads.
 **CI pipeline** (`.github/workflows/ci.yml` — triggers on push to main + PRs):
 1. Type check — `tsc --noEmit` filtered to `src/` errors only
 2. Lint — `biome check`
-3. Test with coverage — `bun test --coverage --coverage-reporter=text --coverage-reporter=lcov --config=/dev/null` (3663 tests)
+3. Test with coverage — `bun test --coverage --coverage-reporter=text --coverage-reporter=lcov --config=/dev/null` (3676 tests)
    and publish `coverage/lcov.info` to the GitHub Actions job summary/artifact
 4. Build smoke test — all 5 platform targets
 5. Cross-platform build verify — Ubuntu + macOS + Windows
@@ -1016,8 +1022,8 @@ today. It auto-activates if a token is ever added. GitHub Releases (consumed by
 |--------|-------|
 | Source files | 223 |
 | Test files | 284 |
-| Tests | 3,663 |
-| Assertions | 11,455 |
+| Tests | 3,676 |
+| Assertions | 11,494 |
 | IDE adapters | 13 (+community) |
 | Platform adapters | 3 |
 | CLI commands | 37 |

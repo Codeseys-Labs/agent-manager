@@ -333,13 +333,27 @@ export async function applyResolved(
     const notices: string[] = [];
     const profileScoped = interpolated.profiles?.[profileName] !== undefined;
 
-    // Issue #3 URL-credential guard: scan the post-interpolation resolved
-    // config for credential-bearing query params before any adapter.export
-    // writes to disk. `interpolateEnvAsync` has already expanded `${VAR}`
-    // so what we scan is what would land in the user's native configs.
-    // On a hit we refuse the whole apply — catching one leak late is worse
-    // than catching all of them early.
-    const credentialHits = scanServersForUrlCredentials(resolved.servers ?? {});
+    // Issue #3 URL-credential guard: refuse to write native configs that would
+    // leak a credential embedded in a URL query param.
+    //
+    // MEMBERSHIP vs VALUES (review finding D): which servers get exported is
+    // decided by `resolved` (built from the INTERPOLATED config — profile
+    // server_tags/inherits can use `${VAR}` tags that only resolve after
+    // interpolation). But the VALUES we must scan are the RAW pre-interpolation
+    // ones, because `scanUrlForCredentials` exempts `${VAR}` placeholders — so a
+    // properly-obfuscated `?tavilyApiKey=${TAVILYAPIKEY}` PASSES while a
+    // hardcoded `?tavilyApiKey=tvly-…` is refused. Scanning raw values on the
+    // RAW membership set (the old bug) missed `${VAR}`-tagged servers that DO
+    // get exported; scanning interpolated values would wrongly refuse the
+    // obfuscated case. Fix: take membership from `resolved`, re-key onto raw
+    // `config.servers[name]` values, scan that.
+    const guardServers: Record<string, unknown> = {};
+    for (const name of Object.keys(resolved.servers ?? {})) {
+      guardServers[name] = config.servers?.[name] ?? resolved.servers?.[name];
+    }
+    const credentialHits = scanServersForUrlCredentials(
+      guardServers as Parameters<typeof scanServersForUrlCredentials>[0],
+    );
     if (credentialHits.length > 0) {
       throw new Error(formatCredentialHits(credentialHits));
     }
