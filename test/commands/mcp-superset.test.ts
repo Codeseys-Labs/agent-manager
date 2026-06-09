@@ -27,13 +27,13 @@ describe("classifyServer", () => {
   test("HTTP URL with api_key in query → refuse", () => {
     const r = classifyServer("tavily", {
       type: "http",
-      url: "https://mcp.tavily.com/mcp/?tavilyApiKey=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",
+      url: "https://mcp.tavily.com/mcp/?tavilyApiKey=tvly-FAKEFIXTURE1234567890",
     });
     expect(r.class).toBe("refuse");
     expect(r.sourceShape).toBe("http-url-credential");
     expect(r.remediation?.suggestedEnvVar).toBe("${TAVILYAPIKEY}");
     // Never echo the raw credential.
-    expect(r.redactedDetectedPattern).not.toContain("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");
+    expect(r.redactedDetectedPattern).not.toContain("tvly-FAKEFIXTURE1234567890");
   });
 
   test("HTTP URL with bearer-via-env-var in headers → copy (safe to mirror)", () => {

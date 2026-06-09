@@ -25,11 +25,11 @@ import {
 describe("scanUrlForCredentials", () => {
   test("detects camelCase vendor-prefixed API keys (tavilyApiKey)", () => {
     const hits = scanUrlForCredentials(
-      "https://mcp.tavily.com/mcp/?tavilyApiKey=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",
+      "https://mcp.tavily.com/mcp/?tavilyApiKey=tvly-FAKEFIXTURE1234567890",
     );
     expect(hits).toHaveLength(1);
     expect(hits[0].queryKey).toBe("tavilyApiKey");
-    expect(hits[0].redactedValue).toBe("tvly-b…");
+    expect(hits[0].redactedValue).toBe("tvly-F…");
     expect(hits[0].suggestedEnvVar).toBe("${TAVILYAPIKEY}");
   });
 
@@ -93,7 +93,7 @@ describe("scanServersForUrlCredentials", () => {
   test("walks server.command when it is an http URL", () => {
     const hits = scanServersForUrlCredentials({
       tavily: {
-        command: "https://mcp.tavily.com/mcp/?tavilyApiKey=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",
+        command: "https://mcp.tavily.com/mcp/?tavilyApiKey=tvly-FAKEFIXTURE1234567890",
       },
     });
     expect(hits).toHaveLength(1);
@@ -149,14 +149,14 @@ describe("formatCredentialHits", () => {
     const msg = formatCredentialHits([
       {
         serverName: "tavily",
-        url: "https://mcp.tavily.com/mcp/?tavilyApiKey=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",
+        url: "https://mcp.tavily.com/mcp/?tavilyApiKey=tvly-FAKEFIXTURE1234567890",
         queryKey: "tavilyApiKey",
-        redactedValue: "tvly-b…",
+        redactedValue: "tvly-F…",
         suggestedEnvVar: "${TAVILYAPIKEY}",
       },
     ]);
-    expect(msg).not.toContain("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");
-    expect(msg).toContain("tvly-b…");
+    expect(msg).not.toContain("tvly-FAKEFIXTURE1234567890");
+    expect(msg).toContain("tvly-F…");
     expect(msg).toContain("tavily");
     expect(msg).toContain("${TAVILYAPIKEY}");
   });

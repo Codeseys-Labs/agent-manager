@@ -44,7 +44,7 @@ describe("applyResolved — URL-credential refusal (issue #3)", () => {
     await writeConfig(join(dir.path, "config.toml"), {
       servers: {
         tavily: {
-          command: "https://mcp.tavily.com/mcp/?tavilyApiKey=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",
+          command: "https://mcp.tavily.com/mcp/?tavilyApiKey=tvly-FAKEFIXTURE1234567890",
           transport: "streamable-http",
           enabled: true,
         },
