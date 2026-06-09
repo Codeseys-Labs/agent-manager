@@ -332,12 +332,12 @@ entries for orientation:
 |--------|-------|
 | Source files | 223 |
 | Test files | 284 |
-| Tests | 3,676 |
-| Assertions | 11,494 |
+| Tests | 3,684 |
+| Assertions | 11,516 |
 | IDE adapters | 13 (+community) |
 | Platform adapters | 3 |
 | CLI commands | 37 |
 | MCP tools | 44 (39 canonical + 5 deprecated aliases) |
-| ADRs | 57 |
+| ADRs | 58 |
 | `as any` in src/ | 0 |
 | `err: any` in src/ | 0 |

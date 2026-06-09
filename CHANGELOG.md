@@ -17,6 +17,32 @@
   names), and a read-only `am_get_scope` MCP tool returns the same manifest to an
   agent — both built from the SAME decision the gateway enforces, so the manifest
   can never drift from what is actually allowed (now 44 MCP tools).
+- **URL-embedded credential obfuscation (third secret class).** HTTP MCP servers
+  whose credential rides in a URL query param (e.g.
+  `?tavilyApiKey=tvly-…`) now follow the same obfuscate-on-ingest → encrypt →
+  interpolate-at-apply lifecycle as named env vars and inline command/arg secrets:
+  detected across `command`, `args`, and `adapters.<tool>.url` at `am add`/`am
+  import`, rewritten to `?key=${VAR}` and encrypted in place. `am apply` refuses
+  (fail-closed) to render a native config that would leak a plaintext URL
+  credential. Hardened against 6 adversarial-review findings (adapter-url leak,
+  scan-fix env-name collision, apply-guard membership bypass, missing-key
+  fail-open, betterleaks no-op substitution, report mislabel).
+- **Release runbook + version-assert gate.** New `RELEASING.md` (linked from
+  AGENTS.md) documents the tag-triggered flow; a CI `assert-version` job fails the
+  release before any binary is built unless the tag matches `package.json`, the
+  version is dotted SemVer (`-rc.N`), and CHANGELOG `[Unreleased]` is non-empty,
+  plus a self-report check that the compiled binary carries the tag.
+
+### Changed
+- **`ServerSchema` is a discriminated union on `transport` (ADR-0057).** stdio and
+  remote (`streamable-http`/`sse`) server shapes are now mutually exclusive at the
+  type level — `url` is structurally forbidden on stdio — replacing the prior
+  ad-hoc `superRefine`. `command` stays on both variants (am stores the remote URL
+  there today), so adapters are unchanged.
+- **`am init` next-steps spell out the full path to working configs.** Both the
+  detected-tools and no-tools branches now lead with `am setup` (the guided
+  wizard) and always name `am apply` explicitly — import alone writes nothing to
+  disk — removing the "init → ??? → working configs" dead end.
 
 ### Security
 - **Scope boundary fails CLOSED on a broken profile chain (K-CRIT).** An
@@ -31,6 +57,18 @@
   inert under the pinned betterleaks v1.1.1.)
 - **Web `POST`/`PUT /api/servers` validate against `ServerSchema` before write**,
   so a malformed request body can no longer persist an unloadable `config.toml`.
+- **Secret ingest fails CLOSED on un-obfuscatable findings.** If `substituteSecret`
+  cannot rewrite a detected secret to a `${VAR}` reference, `am import`, `am add`,
+  and the web write paths now abort the write entirely instead of skipping
+  encryption while leaving the raw value in `config.toml` — closing a gap the
+  apply guard (URL-credentials only) didn't cover. Substitution also scrubs ALL
+  occurrences (`replaceAll`) and verifies the plaintext is gone before reporting
+  success, so a value repeated in one arg can't leave a residue.
+- **Marketplace install can't write a config-bricking `stdio`+`url` server.** A
+  plugin manifest with `url` and no `transport` resolved to stdio; the installer
+  copied `url` unconditionally, persisting a server the new union rejects on the
+  next read (and `writeConfig` doesn't validate). Now guarded on the resolved
+  transport, mirroring the registry path.
 
 ### Fixed
 - Several review-driven correctness fixes: `am_get_scope`/out-of-scope errors now
@@ -41,6 +79,16 @@
 - Documentation/stat coherence: tool counts, ROADMAP/AGENTS drift, the marketplace
   runtime notice (now "deferred to v2", matching ADR-0039/0052 supersession), and
   the `am secret generate-key` command name.
+- **`scripts/build.ts` Silvery patch no longer cries wolf on rebuilds.** The
+  "patch regex did not match — build may fail" warning fired on every rebuild
+  (file already stubbed); it now distinguishes already-patched (benign) from a
+  genuine upstream format change (the real warning).
+- **CI secret-scan survives transient GitHub 504s.** The betterleaks download is
+  retried (5 attempts, linear backoff) so a single CDN blip no longer hard-reds
+  the HARD secret gate.
+- **Registry `LRUCache` TTL is deterministically testable** via a constructor-
+  injected clock seam, removing a `Date.now` monkey-patch that the module
+  singleton's import-time capture defeated (no production behavior change).
 
 ## [0.5.0-rc7] - 2026-06-04
 
