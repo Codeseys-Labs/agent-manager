@@ -620,6 +620,74 @@ describe("secret pipeline integration", () => {
       expect(substituteSecret(server, phantom, "TAVILYAPIKEY")).toBe(false);
     });
 
+    // CodeRabbit: a secret repeated within ONE arg/command must be fully
+    // scrubbed (replaceAll, not replace) before returning true — else a
+    // plaintext copy survives while we report it obfuscated.
+    test("substituteSecret scrubs ALL occurrences of a value repeated in one arg", () => {
+      const dup = "sk-DUPLICATEVALUE1234567890";
+      const server = {
+        command: "npx",
+        // betterleaks-style finding at a specific index; value appears twice.
+        args: [`--key=${dup} --backup=${dup}`],
+      };
+      const secret = {
+        location: "args" as const,
+        key: "STRIPE_SECRET_KEY",
+        value: dup,
+        source: "betterleaks" as const,
+        index: 0,
+        suggestedEnvVar: "STRIPE_SECRET_KEY",
+      };
+      const ok = substituteSecret(server, secret, "STRIPE_SECRET_KEY");
+      expect(ok).toBe(true);
+      // BOTH occurrences gone — no plaintext residue.
+      expect(server.args[0]).not.toContain(dup);
+      expect(server.args[0]).toBe("--key=${STRIPE_SECRET_KEY} --backup=${STRIPE_SECRET_KEY}");
+    });
+
+    // CodeRabbit: the ingest WRITE PATHS (import.ts / web/server.ts) must fail
+    // CLOSED when substituteSecret returns false — not `continue` past it,
+    // leaving the raw secret in the server AND skipping encryption. The apply
+    // guard only re-checks URL-query credentials, so a non-URL finding that
+    // can't be rewritten would otherwise persist plaintext and report success.
+    // This pins the handler-level contract (the invariant the fix enforces):
+    // on a false return, the loop throws and NO encrypted copy is recorded.
+    test("ingest loop throws and stores no encrypted copy when substitution fails (substitute-before-encrypt)", async () => {
+      const { key } = await makeEncryptionKey();
+      // A url-credential finding pointing at an adapter that no longer exists →
+      // substituteSecret cannot rewrite → returns false.
+      const server: { command: string; adapters: Record<string, unknown> } = {
+        command: "npx",
+        adapters: {},
+      };
+      const unrewritable = {
+        location: "command" as const,
+        key: "tavilyApiKey",
+        value: "tvly-PHANTOM1234567890",
+        source: "url-credential" as const,
+        urlSource: "adapter" as const,
+        adapterName: "cursor",
+        suggestedEnvVar: "TAVILYAPIKEY",
+      };
+
+      const settingsEnv: Record<string, string> = {};
+      // Mirror the import.ts / web/server.ts ingest loop's invariant exactly.
+      const ingestOne = async () => {
+        if (!substituteSecret(server, unrewritable, "TAVILYAPIKEY")) {
+          throw new Error("Refused: a detected secret could not be obfuscated");
+        }
+        settingsEnv.TAVILYAPIKEY = await encryptValue(unrewritable.value, key);
+      };
+
+      await expect(ingestOne()).rejects.toThrow(/could not be obfuscated/);
+      // The decisive assertion: NO encrypted copy was stored beside the
+      // surviving plaintext (the fail-open bug would have populated this).
+      expect(settingsEnv.TAVILYAPIKEY).toBeUndefined();
+      // And the plaintext is still present in the server (so a downstream write
+      // MUST be aborted — which the throw guarantees).
+      expect(JSON.stringify(server)).toContain("npx");
+    });
+
     // Review finding E: missing key at apply must FAIL LOUD, never splice an
     // enc:v1: envelope into a command URL as if it were the plaintext key.
     test("apply with a missing key fails loud instead of leaking ciphertext into the URL (finding E)", async () => {

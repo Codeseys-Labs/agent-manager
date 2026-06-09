@@ -342,12 +342,21 @@ export const importCommand = defineCommand({
                   secret.source === "url-credential"
                     ? pickEnvVarName(config.settings.env, secret.suggestedEnvVar, result.serverName)
                     : secret.suggestedEnvVar;
-                // INVARIANT: never encrypt+count unless the plaintext was removed
-                // (review A+F). If substitution can't rewrite the location, do
-                // NOT store an encrypted copy beside surviving plaintext — leave
-                // it for the apply guard to refuse loudly (fail-closed at apply).
+                // INVARIANT: never encrypt+count unless the plaintext was
+                // provably removed (review A+F). Fail CLOSED at ingest if
+                // substitution can't rewrite the location: a `continue` here
+                // would leave the raw secret in config.servers AND skip
+                // encryption, and the apply guard only re-checks URL-query
+                // credentials (controller.ts) — so a non-URL finding (env /
+                // inline / indexless betterleaks) would slip through apply too
+                // and persist plaintext. Throw so the whole import aborts before
+                // withConfig writes anything (CodeRabbit: substitute-before-encrypt).
                 if (!substituteSecret(server, secret, envVarName)) {
-                  continue;
+                  throw new AmError(
+                    `Refused to import "${result.serverName}": a detected secret could not be obfuscated to a \${VAR} reference`,
+                    "Remove or manually rewrite the plaintext value, then re-run the import.",
+                    "SECRET_SUBSTITUTION_FAILED",
+                  );
                 }
                 config.settings.env[envVarName] = await encryptValue(secret.value, key);
                 totalEncrypted++;

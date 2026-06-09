@@ -392,10 +392,13 @@ export function substituteSecret(
       // caller refuses instead of falsely reporting it encrypted (finding F).
       if (server.args && secret.index !== undefined && secret.index < server.args.length) {
         const arg = server.args[secret.index];
-        const next = arg.replace(secret.value, placeholder);
+        // replaceAll (not replace): a value repeated in the same arg must be
+        // fully scrubbed, else one plaintext copy survives while we return true
+        // and the caller encrypts+counts it (CodeRabbit: provably-removed).
+        const next = arg.replaceAll(secret.value, placeholder);
         if (next === arg) return false; // value not present at that index → no-op
         server.args[secret.index] = next;
-        return true;
+        return !next.includes(secret.value);
       }
       // Betterleaks finding with no index: try to locate the value in any arg
       // or the command so we still obfuscate it rather than silently no-op.
@@ -439,11 +442,13 @@ export function substituteSecret(
       // Legacy inline `key=value` form in the command string (non-URL).
       if (secret.key) {
         const before = server.command;
-        server.command = server.command.replace(
+        // replaceAll + value-gone post-check: a repeated key=value must be fully
+        // scrubbed before we report success (CodeRabbit: provably-removed).
+        server.command = server.command.replaceAll(
           `${secret.key}=${secret.value}`,
           `${secret.key}=${placeholder}`,
         );
-        return server.command !== before;
+        return server.command !== before && !server.command.includes(secret.value);
       }
       return false;
     }
@@ -472,11 +477,16 @@ export function formatScanReport(results: SecretScanResult[]): string {
       total++;
       const loc =
         secret.source === "url-credential"
-          ? secret.urlSource === "adapter"
-            ? `adapters.${secret.adapterName}.url`
+          ? // Point at the REAL editable field. For adapter the URL lives in a
+            // genuine `.url` field; for command/args the URL *is* the command
+            // string or the arg itself — appending `.url` there sent users to a
+            // path they can't edit (CodeRabbit). Tag the query-param so the user
+            // knows which one to fix.
+            secret.urlSource === "adapter"
+            ? `adapters.${secret.adapterName}.url?${secret.key}`
             : secret.urlSource === "args"
-              ? `args[${secret.index ?? "?"}].url`
-              : "command.url"
+              ? `args[${secret.index ?? "?"}]?${secret.key}`
+              : `command?${secret.key}`
           : secret.location === "env"
             ? `env.${secret.key}`
             : secret.location === "args"
