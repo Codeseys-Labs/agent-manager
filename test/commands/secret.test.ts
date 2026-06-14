@@ -470,6 +470,58 @@ describe("am secret", () => {
       expect(isEncrypted(settingsEnv!.GITHUB_TOKEN)).toBe(true);
     });
 
+    // W5R (ws f5ab-secret-scan-inplace-msg): the human --fix report must not
+    // claim a `key -> ${VAR}` substitution for a settings.env value encrypted
+    // IN PLACE — no ${VAR} placeholder was written, so the arrow misleads. The
+    // in-place case prints an "encrypted in place" message instead.
+    test("--fix human output says 'encrypted in place' (no arrow) for settings.env", async () => {
+      dir = await createTestDir("am-secret-scan-fix-inplace-msg-");
+      const configDir = dir.path;
+      await initRepo(configDir);
+      const configPath = join(configDir, "config.toml");
+      const config: Config = {
+        settings: {
+          default_profile: "default",
+          env: { GITHUB_TOKEN: "ghp_realtokenvalue1234567890" },
+        } as Config["settings"],
+        profiles: { default: { description: "Default profile" } },
+      };
+      await writeConfig(configPath, config);
+      process.env.AM_CONFIG_DIR = configDir;
+
+      const scan = await resolveScan();
+      process.exitCode = 0;
+      capture();
+      await scan.run({ args: { fix: true, json: false, quiet: false, verbose: false } });
+
+      const out = logged.join("\n");
+      // The misleading substitution arrow must NOT appear for the in-place key.
+      expect(out).not.toContain("-> ${GITHUB_TOKEN}");
+      expect(out).not.toContain("${GITHUB_TOKEN}");
+      // It reports in-place encryption instead.
+      expect(out).toContain("GITHUB_TOKEN");
+      expect(out).toContain("encrypted in place");
+    });
+
+    // W5R: a genuine server substitution still prints the `key -> ${VAR}` arrow
+    // — the in-place message must NOT swallow the real-substitution case.
+    test("--fix human output keeps the arrow form for a real server substitution", async () => {
+      dir = await createTestDir("am-secret-scan-fix-arrow-msg-");
+      const { configDir } = await setupConfigDir(dir);
+      process.env.AM_CONFIG_DIR = configDir;
+
+      const scan = await resolveScan();
+      process.exitCode = 0;
+      capture();
+      await scan.run({ args: { fix: true, json: false, quiet: false, verbose: false } });
+
+      const out = logged.join("\n");
+      // setupConfigDir seeds tavily.env.TAVILY_API_KEY = "plain-key"; the fix
+      // moves it to settings.env and rewrites the server env to ${TAVILY_API_KEY}.
+      expect(out).toContain("-> ${TAVILY_API_KEY}");
+      expect(out).not.toContain("encrypted in place");
+    });
+
     test("exits 0 when no secrets are detected", async () => {
       dir = await createTestDir("am-secret-scan-exit-clean-");
       const configDir = dir.path;

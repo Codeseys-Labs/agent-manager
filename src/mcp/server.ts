@@ -189,6 +189,16 @@ export interface ToolContext {
     profileName: string;
     scope: ResolvedScope | undefined;
     ceiling: McpToolGroup[];
+    /**
+     * R2-4: true when the gateway is failing CLOSED (malformed config, or an
+     * explicit-but-missing confinement profile). In that state `isToolScoped`
+     * STILL admits the DIAGNOSTIC_SCOPE_EXEMPT tools (am_doctor, am_get_scope),
+     * but the resolved `scope`/`ceiling` here are both empty — so a naive
+     * `buildScopeManifest` would report `effectiveTools = []`, contradicting
+     * the no-drift invariant (those two tools are provably callable). The
+     * am_get_scope handler reconciles the manifest against this flag.
+     */
+    scopeFailClosed?: boolean;
   };
 }
 
@@ -1086,8 +1096,31 @@ function defineTools(): ToolEntry[] {
         // (ADR-0055 Decision 6): same profile name, same scope object, same
         // ceiling the dispatch gate just used.
         if (ctx?.activeScope) {
-          const { profileName, scope, ceiling } = ctx.activeScope;
-          return buildScopeManifest(profileName, catalog, ceiling, scope);
+          const { profileName, scope, ceiling, scopeFailClosed } = ctx.activeScope;
+          const manifest = buildScopeManifest(profileName, catalog, ceiling, scope);
+          // R2-4 no-drift: while failing CLOSED, `isToolScoped` admits the
+          // DIAGNOSTIC_SCOPE_EXEMPT tools (am_doctor, am_get_scope) even though
+          // scope ∩ ceiling is empty — that's how this very handler ran. The raw
+          // manifest would list them as excluded (effectiveTools=[]),
+          // contradicting "the manifest can NEVER drift from enforcement". Move
+          // the exempt names into effectiveTools and out of excludedTools,
+          // preserving sorted order so the audit surface matches what the gate
+          // actually allows.
+          if (scopeFailClosed) {
+            // Only promote exempt names that the catalog actually contains (the
+            // manifest's effective ∪ excluded IS the catalog projection), so we
+            // never invent a tool that isn't registered. Handlers are free
+            // functions (no `this`), so derive the catalog from the manifest.
+            const known = new Set([...manifest.effectiveTools, ...manifest.excludedTools]);
+            const exemptSet = new Set(
+              [...DIAGNOSTIC_SCOPE_EXEMPT].filter((name) => known.has(name)),
+            );
+            const effective = new Set(manifest.effectiveTools);
+            for (const name of exemptSet) effective.add(name);
+            manifest.effectiveTools = [...effective].sort();
+            manifest.excludedTools = manifest.excludedTools.filter((name) => !exemptSet.has(name));
+          }
+          return manifest;
         }
         // FALLBACK (no gateway context — e.g. a direct in-process handler call
         // in a unit test): resolve the persisted/default profile with the SAME
@@ -3885,6 +3918,11 @@ export class McpServer {
             profileName: this.activeProfileName,
             scope: this.scope,
             ceiling: this.settings?.mcp_serve?.tools ?? DEFAULT_TOOL_GROUPS,
+            // R2-4: propagate the fail-closed flag so am_get_scope can reconcile
+            // its manifest with the dispatch gate's DIAGNOSTIC_SCOPE_EXEMPT
+            // carve-out (isToolScoped admits am_doctor/am_get_scope here even
+            // though scope ∩ ceiling is empty), keeping the no-drift invariant.
+            scopeFailClosed: this.scopeFailClosed,
           };
           const ctx: ToolContext = {
             progressToken,

@@ -253,7 +253,9 @@ export function resolveRecipientsDir(): string {
  *   location to the data-dir location.
  * - `none`:     no legacy identity present, no action needed.
  * - `conflict`: a data-dir identity already exists; the legacy copy is
- *   left in place (the data-dir one wins) so the caller can warn.
+ *   left in place (the data-dir one wins) so the caller can warn. Surfaced
+ *   by `AgeSecretsBackend.initialize()` as a stderr warning telling the
+ *   user to delete the stale legacy copy.
  * - `skipped`:  legacy and target resolve to the SAME directory (e.g.
  *   `AM_AGE_IDENTITY_DIR` points at the legacy location, or a custom
  *   layout) — nothing to move.
@@ -634,7 +636,18 @@ export class AgeSecretsBackend implements SecretsBackend {
     // location). Best-effort: a migration failure must never block
     // unlock/create of a perfectly good local identity.
     try {
-      await migrateLegacyIdentityDir(dirname(this.#identityPath));
+      const migration = await migrateLegacyIdentityDir(dirname(this.#identityPath));
+      // Surface the `conflict` outcome: a data-dir identity already exists,
+      // so the leaky legacy copy in the git-tracked config dir was left in
+      // place (we never clobber a live key). Warn so the user deletes it —
+      // mirrors `loadKey`'s conflict warning in core/secrets.ts. stderr (not
+      // stdout) so JSON-mode callers aren't polluted; the active identity is
+      // perfectly usable regardless.
+      if (migration.kind === "conflict") {
+        console.error(
+          `warning: age identity found in BOTH ${migration.current} (active) and legacy ${migration.legacy}. The legacy copy is ignored; delete it and ensure it is not committed.`,
+        );
+      }
     } catch {
       // Non-fatal — fall through to the normal create/unlock flow.
     }

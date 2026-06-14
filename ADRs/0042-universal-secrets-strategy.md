@@ -423,6 +423,57 @@ wire format, per-machine identity model, OS-keychain caching tier,
 and `.am-secrets.toml` backend selector all stand verbatim. Promotion
 is therefore evidentially supported, not a rationalization.
 
+## Amendment (2026-06-14) — identity moved to the OS DATA dir (e737)
+
+**This amendment supersedes the identity-file location stated in the
+§"Per-machine identity" Decision above.** That section places the
+identity at `~/.config/agent-manager/identity.age` — i.e. inside the
+git-tracked config dir. That location is a security defect, fixed in
+the wave-4 secret-hygiene pass (seed e737).
+
+**Defect.** `resolveConfigDir()` is a git repo that `commitAll` stages
+and pushes wholesale. The original location resolved the
+passphrase-wrapped *private* identity under that same tree, so the
+wrapped private key was committed and pushed to the config remote on
+every sync. The on-disk file being passphrase-wrapped does not make this
+acceptable — it exports the key material to a remote and reduces the
+guarantee to "as strong as the passphrase, off-box, indefinitely," which
+is not what §"Per-machine identity" intends. The private key must never
+leave the machine that generated it.
+
+**New platform-correct path.** The age identity (`identity.age`), its
+rotation sidecars (`identity.age.old`, `.am-rotation-state.json`), and
+the sibling `recipients/` directory now live in the OS DATA dir —
+physically outside the config repo — mirroring `resolveKeyPath()` for
+the AES master key (the two are the same class of per-machine private
+material and share one platform switch via `resolveDataDir()`):
+
+- macOS:   `~/Library/Application Support/agent-manager/identities/identity.age`
+- Linux:   `$XDG_DATA_HOME/agent-manager/identities/identity.age`
+           (default `~/.local/share/agent-manager/identities/identity.age`)
+- Windows: `%APPDATA%/agent-manager/identities/identity.age`
+- Other:   `~/.local/share/agent-manager/identities/identity.age` (XDG fallback)
+
+Overridable via `AM_AGE_IDENTITY_DIR` (absolute) for tests and
+non-standard layouts. The public `recipients/<host>.pub` files are
+unchanged in role: they are not secret and are still committed to the
+config repo.
+
+**Migration.** `AgeSecretsBackend.initialize()` runs a best-effort,
+idempotent migration (`migrateLegacyIdentityDir`): a pre-e737 install's
+identity under `~/.config/agent-manager/identities` is moved out to the
+data-dir location on next backend use, closing the leak in place. If a
+data-dir identity already exists, the data-dir copy wins, the legacy
+copy is left untouched (a live key is never clobbered), and
+`initialize()` emits a stderr warning telling the user to delete the
+stale legacy copy. `.gitignore` carries defence-in-depth entries for the
+legacy path.
+
+Everything else in §"Per-machine identity" — the chezmoi `key.txt.age`
+pattern, passphrase-wrapping, the committed `recipients/<host>.pub`
+contract — stands. Only the on-disk directory of the private identity
+changes.
+
 ## References
 
 - [ADR-0012 Application-level encryption](0012-application-level-encryption.md) — wire format (unchanged)

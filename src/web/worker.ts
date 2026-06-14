@@ -247,6 +247,14 @@ app.get("/auth/providers", (c) => {
 // ---------------------------------------------------------------------------
 
 app.get("/auth/:provider/login", async (c) => {
+  // Fail closed before any session crypto: HKDF deriveKey does NOT throw on a
+  // missing/short key, so a weak SESSION_SECRET would let encryptSession mint a
+  // forgeable am_oauth_state (CSRF) cookie below. Reject before that point.
+  const secretError = assertSessionSecret(c.env);
+  if (secretError) {
+    return c.json({ error: secretError }, 500);
+  }
+
   const providerName = c.req.param("provider");
   const provider = getProvider(providerName);
   if (!provider) {
@@ -385,6 +393,14 @@ app.post("/auth/logout", (c) => {
 app.get("/auth/check", async (c) => {
   const encrypted = getSessionCookie(c);
   if (!encrypted) return c.json({ authenticated: false });
+
+  // Fail closed before decrypting: the am_session cookie carries a live git
+  // PAT, and a missing/weak SESSION_SECRET makes it trivially decryptable.
+  // Mirrors the /api/* middleware guard (cookie-presence check first).
+  const secretError = assertSessionSecret(c.env);
+  if (secretError) {
+    return c.json({ error: secretError }, 500);
+  }
 
   const session = await decryptSession(encrypted, c.env.SESSION_SECRET);
   if (!session?.token) return c.json({ authenticated: false });

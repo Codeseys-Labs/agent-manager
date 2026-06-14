@@ -579,6 +579,96 @@ describe("Worker — SESSION_SECRET guard (fail closed)", () => {
     expect(res.status).toBe(500);
     expect(res.status).not.toBe(403);
   });
+
+  // ── /auth/:provider/login guard (ws-80ad-oauth-secret-guard) ──────
+  //
+  // The login handler mints an `am_oauth_state` cookie via encryptSession().
+  // Because HKDF deriveKey does NOT throw on an empty/short key, a weak/missing
+  // SESSION_SECRET produces a forgeable CSRF-state cookie. The guard must fire
+  // at the TOP of the handler — before encryptSession — and return 500 without
+  // setting any am_oauth_state cookie.
+
+  it("login returns 500 when SESSION_SECRET is unset (no state cookie minted)", async () => {
+    const env = { ...MOCK_ENV, SESSION_SECRET: undefined as unknown as string };
+    const res = await app.request("/auth/github/login", {}, env);
+    expect(res.status).toBe(500);
+    const data = (await res.json()) as { error: string };
+    expect(data.error.toLowerCase()).toContain("session_secret");
+    // A forgeable state cookie must NOT have been minted.
+    expect(res.headers.get("set-cookie") ?? "").not.toContain("am_oauth_state=");
+  });
+
+  it("login returns 500 when SESSION_SECRET is shorter than 32 chars (no state cookie)", async () => {
+    const env = { ...MOCK_ENV, SESSION_SECRET: "too-short-secret" }; // 16 chars
+    const res = await app.request("/auth/github/login", {}, env);
+    expect(res.status).toBe(500);
+    const data = (await res.json()) as { error: string };
+    expect(data.error.toLowerCase()).toContain("session_secret");
+    expect(res.headers.get("set-cookie") ?? "").not.toContain("am_oauth_state=");
+  });
+
+  it("login guard fires before the unknown-provider / not-configured checks", async () => {
+    // The guard sits at the very top, so even a weak-secret request that would
+    // otherwise 302-redirect (valid provider + creds) fails closed with 500
+    // and never mints a cookie.
+    const env = { ...MOCK_ENV, SESSION_SECRET: "weak" };
+    const res = await app.request("/auth/github/login", {}, env);
+    expect(res.status).toBe(500);
+    expect(res.status).not.toBe(302);
+    expect(res.headers.get("set-cookie") ?? "").not.toContain("am_oauth_state=");
+  });
+
+  it("login proceeds normally (302 + state cookie) when SESSION_SECRET is strong", async () => {
+    // Positive case: a valid >=32-char secret preserves the prior behavior.
+    const env = { ...MOCK_ENV, SESSION_SECRET: "a".repeat(32) };
+    const res = await app.request("/auth/github/login", {}, env);
+    expect(res.status).toBe(302);
+    const cookie = res.headers.get("set-cookie") ?? "";
+    expect(cookie).toContain("am_oauth_state=");
+    expect(cookie).toContain("Max-Age=300");
+  });
+
+  // ── /auth/check guard (ws-80ad-oauth-secret-guard) ────────────────
+  //
+  // /auth/check decrypts the am_session cookie (which carries a live PAT). A
+  // weak/missing SESSION_SECRET makes that cookie trivially decryptable, so the
+  // guard must fail closed with 500 before decryptSession runs.
+
+  it("auth/check returns 500 when SESSION_SECRET is unset", async () => {
+    const env = { ...MOCK_ENV, SESSION_SECRET: undefined as unknown as string };
+    const res = await app.request("/auth/check", SOME_COOKIE, env);
+    expect(res.status).toBe(500);
+    const data = (await res.json()) as { error: string };
+    expect(data.error.toLowerCase()).toContain("session_secret");
+  });
+
+  it("auth/check returns 500 when SESSION_SECRET is shorter than 32 chars", async () => {
+    const env = { ...MOCK_ENV, SESSION_SECRET: "too-short" };
+    const res = await app.request("/auth/check", SOME_COOKIE, env);
+    expect(res.status).toBe(500);
+    const data = (await res.json()) as { error: string };
+    expect(data.error.toLowerCase()).toContain("session_secret");
+  });
+
+  it("auth/check does NOT leak the secret value in the error body", async () => {
+    const env = { ...MOCK_ENV, SESSION_SECRET: "short-but-secret" };
+    const res = await app.request("/auth/check", SOME_COOKIE, env);
+    expect(res.status).toBe(500);
+    const body = await res.text();
+    expect(body).not.toContain("short-but-secret");
+  });
+
+  it("auth/check with a strong secret + no cookie preserves authenticated:false (200)", async () => {
+    // Positive case: a strong secret must NOT turn the unauthenticated path
+    // into a 500. No cookie → short-circuits to authenticated:false BEFORE the
+    // guard (the guard sits after the missing-cookie check), proving the guard
+    // is length-gated, not a blanket failure.
+    const env = { ...MOCK_ENV, SESSION_SECRET: "a".repeat(32) };
+    const res = await app.request("/auth/check", {}, env);
+    expect(res.status).toBe(200);
+    const data = (await res.json()) as { authenticated: boolean };
+    expect(data.authenticated).toBe(false);
+  });
 });
 
 // ── Worker crypto (deriveKey, encryptSession, decryptSession) ────

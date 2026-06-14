@@ -40,6 +40,17 @@ describe("isSecretKeyName", () => {
     expect(isSecretKeyName("SIGNING_KEY")).toBe(true);
   });
 
+  test("matches anchored bearer key names (ws5: free /bearer/i was unanchored)", () => {
+    // The old free-floating /bearer/i fired on ANY substring `bearer`, so
+    // config flags like BEARER_ENABLED were encrypted as if they were secrets.
+    // The anchored form matches only a bearer-suffixed (or bare) key. AUTH_BEARER
+    // and bare BEARER match via the bearer pattern; BEARER_TOKEN matches via the
+    // suffix-anchored token$ group, so all three stay secrets.
+    expect(isSecretKeyName("AUTH_BEARER")).toBe(true);
+    expect(isSecretKeyName("BEARER")).toBe(true);
+    expect(isSecretKeyName("BEARER_TOKEN")).toBe(true);
+  });
+
   test("matches AI provider key names", () => {
     expect(isSecretKeyName("ANTHROPIC_API_KEY")).toBe(true);
     expect(isSecretKeyName("OPENAI_KEY")).toBe(true);
@@ -72,6 +83,13 @@ describe("isSecretKeyName", () => {
     expect(isSecretKeyName("LOG_LEVEL")).toBe(false);
     expect(isSecretKeyName("HOSTNAME")).toBe(false);
     expect(isSecretKeyName("MAX_RETRIES")).toBe(false);
+    // ws5: the old unanchored /bearer/i flagged these config flags as secrets
+    // (false positives → harmless config encrypted as a credential). The
+    // anchored /(^|[_-])bearer$/i only matches a bearer-suffixed/bare key.
+    expect(isSecretKeyName("BEARER_ENABLED")).toBe(false);
+    expect(isSecretKeyName("FORBEARER")).toBe(false);
+    expect(isSecretKeyName("BEARERTOWN")).toBe(false);
+    expect(isSecretKeyName("BEARER_TOKEN_TTL")).toBe(false);
   });
 });
 

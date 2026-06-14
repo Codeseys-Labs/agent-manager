@@ -164,6 +164,77 @@ describe("am doctor", () => {
     expect(depCheck?.message).toContain("researcher");
   });
 
+  // ws-c7d6-doctor-active-profile (R2-7): the skill-dependency check must
+  // resolve the SAME catalog `am status` does — i.e. honor the persisted active
+  // profile (active → default_profile → "default"), not just `default_profile`.
+  // Construct a config where the active profile EXCLUDES the agent (so the
+  // skill's reference dangles) while default_profile INCLUDES it (so under
+  // default_profile the check would pass). doctor and status must agree on the
+  // active-profile result.
+  test("skill-dependency check honors the persisted active profile", async () => {
+    dir = await createTestDir("am-doctor-active-profile-");
+    const configDir = dir.path;
+    await initRepo(configDir);
+
+    const skillDir = join(configDir, "skills", "researcher");
+    fs.mkdirSync(skillDir, { recursive: true });
+    fs.writeFileSync(
+      join(skillDir, "SKILL.md"),
+      "# Researcher\n\nFan out with Task(subagent_type='hyperresearch-fetcher').\n",
+    );
+
+    const config: Config = {
+      settings: { default_profile: "full" },
+      skills: {
+        researcher: { path: skillDir, description: "Research skill" },
+      },
+      agents: {
+        "hyperresearch-fetcher": { name: "hyperresearch-fetcher", prompt: "Fetch sources." },
+        decoy: { name: "decoy", prompt: "Unrelated agent." },
+      },
+      profiles: {
+        // `full` includes both the skill and the agent → reference resolves.
+        full: { description: "Full", skills: ["researcher"], agents: ["hyperresearch-fetcher"] },
+        // `minimal` includes the skill and lists ONLY the decoy agent. A
+        // non-empty agents list activates buildResolvedConfig's agent filter,
+        // so `hyperresearch-fetcher` is excluded and the skill's reference
+        // dangles. (An empty `agents: []` would mean "no filter / include all",
+        // which is NOT what we want to exercise here.)
+        minimal: { description: "Minimal", skills: ["researcher"], agents: ["decoy"] },
+      },
+    };
+    await writeConfig(join(configDir, "config.toml"), config);
+
+    // Persist `minimal` as the active profile — the one that makes the dep dangle.
+    const { writeActiveProfile, readActiveProfile } = await import("../../src/core/state");
+    await writeActiveProfile(configDir, "minimal");
+    expect(await readActiveProfile(configDir)).toBe("minimal");
+
+    // doctor must resolve the active profile (`minimal`), under which the agent
+    // is filtered out, so the skill reference dangles → warn.
+    const checks = await collectDoctorChecks(configDir, configDir);
+    const depCheck = checks.find((c) => c.name === "Skill dependencies");
+    expect(depCheck).toBeDefined();
+    expect(depCheck?.status).toBe("warn");
+    expect(depCheck?.message).toContain("hyperresearch-fetcher");
+
+    // status must resolve the SAME catalog. Recompute its missing-deps set the
+    // way status.ts does (active → default_profile → "default") and assert they
+    // agree: same profile, same missing-dep set.
+    const { loadResolvedConfig, buildResolvedConfig } = await import("../../src/core/config");
+    const { findMissingSkillAgentDeps } = await import("../../src/core/skill-deps");
+    const loaded = await loadResolvedConfig({ configDir });
+    const statusProfile =
+      (await readActiveProfile(configDir)) ?? loaded.settings?.default_profile ?? "default";
+    expect(statusProfile).toBe("minimal");
+    const statusResolved = buildResolvedConfig(loaded, statusProfile, configDir);
+    const statusMissing = findMissingSkillAgentDeps(statusResolved);
+    expect(statusMissing).toEqual([{ skill: "researcher", agent: "hyperresearch-fetcher" }]);
+    // doctor reported a warn for the same dangling reference status found.
+    expect(statusMissing.length).toBeGreaterThan(0);
+    expect(depCheck?.status).toBe("warn");
+  });
+
   test("passes the skill-dependency check when the referenced agent exists", async () => {
     dir = await createTestDir("am-doctor-deps-ok-");
     const configDir = dir.path;

@@ -364,7 +364,12 @@ export function mapServerResponse(raw: ServerResponse): RegistryPackage {
 /** Remap a v0 ServerListResponse to the internal RegistrySearchResult. */
 export function mapListResponse(raw: ServerListResponse): RegistrySearchResult {
   return {
-    packages: (raw.servers ?? []).map(mapServerResponse),
+    // Skip (don't throw on) a malformed entry missing `.server` — mapServerResponse
+    // would read `detail.name` off undefined. Mirrors getPackage's null-on-missing
+    // posture for the single-server route.
+    packages: (raw.servers ?? [])
+      .filter((s): s is ServerResponse => !!s?.server)
+      .map(mapServerResponse),
     ...(raw.metadata?.nextCursor ? { nextCursor: raw.metadata.nextCursor } : {}),
   };
 }

@@ -115,6 +115,33 @@ describe("registry/client", () => {
       expect(calledUrl).toContain("limit=100");
     });
 
+    test("skips a malformed list entry lacking .server instead of throwing", async () => {
+      // A list entry with no `.server` is malformed; mapServerResponse would
+      // read `detail.name` off undefined and throw a raw TypeError. The guard
+      // filters it out so the call resolves with only the well-formed entries.
+      const malformedEntry = {
+        _meta: {
+          "io.modelcontextprotocol.registry/official": {
+            publishedAt: "2024-01-01T00:00:00Z",
+            isLatest: true,
+          },
+        },
+      } as unknown as ServerResponse;
+      globalThis.fetch = mock(() =>
+        Promise.resolve(
+          new Response(
+            JSON.stringify({ servers: [TAVILY_SERVER, malformedEntry], metadata: { count: 2 } }),
+            { status: 200, headers: { "Content-Type": "application/json" } },
+          ),
+        ),
+      ) as unknown as typeof fetch;
+
+      const result = await search("tavily", undefined, { skipCache: true });
+      // Malformed entry skipped, not thrown — only the well-formed one survives.
+      expect(result.packages).toHaveLength(1);
+      expect(result.packages[0].name).toBe("io.github.tavily/tavily-mcp");
+    });
+
     test("surfaces nextCursor from the list metadata", async () => {
       globalThis.fetch = mock(() =>
         Promise.resolve(

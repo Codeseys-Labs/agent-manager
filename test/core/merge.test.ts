@@ -24,6 +24,7 @@ function makeServer(overrides: Partial<Server> & { command: string }): Server {
       tags: overrides.tags,
       enabled: overrides.enabled ?? true,
       _registry: overrides._registry,
+      _marketplace: overrides._marketplace,
       adapters: overrides.adapters,
     };
   }
@@ -37,6 +38,7 @@ function makeServer(overrides: Partial<Server> & { command: string }): Server {
     tags: overrides.tags,
     enabled: overrides.enabled ?? true,
     _registry: overrides._registry,
+    _marketplace: overrides._marketplace,
     adapters: overrides.adapters,
   };
 }
@@ -680,6 +682,76 @@ describe("mergeServers", () => {
     expect(force.url).toBeUndefined();
     expect(force.transport).toBe("stdio");
   });
+
+  // ── adapters passthrough + _marketplace provenance preservation (ws-0d29) ──
+  //
+  // ImportedServer carries no `adapters` / `_marketplace` field, so the existing
+  // server is the sole source for both. A re-merge must NOT silently strip the
+  // adapter-scoped passthrough subtable (the round-trip sink for adapterExtras)
+  // or the marketplace provenance block — both survive under auto AND force.
+
+  const marketplaceProvenance = {
+    source: "claude-plugin" as const,
+    package: "example-plugin",
+    version: "1.2.3",
+    imported_at: "2026-01-01T00:00:00.000Z",
+    install_path: "/plugins/example",
+  };
+
+  test("auto — preserves adapters passthrough and _marketplace provenance", () => {
+    const existing = makeServer({
+      command: "test-mcp",
+      adapters: { "claude-code": { alwaysAllow: ["search"] } },
+      _marketplace: marketplaceProvenance,
+    });
+    const incoming = makeImported({ name: "test", command: "test-mcp" });
+
+    const merged = mergeServers(existing, incoming, "auto");
+    expect(merged.adapters).toEqual({ "claude-code": { alwaysAllow: ["search"] } });
+    expect(merged._marketplace).toEqual(marketplaceProvenance);
+  });
+
+  test("force — preserves adapters passthrough and _marketplace provenance", () => {
+    const existing = makeServer({
+      command: "bunx",
+      args: ["tavily-mcp@latest"],
+      adapters: { "claude-code": { alwaysAllow: ["search"] } },
+      _marketplace: marketplaceProvenance,
+    });
+    const incoming = makeImported({
+      name: "tavily",
+      command: "npx",
+      args: ["-y", "tavily-mcp@0.3.2"],
+    });
+
+    const merged = mergeServers(existing, incoming, "force");
+    // force: incoming wins on the merge-able fields...
+    expect(merged.command).toBe("npx");
+    // ...but the schema-only passthrough + provenance survive (incoming has none).
+    expect(merged.adapters).toEqual({ "claude-code": { alwaysAllow: ["search"] } });
+    expect(merged._marketplace).toEqual(marketplaceProvenance);
+  });
+
+  test("force — preserves adapters and _marketplace on a remote server", () => {
+    const existing = makeServer({
+      command: "https://mcp.example.com/sse",
+      transport: "sse",
+      url: "https://mcp.example.com/sse",
+      adapters: { cursor: { headers: { Authorization: "${TOKEN}" } } },
+      _marketplace: marketplaceProvenance,
+    });
+    const incoming = makeImported({
+      name: "remote",
+      command: "https://mcp.example.com/sse",
+      transport: "sse",
+      url: "https://mcp.example.com/sse",
+    });
+
+    const merged = mergeServers(existing, incoming, "force");
+    expect(merged.transport).toBe("sse");
+    expect(merged.adapters).toEqual({ cursor: { headers: { Authorization: "${TOKEN}" } } });
+    expect(merged._marketplace).toEqual(marketplaceProvenance);
+  });
 });
 
 // ── runMergePipeline ─────────────────────────────────────────────────
@@ -956,5 +1028,49 @@ describe("runMergePipeline", () => {
     expect(result.added[0].name).toBe("exa");
 
     expect(result.conflicts).toHaveLength(0);
+  });
+
+  // ── adapters + _marketplace survive a re-merge through the pipeline (ws-0d29) ──
+
+  test("re-merge — adapters passthrough and _marketplace survive under auto and force", () => {
+    const marketplace = {
+      source: "cursor-extension" as const,
+      package: "tavily-ext",
+      version: "0.9.0",
+      imported_at: "2026-02-02T00:00:00.000Z",
+    };
+    const existing: Record<string, Server> = {
+      tavily: makeServer({
+        command: "bunx",
+        args: ["tavily-mcp@latest"],
+        env: { KEY: "old" },
+        adapters: { "claude-code": { alwaysAllow: ["search"] } },
+        _marketplace: marketplace,
+      }),
+    };
+    // A subsequent import of the same server (exact identity) with new env —
+    // forces an auto-merge / force-merge path rather than an identical skip.
+    const incoming: ImportedServer[] = [
+      makeImported({
+        name: "tavily-cursor",
+        command: "bunx",
+        args: ["tavily-mcp@latest"],
+        env: { KEY: "new", EXTRA: "val" },
+      }),
+    ];
+
+    const auto = runMergePipeline(existing, incoming, "auto", "cursor");
+    expect(auto.merged).toHaveLength(1);
+    expect(auto.merged[0].server.adapters).toEqual({
+      "claude-code": { alwaysAllow: ["search"] },
+    });
+    expect(auto.merged[0].server._marketplace).toEqual(marketplace);
+
+    const force = runMergePipeline(existing, incoming, "force", "cursor");
+    expect(force.merged).toHaveLength(1);
+    expect(force.merged[0].server.adapters).toEqual({
+      "claude-code": { alwaysAllow: ["search"] },
+    });
+    expect(force.merged[0].server._marketplace).toEqual(marketplace);
   });
 });

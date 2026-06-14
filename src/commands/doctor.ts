@@ -17,6 +17,7 @@ import { findMissingSkillAgentDeps } from "../core/skill-deps";
 import { errorDetail, errorMessage } from "../lib/errors";
 import { error, info, output } from "../lib/output";
 import { redactSecretish } from "../lib/redact";
+import { readActiveProfile } from "./use";
 
 export interface Check {
   name: string;
@@ -393,8 +394,15 @@ export async function collectDoctorChecks(
   try {
     const configForDeps = await tryReadConfig(join(configDir, "config.toml"));
     if (configForDeps) {
+      // Resolve the SAME catalog `am status` does: honor the persisted active
+      // profile first (ws-c7d6-doctor-active-profile / R2-7), falling back to
+      // default_profile, then "default". status.ts uses this exact precedence —
+      // if doctor only read default_profile the two commands could disagree on
+      // which catalog they check.
       const profileName =
-        (configForDeps.settings?.default_profile as string | undefined) ?? "default";
+        (await readActiveProfile(configDir)) ??
+        (configForDeps.settings?.default_profile as string | undefined) ??
+        "default";
       const resolved = buildResolvedConfig(configForDeps, profileName, configDir);
       const missingDeps = findMissingSkillAgentDeps(resolved);
       if (missingDeps.length > 0) {

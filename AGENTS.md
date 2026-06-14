@@ -271,6 +271,13 @@ instantiation -- only detected tools are activated.
 
 **Drift detection over overwrite (ADR-0006):** `am status` uses structural comparison
 to detect native config edits. Surfaces drift rather than silently overwriting.
+Catalog-ahead deltas — the catalog holds an instruction/skill the native file lacks,
+or a managed block a tool removed — are deliberately surfaced as `added-in-config`
+("pending (in catalog, not yet applied)"), NOT as drift, because am is the source of
+truth and a bare `am apply` simply re-writes them. This is a deliberate conflation
+(a24e / ws4-drift-relabel-catalog-ahead) of the prior "managed block locally removed"
+warning: a forward delta is pending work, not divergence. The human label wording lives
+in `src/commands/status.ts` `formatDriftChangeLine`.
 
 **Application-level encryption (ADR-0012):** AES-256-GCM for secrets in TOML. Key
 from env var or file. Encrypted values are safe to commit to git.

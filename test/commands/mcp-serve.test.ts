@@ -151,7 +151,14 @@ describe("mcp-serve --profile precedence (ADR-0055)", () => {
     // (registry write tools, etc.) is effective. am_registry_search is a ceiling
     // tool under the `registry` group — it must be excluded.
     expect(manifest.effectiveTools).not.toContain("am_registry_search");
-    expect(manifest.effectiveTools).toEqual([]);
+    // R2-4 NO-DRIFT: under scopeFailClosed the dispatch gate (isToolScoped)
+    // STILL lets the DIAGNOSTIC_SCOPE_EXEMPT tools through — so the manifest
+    // MUST report them as effective, or the audit surface drifts from
+    // enforcement (am_get_scope succeeded above, so it is provably callable).
+    expect(manifest.effectiveTools).toEqual(["am_doctor", "am_get_scope"]);
+    // …and they must NOT appear in excludedTools (a tool can't be both).
+    expect(manifest.excludedTools).not.toContain("am_doctor");
+    expect(manifest.excludedTools).not.toContain("am_get_scope");
     // The scope is the maximally-restrictive empty scope, not the ceiling.
     expect(manifest.scoped).toBe(true);
     expect(manifest.toolGroups).toEqual([]);
@@ -166,6 +173,19 @@ describe("mcp-serve --profile precedence (ADR-0055)", () => {
       params: { name: "am_registry_search", arguments: { query: "x" } },
     });
     expect(denied?.error?.code).toBe(-32601);
+
+    // R2-4 POSITIVE: am_doctor (the OTHER DIAGNOSTIC_SCOPE_EXEMPT tool that the
+    // manifest now lists as effective) really IS dispatchable under fail-closed
+    // — it is not refused by the scope gate (-32601 "not available …"). This
+    // proves the manifest's effectiveTools claim, closing the drift.
+    const doctored = await server.handleRequest({
+      jsonrpc: "2.0",
+      id: 3,
+      method: "tools/call",
+      params: { name: "am_doctor", arguments: {} },
+    });
+    const doctorMsg = doctored?.error?.message ?? "";
+    expect(doctorMsg).not.toContain("not available in the active profile");
   });
 
   test("settings.default_profile naming a missing profile also fails CLOSED", async () => {
@@ -192,9 +212,61 @@ describe("mcp-serve --profile precedence (ADR-0055)", () => {
     const manifest = await getScope(server);
     expect(manifest.profile).toBe("ghost");
     expect(manifest.effectiveTools).not.toContain("am_registry_search");
-    expect(manifest.effectiveTools).toEqual([]);
+    // R2-4 NO-DRIFT: same fail-closed reasoning as the does-not-exist case —
+    // the diagnostic tools stay callable, so they stay in effectiveTools.
+    expect(manifest.effectiveTools).toEqual(["am_doctor", "am_get_scope"]);
+    expect(manifest.excludedTools).not.toContain("am_doctor");
+    expect(manifest.excludedTools).not.toContain("am_get_scope");
     expect(manifest.scoped).toBe(true);
     expect(manifest.toolGroups).toEqual([]);
+  });
+
+  // R2-4 NO-DRIFT (malformed-config path): the OTHER scopeFailClosed entry
+  // point is refreshSettings' catch branch (a config that EXISTS but fails to
+  // parse/validate — e.g. a bogus tool_groups enum). It pins ceiling=[] and an
+  // empty scope. The diagnostic tools must still be both callable AND reported
+  // as effective by am_get_scope, or the audit surface drifts from enforcement.
+  test("a malformed config (invalid tool_groups) fails CLOSED but still lists the diagnostic tools as effective", async () => {
+    dir = await createTestDir("am-mcp-serve-profile-");
+    const configDir = dir.path;
+    process.env.AM_CONFIG_DIR = configDir;
+    Reflect.deleteProperty(process.env, "AM_MCP_PROFILE");
+    await initRepo(configDir);
+    // Write a config.toml whose `default` profile declares an INVALID tool group
+    // ("bogus" is not in the McpToolGroup enum). loadResolvedConfig's ZodError
+    // propagates to refreshSettings' catch branch → scopeFailClosed = true,
+    // ceiling = [], scope = empty. We write the TOML by hand because writeConfig
+    // would reject the invalid value before it ever reaches disk.
+    await Bun.write(
+      join(configDir, "config.toml"),
+      ["[profiles.default.scope]", 'tool_groups = ["bogus"]', ""].join("\n"),
+    );
+
+    const server = new McpServer({ auth: { token: undefined, allowUnsafeLocal: true } });
+    const manifest = await getScope(server);
+    // Fail-closed ceiling ∩ ∅ = ∅ for everything EXCEPT the diagnostic carve-out.
+    expect(manifest.effectiveTools).not.toContain("am_registry_search");
+    expect(manifest.effectiveTools).toEqual(["am_doctor", "am_get_scope"]);
+    expect(manifest.excludedTools).not.toContain("am_doctor");
+    expect(manifest.excludedTools).not.toContain("am_get_scope");
+    expect(manifest.scoped).toBe(true);
+    expect(manifest.toolGroups).toEqual([]);
+
+    // Enforcement side: the diagnostic tools dispatch, a ceiling tool is refused.
+    const doctored = await server.handleRequest({
+      jsonrpc: "2.0",
+      id: 2,
+      method: "tools/call",
+      params: { name: "am_doctor", arguments: {} },
+    });
+    expect(doctored?.error?.message ?? "").not.toContain("not available in the active profile");
+    const denied = await server.handleRequest({
+      jsonrpc: "2.0",
+      id: 3,
+      method: "tools/call",
+      params: { name: "am_registry_search", arguments: { query: "x" } },
+    });
+    expect(denied?.error?.code).toBe(-32601);
   });
 
   // REGRESSION GUARD: the fresh-install case (no profiles table, no

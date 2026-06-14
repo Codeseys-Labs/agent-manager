@@ -61,9 +61,10 @@ const HOST_PATH_PATTERNS: { kind: HostPathKind; regex: RegExp }[] = [
 /**
  * Scan body text for host-absolute per-user paths.
  *
- * Returns one {@link HostPathFinding} per occurrence, in document order
- * (top-to-bottom, and left-to-right within a line). Returns an empty array for
- * portable text (relative paths, system-absolute paths, or no paths at all).
+ * Returns one {@link HostPathFinding} per occurrence, ordered top-to-bottom by
+ * line number (within a single line, findings are grouped by OS pattern, not by
+ * column). Returns an empty array for portable text (relative paths,
+ * system-absolute paths, or no paths at all).
  */
 export function scanBodyForHostPaths(text: string): HostPathFinding[] {
   if (!text) return [];
@@ -88,8 +89,10 @@ export function scanBodyForHostPaths(text: string): HostPathFinding[] {
     }
   }
 
-  // Sort by line, then by column position within the line, so multi-OS bodies
-  // come back in stable document order regardless of pattern iteration order.
+  // Sort by line number so multi-OS bodies come back in stable top-to-bottom
+  // order. (HostPathFinding has no column field; within a line, findings stay
+  // grouped by the OS pattern iteration order above — Array.sort is stable in
+  // V8/JSC, so that grouping is preserved.)
   findings.sort((a, b) => a.line - b.line);
   return findings;
 }

@@ -338,6 +338,12 @@ function pickLonger(existing?: string, incoming?: string): string | undefined {
  * - url: preserve the remote endpoint (existing wins, falls back to incoming) —
  *   RemoteServerSchema.url is dropped otherwise, silently degrading the server
  * - _registry: preserve existing provenance
+ * - adapters: preserve the existing adapter-scoped passthrough subtable in BOTH
+ *   branches — it is the round-trip sink for adapterExtras and ImportedServer
+ *   carries no `adapters` field, so dropping it loses adapter config
+ * - _marketplace: preserve existing marketplace provenance in BOTH branches —
+ *   ImportedServer carries no `_marketplace` field, so dropping it strips the
+ *   plugin/extension origin that `am marketplace` reasons about
  */
 export function mergeServers(
   existing: Server,
@@ -357,6 +363,12 @@ export function mergeServers(
       tags: incoming.tags,
       enabled: incoming.enabled ?? true,
       _registry: existing._registry,
+      // ImportedServer carries neither `adapters` nor `_marketplace`, so the
+      // existing server is the sole source — carry both through rather than
+      // silently dropping the adapter-scoped passthrough (the round-trip sink
+      // for adapterExtras) and the marketplace provenance block.
+      adapters: existing.adapters,
+      _marketplace: existing._marketplace,
     };
     if (transport === "stdio") {
       return { ...base, transport };
@@ -375,7 +387,10 @@ export function mergeServers(
     tags: unionTags(existing.tags, incoming.tags),
     enabled: existing.enabled,
     _registry: existing._registry,
+    // auto = existing/merged precedence; ImportedServer carries neither field,
+    // so existing is authoritative for the passthrough subtable + provenance.
     adapters: existing.adapters,
+    _marketplace: existing._marketplace,
   };
   if (existing.transport === "stdio") {
     return { ...base, transport: existing.transport };

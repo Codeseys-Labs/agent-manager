@@ -324,6 +324,75 @@ describe("AgeSecretsBackend — legacy identity-dir migration (e737)", () => {
       await rm(xdgConfig, { recursive: true, force: true });
     }
   });
+
+  // The `conflict` migration result is not just computed — initialize()
+  // surfaces it as a stderr warning so the user deletes the stale legacy
+  // copy of the private key that still sits in the git-tracked config dir.
+  // (Mirrors loadKey()'s conflict warning in core/secrets.ts.)
+  test("initialize() warns on stderr when a legacy identity copy conflicts with the data-dir identity", async () => {
+    const xdgConfig = await mkdtemp(join(tmpdir(), "am-e737-cfg-"));
+    const dataDir = await mkdtemp(join(tmpdir(), "am-e737-data-"));
+    setEnv("XDG_CONFIG_HOME", xdgConfig);
+    // Migration only fires on the DEFAULT layout — no override may leak in.
+    setEnv("AM_AGE_IDENTITY_DIR", undefined);
+
+    const errors: string[] = [];
+    const origError = console.error;
+    console.error = (...args: unknown[]) => {
+      errors.push(args.map(String).join(" "));
+    };
+
+    try {
+      const identityDir = join(dataDir, "identities");
+      const identityPath = join(identityDir, "identity.age");
+
+      // 1. Create a REAL passphrase-wrapped identity in the data-dir location
+      //    so the conflicting copy is a live, unlockable key.
+      const kc = makeMemKeychain();
+      const first = new AgeSecretsBackend({
+        identityPath,
+        passphraseProvider: async () => "pw",
+        keychain: kc,
+      });
+      await first.initialize();
+
+      // 2. Plant a stale legacy copy in the git-tracked config dir so the
+      //    migration sees BOTH the data-dir identity and the legacy one.
+      const legacy = legacyIdentityDir();
+      await mkdir(legacy, { recursive: true });
+      await writeFile(join(legacy, "identity.age"), "STALE-LEAKY-LEGACY-COPY");
+
+      // 3. Fresh backend over the same on-disk data-dir identity → initialize()
+      //    runs migration, hits the conflict, and must warn on stderr.
+      const second = new AgeSecretsBackend({
+        identityPath,
+        passphraseProvider: async () => "pw",
+        keychain: makeMemKeychain({ "agent-manager::identity-passphrase": "pw" }),
+      });
+      await second.initialize();
+
+      // The active identity is still perfectly usable...
+      const env = await second.encrypt("still-works");
+      expect(await second.decrypt(env)).toBe("still-works");
+
+      // ...and a single actionable warning was surfaced on stderr naming both
+      // the active data-dir copy and the legacy copy to delete.
+      const warning = errors.find((e) => /warning: age identity found in BOTH/.test(e));
+      expect(warning).toBeDefined();
+      expect(warning).toContain(identityDir);
+      expect(warning).toContain(legacy);
+      expect(warning).toMatch(/delete it/i);
+
+      // The legacy copy is NOT clobbered — the conflict path never overwrites
+      // a live key; the user deletes the legacy copy themselves.
+      expect(await readFile(join(legacy, "identity.age"), "utf8")).toBe("STALE-LEAKY-LEGACY-COPY");
+    } finally {
+      console.error = origError;
+      restoreEnv();
+      await rm(xdgConfig, { recursive: true, force: true });
+      await rm(dataDir, { recursive: true, force: true });
+    }
+  });
 });
 
 describe("AgeSecretsBackend — identity lifecycle", () => {
@@ -878,5 +947,173 @@ describe("AgeSecretsBackend — readRotationState fail-closed", () => {
       new RegExp(statePath.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")),
     );
     await rm(tmpDir, { recursive: true, force: true });
+  });
+});
+
+// SECURITY (e737 / ADR-0082) — production-path initialize() coverage.
+//
+// Every other lifecycle test passes an explicit `identityPath` to the
+// constructor, which short-circuits the OS-data-dir resolution that PRODUCTION
+// uses (the backend factory + `am secrets` never pass identityPath; they rely
+// on resolveIdentityPath()). The wave-5 review flagged that the real init path
+// — construct WITHOUT identityPath, let resolveIdentityDir() pick the platform
+// data dir, run the e737 migration shim, land identity.age there — was never
+// exercised end-to-end, so a regression in the default resolution or migration
+// wiring would slip past the suite.
+//
+// These tests drive initialize() through the DEFAULT resolution path with
+// HOME/XDG pointed at mktemp dirs (no AM_AGE_IDENTITY_DIR override, so the
+// migration shim is live), and assert (a) the identity lands at the
+// platform-correct OS data dir per the e737/0082 relocation, physically
+// OUTSIDE the git-tracked config dir, and (b) — building on the 7dcc
+// conflict-surfacing shape — that a stale legacy copy surfaces the
+// `conflict` stderr warning through the same production resolver.
+describe("AgeSecretsBackend — production initialize() path (no identityPath short-circuit)", () => {
+  const origEnv: Record<string, string | undefined> = {};
+  function setEnv(key: string, value: string | undefined) {
+    if (!(key in origEnv)) origEnv[key] = process.env[key];
+    if (value === undefined) delete process.env[key];
+    else process.env[key] = value;
+  }
+  function restoreEnv() {
+    for (const [key, value] of Object.entries(origEnv)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+    for (const key of Object.keys(origEnv)) delete (origEnv as Record<string, unknown>)[key];
+  }
+
+  // Point HOME + every per-platform data/config root at mktemp dirs and CLEAR
+  // the identity override so resolveIdentityDir() walks the real production
+  // switch (XDG_DATA_HOME on Linux, %APPDATA% on Windows, ~/Library/... on
+  // macOS — all under our temp HOME) and the e737 migration shim stays armed.
+  async function pinDataDirs(): Promise<{ home: string; dataRoot: string; configRoot: string }> {
+    const home = await mkdtemp(join(tmpdir(), "am-age-prod-home-"));
+    const dataRoot = await mkdtemp(join(tmpdir(), "am-age-prod-data-"));
+    const configRoot = await mkdtemp(join(tmpdir(), "am-age-prod-cfg-"));
+    setEnv("HOME", home);
+    setEnv("AM_AGE_IDENTITY_DIR", undefined); // no short-circuit → real resolver + migration
+    setEnv("AM_KEY_PATH", undefined);
+    setEnv("XDG_DATA_HOME", dataRoot); // Linux + "other" data dir
+    setEnv("XDG_CONFIG_HOME", configRoot); // legacy (leaky) config dir root
+    setEnv("APPDATA", join(dataRoot, "Roaming")); // Windows data dir
+    return { home, dataRoot, configRoot };
+  }
+
+  test("initialize() with NO identityPath lands the identity at the OS data dir (not the config dir), migration runs", async () => {
+    const { home, dataRoot, configRoot } = await pinDataDirs();
+    try {
+      // resolveIdentityPath() reads the SAME env we just pinned, so it is the
+      // ground truth for "where production would write" on this platform.
+      const expectedPath = resolveIdentityPath();
+      const expectedDir = resolveIdentityDir();
+
+      const kc = makeMemKeychain();
+      // NO identityPath → constructor falls back to resolveIdentityPath().
+      const backend = new AgeSecretsBackend({
+        passphraseProvider: async () => "prod-pw",
+        keychain: kc,
+      });
+
+      // initialize() runs the e737 migration shim (no legacy present → kind
+      // 'none', a no-op) and then creates a fresh identity at the resolved path.
+      await backend.initialize();
+
+      // The backend resolved to the production data-dir path...
+      expect(backend.getIdentityPath()).toBe(expectedPath);
+
+      // ...and a real passphrase-wrapped age file physically landed there.
+      const st = await stat(expectedPath);
+      expect(st.isFile()).toBe(true);
+      const raw = await readFile(expectedPath);
+      const head = new TextDecoder().decode(raw.subarray(0, 22));
+      expect(head.startsWith("age-encryption.org/")).toBe(true);
+
+      // It is the platform-correct OS DATA dir (e737/0082 relocation): under
+      // our pinned data root, NEVER under the git-tracked config dir.
+      const normExpectedDir = expectedDir.replace(/\\/g, "/");
+      expect(normExpectedDir.endsWith("agent-manager/identities")).toBe(true);
+      expect(normExpectedDir).not.toContain(configRoot.replace(/\\/g, "/"));
+      // On Linux/other the data root is XDG_DATA_HOME; on win32 it is APPDATA;
+      // on darwin it is ~/Library/... under our temp HOME. In every case the
+      // path is rooted at material we control, so the real user's data dir is
+      // never touched.
+      const underTempRoots =
+        normExpectedDir.startsWith(dataRoot.replace(/\\/g, "/")) ||
+        normExpectedDir.startsWith(home.replace(/\\/g, "/"));
+      expect(underTempRoots).toBe(true);
+
+      // The identity is fully functional through the production path.
+      const env = await backend.encrypt("prod-roundtrip");
+      expect(await backend.decrypt(env)).toBe("prod-roundtrip");
+    } finally {
+      restoreEnv();
+      await rm(home, { recursive: true, force: true });
+      await rm(dataRoot, { recursive: true, force: true });
+      await rm(configRoot, { recursive: true, force: true });
+    }
+  });
+
+  test("initialize() with NO identityPath surfaces the conflict warning when a legacy copy exists in the config dir", async () => {
+    const { home, dataRoot, configRoot } = await pinDataDirs();
+
+    const errors: string[] = [];
+    const origError = console.error;
+    console.error = (...args: unknown[]) => {
+      errors.push(args.map(String).join(" "));
+    };
+
+    try {
+      const dataDir = resolveIdentityDir();
+      const legacyDir = legacyIdentityDir();
+
+      // 1. Create a REAL data-dir identity through the production resolver (no
+      //    identityPath) so the conflicting copy is a live, unlockable key.
+      const first = new AgeSecretsBackend({
+        passphraseProvider: async () => "pw",
+        keychain: makeMemKeychain(),
+      });
+      await first.initialize();
+      expect(first.getIdentityPath()).toBe(resolveIdentityPath());
+
+      // 2. Plant a stale legacy copy in the git-tracked config dir so the
+      //    migration shim sees BOTH the data-dir identity and the legacy one.
+      await mkdir(legacyDir, { recursive: true });
+      await writeFile(join(legacyDir, "identity.age"), "STALE-LEAKY-LEGACY-COPY");
+
+      // 3. Fresh backend over the same on-disk data-dir identity, again with NO
+      //    identityPath → initialize() runs the real migration, hits the
+      //    conflict, and must warn on stderr. Keychain pre-seeded so the
+      //    unlock is silent (this is the production cache-hit path).
+      const second = new AgeSecretsBackend({
+        passphraseProvider: async () => "pw",
+        keychain: makeMemKeychain({ "agent-manager::identity-passphrase": "pw" }),
+      });
+      await second.initialize();
+
+      // The active data-dir identity is still perfectly usable.
+      const env = await second.encrypt("still-works");
+      expect(await second.decrypt(env)).toBe("still-works");
+
+      // A single actionable warning surfaced on stderr, naming the active
+      // data-dir copy and the legacy copy to delete (7dcc conflict shape).
+      const warning = errors.find((e) => /warning: age identity found in BOTH/.test(e));
+      expect(warning).toBeDefined();
+      expect(warning).toContain(dataDir);
+      expect(warning).toContain(legacyDir);
+      expect(warning).toMatch(/delete it/i);
+
+      // The legacy copy is NEVER clobbered — the conflict path leaves the live
+      // key alone for the user to delete.
+      expect(await readFile(join(legacyDir, "identity.age"), "utf8")).toBe(
+        "STALE-LEAKY-LEGACY-COPY",
+      );
+    } finally {
+      console.error = origError;
+      restoreEnv();
+      await rm(home, { recursive: true, force: true });
+      await rm(dataRoot, { recursive: true, force: true });
+      await rm(configRoot, { recursive: true, force: true });
+    }
   });
 });

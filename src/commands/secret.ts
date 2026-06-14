@@ -382,16 +382,26 @@ const scanCommand = defineCommand({
       }
       const encryptionKey = key;
 
+      // `inPlace` distinguishes a settings.env value encrypted where it already
+      // lives (no ${VAR} placeholder was written) from a real server-env
+      // substitution (the value moved to settings.env and the server env now
+      // references ${envVar}). The human report renders the two cases
+      // differently so it never claims a substitution that did not happen (W5R).
       interface FixResult {
         substituted: number;
-        fixedSecrets: Array<{ server: string; key: string; envVar: string }>;
+        fixedSecrets: Array<{ server: string; key: string; envVar: string; inPlace: boolean }>;
       }
 
       const fixOutcome = await withConfig<FixResult>(configDir, async (maybeConfig) => {
         requireConfig(maybeConfig);
         const config = maybeConfig;
         let substituted = 0;
-        const fixedSecrets: Array<{ server: string; key: string; envVar: string }> = [];
+        const fixedSecrets: Array<{
+          server: string;
+          key: string;
+          envVar: string;
+          inPlace: boolean;
+        }> = [];
 
         // Re-scan inside the lock so we operate on the current state.
         const freshScan = config.servers ? await scanConfigForSecrets(config.servers) : [];
@@ -412,6 +422,7 @@ const scanCommand = defineCommand({
             server: SETTINGS_ENV_SCOPE,
             key: secret.key,
             envVar: secret.key,
+            inPlace: true,
           });
           substituted++;
         }
@@ -442,6 +453,7 @@ const scanCommand = defineCommand({
               server: result.serverName,
               key: secret.key ?? `args[${secret.index}]`,
               envVar,
+              inPlace: false,
             });
             substituted++;
           }
@@ -461,7 +473,15 @@ const scanCommand = defineCommand({
       } else {
         info(`Substituted and encrypted ${substituted} secret(s):`, opts);
         for (const f of fixedSecrets) {
-          info(`  ${f.server}: ${f.key} -> \${${f.envVar}}`, opts);
+          // In-place encryption rewrote the value where it already lived; there
+          // is no ${VAR} placeholder, so printing the substitution arrow would
+          // misrepresent what happened (W5R). Only the real-substitution case
+          // gets the `key -> ${VAR}` arrow.
+          if (f.inPlace) {
+            info(`  ${f.server}: ${f.key}: encrypted in place`, opts);
+          } else {
+            info(`  ${f.server}: ${f.key} -> \${${f.envVar}}`, opts);
+          }
         }
         info(
           `\nOriginal values stored encrypted in settings.env. Skipped ${totalSecrets - substituted} low-confidence finding(s).`,

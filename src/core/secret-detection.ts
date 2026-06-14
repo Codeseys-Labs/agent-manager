@@ -46,7 +46,14 @@ const SECRET_KEY_PATTERNS: RegExp[] = [
   // LICENSE_KEY / PUBLIC_KEY now match — acceptable, substitution is reversible)
   // rather than a free `key` substring (which would catch KEYBOARD, MONKEY…).
   /(^|[_-])(key|token|secret|password|pass|pwd|credential)$/i,
-  /bearer/i,
+  // Anchored bearer: matches a bare `BEARER` or a bearer-SUFFIXED key
+  // (AUTH_BEARER). A free `/bearer/i` substring match treated config flags as
+  // secrets (BEARER_ENABLED, BEARER_TOKEN_TTL) and false-fired on FORBEARER /
+  // BEARERTOWN — harmless config encrypted as a credential. Anchoring on a
+  // `_`/`-`/start prefix and the END of the string bounds the match to the
+  // bearer suffix. BEARER_TOKEN already matches via the `token$` suffix group
+  // above, so it stays a secret without re-admitting the false positives.
+  /(^|[_-])bearer$/i,
 
   // Cloud providers
   /aws[_-]secret/i,
