@@ -73,8 +73,55 @@ const RETRY_DELAYS = [1000, 2000, 4000];
 
 const cache = new LRUCache<unknown>(CACHE_MAX_ENTRIES, CACHE_TTL_MS);
 
-function getBaseUrl(): string {
-  return process.env.AM_REGISTRY_URL ?? DEFAULT_BASE_URL;
+/** Hosts for which a cleartext http:// registry is acceptable (local dev). */
+const LOOPBACK_HOSTS: ReadonlySet<string> = new Set(["localhost", "127.0.0.1", "[::1]", "::1"]);
+
+/**
+ * Resolve the registry base URL, enforcing TLS.
+ *
+ * AM_REGISTRY_URL is attacker-influenceable env (a poisoned shell profile, a
+ * malicious CI step, a hijacked `.envrc`). A cleartext http:// (or any non-https)
+ * base silently downgrades every registry fetch to a MITM-able channel, so we
+ * FAIL CLOSED: only https:// is accepted, with two narrow exceptions —
+ *   - a loopback host (localhost / 127.0.0.1 / ::1) over http, for local dev;
+ *   - an explicit operator opt-in via AM_REGISTRY_ALLOW_HTTP=1, for trusted
+ *     internal cleartext registries.
+ * Non-http(s) schemes (ftp://, file://, …) are never allowed.
+ *
+ * Exported so tests can drive the policy directly without a network round-trip.
+ */
+export function getBaseUrl(): string {
+  const raw = process.env.AM_REGISTRY_URL;
+  if (raw === undefined || raw === "") return DEFAULT_BASE_URL;
+
+  let parsed: URL;
+  try {
+    parsed = new URL(raw);
+  } catch {
+    throw new RegistryError(
+      `Invalid AM_REGISTRY_URL "${raw}": not a valid URL. Expected an https:// registry URL.`,
+      0,
+    );
+  }
+
+  if (parsed.protocol === "https:") return raw;
+
+  if (parsed.protocol === "http:") {
+    // hostname strips the port and IPv6 brackets; check both forms.
+    const host = parsed.hostname;
+    const isLoopback = LOOPBACK_HOSTS.has(host) || LOOPBACK_HOSTS.has(`[${host}]`);
+    if (isLoopback) return raw;
+    if (process.env.AM_REGISTRY_ALLOW_HTTP === "1") return raw;
+    throw new RegistryError(
+      `Refusing to use cleartext AM_REGISTRY_URL "${raw}": http:// downgrades the registry connection to a MITM-able channel. Use an https:// URL, target a loopback host (localhost/127.0.0.1), or set AM_REGISTRY_ALLOW_HTTP=1 to opt in.`,
+      0,
+    );
+  }
+
+  throw new RegistryError(
+    `Refusing to use AM_REGISTRY_URL "${raw}": scheme "${parsed.protocol}" is not allowed. Only https:// (or loopback http://) registry URLs are permitted.`,
+    0,
+  );
 }
 
 async function fetchWithRetry(url: string, opts: { skipCache?: boolean } = {}): Promise<Response> {

@@ -1266,6 +1266,15 @@ export const pathSubcommand = defineCommand({
   },
 });
 
+// L11 (2026-06-14): editor resolution for `am wiki resolve`'s interactive
+// "open in $EDITOR" path. Honor EDITOR, then VISUAL, then a platform-aware
+// final fallback: `notepad` on Windows (where `vi` is absent) and `vi`
+// everywhere else. `platform` is injectable for tests; it defaults to the
+// live `process.platform`.
+export function resolveEditor(platform: NodeJS.Platform = process.platform): string {
+  return process.env.EDITOR ?? process.env.VISUAL ?? (platform === "win32" ? "notepad" : "vi");
+}
+
 // M5.2 (2026-05-03): correctness-first sync pipeline. Replaces the thin
 // push/pull wrapper with auto-commit + fast-forward-only pull + rollback via
 // `softResetHead` on divergence + wiki-conflict.json sidecar for `am wiki
@@ -1502,7 +1511,7 @@ const resolveSubcommand = defineCommand({
         // EDITOR="code --wait" or EDITOR="vim -f". Passing the whole
         // string as argv[0] fails with ENOENT. Split on whitespace so
         // EDITOR-style env vars work.
-        const editorRaw = process.env.EDITOR ?? process.env.VISUAL ?? "vi";
+        const editorRaw = resolveEditor();
         const parts = editorRaw.trim().split(/\s+/);
         const bin = parts[0];
         const editorArgs = parts.slice(1);

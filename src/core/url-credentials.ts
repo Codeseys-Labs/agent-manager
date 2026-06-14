@@ -68,21 +68,33 @@ export interface CredentialHit {
   suggestedEnvVar: string;
   /**
    * Which field the credential URL lives in, so the write path can rewrite the
-   * RIGHT location: `"command"`, `"args"` (with `argIndex`), or `"adapter"`
-   * (with `adapterName`). Without this, an adapter-url hit was mis-rewritten as
-   * the command and the plaintext survived (review finding A).
+   * RIGHT location: `"command"`, `"args"` (with `argIndex`), `"adapter"`
+   * (with `adapterName`), or `"env"` (with `envKey`). Without this, an
+   * adapter-url hit was mis-rewritten as the command and the plaintext
+   * survived (review finding A).
    */
-  source: "command" | "args" | "adapter";
+  source: "command" | "args" | "adapter" | "env";
   /** Arg index when `source === "args"`. */
   argIndex?: number;
   /** Adapter name when `source === "adapter"` (e.g. "cursor"). */
   adapterName?: string;
+  /** Env-var key when `source === "env"` (e.g. "MCP_ENDPOINT"). */
+  envKey?: string;
 }
 
 export interface ServerLike {
   command?: string;
   args?: string[];
   env?: Record<string, string>;
+}
+
+/**
+ * True when `key` names a credential (matches any CREDENTIAL_QUERY_KEYS rule).
+ * Shared by the query-param scan and the userinfo scan so both honour the same
+ * credential-name detection (M7: the length floor is relaxed for these keys).
+ */
+function isCredentialKey(key: string): boolean {
+  return CREDENTIAL_QUERY_KEYS.some((re) => re.test(key));
 }
 
 /**
@@ -133,11 +145,40 @@ export function scanUrlForCredentials(url: string): UrlCredentialMatch[] {
   } catch {
     return hits; // not a URL, skip
   }
+  // M7 gap 3: userinfo credentials (https://user:s3cret@host) are never query
+  // params, so the loop below would miss them. A non-empty username OR password
+  // in the URL authority is a leaked credential — emit a hit before walking the
+  // query string. The percent-decoded password (then username) is the raw
+  // secret; we synthesize a credential-named queryKey so the env-derivation and
+  // formatting paths stay uniform.
+  const userinfoSecrets: Array<{ key: string; value: string }> = [];
+  if (parsed.password) {
+    userinfoSecrets.push({ key: "password", value: decodeURIComponent(parsed.password) });
+  }
+  if (parsed.username) {
+    userinfoSecrets.push({ key: "username", value: decodeURIComponent(parsed.username) });
+  }
+  for (const { key, value } of userinfoSecrets) {
+    if (PLACEHOLDER_VALUE.test(value)) continue; // explicit interpolation
+    hits.push({
+      url,
+      queryKey: key,
+      redactedValue: `${value.slice(0, 6)}…`,
+      rawValue: value,
+      suggestedEnvVar: `\${${deriveBareEnvName(key)}}`,
+    });
+  }
   const params = parsed.searchParams;
   for (const [key, value] of params.entries()) {
-    if (!CREDENTIAL_QUERY_KEYS.some((re) => re.test(key))) continue;
+    const credentialNamed = isCredentialKey(key);
+    if (!credentialNamed) continue;
     if (PLACEHOLDER_VALUE.test(value)) continue; // explicit interpolation
-    if (value.length < 8) continue; // too short to be a real key
+    // M7 gap 2: the <8 length floor only bounds false positives on
+    // NON-credential-named keys. A credential-NAMED key (token/api_key/secret/…)
+    // is flagged regardless of length — a short `token=abc123` is still a leak.
+    // (All keys reaching here are credential-named, so the floor is dropped;
+    // kept conditional for intent + future non-credential heuristics.)
+    if (!credentialNamed && value.length < 8) continue;
     hits.push({
       url,
       queryKey: key,
@@ -164,7 +205,8 @@ export function scanServersForUrlCredentials(
   type Candidate =
     | { url: string; source: "command" }
     | { url: string; source: "args"; argIndex: number }
-    | { url: string; source: "adapter"; adapterName: string };
+    | { url: string; source: "adapter"; adapterName: string }
+    | { url: string; source: "env"; envKey: string };
   for (const [serverName, server] of Object.entries(servers ?? {})) {
     const candidates: Candidate[] = [];
     if (server.command && /^https?:\/\//i.test(server.command)) {
@@ -185,6 +227,14 @@ export function scanServersForUrlCredentials(
         candidates.push({ url: adapter.url, source: "adapter", adapterName });
       }
     }
+    // M7 gap 1: a credential URL stashed in a server.env value (e.g.
+    // `MCP_ENDPOINT=https://…?api_key=…`) was undetected because the scan
+    // never iterated env. Walk every env value that parses as a URL.
+    for (const [envKey, envValue] of Object.entries(server.env ?? {})) {
+      if (typeof envValue === "string" && /^https?:\/\//i.test(envValue)) {
+        candidates.push({ url: envValue, source: "env", envKey });
+      }
+    }
     for (const cand of candidates) {
       for (const h of scanUrlForCredentials(cand.url)) {
         hits.push({
@@ -193,6 +243,7 @@ export function scanServersForUrlCredentials(
           source: cand.source,
           ...(cand.source === "args" ? { argIndex: cand.argIndex } : {}),
           ...(cand.source === "adapter" ? { adapterName: cand.adapterName } : {}),
+          ...(cand.source === "env" ? { envKey: cand.envKey } : {}),
         });
       }
     }
@@ -217,14 +268,43 @@ export function buildSuggestedReplacementUrl(
 ): string {
   try {
     const u = new URL(url);
+    // M7 gap 3: userinfo credentials (`https://user:s3cret@host`) are NOT query
+    // params, so the searchParams rewrite below would leave the raw
+    // `user:s3cret@` in the authority and LEAK it in the displayed fix. Handle
+    // userinfo first: rewrite the target field to the placeholder (when the hit
+    // IS the userinfo field) and mask the sibling so the displayed URL is safe
+    // to copy verbatim. URL setters reject `${VAR}` (it percent-encodes), so we
+    // de-percent-encode the placeholder back to its literal form afterwards.
+    const userinfoTarget = queryKey === "username" || queryKey === "password";
+    // The URL userinfo setter percent-encodes the `${VAR}` braces (e.g.
+    // `${PASSWORD}` → `$%7BPASSWORD%7D`). Capture the encoded form the setter
+    // actually produced so we can restore the literal placeholder afterwards.
+    let encodedPlaceholder = "";
+    if (u.username || u.password) {
+      if (u.password) {
+        u.password = queryKey === "password" ? envVar : "***REDACTED***";
+        if (queryKey === "password") encodedPlaceholder = u.password;
+      }
+      if (u.username) {
+        u.username = queryKey === "username" ? envVar : "***REDACTED***";
+        if (queryKey === "username") encodedPlaceholder = u.username;
+      }
+    }
     // Mask every OTHER credential-shaped param so the displayed URL is
     // safe to copy verbatim. (Display-only — the write path uses the
     // non-masking `rewriteUrlParam` instead.)
     for (const [k, _v] of u.searchParams.entries()) {
-      if (k === queryKey) continue;
+      if (!userinfoTarget && k === queryKey) continue;
       if (CREDENTIAL_QUERY_KEYS.some((re) => re.test(k))) {
         u.searchParams.set(k, "***REDACTED***");
       }
+    }
+    if (userinfoTarget) {
+      // Target lives in userinfo, not the query string — nothing more to rewrite
+      // there. Restore the literal `${VAR}` placeholder (the setter
+      // percent-encoded its braces).
+      const out = u.toString();
+      return encodedPlaceholder ? out.replace(encodedPlaceholder, envVar) : out;
     }
     // Rewrite the target param last, via the shared core (handles the
     // `${VAR}` de-percent-encoding).
@@ -256,7 +336,9 @@ export function formatCredentialHits(hits: CredentialHit[]): string {
         ? `servers.${h.serverName}.adapters.${h.adapterName}.url`
         : h.source === "args"
           ? `servers.${h.serverName}.args[${h.argIndex}]`
-          : `servers.${h.serverName}.command`;
+          : h.source === "env"
+            ? `servers.${h.serverName}.env.${h.envKey}`
+            : `servers.${h.serverName}.command`;
     lines.push(
       `  ${field} = "${buildSuggestedReplacementUrl(h.url, h.queryKey, h.suggestedEnvVar)}"`,
     );

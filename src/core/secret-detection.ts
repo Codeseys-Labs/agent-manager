@@ -116,11 +116,14 @@ export interface DetectedSecret {
   /**
    * For a url-credential: where the credential-bearing URL lives. `substituteSecret`
    * uses this to pick the right field to rewrite via `rewriteUrlParam`. `"adapter"`
-   * means it lives in `server.adapters[adapterName].url`.
+   * means it lives in `server.adapters[adapterName].url`; `"env"` means it lives
+   * in `server.env[envKey]` (M7: a credential URL stashed in an env value).
    */
-  urlSource?: "command" | "args" | "adapter";
+  urlSource?: "command" | "args" | "adapter" | "env";
   /** Adapter name when urlSource === "adapter". */
   adapterName?: string;
+  /** Env-var key when urlSource === "env" (the env entry holding the URL). */
+  envKey?: string;
   /** Suggested ${VAR} replacement name (bare name, e.g. TAVILYAPIKEY) */
   suggestedEnvVar: string;
 }
@@ -272,6 +275,7 @@ export function scanServerForUrlCredentials(
     urlSource: h.source,
     ...(h.source === "args" ? { index: h.argIndex } : {}),
     ...(h.source === "adapter" ? { adapterName: h.adapterName } : {}),
+    ...(h.source === "env" ? { envKey: h.envKey } : {}),
     suggestedEnvVar: deriveBareEnvName(h.queryKey),
   }));
 }
@@ -477,6 +481,18 @@ export function substituteSecret(
             return !rewritten.includes(secret.value);
           }
           return false; // adapter/url vanished — cannot rewrite
+        }
+        // M7: a credential URL stashed in an env value. Rewrite the EXACT env
+        // entry — falling through to the command rewrite below would scan the
+        // wrong field, detect-but-not-substitute, and leave the plaintext in
+        // env (the "detection > substitution = plaintext leak" failure mode).
+        if (secret.urlSource === "env" && secret.envKey) {
+          if (server.env && typeof server.env[secret.envKey] === "string") {
+            const rewritten = rewriteUrlParam(server.env[secret.envKey], secret.key, placeholder);
+            server.env[secret.envKey] = rewritten;
+            return !rewritten.includes(secret.value);
+          }
+          return false; // env entry vanished — cannot rewrite (fail closed)
         }
         server.command = rewriteUrlParam(server.command, secret.key, placeholder);
         return !server.command.includes(secret.value);

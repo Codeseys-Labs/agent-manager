@@ -57,6 +57,10 @@ export interface ImportedServer {
   args?: string[];
   env?: Record<string, string>;
   transport?: "stdio" | "streamable-http" | "sse";
+  // Optional remote endpoint for sse / streamable-http transports. Mirrors
+  // RemoteServerSchema.url (core/schema.ts). Carried through merge so a
+  // brownfield import of a remote server does not silently drop its url.
+  url?: string;
   description?: string;
   tags?: string[];
   enabled?: boolean;

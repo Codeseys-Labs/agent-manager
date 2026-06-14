@@ -8,6 +8,7 @@ import {
   scanConfigForSecrets,
   scanServerEnvVars,
   scanServerForSecrets,
+  scanServerForUrlCredentials,
   scanSettingsEnvForSecrets,
   substituteSecret,
 } from "../../src/core/secret-detection";
@@ -328,6 +329,33 @@ describe("substituteSecret", () => {
 
     substituteSecret(server, secret, "API_KEY");
     expect(server.command).toBe("API_KEY=${API_KEY} npx mcp-server");
+  });
+
+  test("M7: env-sourced url-credential is DETECTED and SUBSTITUTED (no surviving plaintext)", () => {
+    // Regression for the "detection > substitution = plaintext leak" hazard:
+    // a credential URL stashed in an env value must be (a) detected with
+    // urlSource:'env' + envKey, and (b) rewritten IN the env entry — not the
+    // command. Before the fix substituteSecret fell through to the command
+    // rewrite, returned false (or wrong field), and left the plaintext in env.
+    const server = {
+      command: "npx",
+      args: ["-y", "some-mcp"],
+      env: { MCP_ENDPOINT: "https://mcp.example.com/?api_key=abcdefghijklmnop1234" },
+    };
+    const secrets = scanServerForUrlCredentials("enved", server);
+    const envHit = secrets.find((s) => s.urlSource === "env");
+    expect(envHit, "env url-credential not detected").toBeDefined();
+    expect(envHit?.envKey).toBe("MCP_ENDPOINT");
+    expect(envHit?.key).toBe("api_key");
+
+    const removed = substituteSecret(server, envHit as DetectedSecret, "MCP_ENDPOINT_API_KEY");
+    // substitution MUST report success (plaintext provably removed)…
+    expect(removed).toBe(true);
+    // …the env value is rewritten to the placeholder…
+    expect(server.env.MCP_ENDPOINT).toContain("api_key=${MCP_ENDPOINT_API_KEY}");
+    // …the raw credential survives NOWHERE in the server.
+    expect(server.env.MCP_ENDPOINT).not.toContain("abcdefghijklmnop1234");
+    expect(server.command).toBe("npx");
   });
 });
 

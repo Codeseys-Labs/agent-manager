@@ -17,6 +17,7 @@ import {
   writeAdaptersToml,
 } from "../adapters/community/loader";
 import type { CommunityAdapterConfig } from "../adapters/community/types";
+import { validateAdapterName } from "../commands/adapter";
 import { resolveConfigDir, tryReadConfig } from "../core/config";
 import { withConfig } from "../core/controller";
 import type { AgentProfile, Config, Server, Skill } from "../core/schema";
@@ -85,6 +86,16 @@ export async function installPlugin(
   // is atomic under a single mutex held against concurrent MCP/CLI callers.
   return withConfig(configDir, async (config) => {
     requireConfig(config);
+
+    // Security: when a manifest declares an `adapter`, the plugin's
+    // `manifest.name` becomes the adapters.toml catalog KEY (and flows into
+    // path composition `am-adapter-<name>` downstream). A malicious/malformed
+    // name (`../evil`, "Bad Name", uppercase) must be rejected BEFORE any
+    // catalog write OR config mutation — fail closed up front so no
+    // servers/skills/agents leak in for a plugin we will refuse anyway.
+    if (plugin.manifest.adapter) {
+      validateAdapterName(plugin.manifest.name);
+    }
 
     const result = applyPlugin(config, plugin, { trustCommands: opts?.trustCommands });
 

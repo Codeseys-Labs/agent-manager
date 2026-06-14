@@ -241,6 +241,20 @@ const SECRET_PATTERNS: Array<{ re: RegExp; replace: string }> = [
     re: /\beyJ[A-Za-z0-9_-]{4,}\.[A-Za-z0-9_-]{4,}\.[A-Za-z0-9_-]{4,}\b/g,
     replace: "[REDACTED_JWT]",
   },
+  // Database connection strings (L6): postgres/mysql/mongodb/redis URLs leak
+  // not just an embedded password (which the userinfo rule below would catch)
+  // but the host, port, and database name — internal topology that should not
+  // ride out in an error envelope. The userinfo rule only masks `user:pass@`
+  // and leaves a credential-LESS `postgres://app_user@host:5432/db` echoing the
+  // host verbatim. Redact the WHOLE connection string for these known DB
+  // schemes. Must precede the generic userinfo rule so the full string is
+  // swallowed rather than half-masked. Scheme set is an explicit allowlist
+  // (incl. +srv / +ssl variants like `mongodb+srv://`) so benign `https://`
+  // web URLs are never touched (no generic-entropy / no broad-URL posture).
+  {
+    re: /\b(?:postgres(?:ql)?|mysql|mongodb(?:\+srv)?|redis(?:s)?|rediss)(?:\+[a-z]+)?:\/\/[^\s"'`]+/gi,
+    replace: "[REDACTED_CONNECTION_STRING]",
+  },
   // URL userinfo: scheme://user:token@host → scheme://[redacted]@host. Git
   // remotes and MCP server URLs embed live credentials here; error envelopes
   // (e.g. a failed `git push` to https://x-access-token:ghp_xxx@host) would
@@ -261,6 +275,15 @@ const SECRET_PATTERNS: Array<{ re: RegExp; replace: string }> = [
   { re: /\bsk-[A-Za-z0-9_-]{20,}\b/g, replace: "[REDACTED_API_KEY]" },
   // Google API keys (AIza + 35 chars)
   { re: /\bAIza[A-Za-z0-9_-]{35}\b/g, replace: "[REDACTED_GOOGLE_KEY]" },
+  // Vendor tokens with distinctive prefixes (L6). These providers are already
+  // keyed by NAME in src/core/secret-detection.ts (SECRET_KEY_PATTERNS) but
+  // their VALUE shape was unguarded here, so a bare token in free-form error
+  // text leaked verbatim. Mirror only the HIGH-CONFIDENCE prefixes — keeping
+  // the no-generic-entropy posture (specific prefix rules, no broad heuristic).
+  //   - Tavily: tvly-<token>
+  //   - Replicate: r8_<token>
+  { re: /\btvly-[A-Za-z0-9_-]{8,}\b/g, replace: "[REDACTED_TAVILY_KEY]" },
+  { re: /\br8_[A-Za-z0-9]{20,}\b/g, replace: "[REDACTED_REPLICATE_KEY]" },
   // Slack tokens (xox[baprs]-...) — extended character class to cover the
   // newer xoxp/xoxa/xoxr token formats that include `.` and `_` in the
   // trailing segment.

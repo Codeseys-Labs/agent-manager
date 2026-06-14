@@ -16,8 +16,12 @@
 import { readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { DEFAULT_KEEP_COUNT } from "./atomic-write";
 
-const DEFAULT_MAX_COUNT = 10;
+// Single source of truth for the keep-count: the proactive sweep default MUST
+// equal atomic-write's per-write prune floor so the two prune windows don't
+// diverge (W-l8). Re-exporting the same constant rather than a local `10`.
+const DEFAULT_MAX_COUNT = DEFAULT_KEEP_COUNT;
 const DEFAULT_MAX_AGE_DAYS = 30;
 
 export interface BackupSummary {
@@ -139,7 +143,13 @@ function envMaxCount(): number {
   const raw = process.env.AM_APPLY_BACKUP_MAX;
   if (!raw) return DEFAULT_MAX_COUNT;
   const parsed = Number.parseInt(raw, 10);
+  // Negative / unparseable: fall back to the default keep-count.
   if (Number.isNaN(parsed) || parsed < 0) return DEFAULT_MAX_COUNT;
+  // A keep-count of 0 must NOT mean keep-all. Downstream `slice(-maxCount)`
+  // treats `slice(-0)` as `slice(0)` (the whole array), which would retain
+  // every backup forever — the exact opposite of "keep zero" and a silent
+  // disk-bloat footgun. Floor to 1 so a 0 still bounds retention (W-l8).
+  if (parsed === 0) return 1;
   return parsed;
 }
 
@@ -169,7 +179,12 @@ export async function pruneBackups(
   options: { maxAgeDays?: number; maxCount?: number } = {},
 ): Promise<{ removed: number; freedBytes: number }> {
   const maxAgeDays = options.maxAgeDays ?? envMaxAgeDays();
-  const maxCount = options.maxCount ?? envMaxCount();
+  // Floor the resolved keep-count at 1: a 0 (or negative) here would make the
+  // `slice(-maxCount)` survivor selection below degrade to `slice(0)` —
+  // keep-all — instead of pruning. envMaxCount already floors the env path;
+  // this guards the explicit `options.maxCount` path too so there is a single
+  // invariant: the survivor window is always >= 1 (W-l8).
+  const maxCount = Math.max(1, options.maxCount ?? envMaxCount());
   const ageThresholdMs = Date.now() - maxAgeDays * 24 * 60 * 60 * 1000;
 
   const dirs = await listPerTargetDirs();

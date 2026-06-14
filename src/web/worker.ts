@@ -9,6 +9,7 @@
  */
 import { Hono } from "hono";
 import type { ContentfulStatusCode } from "hono/utils/http-status";
+import { redactConfigPlaintextSecrets, redactConfigSecrets } from "../lib/redact";
 import { type GitProvider, getProvider, registerGiteaInstance } from "./git-providers";
 
 // ---------------------------------------------------------------------------
@@ -82,6 +83,31 @@ function getConfiguredProviders(env: Bindings): string[] {
 }
 
 // ---------------------------------------------------------------------------
+// Session secret guard (fail closed)
+// ---------------------------------------------------------------------------
+
+/** Minimum SESSION_SECRET length. The HKDF salt is fixed, so the secret is the
+ *  sole source of session-key entropy — a short secret is brute-forceable and
+ *  yields trivially-decryptable cookies that carry a live git PAT. */
+const MIN_SESSION_SECRET_LENGTH = 32;
+
+/**
+ * Validate that SESSION_SECRET is present and strong enough BEFORE any session
+ * crypto runs. Returns an error string when the secret is unset or shorter than
+ * {@link MIN_SESSION_SECRET_LENGTH}; returns null when the secret is acceptable.
+ *
+ * Callers MUST fail closed (HTTP 500) on a non-null result and MUST NOT proceed
+ * to encrypt/decrypt. The returned message never includes the secret value.
+ */
+function assertSessionSecret(env: Bindings): string | null {
+  const secret = env.SESSION_SECRET;
+  if (typeof secret !== "string" || secret.length < MIN_SESSION_SECRET_LENGTH) {
+    return `Server misconfigured: SESSION_SECRET must be set and at least ${MIN_SESSION_SECRET_LENGTH} characters`;
+  }
+  return null;
+}
+
+// ---------------------------------------------------------------------------
 // Cookie-based session helpers (no persistent storage)
 // ---------------------------------------------------------------------------
 
@@ -141,6 +167,36 @@ function getSessionCookie(c: {
 
 function sessionCookie(value: string, maxAge = 86400): string {
   return `am_session=${value}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=${maxAge}`;
+}
+
+// ---------------------------------------------------------------------------
+// Wiki path-component guards (path-traversal defense, W-l4-worker-wiki-path)
+// ---------------------------------------------------------------------------
+
+/**
+ * Strict allowlist for a single wiki path component (project / slug). Mirrors
+ * the local MCP server's slug guard pattern (src/web/server.ts) but omits `.`
+ * entirely so a `..` segment can never be assembled. A component must start
+ * with [a-z0-9] and contain only lowercase alphanumerics, `_`, and `-`.
+ *
+ * These components are interpolated into a REMOTE git file path
+ * (`wiki/projects/${project}/${type}/${slug}.md`). Without this guard a value
+ * like `../../config` traverses out of the wiki dir and an authenticated
+ * caller can read arbitrary repo files. Validate BEFORE composing any path.
+ */
+const WIKI_COMPONENT_RE = /^[a-z0-9][a-z0-9_-]{0,63}$/;
+
+/** The fixed set of wiki page-type subdirectory names (src/wiki/storage.ts
+ *  PAGE_SUBDIRS). `type` is constrained to this allowlist rather than a regex
+ *  so an unexpected-but-traversal-free value can't address an arbitrary dir. */
+const WIKI_TYPES = new Set(["entities", "concepts", "summaries", "synthesis", "decisions"]);
+
+function isValidWikiComponent(value: string): boolean {
+  return WIKI_COMPONENT_RE.test(value);
+}
+
+function isValidWikiType(value: string): boolean {
+  return WIKI_TYPES.has(value);
 }
 
 // ---------------------------------------------------------------------------
@@ -223,6 +279,13 @@ app.get("/auth/:provider/login", async (c) => {
 });
 
 app.get("/auth/:provider/callback", async (c) => {
+  // Fail closed before any session crypto: a missing/weak SESSION_SECRET makes
+  // the encrypted session cookie (which carries a live git PAT) forgeable.
+  const secretError = assertSessionSecret(c.env);
+  if (secretError) {
+    return c.json({ error: secretError }, 500);
+  }
+
   const providerName = c.req.param("provider");
   const provider = getProvider(providerName);
   if (!provider) {
@@ -362,6 +425,13 @@ app.use("/api/*", async (c, next) => {
     return c.json({ error: "Not authenticated", login: "/auth/providers" }, 401);
   }
 
+  // Fail closed before decrypting: a missing/weak SESSION_SECRET makes the
+  // session cookie (which carries a live git PAT) trivially decryptable.
+  const secretError = assertSessionSecret(c.env);
+  if (secretError) {
+    return c.json({ error: secretError }, 500);
+  }
+
   const session = await decryptSession(encrypted, c.env.SESSION_SECRET);
   if (!session?.token) {
     return c.json({ error: "Session expired", login: "/auth/providers" }, 401);
@@ -426,13 +496,21 @@ app.get("/api/config/:owner/:repo", async (c) => {
 
   try {
     const TOML = await import("@iarna/toml");
-    const parsed = TOML.parse(content);
-    return c.json({ raw: content, parsed });
+    // Two-pass redaction, identical to the local server (src/web/server.ts)
+    // and the MCP am_config_show path: redactConfigSecrets masks enc: envelopes
+    // (v1 + v2 age), redactConfigPlaintextSecrets masks the PLAINTEXT secrets the
+    // envelope pass misses (env/headers maps by location, named secret scalars
+    // like a2a.auth_token, credential userinfo in URLs). The unredacted `raw`
+    // TOML text is deliberately NOT returned — it would leak every plaintext
+    // secret verbatim, bypassing the structural redactor entirely.
+    const parsed = redactConfigPlaintextSecrets(redactConfigSecrets(TOML.parse(content)));
+    return c.json({ parsed });
   } catch {
+    // Parse failed: we cannot structurally redact, so we MUST NOT return the raw
+    // content (it may carry plaintext secrets). Fail closed with a warning only.
     return c.json({
-      raw: content,
       parsed: null,
-      warning: "TOML parsing unavailable — returning raw content",
+      warning: "TOML parsing failed — raw content withheld to avoid leaking secrets",
     });
   }
 });
@@ -532,6 +610,12 @@ app.get("/api/wiki/:owner/:repo/pages", async (c) => {
   const { owner, repo } = c.req.param();
   const project = c.req.query("project");
 
+  // Validate the project component BEFORE composing the wiki path: a value
+  // like `../x` would escape the wiki dir. Reject with 400; never echo it back.
+  if (project !== undefined && !isValidWikiComponent(project)) {
+    return c.json({ error: "Invalid project" }, 400);
+  }
+
   const wikiPath = project ? `wiki/projects/${project}` : "wiki/global";
   const treeRes = await fetch(provider.treeUrl(owner, repo, "main"), {
     headers: {
@@ -577,6 +661,20 @@ app.get("/api/wiki/:owner/:repo/pages/:slug", async (c) => {
   const { owner, repo, slug } = c.req.param();
   const project = c.req.query("project");
   const type = c.req.query("type") ?? "entities";
+
+  // Validate every component BEFORE composing the file path. project/type/slug
+  // are interpolated into a remote git path; an unguarded `../` segment lets an
+  // authenticated caller traverse to arbitrary repo files. Reject with 400 and
+  // never echo the offending value back.
+  if (project !== undefined && !isValidWikiComponent(project)) {
+    return c.json({ error: "Invalid project" }, 400);
+  }
+  if (!isValidWikiType(type)) {
+    return c.json({ error: "Invalid type" }, 400);
+  }
+  if (!isValidWikiComponent(slug)) {
+    return c.json({ error: "Invalid slug" }, 400);
+  }
 
   const filePath = project
     ? `wiki/projects/${project}/${type}/${slug}.md`

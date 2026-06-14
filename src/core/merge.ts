@@ -332,6 +332,11 @@ function pickLonger(existing?: string, incoming?: string): string | undefined {
  * - tags: union
  * - description: keep longer
  * - enabled: keep existing
+ * - transport: survives for remote servers in BOTH branches — never coerce a
+ *   remote (sse / streamable-http) server back to stdio just because the
+ *   incoming payload left transport implicit (force) or differed (auto)
+ * - url: preserve the remote endpoint (existing wins, falls back to incoming) —
+ *   RemoteServerSchema.url is dropped otherwise, silently degrading the server
  * - _registry: preserve existing provenance
  */
 export function mergeServers(
@@ -340,29 +345,46 @@ export function mergeServers(
   strategy: MergeStrategy = "auto",
 ): Server {
   if (strategy === "force") {
-    return {
+    // Prefer the incoming transport, but fall back to the existing one rather
+    // than defaulting to "stdio": a remote server whose incoming payload omits
+    // transport must stay remote.
+    const transport = incoming.transport ?? existing.transport ?? "stdio";
+    const base = {
       command: incoming.command,
       args: incoming.args,
       env: incoming.env,
-      transport: incoming.transport ?? "stdio",
       description: incoming.description,
       tags: incoming.tags,
       enabled: incoming.enabled ?? true,
       _registry: existing._registry,
     };
+    if (transport === "stdio") {
+      return { ...base, transport };
+    }
+    // Remote: carry the url forward (existing wins, falls back to incoming) so
+    // an sse / streamable-http server isn't silently stripped of its endpoint.
+    return { ...base, transport, url: existing.url ?? incoming.url } as Server;
   }
 
-  return {
+  // auto: keep existing transport (it is authoritative for the matched server).
+  const base = {
     command: existing.command,
     args: unionArgs(existing.args, incoming.args),
     env: mergeEnv(existing.env, incoming.env),
-    transport: existing.transport,
     description: pickLonger(existing.description, incoming.description),
     tags: unionTags(existing.tags, incoming.tags),
     enabled: existing.enabled,
     _registry: existing._registry,
     adapters: existing.adapters,
   };
+  if (existing.transport === "stdio") {
+    return { ...base, transport: existing.transport };
+  }
+  return {
+    ...base,
+    transport: existing.transport,
+    url: existing.url ?? incoming.url,
+  } as Server;
 }
 
 /**

@@ -40,6 +40,45 @@ const MARKETPLACES_DIR = "marketplaces";
 const MARKETPLACES_JSON = "marketplaces.json";
 const GIT_AUTHOR = { name: "agent-manager", email: "am@localhost" };
 
+/**
+ * Valid marketplace name: lowercase alphanumerics, dash, underscore. Must start
+ * with alnum. 1–64 chars. This mirrors the adapter-name rule
+ * (src/commands/adapter.ts) — the subset of POSIX-safe directory names that are
+ * also a single path segment.
+ *
+ * Rejects: path traversal (`..`, `/`, `\`), empty strings, uppercase,
+ * whitespace, leading dash/underscore, and anything > 64 chars.
+ */
+const MARKETPLACE_NAME_RE = /^[a-z0-9][a-z0-9_-]{0,63}$/;
+
+/**
+ * Validate a marketplace name (user-supplied `--name` or one derived from a
+ * URL) before it is used to build a filesystem path. The resolved name is
+ * fed to `join(marketplacesDir, name)` which then drives `symlink()`,
+ * `git.clone()`, and `rm()` — a traversal value such as `../../etc` would
+ * escape the marketplaces directory and let an `rm` delete arbitrary paths.
+ *
+ * Throws {@link MarketplaceError} (fail closed) so every entry point rejects
+ * before any filesystem mutation. Exported so tests and other call sites can
+ * reuse the same rule.
+ */
+export function validateMarketplaceName(name: string): void {
+  if (!name || typeof name !== "string") {
+    throw new MarketplaceError("Invalid marketplace name: empty or non-string value.");
+  }
+  // Reject obvious separator/traversal abuse first for an actionable message.
+  if (name.includes("..") || name.includes("/") || name.includes("\\")) {
+    throw new MarketplaceError(
+      `Invalid marketplace name "${name}": must not contain "..", "/", or "\\" (would escape the marketplaces directory).`,
+    );
+  }
+  if (!MARKETPLACE_NAME_RE.test(name)) {
+    throw new MarketplaceError(
+      `Invalid marketplace name "${name}": must match /^[a-z0-9][a-z0-9_-]{0,63}$/ (lowercase letters/digits, dash, underscore; start with alnum; 1–64 chars). Pass a valid --name.`,
+    );
+  }
+}
+
 /** Extra options accepted by addMarketplace. */
 export interface AddMarketplaceOptions extends MarketplaceSecurityOptions {
   /** Skip the TOFU prompt. */
@@ -113,10 +152,17 @@ export async function addMarketplace(
   name?: string,
   opts: AddMarketplaceOptions = {},
 ): Promise<MarketplaceEntry> {
+  const resolvedName = name ?? deriveMarketplaceName(url);
+
+  // Validate BEFORE any filesystem op. resolvedName flows into
+  // join(marketplacesDir, …) → symlink()/clone()/rm(); a traversal value such
+  // as "../../etc" would escape the marketplaces directory. Validate the
+  // resolved name (not just the user-supplied --name) so a crafted URL whose
+  // derived basename traverses is rejected too. Fail closed.
+  validateMarketplaceName(resolvedName);
+
   const marketplacesDir = resolveMarketplacesDir();
   await fs.promises.mkdir(marketplacesDir, { recursive: true });
-
-  const resolvedName = name ?? deriveMarketplaceName(url);
 
   // Check for duplicate
   const existing = await readMarketplacesFile();
@@ -308,6 +354,11 @@ export async function updateMarketplace(
  * Remove a marketplace repo and its entry.
  */
 export async function removeMarketplace(name: string): Promise<void> {
+  // Validate BEFORE join()/rm(): a traversal name (whether passed directly or
+  // forged into marketplaces.json) would otherwise let rm delete an arbitrary
+  // path outside the marketplaces directory. Fail closed.
+  validateMarketplaceName(name);
+
   const data = await readMarketplacesFile();
   const idx = data.marketplaces.findIndex((m) => m.name === name);
   if (idx === -1) {

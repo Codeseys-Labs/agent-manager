@@ -91,6 +91,124 @@ describe("am secret", () => {
       const keyContents = await readFile(keyPath, "utf-8");
       expect(keyContents.trim()).toBe(base64);
     });
+
+    // L5 (ws W-l5-secret-genkey): `am secret generate-key` must NOT leak the raw
+    // base64 master key into shell history / logs / captured JSON by default.
+    // The raw key is only emitted when --show-key is explicitly passed.
+    describe("does not leak the raw master key by default", () => {
+      const origConfigDir = process.env.AM_CONFIG_DIR;
+      const origLog = console.log;
+      let logged: string[] = [];
+
+      // Reach the `generate-key` subcommand handler off the parent command's
+      // lazy subCommands map (same pattern as the scan tests above).
+      async function resolveGenerateKey(): Promise<{
+        run: (ctx: { args: Record<string, unknown> }) => Promise<void>;
+      }> {
+        const subCommands = secretCommand.subCommands as unknown as Record<
+          string,
+          () => Promise<unknown>
+        >;
+        const gen = await subCommands["generate-key"]();
+        return gen as { run: (ctx: { args: Record<string, unknown> }) => Promise<void> };
+      }
+
+      function capture(): void {
+        logged = [];
+        console.log = (...args: unknown[]) => {
+          logged.push(args.map(String).join(" "));
+        };
+      }
+
+      afterEach(() => {
+        console.log = origLog;
+        if (origConfigDir === undefined) Reflect.deleteProperty(process.env, "AM_CONFIG_DIR");
+        else process.env.AM_CONFIG_DIR = origConfigDir;
+      });
+
+      test("--json (no --show-key) omits the key and reports the path + keyShown:false", async () => {
+        dir = await createTestDir("am-secret-genkey-json-noshow-");
+        const configDir = dir.path;
+        await initRepo(configDir);
+        process.env.AM_CONFIG_DIR = configDir;
+
+        const gen = await resolveGenerateKey();
+        capture();
+        await gen.run({
+          args: { json: true, quiet: false, verbose: false, "show-key": false, showKey: false },
+        });
+
+        const payload = JSON.parse(logged.join("\n"));
+        expect(payload.action).toBe("generate-key");
+        // The raw key MUST NOT be present in the JSON payload by default.
+        expect(payload.key).toBeUndefined();
+        expect("key" in payload).toBe(false);
+        // The path to the key file IS reported so callers know where it landed.
+        expect(payload.path).toBeDefined();
+        expect(typeof payload.path).toBe("string");
+        // An explicit indicator that the key was withheld.
+        expect(payload.keyShown).toBe(false);
+      });
+
+      test("default text output never contains the base64 key", async () => {
+        dir = await createTestDir("am-secret-genkey-text-noshow-");
+        const configDir = dir.path;
+        await initRepo(configDir);
+        process.env.AM_CONFIG_DIR = configDir;
+
+        const gen = await resolveGenerateKey();
+        capture();
+        await gen.run({
+          args: { json: false, quiet: false, verbose: false, "show-key": false, showKey: false },
+        });
+
+        const out = logged.join("\n");
+        // Read the actual key off disk and prove it does NOT appear in stdout.
+        const keyContents = (await readFile(process.env.AM_KEY_PATH!, "utf-8")).trim();
+        expect(keyContents.length).toBeGreaterThan(0);
+        expect(out).not.toContain(keyContents);
+        // A safe message points at the key file path instead.
+        expect(out).toContain(process.env.AM_KEY_PATH!);
+      });
+
+      test("--show-key --json includes the raw key and keyShown:true", async () => {
+        dir = await createTestDir("am-secret-genkey-json-show-");
+        const configDir = dir.path;
+        await initRepo(configDir);
+        process.env.AM_CONFIG_DIR = configDir;
+
+        const gen = await resolveGenerateKey();
+        capture();
+        await gen.run({
+          args: { json: true, quiet: false, verbose: false, "show-key": true, showKey: true },
+        });
+
+        const payload = JSON.parse(logged.join("\n"));
+        expect(payload.action).toBe("generate-key");
+        expect(payload.keyShown).toBe(true);
+        expect(typeof payload.key).toBe("string");
+        // The emitted key matches what was written to disk.
+        const keyContents = (await readFile(process.env.AM_KEY_PATH!, "utf-8")).trim();
+        expect(payload.key).toBe(keyContents);
+      });
+
+      test("--show-key text output prints the raw key inline", async () => {
+        dir = await createTestDir("am-secret-genkey-text-show-");
+        const configDir = dir.path;
+        await initRepo(configDir);
+        process.env.AM_CONFIG_DIR = configDir;
+
+        const gen = await resolveGenerateKey();
+        capture();
+        await gen.run({
+          args: { json: false, quiet: false, verbose: false, "show-key": true, showKey: true },
+        });
+
+        const out = logged.join("\n");
+        const keyContents = (await readFile(process.env.AM_KEY_PATH!, "utf-8")).trim();
+        expect(out).toContain(keyContents);
+      });
+    });
   });
 
   describe("import-key", () => {

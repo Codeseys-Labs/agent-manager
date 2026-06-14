@@ -334,10 +334,13 @@ export async function applyResolved(
     if (selectBackendName(config) === "age" || configContainsAgeEnvelope(config)) {
       ageBackend = await getDefaultBackend(configDir, { config, override: "age" });
     }
-    const { config: interpolated } = await interpolateEnvAsync(config, {
-      encryptionKey: encryptionKey ?? undefined,
-      ageBackend,
-    });
+    const { config: interpolated, warnings: interpolationWarnings } = await interpolateEnvAsync(
+      config,
+      {
+        encryptionKey: encryptionKey ?? undefined,
+        ageBackend,
+      },
+    );
     const resolved = buildResolvedConfig(interpolated, profileName, configDir);
 
     // ws3 empty-overwrite guard (brownfield-wipe lineage). A live apply whose
@@ -366,6 +369,19 @@ export async function applyResolved(
     // tools and how to narrow it. This stays advisory (no exit code change).
     const notices: string[] = [];
     const profileScoped = interpolated.profiles?.[profileName] !== undefined;
+
+    // M9 interpolation-warning surfacing. `interpolateEnvAsync` is non-strict by
+    // default: an unresolved `${VAR}` is NOT thrown — it pushes a warning and
+    // leaves the literal `${VAR}` text in place. Previously these warnings were
+    // discarded here, so an apply with a missing env var wrote a literal `${VAR}`
+    // (or an undecryptable placeholder) into the native config with zero surfaced
+    // signal — a silently-broken server reported as a clean apply. Surface each
+    // via the existing advisory `notices` channel (ADR-0040: controller is
+    // I/O-free; surfaces render notices). Strictness/default-fail behaviour is
+    // unchanged — we no longer SWALLOW the warning, we don't START throwing.
+    for (const w of interpolationWarnings) {
+      notices.push(`interpolation: ${w}`);
+    }
 
     // Issue #3 URL-credential guard: refuse to write native configs that would
     // leak a credential embedded in a URL query param.

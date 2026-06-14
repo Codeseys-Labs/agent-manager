@@ -11,6 +11,20 @@ import type { ResolvedServer } from "../types.ts";
 export const AM_BEGIN = "<!-- am:begin -->";
 export const AM_END = "<!-- am:end -->";
 
+// ── Line-ending normalization ───────────────────────────────────
+
+/**
+ * Normalize line endings to LF.
+ *
+ * Managed instruction blocks are always written with `\n`, but native files
+ * read on Windows arrive with `\r\n` (and legacy files may use lone `\r`).
+ * Comparing the two byte-for-byte produces permanent false drift on every
+ * internal newline. Normalize both operands with this helper before comparing.
+ */
+export function normalizeLineEndings(s: string): string {
+  return s.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+}
+
 // ── Sort / Normalize ────────────────────────────────────────────
 
 /** Sort keys of an object for deterministic comparison. */

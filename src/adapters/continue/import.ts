@@ -174,6 +174,7 @@ function extractServers(config: ContinueConfig, scope: "global" | "project"): Im
       name: entry.name,
       command: entry.command ?? entry.url ?? "",
       scope,
+      ...(isRemote && entry.url && { url: entry.url }),
       ...(entry.args && entry.args.length > 0 && { args: entry.args }),
       ...(entry.env && Object.keys(entry.env).length > 0 && { env: entry.env }),
       ...(isRemote && { transport: "streamable-http" as const }),

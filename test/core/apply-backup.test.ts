@@ -19,6 +19,7 @@ import {
   listAllBackups,
   pruneBackups,
 } from "../../src/core/apply-backup";
+import { DEFAULT_KEEP_COUNT } from "../../src/core/atomic-write";
 
 let cfgDir: string;
 
@@ -276,6 +277,96 @@ describe("pruneBackups", () => {
 
     const remaining = fs.readdirSync(dir).filter((f) => f.endsWith(".bak"));
     expect(remaining).toHaveLength(3);
+  });
+
+  test("AM_APPLY_BACKUP_MAX = '0' floors to keep exactly 1 (NOT keep-all)", async () => {
+    // Regression (W-l8): maxCount 0 hit `slice(-0)` === `slice(0)` === keep-all,
+    // diverging from atomic-write's hardcoded keep-count and silently leaking
+    // disk. A 0 keep-count must floor to 1 — never keep everything.
+    const target = "/some/config.json";
+    const now = Date.now();
+    const dir = await seedTarget(target, [
+      { ts: new Date(now - 4 * 60 * 60 * 1000), content: "v1" },
+      { ts: new Date(now - 3 * 60 * 60 * 1000), content: "v2" },
+      { ts: new Date(now - 2 * 60 * 60 * 1000), content: "v3" },
+      { ts: new Date(now - 1 * 60 * 60 * 1000), content: "v4" },
+    ]);
+
+    process.env.AM_APPLY_BACKUP_MAX = "0";
+    try {
+      const result = await pruneBackups();
+      expect(result.removed).toBe(3);
+    } finally {
+      Reflect.deleteProperty(process.env, "AM_APPLY_BACKUP_MAX");
+    }
+
+    const remaining = fs.readdirSync(dir).filter((f) => f.endsWith(".bak"));
+    expect(remaining).toHaveLength(1);
+
+    const manifest = JSON.parse(fs.readFileSync(join(dir, "manifest.json"), "utf-8"));
+    expect(manifest.entries).toHaveLength(1);
+  });
+
+  test("explicit maxCount: 0 option also floors to keep exactly 1", async () => {
+    const target = "/some/config.json";
+    const now = Date.now();
+    const dir = await seedTarget(target, [
+      { ts: new Date(now - 3 * 60 * 60 * 1000), content: "v1" },
+      { ts: new Date(now - 2 * 60 * 60 * 1000), content: "v2" },
+      { ts: new Date(now - 1 * 60 * 60 * 1000), content: "v3" },
+    ]);
+
+    const result = await pruneBackups({ maxCount: 0 });
+    expect(result.removed).toBe(2);
+
+    const remaining = fs.readdirSync(dir).filter((f) => f.endsWith(".bak"));
+    expect(remaining).toHaveLength(1);
+  });
+
+  test("AM_APPLY_BACKUP_MAX negative falls back to default 10", async () => {
+    const target = "/some/config.json";
+    const now = Date.now();
+    const seedEntries: SeedEntry[] = [];
+    for (let i = 1; i <= 12; i++) {
+      seedEntries.push({
+        ts: new Date(now - (13 - i) * 60 * 60 * 1000),
+        content: `v${i}`,
+      });
+    }
+    const dir = await seedTarget(target, seedEntries);
+
+    process.env.AM_APPLY_BACKUP_MAX = "-3";
+    try {
+      const result = await pruneBackups();
+      expect(result.removed).toBe(2);
+    } finally {
+      Reflect.deleteProperty(process.env, "AM_APPLY_BACKUP_MAX");
+    }
+
+    const remaining = fs.readdirSync(dir).filter((f) => f.endsWith(".bak"));
+    expect(remaining).toHaveLength(10);
+  });
+
+  test("env-derived keep-count agrees with atomic-write's DEFAULT_KEEP_COUNT floor", async () => {
+    // The proactive sweep default must equal the per-write prune floor so the
+    // two prune windows don't diverge (W-l8). atomic-write keeps DEFAULT_KEEP_COUNT
+    // per write; pruneBackups with no env/option must keep the same number.
+    const target = "/some/config.json";
+    const now = Date.now();
+    const seedEntries: SeedEntry[] = [];
+    for (let i = 1; i <= 15; i++) {
+      seedEntries.push({
+        ts: new Date(now - (16 - i) * 60 * 60 * 1000),
+        content: `v${i}`,
+      });
+    }
+    const dir = await seedTarget(target, seedEntries);
+
+    const result = await pruneBackups();
+    expect(result.removed).toBe(5);
+
+    const remaining = fs.readdirSync(dir).filter((f) => f.endsWith(".bak"));
+    expect(remaining).toHaveLength(DEFAULT_KEEP_COUNT);
   });
 
   test("default maxCount is 10 when no env var and no option", async () => {

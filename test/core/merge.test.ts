@@ -13,11 +13,26 @@ import type { Server } from "../../src/core/schema";
 // ── Helpers ──────────────────────────────────────────────────────────
 
 function makeServer(overrides: Partial<Server> & { command: string }): Server {
+  const transport = overrides.transport ?? "stdio";
+  if (transport === "stdio") {
+    return {
+      command: overrides.command,
+      args: overrides.args,
+      env: overrides.env,
+      transport: "stdio",
+      description: overrides.description,
+      tags: overrides.tags,
+      enabled: overrides.enabled ?? true,
+      _registry: overrides._registry,
+      adapters: overrides.adapters,
+    };
+  }
   return {
     command: overrides.command,
     args: overrides.args,
     env: overrides.env,
-    transport: overrides.transport ?? "stdio",
+    transport,
+    url: "url" in overrides ? (overrides as { url?: string }).url : undefined,
     description: overrides.description,
     tags: overrides.tags,
     enabled: overrides.enabled ?? true,
@@ -35,6 +50,7 @@ function makeImported(
     args: overrides.args,
     env: overrides.env,
     transport: overrides.transport,
+    url: overrides.url,
     description: overrides.description,
     tags: overrides.tags,
     enabled: overrides.enabled,
@@ -531,6 +547,138 @@ describe("mergeServers", () => {
 
     const merged = mergeServers(existing, incoming, "auto");
     expect(merged.env).toEqual({ NEW_KEY: "val" });
+  });
+
+  // ── Remote server url / transport preservation (W-m10) ──────────────
+  //
+  // RemoteServerSchema carries an optional `url` and a non-stdio transport.
+  // Both branches of mergeServers must preserve them or an sse / streamable-http
+  // server silently degrades into a stdio server with no url (data loss).
+
+  test("auto — preserves url and transport for an sse remote server", () => {
+    const existing = makeServer({
+      command: "https://mcp.example.com/sse",
+      transport: "sse",
+      url: "https://mcp.example.com/sse",
+    });
+    const incoming = makeImported({
+      name: "remote",
+      command: "https://mcp.example.com/sse",
+      transport: "sse",
+      url: "https://mcp.example.com/sse",
+    });
+
+    const merged = mergeServers(existing, incoming, "auto");
+    expect(merged.transport).toBe("sse");
+    expect(merged.url).toBe("https://mcp.example.com/sse");
+  });
+
+  test("auto — preserves url and transport for a streamable-http remote server", () => {
+    const existing = makeServer({
+      command: "https://mcp.example.com/mcp",
+      transport: "streamable-http",
+      url: "https://mcp.example.com/mcp",
+    });
+    const incoming = makeImported({
+      name: "remote",
+      command: "https://mcp.example.com/mcp",
+      transport: "streamable-http",
+      url: "https://mcp.example.com/mcp",
+    });
+
+    const merged = mergeServers(existing, incoming, "auto");
+    expect(merged.transport).toBe("streamable-http");
+    expect(merged.url).toBe("https://mcp.example.com/mcp");
+  });
+
+  test("auto — falls back to incoming url when existing url is absent", () => {
+    const existing = makeServer({
+      command: "https://mcp.example.com/sse",
+      transport: "sse",
+    });
+    const incoming = makeImported({
+      name: "remote",
+      command: "https://mcp.example.com/sse",
+      transport: "sse",
+      url: "https://mcp.example.com/sse",
+    });
+
+    const merged = mergeServers(existing, incoming, "auto");
+    expect(merged.url).toBe("https://mcp.example.com/sse");
+    expect(merged.transport).toBe("sse");
+  });
+
+  test("force — preserves url and transport for an sse remote server", () => {
+    // Per the W-m10 field strategy, url uses `existing.url ?? incoming.url`,
+    // so the existing endpoint is retained when present. The key invariant
+    // exercised here is that a remote server keeps a non-undefined url and a
+    // remote transport through a force-merge (it is not dropped / coerced).
+    const existing = makeServer({
+      command: "https://old.example.com/sse",
+      transport: "sse",
+      url: "https://old.example.com/sse",
+    });
+    const incoming = makeImported({
+      name: "remote",
+      command: "https://new.example.com/sse",
+      transport: "sse",
+      url: "https://new.example.com/sse",
+    });
+
+    const merged = mergeServers(existing, incoming, "force");
+    expect(merged.transport).toBe("sse");
+    expect(merged.url).toBe("https://old.example.com/sse");
+  });
+
+  test("force — does NOT coerce a remote server to stdio when incoming omits transport", () => {
+    // A force-merge where the incoming payload restates a remote server but
+    // (as several importers do) leaves transport implicit. The existing server
+    // is unambiguously remote; the merged result must remain remote, not stdio.
+    const existing = makeServer({
+      command: "https://mcp.example.com/sse",
+      transport: "sse",
+      url: "https://mcp.example.com/sse",
+    });
+    const incoming = makeImported({
+      name: "remote",
+      command: "https://mcp.example.com/sse",
+      url: "https://mcp.example.com/sse",
+      // transport intentionally omitted
+    });
+
+    const merged = mergeServers(existing, incoming, "force");
+    expect(merged.transport).toBe("sse");
+    expect(merged.url).toBe("https://mcp.example.com/sse");
+  });
+
+  test("force — falls back to incoming url when existing url is absent", () => {
+    const existing = makeServer({
+      command: "https://mcp.example.com/sse",
+      transport: "sse",
+    });
+    const incoming = makeImported({
+      name: "remote",
+      command: "https://mcp.example.com/sse",
+      transport: "sse",
+      url: "https://mcp.example.com/sse",
+    });
+
+    const merged = mergeServers(existing, incoming, "force");
+    expect(merged.url).toBe("https://mcp.example.com/sse");
+    expect(merged.transport).toBe("sse");
+  });
+
+  test("stdio merge leaves url undefined", () => {
+    const existing = makeServer({ command: "test-mcp", transport: "stdio" });
+    const incoming = makeImported({ name: "test", command: "test-mcp" });
+
+    const auto = mergeServers(existing, incoming, "auto");
+    expect(auto.url).toBeUndefined();
+    expect(auto.transport).toBe("stdio");
+
+    const force = mergeServers(existing, incoming, "force");
+    expect(force.url).toBeUndefined();
+    expect(force.transport).toBe("stdio");
   });
 });
 

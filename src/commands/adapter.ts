@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { mkdir, readFile, rm } from "node:fs/promises";
-import { join } from "node:path";
+import { join, win32 as winPath } from "node:path";
 import { defineCommand } from "citty";
 import {
   getCommunityAdapterConfig,
@@ -17,6 +17,7 @@ import { getAdapter, isBuiltInAdapter, listAllAdapters } from "../adapters/regis
 import { resolveConfigDir } from "../core/config";
 import { commitAll } from "../core/git";
 import { amError, debug, error, info, output } from "../lib/output";
+import { validateMarketplaceUrl } from "../marketplace/security";
 
 // ── list ───────────────────────────────────────────────────────────
 
@@ -575,16 +576,23 @@ export function resolveSource(source: string): {
   sourceType: "npm" | "git" | "local";
   installCmd: string[];
 } {
-  // Local path
-  if (source.startsWith("./") || source.startsWith("/") || source.startsWith("local:")) {
+  // Local path. Matches POSIX (`./`, `/`), the explicit `local:` prefix, and
+  // Windows shapes the npm fall-through would otherwise misclassify as a
+  // package: a drive-letter path (`C:\repo`, `c:/repo`) and a backslash-relative
+  // path (`.\repo`). The drive-letter regex matches setup.ts:182.
+  if (
+    source.startsWith("./") ||
+    source.startsWith(".\\") ||
+    source.startsWith("/") ||
+    source.startsWith("local:") ||
+    /^[a-zA-Z]:[\\/]/.test(source) // Windows drive path (C:\ or c:/)
+  ) {
     const path = source.replace(/^local:/, "");
-    // Derive name from directory basename
-    const name =
-      path
-        .split("/")
-        .filter(Boolean) // drop empty segments from trailing or doubled slashes
-        .pop()
-        ?.replace(/^am-adapter-/, "") ?? "";
+    // Derive name from directory basename. win32.basename handles BOTH "/" and
+    // "\" separators (and strips the drive letter), so it is correct for Windows
+    // path strings regardless of the host OS we are running on — node:path's
+    // POSIX basename leaves backslashes intact and would leak the whole path.
+    const name = winPath.basename(path).replace(/^am-adapter-/, "");
     validateAdapterName(name);
     return { name, sourceType: "local", installCmd: [] };
   }
@@ -596,7 +604,15 @@ export function resolveSource(source: string): {
     source.startsWith("git://") ||
     source.endsWith(".git")
   ) {
+    // Strip the npm-style `git+` prefix (git+https://… → https://…) before
+    // validating; isomorphic-git / `git clone` accept the bare URL.
     const url = source.replace(/^git\+/, "");
+    // FAIL CLOSED on cleartext / unauthenticated clone URLs: route the resolved
+    // URL through the canonical marketplace validator, which enforces https:
+    // (rejecting git://, http://, ftp://, …) and rejects embedded credentials
+    // (user:pass@host) — both classic supply-chain / MITM vectors for a clone
+    // we will execute. validateMarketplaceUrl throws MarketplaceSecurityError.
+    validateMarketplaceUrl(url);
     // Derive name from repo basename
     const repoName =
       url

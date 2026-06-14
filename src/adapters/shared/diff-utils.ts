@@ -7,7 +7,7 @@
  */
 
 import type { DiffChange, ResolvedInstruction } from "../types.ts";
-import { AM_BEGIN, AM_END } from "./utils.ts";
+import { AM_BEGIN, AM_END, normalizeLineEndings } from "./utils.ts";
 
 // ── Instruction diff ────────────────────────────────────────────
 
@@ -84,8 +84,11 @@ export function compareInstructions(
     return changes;
   }
 
-  // Compare normalized content (trim whitespace differences)
-  if (nativeBlock.trim() !== expectedBlock.trim()) {
+  // Compare normalized content. Trim whitespace differences AND normalize line
+  // endings on BOTH sides: managed blocks are written with `\n`, but native
+  // files read on Windows arrive with `\r\n` (or legacy lone `\r`). Without this
+  // every internal newline reports permanent false drift on Windows. (M13)
+  if (normalizeLineEndings(nativeBlock).trim() !== normalizeLineEndings(expectedBlock).trim()) {
     changes.push({
       entity: "instruction",
       name: "_managed_block",

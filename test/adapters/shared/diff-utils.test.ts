@@ -132,4 +132,53 @@ describe("compareInstructions", () => {
     const changes = compareInstructions(expected, nativeContent, "claude-code");
     expect(changes).toEqual([]);
   });
+
+  // ── CRLF normalization (M13) ──────────────────────────────────
+  // Managed blocks are written with \n. On Windows, native files are read with
+  // \r\n line endings. Internal \r must be normalized on BOTH sides before
+  // comparing, or every multi-line instruction reports permanent false drift.
+
+  test("reports no drift when native uses CRLF and managed block uses LF (M13)", () => {
+    const content = "Line one.\nLine two.\nLine three.";
+    const expected: Record<string, ResolvedInstruction> = {
+      "ts-rules": makeInstruction({ name: "ts-rules", content }),
+    };
+
+    // Native file read with Windows CRLF line endings (every internal \n is \r\n),
+    // including the marker boundaries the native writer/reader would produce.
+    const nativeContent = wrapInMarkers(content).replace(/\n/g, "\r\n");
+
+    const changes = compareInstructions(expected, nativeContent, "claude-code");
+    expect(changes).toEqual([]);
+  });
+
+  test("reports no drift for lone CR line endings vs LF managed block (M13)", () => {
+    const content = "Line one.\nLine two.";
+    const expected: Record<string, ResolvedInstruction> = {
+      "ts-rules": makeInstruction({ name: "ts-rules", content }),
+    };
+
+    // Old Mac-style lone \r line endings should also normalize to \n.
+    const nativeContent = wrapInMarkers(content).replace(/\n/g, "\r");
+
+    const changes = compareInstructions(expected, nativeContent, "claude-code");
+    expect(changes).toEqual([]);
+  });
+
+  test("still detects genuine content drift even with CRLF endings (M13)", () => {
+    const expected: Record<string, ResolvedInstruction> = {
+      "ts-rules": makeInstruction({
+        name: "ts-rules",
+        content: "Use strict TypeScript.\nAlways.",
+      }),
+    };
+
+    // Native has CRLF endings AND genuinely different text — must still drift.
+    const nativeContent = wrapInMarkers("Use loose TypeScript.\nNever.").replace(/\n/g, "\r\n");
+
+    const changes = compareInstructions(expected, nativeContent, "claude-code");
+    expect(changes.length).toBe(1);
+    expect(changes[0].type).toBe("modified");
+    expect(changes[0].name).toBe("_managed_block");
+  });
 });

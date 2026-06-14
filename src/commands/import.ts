@@ -5,7 +5,7 @@ import { resolveConfigDir } from "../core/config";
 import { withConfig } from "../core/controller";
 import { extractServerIdentity } from "../core/identity";
 import { type MergeStrategy, type ServerConflict, runMergePipeline } from "../core/merge";
-import type { MarketplaceProvenance } from "../core/schema";
+import type { MarketplaceProvenance, Server } from "../core/schema";
 
 export { extractServerIdentity } from "../core/identity";
 import {
@@ -42,6 +42,40 @@ interface ImportOutcome {
   allMarketplaceItems: MarketplaceItem[];
   reportOnly: boolean;
   unencryptedScanReport?: string;
+}
+
+/**
+ * Materialize a catalog {@link Server} from an {@link ImportedServer}.
+ *
+ * W-m11/M11: the three import write sites (greenfield append, brownfield
+ * "added", marketplace) previously rebuilt the catalog entry from a fixed field
+ * list, silently DROPPING two things importers emit:
+ *
+ *   - `url` — the remote endpoint for streamable-http / sse transports. Only
+ *     attached for remote transports (the catalog ServerSchema forbids `url`
+ *     on stdio — it's a discriminated union, ADR-0057).
+ *   - `adapterExtras` — per-adapter scope/config that round-trips on export.
+ *     Surfaced under `adapters[<adapterName>]`, matching the namespaced shape
+ *     every adapter's export reads (e.g. `server.adapters.cursor`).
+ *
+ * `adapterName` is the importing adapter's `meta.name` so the extras land in the
+ * adapter-scoped sub-table the exporter expects.
+ */
+function materializeServer(srv: ImportedServer, adapterName: string): Server {
+  const transport = srv.transport ?? "stdio";
+  const isRemote = transport === "streamable-http" || transport === "sse";
+  const base = {
+    command: srv.command,
+    args: srv.args,
+    env: srv.env,
+    description: srv.description,
+    tags: srv.tags,
+    enabled: srv.enabled ?? true,
+    ...(srv.adapterExtras && { adapters: { [adapterName]: srv.adapterExtras } }),
+  };
+  return isRemote
+    ? { ...base, transport, ...(srv.url && { url: srv.url }) }
+    : { ...base, transport: "stdio" };
 }
 
 export const importCommand = defineCommand({
@@ -161,15 +195,7 @@ export const importCommand = defineCommand({
             }
 
             for (const srv of mergeResult.added) {
-              config.servers[srv.name] = {
-                command: srv.command,
-                args: srv.args,
-                env: srv.env,
-                transport: srv.transport ?? "stdio",
-                description: srv.description,
-                tags: srv.tags,
-                enabled: srv.enabled ?? true,
-              };
+              config.servers[srv.name] = materializeServer(srv, adapter.meta.name);
               totalImported++;
             }
 
@@ -209,15 +235,7 @@ export const importCommand = defineCommand({
                 continue;
               }
 
-              config.servers[srv.name] = {
-                command: srv.command,
-                args: srv.args,
-                env: srv.env,
-                transport: srv.transport ?? "stdio",
-                description: srv.description,
-                tags: srv.tags,
-                enabled: srv.enabled ?? true,
-              };
+              config.servers[srv.name] = materializeServer(srv, adapter.meta.name);
               existingIdentities.set(identity, srv.name);
               totalImported++;
             }
@@ -274,13 +292,7 @@ export const importCommand = defineCommand({
                 };
 
                 config.servers![srv.name] = {
-                  command: srv.command,
-                  args: srv.args,
-                  env: srv.env,
-                  transport: srv.transport ?? "stdio",
-                  description: srv.description,
-                  tags: srv.tags,
-                  enabled: srv.enabled ?? true,
+                  ...materializeServer(srv, adapter.meta.name),
                   _marketplace: provenance,
                 };
                 existingIdentities.set(identity, srv.name);

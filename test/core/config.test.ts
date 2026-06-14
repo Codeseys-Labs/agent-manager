@@ -337,6 +337,110 @@ describe("mergeConfigs", () => {
     expect(merged.adapters?.["claude-code"]).toEqual({ permission_mode: "allowEdits" });
     expect(merged.adapters?.cursor).toEqual({ always_allow_read: true });
   });
+
+  // M12 (data-loss): a higher layer that restates only ONE field of a
+  // same-named entry MUST NOT drop the sibling fields the lower layer set.
+  // The old shallow-spread `{ ...a.servers, ...b.servers }` replaced the whole
+  // entry wholesale, silently nuking command/args/env/transport. Same-named
+  // entries deep-merge at the field grain: `{ ...a[key], ...b[key] }`.
+  test("partial server override preserves sibling fields from lower layer", () => {
+    const a: Config = {
+      servers: {
+        foo: {
+          command: "foo-mcp",
+          args: ["--port", "8080"],
+          env: { TOKEN: "${TOKEN}" },
+          transport: "stdio",
+          enabled: true,
+          tags: ["work"],
+        },
+      },
+    };
+    // Higher layer flips ONLY enabled. Everything else must survive.
+    const b: Config = {
+      servers: { foo: { command: "foo-mcp", transport: "stdio", enabled: false } },
+    };
+    const merged = mergeConfigs(a, b);
+    expect(merged.servers?.foo.enabled).toBe(false);
+    expect(merged.servers?.foo.command).toBe("foo-mcp");
+    expect(merged.servers?.foo.args).toEqual(["--port", "8080"]);
+    expect(merged.servers?.foo.env).toEqual({ TOKEN: "${TOKEN}" });
+    expect(merged.servers?.foo.tags).toEqual(["work"]);
+  });
+
+  test("higher-layer set field still wins on a same-named entry", () => {
+    const a: Config = {
+      servers: { foo: { command: "old-cmd", transport: "stdio", enabled: true } },
+    };
+    const b: Config = {
+      servers: { foo: { command: "new-cmd", transport: "stdio", enabled: true } },
+    };
+    const merged = mergeConfigs(a, b);
+    expect(merged.servers?.foo.command).toBe("new-cmd");
+  });
+
+  test("partial agent override preserves sibling fields from lower layer", () => {
+    const a: Config = {
+      agents: {
+        reviewer: {
+          name: "reviewer",
+          description: "Code reviewer",
+          model: "sonnet",
+          tools: ["Read", "Grep"],
+        },
+      },
+    };
+    // Higher layer changes ONLY the model.
+    const b: Config = {
+      agents: { reviewer: { name: "reviewer", model: "o3" } },
+    };
+    const merged = mergeConfigs(a, b);
+    expect(merged.agents?.reviewer.model).toBe("o3");
+    expect(merged.agents?.reviewer.description).toBe("Code reviewer");
+    expect(merged.agents?.reviewer.tools).toEqual(["Read", "Grep"]);
+  });
+
+  test("partial instruction override preserves sibling fields", () => {
+    const a: Config = {
+      instructions: {
+        rule: { content: "Do the thing", scope: "glob", globs: ["*.ts"], description: "tsrule" },
+      },
+    };
+    const b: Config = {
+      instructions: { rule: { content: "Do the thing", scope: "always" } },
+    };
+    const merged = mergeConfigs(a, b);
+    expect(merged.instructions?.rule.scope).toBe("always");
+    expect(merged.instructions?.rule.globs).toEqual(["*.ts"]);
+    expect(merged.instructions?.rule.description).toBe("tsrule");
+  });
+
+  test("partial skill override preserves sibling fields", () => {
+    const a: Config = {
+      skills: {
+        research: { path: "skills/research", description: "Deep research", tags: ["web"] },
+      },
+    };
+    const b: Config = {
+      skills: { research: { path: "skills/research", description: "Updated description" } },
+    };
+    const merged = mergeConfigs(a, b);
+    expect(merged.skills?.research.description).toBe("Updated description");
+    expect(merged.skills?.research.path).toBe("skills/research");
+    expect(merged.skills?.research.tags).toEqual(["web"]);
+  });
+
+  test("union of distinct same-map entries is unaffected by deep-merge", () => {
+    const a: Config = {
+      servers: { fetch: { command: "fetch", transport: "stdio", enabled: true } },
+    };
+    const b: Config = {
+      servers: { outlook: { command: "outlook", transport: "stdio", enabled: true } },
+    };
+    const merged = mergeConfigs(a, b);
+    expect(merged.servers?.fetch.command).toBe("fetch");
+    expect(merged.servers?.outlook.command).toBe("outlook");
+  });
 });
 
 describe("loadResolvedConfig", () => {
@@ -501,6 +605,55 @@ describe("loadResolvedConfig — full 4-layer hierarchy", () => {
     // Instructions: project.local overrides project for rule-b
     expect(config.instructions?.["rule-a"]?.content).toBe("Global rule A");
     expect(config.instructions?.["rule-b"]?.content).toBe("Project-local overrides rule B");
+  });
+
+  // M12 (data-loss): a project.local layer that toggles a single field of a
+  // globally-defined server must keep the global command/args/env, not nuke
+  // them. This is the real-world shape of the partial-override bug across the
+  // 4-layer hierarchy.
+  test("project-local partial override keeps globally-defined sibling fields", async () => {
+    const { writeFile: wf } = await import("node:fs/promises");
+    const TOML = await import("@iarna/toml");
+
+    // Layer 1: global config.toml defines a fully-specified server.
+    await wf(
+      join(tmpDir, "config.toml"),
+      TOML.stringify({
+        servers: {
+          gateway: {
+            command: "gateway-mcp",
+            args: ["--region", "us-east-1"],
+            env: { API_KEY: "${API_KEY}" },
+            enabled: true,
+            tags: ["infra"],
+          },
+        },
+      } as any),
+    );
+
+    // Layer 4: project .agent-manager.local.toml flips ONLY enabled.
+    const projPath = join(tmpDir, ".agent-manager.toml");
+    await wf(projPath, TOML.stringify({ profile: "work" } as any));
+    const projLocalPath = join(tmpDir, ".agent-manager.local.toml");
+    await wf(
+      projLocalPath,
+      TOML.stringify({
+        servers: { gateway: { command: "gateway-mcp", enabled: false } },
+      } as any),
+    );
+
+    const config = await loadResolvedConfig({
+      configDir: tmpDir,
+      configFile: "config.toml",
+      projectFile: projPath,
+    });
+
+    expect(config.servers?.gateway.enabled).toBe(false);
+    // Sibling fields from the global layer survive the partial override.
+    expect(config.servers?.gateway.command).toBe("gateway-mcp");
+    expect(config.servers?.gateway.args).toEqual(["--region", "us-east-1"]);
+    expect(config.servers?.gateway.env).toEqual({ API_KEY: "${API_KEY}" });
+    expect(config.servers?.gateway.tags).toEqual(["infra"]);
   });
 });
 

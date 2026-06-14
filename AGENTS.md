@@ -284,7 +284,14 @@ storage. Config accessed via git provider API. Wiki browsing + server CRUD from
 both local and worker web UIs.
 
 **MCP tool grouping (ADR-0021):** `settings.mcp_serve.tools` is the GLOBAL tool-group
-ceiling — a discovery-time filter over the 6 groups (core/registry/a2a/wiki/session/acp).
+ceiling over the 6 groups (core/registry/a2a/wiki/session/acp). When UNSET it defaults to
+`["core"]` and acts as a discovery-time filter only (ADR-0021's default-surface guarantee:
+calling a non-core tool without configuring groups still dispatches, gated by tier/auth).
+When EXPLICITLY configured it is also a DISPATCH boundary — a de-listed group's tool is
+refused at `tools/call` with -32601, not merely hidden from `tools/list` (detection keys
+off the explicit-set flag, not a value-comparison against the default). This explicit-set
+dispatch enforcement sits BELOW zod argument validation, so a malformed call still surfaces
+the precise zod error rather than the ceiling rejection.
 
 **Runtime access-scoping profiles (ADR-0055, supersedes ADR-0021's global-only model):**
 the active profile's optional `[profiles.<name>.scope]` projects a RUNTIME access

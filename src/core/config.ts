@@ -196,22 +196,54 @@ export async function writeProjectConfig(path: string, config: ProjectConfig): P
 }
 
 /**
+ * Field-level merge of a higher-precedence keyed map (`b`) over a lower one
+ * (`a`). For a key present in BOTH maps the two ENTRIES are deep-merged at the
+ * field grain (`{ ...a[key], ...b[key] }`) so a higher layer that restates only
+ * ONE field of a same-named entry does NOT drop the sibling fields the lower
+ * layer set (M12 data-loss). Keys present in only one map pass through; a field
+ * `b` sets still wins on conflict.
+ *
+ * Returns `undefined` when both inputs are absent so the caller can keep the
+ * "omit-when-empty" Config shape that serializeConfig / TOML writeback expect.
+ *
+ * Entry merge is one level deep BY DESIGN: it heals the
+ * whole-entry-replacement bug without redefining nested-field semantics (e.g.
+ * an entry's own `env` / `adapters` map) that no layer-merge caller relies on.
+ */
+function mergeKeyedMap<V>(
+  a: Record<string, V> | undefined,
+  b: Record<string, V> | undefined,
+): Record<string, V> | undefined {
+  if (!a && !b) return undefined;
+  const result: Record<string, V> = { ...a };
+  for (const [key, bVal] of Object.entries(b ?? {})) {
+    const aVal = result[key];
+    result[key] =
+      aVal && typeof aVal === "object" && typeof bVal === "object"
+        ? ({ ...aVal, ...bVal } as V)
+        : bVal;
+  }
+  return result;
+}
+
+/**
  * Merge two configs. `b` has higher precedence than `a`.
  *
- * - Servers/Skills/Instructions: union (spread), same-name key in b wins
+ * - Servers/Skills/Instructions/Agents/Commands/Profiles: union of keys;
+ *   a same-named entry present in both layers is DEEP-merged at the field grain
+ *   (b's fields win, a's untouched fields survive) — see `mergeKeyedMap`.
  * - Settings: shallow merge, b's keys override a's
  * - Adapters: shallow merge by adapter name
  */
 export function mergeConfigs(a: Config, b: Config): Config {
   return {
     settings: a.settings || b.settings ? { ...a.settings, ...b.settings } : undefined,
-    servers: a.servers || b.servers ? { ...a.servers, ...b.servers } : undefined,
-    skills: a.skills || b.skills ? { ...a.skills, ...b.skills } : undefined,
-    instructions:
-      a.instructions || b.instructions ? { ...a.instructions, ...b.instructions } : undefined,
-    agents: a.agents || b.agents ? { ...a.agents, ...b.agents } : undefined,
-    commands: a.commands || b.commands ? { ...a.commands, ...b.commands } : undefined,
-    profiles: a.profiles || b.profiles ? { ...a.profiles, ...b.profiles } : undefined,
+    servers: mergeKeyedMap(a.servers, b.servers),
+    skills: mergeKeyedMap(a.skills, b.skills),
+    instructions: mergeKeyedMap(a.instructions, b.instructions),
+    agents: mergeKeyedMap(a.agents, b.agents),
+    commands: mergeKeyedMap(a.commands, b.commands),
+    profiles: mergeKeyedMap(a.profiles, b.profiles),
     adapters: a.adapters || b.adapters ? { ...a.adapters, ...b.adapters } : undefined,
   };
 }

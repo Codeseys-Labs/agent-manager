@@ -8,6 +8,7 @@ import {
   lintSubcommand,
   listSubcommand,
   pathSubcommand,
+  resolveEditor,
   searchSubcommand,
   showSubcommand,
   wikiCommand,
@@ -1022,5 +1023,65 @@ describe("am wiki add: visibility-boundary feedback (W1-3)", () => {
     const payload = JSON.parse(consoleOutput.join("\n"));
     expect(payload.visibleAcrossProjects).toBe(true);
     expect(payload.globalRequestedButLocal).toBe(false);
+  });
+});
+
+describe("am wiki resolve: editor fallback is platform-aware (L11)", () => {
+  const origEditor = process.env.EDITOR;
+  const origVisual = process.env.VISUAL;
+
+  beforeEach(() => {
+    // biome-ignore lint/performance/noDelete: env var must be ABSENT, not "undefined"
+    delete process.env.EDITOR;
+    // biome-ignore lint/performance/noDelete: env var must be ABSENT, not "undefined"
+    delete process.env.VISUAL;
+  });
+
+  afterEach(() => {
+    if (origEditor === undefined) {
+      // biome-ignore lint/performance/noDelete: env var cleanup
+      delete process.env.EDITOR;
+    } else {
+      process.env.EDITOR = origEditor;
+    }
+    if (origVisual === undefined) {
+      // biome-ignore lint/performance/noDelete: env var cleanup
+      delete process.env.VISUAL;
+    } else {
+      process.env.VISUAL = origVisual;
+    }
+  });
+
+  test("falls back to notepad on win32 when EDITOR and VISUAL are unset", () => {
+    expect(resolveEditor("win32")).toBe("notepad");
+  });
+
+  test("falls back to vi on non-win32 (linux) when EDITOR and VISUAL are unset", () => {
+    expect(resolveEditor("linux")).toBe("vi");
+  });
+
+  test("falls back to vi on non-win32 (darwin) when EDITOR and VISUAL are unset", () => {
+    expect(resolveEditor("darwin")).toBe("vi");
+  });
+
+  test("EDITOR wins over the platform fallback", () => {
+    process.env.EDITOR = "code --wait";
+    expect(resolveEditor("win32")).toBe("code --wait");
+  });
+
+  test("VISUAL is used when EDITOR is unset", () => {
+    process.env.VISUAL = "nvim";
+    expect(resolveEditor("win32")).toBe("nvim");
+  });
+
+  test("EDITOR takes precedence over VISUAL", () => {
+    process.env.EDITOR = "vim -f";
+    process.env.VISUAL = "nvim";
+    expect(resolveEditor("linux")).toBe("vim -f");
+  });
+
+  test("defaults platform argument to the current process.platform", () => {
+    const expected = process.platform === "win32" ? "notepad" : "vi";
+    expect(resolveEditor()).toBe(expected);
   });
 });

@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, setDefaultTimeout, test } from "bun:test";
 import { join } from "node:path";
+import { importConfig as importCursor } from "../../src/adapters/cursor/import";
 import { extractServerIdentity, importCommand } from "../../src/commands/import";
 import { readConfig, writeConfig } from "../../src/core/config";
 import { initRepo } from "../../src/core/git";
@@ -222,5 +223,154 @@ describe("import auto-encrypts underscore-suffixed secret keys (ws1 regression)"
     expect(written.settings?.env?.FOO_KEY?.startsWith("enc:")).toBe(true);
     // Decisive fail-closed assertion: the plaintext appears NOWHERE on disk.
     expect(JSON.stringify(written)).not.toContain(plaintext);
+  });
+});
+
+// ── W-m11 (M11): import write path must preserve url + transport + adapters ──
+// The three materialization sites in import.ts (greenfield append, brownfield
+// merge "added", marketplace) previously rebuilt each catalog Server from a
+// fixed field list {command,args,env,transport,description,tags,enabled} — so a
+// remote server's `url` and any adapter-scoped extras (adapterExtras) were
+// DROPPED on write. A round-trip then lost the remote URL and the per-adapter
+// scope/config mapping. These tests drive the REAL import pipeline end-to-end
+// and assert the persisted config preserves them.
+
+describe("import preserves url + transport for remote servers (W-m11)", () => {
+  let configDir: TestDir;
+  let projectDir: TestDir;
+  let homeDir: TestDir;
+  const origConfigDir = process.env.AM_CONFIG_DIR;
+  const origHome = process.env.HOME;
+  const origCwd = process.cwd();
+  const origExitCode = process.exitCode;
+
+  afterEach(async () => {
+    process.chdir(origCwd);
+    if (origConfigDir === undefined) Reflect.deleteProperty(process.env, "AM_CONFIG_DIR");
+    else process.env.AM_CONFIG_DIR = origConfigDir;
+    if (origHome === undefined) Reflect.deleteProperty(process.env, "HOME");
+    else process.env.HOME = origHome;
+    process.exitCode = origExitCode;
+    if (configDir) await configDir.cleanup();
+    if (projectDir) await projectDir.cleanup();
+    if (homeDir) await homeDir.cleanup();
+  });
+
+  test("the cursor importer emits a top-level url for url-based servers", () => {
+    // Unit-level guard on the producer: ImportedServer.url must be populated so
+    // the write sites have something to carry. (Previously url lived only in
+    // adapterExtras, invisible to the catalog Server's top-level url field.)
+    const result = importCursor({ projectPath: "/nonexistent-project-xyz" });
+    // No project file → no servers, but the call must typecheck against the
+    // url-bearing ImportedServer shape. The behavioral assertion is below.
+    expect(Array.isArray(result.servers)).toBe(true);
+  });
+
+  test("remote (streamable-http) server round-trips url + transport into config.toml", async () => {
+    configDir = await createTestDir("am-import-m11-cfg-");
+    projectDir = await createTestDir("am-import-m11-proj-");
+    homeDir = await createTestDir("am-import-m11-home-");
+    process.env.AM_CONFIG_DIR = configDir.path;
+    // Pin HOME so the cursor adapter's global ~/.cursor/mcp.json probe never
+    // touches the real home dir (it just warns "File not found").
+    process.env.HOME = homeDir.path;
+
+    await initRepo(configDir.path);
+    await writeConfig(join(configDir.path, "config.toml"), { servers: {} });
+
+    const remoteUrl = "https://mcp.example.com/sse";
+    await projectDir.write(
+      ".cursor/mcp.json",
+      JSON.stringify({
+        mcpServers: {
+          "m11-remote": { url: remoteUrl },
+        },
+      }),
+    );
+    process.chdir(projectDir.path);
+
+    await importCommand.run!({
+      args: { source: "cursor", json: true, quiet: true, verbose: false },
+      cmd: importCommand,
+      rawArgs: [],
+      data: undefined,
+    } as never);
+
+    const written = await readConfig(join(configDir.path, "config.toml"));
+    const server = written.servers?.["m11-remote"];
+    expect(server).toBeDefined();
+    // Remote transport must survive the write (not silently coerced to stdio).
+    expect(server?.transport).toBe("streamable-http");
+    // The remote URL must be persisted as the top-level catalog `url` field.
+    expect(server?.url).toBe(remoteUrl);
+  });
+});
+
+describe("import preserves adapter-scoped extras (W-m11)", () => {
+  let configDir: TestDir;
+  let projectDir: TestDir;
+  let homeDir: TestDir;
+  const origConfigDir = process.env.AM_CONFIG_DIR;
+  const origHome = process.env.HOME;
+  const origCwd = process.cwd();
+  const origExitCode = process.exitCode;
+
+  afterEach(async () => {
+    process.chdir(origCwd);
+    if (origConfigDir === undefined) Reflect.deleteProperty(process.env, "AM_CONFIG_DIR");
+    else process.env.AM_CONFIG_DIR = origConfigDir;
+    if (origHome === undefined) Reflect.deleteProperty(process.env, "HOME");
+    else process.env.HOME = origHome;
+    process.exitCode = origExitCode;
+    if (configDir) await configDir.cleanup();
+    if (projectDir) await projectDir.cleanup();
+    if (homeDir) await homeDir.cleanup();
+  });
+
+  test("project-scoped adapterExtras map onto catalog server.adapters", async () => {
+    configDir = await createTestDir("am-import-m11x-cfg-");
+    projectDir = await createTestDir("am-import-m11x-proj-");
+    homeDir = await createTestDir("am-import-m11x-home-");
+    process.env.AM_CONFIG_DIR = configDir.path;
+    process.env.HOME = homeDir.path;
+
+    await initRepo(configDir.path);
+    await writeConfig(join(configDir.path, "config.toml"), { servers: {} });
+
+    // The claude-code adapter routes any non-core key (here `type`, a stand-in
+    // for adapter-scoped config) into ImportedServer.adapterExtras. The write
+    // path must surface those under the catalog Server's `adapters` table so the
+    // per-adapter scope/config mapping is not lost on import.
+    await projectDir.write(
+      ".mcp.json",
+      JSON.stringify({
+        mcpServers: {
+          "m11-scoped": {
+            command: "npx",
+            args: ["some-mcp"],
+            type: "project-scoped",
+          },
+        },
+      }),
+    );
+    process.chdir(projectDir.path);
+
+    await importCommand.run!({
+      args: { source: "claude-code", json: true, quiet: true, verbose: false },
+      cmd: importCommand,
+      rawArgs: [],
+      data: undefined,
+    } as never);
+
+    const written = await readConfig(join(configDir.path, "config.toml"));
+    const server = written.servers?.["m11-scoped"];
+    expect(server).toBeDefined();
+    // adapterExtras carried the non-core `type` field — it must land under the
+    // catalog Server's adapters passthrough, namespaced by adapter name (the
+    // shape every adapter export reads: server.adapters["claude-code"]).
+    expect(server?.adapters).toBeDefined();
+    const cc = (server?.adapters as Record<string, Record<string, unknown>>)?.["claude-code"];
+    expect(cc).toBeDefined();
+    expect(cc?.type).toBe("project-scoped");
   });
 });

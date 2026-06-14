@@ -12,6 +12,7 @@ import {
   resolveProjectName,
   searchPages,
   serializeFrontmatter,
+  wikiLinkMatchesTarget,
   writePage,
 } from "../../src/wiki/storage";
 import type { WikiPage } from "../../src/wiki/types";
@@ -293,6 +294,135 @@ describe("wiki/storage", () => {
       } finally {
         process.env.AM_CONFIG_DIR = origEnv;
       }
+    });
+
+    // L10: the second call must short-circuit (not tear down + recreate) when
+    // the link is already correct. Verify by capturing the link inode before
+    // the second call and asserting it is unchanged afterward — a recreate
+    // would change it.
+    test("idempotent call does not recreate an already-correct link", async () => {
+      const { existsSync, mkdirSync, lstatSync } = await import("node:fs");
+
+      const origEnv = process.env.AM_CONFIG_DIR;
+      process.env.AM_CONFIG_DIR = tmp.path;
+      try {
+        const projectDir = join(tmp.path, "no-churn-proj");
+        mkdirSync(projectDir, { recursive: true });
+
+        createProjectWikiLink(projectDir, "no-churn-proj");
+        const wikiLink = join(projectDir, ".agent-manager", "wiki");
+        expect(existsSync(wikiLink)).toBe(true);
+        const inoBefore = lstatSync(wikiLink).ino;
+
+        createProjectWikiLink(projectDir, "no-churn-proj"); // second call
+        const inoAfter = lstatSync(wikiLink).ino;
+        // On POSIX a recreated symlink gets a fresh inode; an unchanged link
+        // keeps the same one. (On win32 ino is 0/unstable — see the
+        // win32-guarded test below for the real-path no-op assertion.)
+        if (process.platform !== "win32") {
+          expect(inoAfter).toBe(inoBefore);
+        }
+      } finally {
+        process.env.AM_CONFIG_DIR = origEnv;
+      }
+    });
+  });
+
+  // ── wikiLinkMatchesTarget (L10 — Windows junction fast-path) ──
+  //
+  // The fast-path that short-circuits createProjectWikiLink must fire when the
+  // link is already correct. On win32 the link is a junction whose readlink
+  // target is a fully-resolved (`\\?\`-prefixed, re-cased) path that never
+  // string-equals the join()-built target — so the comparison must go through
+  // realpathSync on BOTH sides on win32, while POSIX keeps plain string
+  // equality. `platform` is injectable so the win32 branch is exercised here on
+  // a POSIX host.
+
+  describe("wikiLinkMatchesTarget", () => {
+    test("POSIX: true when the symlink target string-equals the target", async () => {
+      const { symlinkSync, mkdirSync } = await import("node:fs");
+
+      const target = join(tmp.path, "central-wiki");
+      mkdirSync(target, { recursive: true });
+      const link = join(tmp.path, "link-correct");
+      symlinkSync(target, link);
+
+      expect(wikiLinkMatchesTarget(link, target, "linux")).toBe(true);
+    });
+
+    test("POSIX: false when the symlink points elsewhere", async () => {
+      const { symlinkSync, mkdirSync } = await import("node:fs");
+
+      const target = join(tmp.path, "central-wiki-2");
+      const other = join(tmp.path, "some-other-dir");
+      mkdirSync(target, { recursive: true });
+      mkdirSync(other, { recursive: true });
+      const link = join(tmp.path, "link-wrong");
+      symlinkSync(other, link);
+
+      expect(wikiLinkMatchesTarget(link, target, "linux")).toBe(false);
+    });
+
+    test("POSIX: false when the path is a plain directory, not a link", async () => {
+      const { mkdirSync } = await import("node:fs");
+
+      const target = join(tmp.path, "central-wiki-3");
+      const plainDir = join(tmp.path, "plain-dir");
+      mkdirSync(target, { recursive: true });
+      mkdirSync(plainDir, { recursive: true });
+
+      expect(wikiLinkMatchesTarget(plainDir, target, "linux")).toBe(false);
+    });
+
+    test("false when the link does not exist", async () => {
+      const missing = join(tmp.path, "does-not-exist");
+      const target = join(tmp.path, "central-wiki-4");
+      expect(wikiLinkMatchesTarget(missing, target, "linux")).toBe(false);
+      expect(wikiLinkMatchesTarget(missing, target, "win32")).toBe(false);
+    });
+
+    test("win32 branch: matches via realpath even when the readlink target string differs", async () => {
+      // This is the core L10 regression. Simulate the Windows junction reality
+      // on a POSIX host: the link's readlink target is NOT byte-equal to the
+      // join()-built `target` we pass in (here: the same dir reached via a
+      // trailing separator), yet realpathSync resolves both to the same inode.
+      // Plain string equality (the old code) would FAIL this; the win32 realpath
+      // comparison must PASS it.
+      const { symlinkSync, mkdirSync } = await import("node:fs");
+      const { sep } = await import("node:path");
+
+      const target = join(tmp.path, "central-wiki-win");
+      mkdirSync(target, { recursive: true });
+
+      const link = join(tmp.path, "link-win");
+      // Point the link at a string that resolves to `target` but is not byte
+      // equal to it — mirrors a junction's normalised readlink output. A raw
+      // trailing separator survives readlink verbatim (join() would strip it).
+      const nonNormalizedTarget = `${target}${sep}`;
+      symlinkSync(nonNormalizedTarget, link);
+
+      // Sanity: the raw readlink target differs from `target` (so the POSIX
+      // string-equality path would reject it)…
+      const { readlinkSync } = await import("node:fs");
+      expect(readlinkSync(link)).not.toBe(target);
+      expect(wikiLinkMatchesTarget(link, target, "linux")).toBe(false);
+
+      // …but the win32 realpath-based comparison treats it as already-correct.
+      expect(wikiLinkMatchesTarget(link, target, "win32")).toBe(true);
+    });
+
+    test("win32 branch: false when the link resolves to a different inode", async () => {
+      const { symlinkSync, mkdirSync } = await import("node:fs");
+
+      const target = join(tmp.path, "central-wiki-win-2");
+      const other = join(tmp.path, "other-win-2");
+      mkdirSync(target, { recursive: true });
+      mkdirSync(other, { recursive: true });
+
+      const link = join(tmp.path, "link-win-2");
+      symlinkSync(other, link);
+
+      expect(wikiLinkMatchesTarget(link, target, "win32")).toBe(false);
     });
   });
 

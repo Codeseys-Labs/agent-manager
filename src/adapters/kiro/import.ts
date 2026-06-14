@@ -135,6 +135,7 @@ function readServersFromFile(
       command: isStdio ? (entry.command ?? "") : (entry.url ?? ""),
       scope,
       transport: isHttp ? "streamable-http" : "stdio",
+      ...(isHttp && entry.url && { url: entry.url }),
       ...(entry.args && { args: entry.args }),
       ...(entry.env && { env: entry.env }),
       enabled: entry.disabled !== true,

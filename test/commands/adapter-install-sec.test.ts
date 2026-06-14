@@ -87,3 +87,83 @@ describe("resolveSource() - name derivation is validated", () => {
     expect(result.installCmd).toContain("--ignore-scripts");
   });
 });
+
+describe("resolveSource() - Windows local paths (W-m14-windows-path)", () => {
+  test("classifies a Windows drive-letter path as local and derives the basename", () => {
+    // Backslash-separated drive path must NOT fall through to the npm branch.
+    const result = resolveSource("C:\\Users\\me\\am-adapter-foo");
+    expect(result.sourceType).toBe("local");
+    expect(result.name).toBe("foo");
+    expect(result.installCmd).toEqual([]);
+  });
+
+  test("classifies a lowercase drive letter with forward slashes as local", () => {
+    const result = resolveSource("c:/Users/me/am-adapter-bar");
+    expect(result.sourceType).toBe("local");
+    expect(result.name).toBe("bar");
+  });
+
+  test("classifies a backslash-relative path (.\\) as local", () => {
+    const result = resolveSource(".\\local-adapter");
+    expect(result.sourceType).toBe("local");
+    expect(result.name).toBe("local-adapter");
+  });
+
+  test("derives the basename of a Windows path using the trailing segment only", () => {
+    // The full path must not leak into the derived name.
+    const result = resolveSource("C:\\repo\\nested\\am-adapter-zed");
+    expect(result.sourceType).toBe("local");
+    expect(result.name).toBe("zed");
+  });
+
+  test("still classifies a POSIX absolute path as local (regression)", () => {
+    const result = resolveSource("/opt/adapters/am-adapter-foo");
+    expect(result.sourceType).toBe("local");
+    expect(result.name).toBe("foo");
+  });
+
+  test("still classifies a POSIX ./ relative path as local (regression)", () => {
+    const result = resolveSource("./am-adapter-bar");
+    expect(result.sourceType).toBe("local");
+    expect(result.name).toBe("bar");
+  });
+});
+
+describe("resolveSource() - git clone URL is TLS-validated (W-m4-tls-enforce)", () => {
+  test("REJECTS a git:// clone URL (unauthenticated, cleartext)", () => {
+    // git:// has no TLS and no authentication — cloning it verbatim is a MITM
+    // / supply-chain hazard. The clone URL must go through validateMarketplaceUrl.
+    expect(() => resolveSource("git://evil.example/x.git")).toThrow(/scheme/);
+  });
+
+  test("REJECTS a cleartext http:// .git clone URL", () => {
+    expect(() => resolveSource("http://evil.example/am-adapter-x.git")).toThrow(/scheme/);
+  });
+
+  test("REJECTS a git URL with embedded credentials", () => {
+    expect(() => resolveSource("https://user:pass@github.com/o/am-adapter-x.git")).toThrow(
+      /credentials/,
+    );
+  });
+
+  test("accepts an https:// git clone URL and returns the clone command", () => {
+    const result = resolveSource("https://github.com/o/am-adapter-x.git");
+    expect(result.name).toBe("x");
+    expect(result.sourceType).toBe("git");
+    expect(result.installCmd[0]).toBe("git");
+    expect(result.installCmd[1]).toBe("clone");
+    expect(result.installCmd[2]).toBe("https://github.com/o/am-adapter-x.git");
+  });
+
+  test("accepts a git+https:// URL, strips git+, validates, and clones over https", () => {
+    const result = resolveSource("git+https://github.com/o/am-adapter-void.git");
+    expect(result.name).toBe("void");
+    expect(result.sourceType).toBe("git");
+    // git+ prefix stripped from the clone URL.
+    expect(result.installCmd[2]).toBe("https://github.com/o/am-adapter-void.git");
+  });
+
+  test("REJECTS git+git:// (cleartext git wrapped in a git+ prefix)", () => {
+    expect(() => resolveSource("git+git://evil.example/x.git")).toThrow(/scheme/);
+  });
+});

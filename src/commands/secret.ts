@@ -478,6 +478,15 @@ const scanCommand = defineCommand({
 const generateKeyCommand = defineCommand({
   meta: { name: "generate-key", description: "Generate a new encryption key" },
   args: {
+    // L5: do NOT print the raw master key by default. It lands in shell history,
+    // logs, and captured --json output — a credential-exposure footgun. The key
+    // is already persisted to the key file (mode 0o600); inline display is
+    // opt-in via --show-key for the "save it to a password manager" workflow.
+    "show-key": {
+      type: "boolean",
+      description: "Print the raw base64 master key to stdout (default: false)",
+      default: false,
+    },
     json: { type: "boolean", description: "JSON output", default: false },
     quiet: { type: "boolean", alias: "q", default: false },
     verbose: { type: "boolean", alias: "v", default: false },
@@ -485,16 +494,34 @@ const generateKeyCommand = defineCommand({
   async run({ args }) {
     const opts = { json: args.json, quiet: args.quiet, verbose: args.verbose };
     const configDir = resolveConfigDir();
+    // citty exposes a dashed flag under both the dashed and camelCase keys.
+    const showKey = args["show-key"] === true || (args as { showKey?: boolean }).showKey === true;
 
     const base64 = await generateKey();
     await saveKey(configDir, base64);
 
     const keyPath = resolveKeyPath();
     info(`Encryption key generated and saved to ${keyPath}`, opts);
-    info(`Save this key in your password manager: ${base64}`, opts);
+    if (showKey) {
+      info(`Save this key in your password manager: ${base64}`, opts);
+    } else {
+      // Point at the key file instead of echoing the credential.
+      info(
+        "The raw key was written to the key file above. Re-run with --show-key to print it for backup.",
+        opts,
+      );
+    }
 
     if (args.json) {
-      output({ action: "generate-key", key: base64, path: keyPath }, opts);
+      // NEVER include the raw key in JSON unless explicitly requested. Callers
+      // get the path and an explicit keyShown indicator; only --show-key adds key.
+      const payload: { action: string; path: string; keyShown: boolean; key?: string } = {
+        action: "generate-key",
+        path: keyPath,
+        keyShown: showKey,
+      };
+      if (showKey) payload.key = base64;
+      output(payload, opts);
     }
   },
 });

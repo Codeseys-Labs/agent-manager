@@ -351,6 +351,7 @@ function extractServers(config: KiloConfig, scope: "global" | "project"): Import
           command: entry.url,
           scope,
           transport: "streamable-http",
+          url: entry.url,
           enabled: entry.enabled !== false,
           ...(entry.environment && { env: entry.environment }),
           ...(Object.keys(adapterExtras).length > 0 && { adapterExtras }),
