@@ -94,7 +94,10 @@ command = "extra-mcp"
     expect(added).toBeDefined();
   });
 
-  test("detects server removed locally", async () => {
+  test("labels catalog-ahead server as added-in-config, not removed-locally", async () => {
+    // Catalog-ahead (`am add server tavily`): native has only ctx, catalog has
+    // both. A FORWARD delta apply resolves, not a local removal.
+    // (ws4-drift-relabel-catalog-ahead)
     dir = await createTestDir("am-codex-diff-");
     await dir.write(
       ".codex/config.toml",
@@ -122,8 +125,9 @@ args = ["-y", "context7-mcp"]
 
     const result = diffConfig(cfg, {}, dir.path);
     expect(result.status).toBe("drifted");
-    const removed = result.changes.find((c) => c.name === "tavily" && c.type === "removed-locally");
-    expect(removed).toBeDefined();
+    const pending = result.changes.find((c) => c.name === "tavily");
+    expect(pending?.type).toBe("added-in-config");
+    expect(result.changes.some((c) => c.type === "removed-locally")).toBe(false);
   });
 
   test("detects modified server fields", async () => {

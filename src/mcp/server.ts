@@ -35,6 +35,7 @@ import type { Config, McpToolGroup, Settings } from "../core/schema";
 import { interpolateEnvAsync, legacyKeyPath, loadKey, resolveKeyPath } from "../core/secrets";
 import { filterMessages, formatJson, formatMarkdown } from "../core/session";
 import type { SessionSummary } from "../core/session";
+import { isNotFound } from "../lib/errors";
 import {
   redactConfigPlaintextSecrets,
   redactConfigSecrets,
@@ -420,6 +421,24 @@ export function checkWriteAuth(
  * `redactSecrets`: redaction is the last line, this gate is the first.
  */
 const SENSITIVE_READONLY_TOOLS = new Set<string>(["am_config_show"]);
+
+/**
+ * ws2 (seed 6a89): the always-available diagnostic/recovery tools. When
+ * `refreshSettings` fails CLOSED because the on-disk config could not be
+ * parsed/validated (a malformed `[profiles.x.scope]`, a non-object `scope`, a
+ * broken server table, …), the runtime scope is pinned to deny-all so a typo can
+ * never WIDEN the surface to the configured ceiling. But a deny-all that also
+ * hid the health-check and scope-audit tools would soft-brick the gateway: an
+ * agent could no longer SEE *why* the config is broken over MCP. These two
+ * core, read-only tools exist precisely to surface and reason about that state,
+ * so the dispatch gate exempts them — but ONLY while `scopeFailClosed` is set
+ * (a validly-parsed narrow profile keeps full ADR-0055 semantics). They leak no
+ * config payload that the dangerous ceiling would: `am_doctor` reports
+ * pass/fail checks (secret-redacted via safeErrorMessage), and `am_get_scope`
+ * reports the boundary itself. `am_config_show` is deliberately NOT here — it
+ * dumps the merged config and is separately token-gated.
+ */
+const DIAGNOSTIC_SCOPE_EXEMPT = new Set<string>(["am_doctor", "am_get_scope"]);
 
 /**
  * Decide whether a SENSITIVE read-only tool (full-config disclosure) may
@@ -3156,6 +3175,17 @@ export class McpServer {
    */
   private scope?: ResolvedScope;
   /**
+   * ws2 (seed 6a89): set true when `refreshSettings` could not parse/validate the
+   * on-disk config (ZodError / non-ENOENT). In that state the declared boundary
+   * cannot be trusted, so `this.scope` is pinned to the maximally-restrictive
+   * empty scope (deny-all) and `this.settings` to an empty ceiling. The dispatch
+   * gate exempts ONLY the diagnostic/recovery tools (DIAGNOSTIC_SCOPE_EXEMPT) so
+   * an operator can still SEE and FIX the breakage over MCP. This flag scopes the
+   * exemption to the fail-closed state — a deliberately-narrow (validly-parsed)
+   * profile keeps full ADR-0055 scope semantics with no diagnostic bypass.
+   */
+  private scopeFailClosed = false;
+  /**
    * ADR-0055 Decision 6: the active profile NAME that `this.scope` was resolved
    * from (connection `am.profile` → state.toml → default). Recorded alongside
    * `this.scope` by `resolveActiveScope` so the `am_get_scope` audit tool can
@@ -3256,8 +3286,30 @@ export class McpServer {
       const config = await loadResolvedConfig({ configDir, projectFile });
       this.settings = config.settings;
       this.scope = await this.resolveActiveScope(config, configDir);
-    } catch {
-      // Keep existing settings if re-read fails
+      this.scopeFailClosed = false; // config parsed cleanly → normal semantics
+    } catch (err) {
+      // ws2 (seed 6a89) K-CRIT: distinguish "config genuinely absent" from
+      // "config present but INVALID". loadResolvedConfig swallows ENOENT inside
+      // tryReadConfig (a missing file yields `{}`), so an ENOENT reaching here is
+      // benign (e.g. a transient stat race) — keep the prior settings/scope, the
+      // undefined-scope = global-ceiling default is correct when there is no
+      // declared boundary.
+      //
+      // ANY OTHER throw means the config FILE EXISTS but failed to parse/validate
+      // — a typo'd `[profiles.x.scope] tool_groups = ['bogus']` fails the z.enum,
+      // or `scope` is a non-object: ConfigSchema.parse throws a ZodError that
+      // tryReadConfig rethrows. We must NOT keep `this.scope` at its undefined
+      // field default, because isToolInScope(..., undefined) treats the whole
+      // ceiling as in-scope and the tools/call gate `if (this.scope && ...)` is
+      // bypassed entirely — a malformed confinement profile would expose the FULL
+      // ceiling. Mirror resolveActiveScope's broken-inheritance branch: fail
+      // CLOSED to a maximally-restrictive scope (empty tool_groups narrows every
+      // group out — isToolInScope rule 4) and pin the ceiling to nothing, so
+      // ceiling ∩ ∅ denies every tool until the config is fixed.
+      if (isNotFound(err)) return; // genuinely absent → keep prior benign behaviour
+      this.settings = { mcp_serve: { tools: [] } };
+      this.scope = { toolGroups: [], allowTools: [], denyTools: [] };
+      this.scopeFailClosed = true; // gate exempts only DIAGNOSTIC_SCOPE_EXEMPT
     }
   }
 
@@ -3311,6 +3363,12 @@ export class McpServer {
   /** ADR-0055: is a tool visible/callable under the global ceiling intersected
    * with the active profile's Scope? Used by both tools/list and tools/call. */
   private isToolScoped(toolName: string): boolean {
+    // ws2 (seed 6a89): while failing closed on a malformed config, expose ONLY
+    // the diagnostic/recovery tools so the breakage can still be seen + fixed
+    // over MCP. Everything else (the dangerous ceiling the typo could have
+    // widened to) stays denied. The flag confines this bypass to the fail-closed
+    // state — a validly-parsed narrow profile gets no diagnostic exemption.
+    if (this.scopeFailClosed) return DIAGNOSTIC_SCOPE_EXEMPT.has(toolName);
     const ceiling = this.settings?.mcp_serve?.tools ?? DEFAULT_TOOL_GROUPS;
     return isToolInScope(toolName, getToolGroup(toolName), ceiling, this.scope);
   }

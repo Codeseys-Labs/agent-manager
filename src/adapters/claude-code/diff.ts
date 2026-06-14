@@ -64,13 +64,17 @@ export function diffConfig(
     }
   }
 
-  // Find servers removed locally (in resolved but not in native)
+  // Servers present in the catalog but not yet in native: this is a FORWARD
+  // delta (catalog-ahead), the normal state right after `am add server`. It is
+  // NOT a local removal — `am apply` resolves it by writing the server. Label
+  // it `added-in-config` so the drift gate treats it as benign and a bare
+  // `am apply` writes it without --force. (ws4-drift-relabel-catalog-ahead)
   for (const name of Object.keys(expected)) {
     if (!(name in allNative)) {
       changes.push({
         entity: "server",
         name,
-        type: "removed-locally",
+        type: "added-in-config",
       });
     }
   }

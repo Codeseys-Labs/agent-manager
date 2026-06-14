@@ -37,6 +37,17 @@ const SECRET_KEY_PATTERNS: RegExp[] = [
   /access[_-]?key/i,
   /\bauth\b/i,
 
+  // Generic suffix-anchored secret indicators. `\b…\b` word boundaries do NOT
+  // fire on `_`/`-` (both are word chars), so `/\btoken\b/` misses MY_TOKEN /
+  // FOO_AUTH and there was no bare key/pwd pattern at all — FOO_KEY, *_TOKEN,
+  // *_PWD slipped through as plaintext while the scan reported clean (false
+  // negative → committed credential). Anchor on a `_`/`-`/start prefix and the
+  // END of the string so blast radius is bounded to the *suffix* (e.g.
+  // LICENSE_KEY / PUBLIC_KEY now match — acceptable, substitution is reversible)
+  // rather than a free `key` substring (which would catch KEYBOARD, MONKEY…).
+  /(^|[_-])(key|token|secret|password|pass|pwd|credential)$/i,
+  /bearer/i,
+
   // Cloud providers
   /aws[_-]secret/i,
   /aws[_-]access/i,

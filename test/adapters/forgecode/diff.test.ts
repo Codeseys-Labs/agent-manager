@@ -94,7 +94,10 @@ describe("forgecode diffConfig()", () => {
     expect(added).toBeDefined();
   });
 
-  test("detects server removed locally", async () => {
+  test("labels catalog-ahead server as added-in-config, not removed-locally", async () => {
+    // Catalog-ahead (`am add server tavily`): native has only fetch, catalog
+    // has both. A FORWARD delta apply resolves, not a local removal.
+    // (ws4-drift-relabel-catalog-ahead)
     dir = await createTestDir("am-fc-diff-");
     const projectDir = `${dir.path}/project`;
     await dir.write(
@@ -123,8 +126,9 @@ describe("forgecode diffConfig()", () => {
 
     const result = diffConfig(cfg, { projectPath: projectDir });
     expect(result.status).toBe("drifted");
-    const removed = result.changes.find((c) => c.name === "tavily" && c.type === "removed-locally");
-    expect(removed).toBeDefined();
+    const pending = result.changes.find((c) => c.name === "tavily");
+    expect(pending?.type).toBe("added-in-config");
+    expect(result.changes.some((c) => c.type === "removed-locally")).toBe(false);
   });
 
   test("detects modified server fields", async () => {

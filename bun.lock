@@ -377,7 +377,7 @@
 
     "events": ["events@3.3.0", "", {}, "sha512-mQw+2fkQbALzQ7V0MY0IqdnXNOeTtP4r0lN9z7AAawCXgqea7bDii20AYrIBrFd/Hx0M2Ocz6S111CaFkUcb0Q=="],
 
-    "flexily": ["flexily@github:beorn/flexily#8705f25", {}, "beorn-flexily-8705f25"],
+    "flexily": ["flexily@github:beorn/flexily#8705f25", {}, "beorn-flexily-8705f25", "sha512-0ie9H0s2gZvrEAMG3NuhxmF+8yQLvOJufX4d+xU/nGlb051OEKsaSecLqMGhJtc4tFSKcYB9I3UZzqZoK4ysHg=="],
 
     "for-each": ["for-each@0.3.5", "", { "dependencies": { "is-callable": "^1.2.7" } }, "sha512-dKx12eRCVIzqCxFGplyFKJMPvLEWgmNtUrpTiJIR5u97zEhRG8ySrtboPHZXx7daLxQVrl643cTzbab2tkQjxg=="],
 
@@ -445,7 +445,7 @@
 
     "lefthook-windows-x64": ["lefthook-windows-x64@1.13.6", "", { "os": "win32", "cpu": "x64" }, "sha512-mOZoM3FQh3o08M8PQ/b3IYuL5oo36D9ehczIw1dAgp1Ly+Tr4fJ96A+4SEJrQuYeRD4mex9bR7Ps56I73sBSZA=="],
 
-    "loggily": ["loggily@github:beorn/loggily#c5e8f32", {}, "beorn-loggily-c5e8f32"],
+    "loggily": ["loggily@github:beorn/loggily#c5e8f32", {}, "beorn-loggily-c5e8f32", "sha512-ermIT+EZ+PEBHWQM751xEhZ+g+kiJjh1mQ+wRBhCKYp8OjU7QulsOO3228VUtDQCrvWolFF+WGaiw5vzGnsbrA=="],
 
     "math-intrinsics": ["math-intrinsics@1.1.0", "", {}, "sha512-/IXtbwEk5HTPyEwyKX6hGkYXxM9nbj64B+ilVJnC/R6B0pH5G4V3b0pVbL7DBj4tkhBAppbQUlf6F6Xl9LHu1g=="],
 

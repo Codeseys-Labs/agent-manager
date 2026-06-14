@@ -75,10 +75,14 @@ export async function tryReadProjectConfig(path: string): Promise<ProjectConfig 
 }
 
 /**
- * Write a Config to TOML with ordered sections:
+ * Serialize a Config to TOML with ordered sections:
  * settings → servers → skills → instructions → profiles → adapters
+ *
+ * Extracted from `writeConfig` so callers that need the rendered bytes
+ * WITHOUT writing them to disk (e.g. `am init` folding `config.toml` into its
+ * single init commit) share the exact same serialization path.
  */
-export async function writeConfig(path: string, config: Config): Promise<void> {
+export function serializeConfig(config: Config): string {
   // Build an ordered object so TOML.stringify preserves section order
   const ordered: Record<string, unknown> = {};
 
@@ -90,8 +94,15 @@ export async function writeConfig(path: string, config: Config): Promise<void> {
   if (config.profiles) ordered.profiles = config.profiles;
   if (config.adapters) ordered.adapters = config.adapters;
 
-  const toml = tomlStringify(ordered);
-  await atomicWriteFile(path, toml);
+  return tomlStringify(ordered);
+}
+
+/**
+ * Write a Config to TOML with ordered sections:
+ * settings → servers → skills → instructions → profiles → adapters
+ */
+export async function writeConfig(path: string, config: Config): Promise<void> {
+  await atomicWriteFile(path, serializeConfig(config));
 }
 
 /**

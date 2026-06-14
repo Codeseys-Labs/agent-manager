@@ -2,6 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import * as fs from "node:fs";
 import { join } from "node:path";
 import { getAdapter, listAdapters } from "../../src/adapters/registry";
+import { collectDoctorChecks } from "../../src/commands/doctor";
 import { writeConfig } from "../../src/core/config";
 import { getStatus, initRepo } from "../../src/core/git";
 import { ConfigSchema } from "../../src/core/schema";
@@ -130,5 +131,64 @@ describe("am doctor", () => {
     const status = await getStatus(configDir);
     // No remote configured in test
     expect(status.remotes.length).toBe(0);
+  });
+
+  // ws6-skill-deps-missing-agent (R2/297e): doctor must flag a skill whose
+  // SKILL.md references an agent the catalog does not provide.
+  test("warns when a skill references an absent agent", async () => {
+    dir = await createTestDir("am-doctor-deps-");
+    const configDir = dir.path;
+    await initRepo(configDir);
+
+    const skillDir = join(configDir, "skills", "researcher");
+    fs.mkdirSync(skillDir, { recursive: true });
+    fs.writeFileSync(
+      join(skillDir, "SKILL.md"),
+      "# Researcher\n\nFan out with Task(subagent_type='hyperresearch-fetcher').\n",
+    );
+
+    const config: Config = {
+      settings: { default_profile: "default" },
+      skills: {
+        researcher: { path: skillDir, description: "Research skill" },
+      },
+    };
+    await writeConfig(join(configDir, "config.toml"), config);
+
+    const checks = await collectDoctorChecks(configDir, configDir);
+    const depCheck = checks.find((c) => c.name === "Skill dependencies");
+    expect(depCheck).toBeDefined();
+    expect(depCheck?.status).toBe("warn");
+    expect(depCheck?.message).toContain("hyperresearch-fetcher");
+    expect(depCheck?.message).toContain("researcher");
+  });
+
+  test("passes the skill-dependency check when the referenced agent exists", async () => {
+    dir = await createTestDir("am-doctor-deps-ok-");
+    const configDir = dir.path;
+    await initRepo(configDir);
+
+    const skillDir = join(configDir, "skills", "researcher");
+    fs.mkdirSync(skillDir, { recursive: true });
+    fs.writeFileSync(
+      join(skillDir, "SKILL.md"),
+      "# Researcher\n\nFan out with Task(subagent_type='hyperresearch-fetcher').\n",
+    );
+
+    const config: Config = {
+      settings: { default_profile: "default" },
+      skills: {
+        researcher: { path: skillDir, description: "Research skill" },
+      },
+      agents: {
+        "hyperresearch-fetcher": { name: "hyperresearch-fetcher", prompt: "Fetch sources." },
+      },
+    };
+    await writeConfig(join(configDir, "config.toml"), config);
+
+    const checks = await collectDoctorChecks(configDir, configDir);
+    const depCheck = checks.find((c) => c.name === "Skill dependencies");
+    expect(depCheck).toBeDefined();
+    expect(depCheck?.status).toBe("ok");
   });
 });

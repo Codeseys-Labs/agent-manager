@@ -53,13 +53,15 @@ export function compareInstructions(
     return changes;
   }
 
-  // Instructions expected but no native file
+  // Instructions expected but no native file. Catalog-ahead: a FORWARD delta
+  // `am apply` resolves by writing the managed block, not a local removal.
+  // (ws4-drift-relabel-catalog-ahead)
   if (nativeContent === null) {
     for (const name of Object.keys(expected)) {
       changes.push({
         entity: "instruction",
         name,
-        type: "removed-locally",
+        type: "added-in-config",
       });
     }
     return changes;
@@ -68,12 +70,15 @@ export function compareInstructions(
   // Both exist — compare managed block content
   const nativeBlock = extractManagedBlock(nativeContent);
   if (nativeBlock === null) {
-    // Native file exists but no managed block — instructions are missing
+    // Native file exists but has no managed block yet — the catalog's
+    // instructions have not been written. Catalog-ahead FORWARD delta `am apply`
+    // resolves by inserting the block, not a local removal.
+    // (ws4-drift-relabel-catalog-ahead)
     for (const name of Object.keys(expected)) {
       changes.push({
         entity: "instruction",
         name,
-        type: "removed-locally",
+        type: "added-in-config",
       });
     }
     return changes;

@@ -24,6 +24,20 @@ describe("isSecretKeyName", () => {
     expect(isSecretKeyName("ACCESS_KEY_ID")).toBe(true);
   });
 
+  test("matches underscore-suffixed generic secret key names (ws1: word-boundary gap)", () => {
+    // `\b…\b` does NOT fire on `_`/`-` (both are word chars), so the old
+    // name-only /\btoken\b/ / /\bauth\b/ patterns let these slip through as
+    // plaintext while the scan reported clean (false negative → leaked
+    // credential). The suffix-anchored generic pattern + /bearer/ close the gap.
+    expect(isSecretKeyName("FOO_KEY")).toBe(true);
+    expect(isSecretKeyName("MY_TOKEN")).toBe(true);
+    expect(isSecretKeyName("GH_TOKEN")).toBe(true);
+    expect(isSecretKeyName("FOO_PWD")).toBe(true);
+    expect(isSecretKeyName("BEARER_TOKEN")).toBe(true);
+    expect(isSecretKeyName("SESSION_KEY")).toBe(true);
+    expect(isSecretKeyName("SIGNING_KEY")).toBe(true);
+  });
+
   test("matches AI provider key names", () => {
     expect(isSecretKeyName("ANTHROPIC_API_KEY")).toBe(true);
     expect(isSecretKeyName("OPENAI_KEY")).toBe(true);

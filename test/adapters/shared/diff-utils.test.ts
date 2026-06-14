@@ -38,19 +38,22 @@ describe("compareInstructions", () => {
     expect(addedLocally[0].name).toBe("_managed_block");
   });
 
-  test("detects removed instructions (expected but native file missing)", () => {
+  test("labels catalog-ahead instructions added-in-config when native file missing", () => {
     const expected: Record<string, ResolvedInstruction> = {
       "ts-rules": makeInstruction({ name: "ts-rules", content: "Use strict TypeScript." }),
       "style-guide": makeInstruction({ name: "style-guide", content: "Follow the style guide." }),
     };
 
-    // Native file does not exist
+    // Native file does not exist: catalog-ahead FORWARD delta `am apply`
+    // resolves by writing the managed block — NOT a local removal.
+    // (ws4-drift-relabel-catalog-ahead)
     const changes = compareInstructions(expected, null, "claude-code");
 
     expect(changes.length).toBe(2);
-    const removedLocally = changes.filter((c) => c.type === "removed-locally");
-    expect(removedLocally.length).toBe(2);
-    const names = removedLocally.map((c) => c.name);
+    const addedInConfig = changes.filter((c) => c.type === "added-in-config");
+    expect(addedInConfig.length).toBe(2);
+    expect(changes.some((c) => c.type === "removed-locally")).toBe(false);
+    const names = addedInConfig.map((c) => c.name);
     expect(names).toContain("ts-rules");
     expect(names).toContain("style-guide");
   });
@@ -85,18 +88,21 @@ describe("compareInstructions", () => {
     expect(changes).toEqual([]);
   });
 
-  test("detects removed when native exists but has no managed block", () => {
+  test("labels catalog-ahead added-in-config when native exists but has no managed block", () => {
     const expected: Record<string, ResolvedInstruction> = {
       "ts-rules": makeInstruction({ name: "ts-rules", content: "Use strict TypeScript." }),
     };
 
-    // Native file exists but has no markers
+    // Native file exists but has no managed block yet: the catalog's
+    // instructions have not been written. Catalog-ahead FORWARD delta `am apply`
+    // resolves by inserting the block — NOT a local removal.
+    // (ws4-drift-relabel-catalog-ahead)
     const nativeContent = "# Some other content without markers";
 
     const changes = compareInstructions(expected, nativeContent, "claude-code");
 
     expect(changes.length).toBe(1);
-    expect(changes[0].type).toBe("removed-locally");
+    expect(changes[0].type).toBe("added-in-config");
     expect(changes[0].name).toBe("ts-rules");
   });
 

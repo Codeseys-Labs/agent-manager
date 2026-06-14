@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, setDefaultTimeout, test } from "bun:test";
 import { join } from "node:path";
-import { extractServerIdentity } from "../../src/commands/import";
-import { writeConfig } from "../../src/core/config";
+import { extractServerIdentity, importCommand } from "../../src/commands/import";
+import { readConfig, writeConfig } from "../../src/core/config";
 import { initRepo } from "../../src/core/git";
 import type { Config } from "../../src/core/schema";
 import { McpServer } from "../../src/mcp/server";
@@ -139,5 +139,88 @@ describe("import command passes projectPath to adapters", () => {
       const content = JSON.parse(result.content[0].text);
       expect(content.source).toBe("claude-code");
     }
+  });
+});
+
+// ── ws1 (seed agent-manager-257c): underscore-suffixed key leak regression ──
+// SECURITY: before the SECRET_KEY_PATTERNS fix, `FOO_KEY` was underscore-blind
+// (the name-only /\btoken\b/ etc. never matched MY_TOKEN/FOO_KEY, and there was
+// no bare key/pwd pattern), so importing FOO_KEY=sk-… stored the PLAINTEXT in
+// config.toml while the scan reported clean — a fail-OPEN credential leak that
+// then got committed. This drives the REAL import pipeline end-to-end
+// (adapter → scanConfigForSecrets → substituteSecret → encryptValue →
+// settings.env) and asserts the value is replaced by a ${FOO_KEY} reference and
+// only the encrypted envelope is persisted. Fails closed: a plaintext sk-…
+// must never reach the on-disk config.
+
+describe("import auto-encrypts underscore-suffixed secret keys (ws1 regression)", () => {
+  let configDir: TestDir;
+  let projectDir: TestDir;
+  let keyDir: TestDir;
+  const origConfigDir = process.env.AM_CONFIG_DIR;
+  const origKeyPath = process.env.AM_KEY_PATH;
+  const origCwd = process.cwd();
+  const origExitCode = process.exitCode;
+
+  afterEach(async () => {
+    // Restore cwd FIRST — leaking a deleted tmp cwd into later tests is fatal.
+    process.chdir(origCwd);
+    if (origConfigDir === undefined) Reflect.deleteProperty(process.env, "AM_CONFIG_DIR");
+    else process.env.AM_CONFIG_DIR = origConfigDir;
+    if (origKeyPath === undefined) Reflect.deleteProperty(process.env, "AM_KEY_PATH");
+    else process.env.AM_KEY_PATH = origKeyPath;
+    process.exitCode = origExitCode;
+    if (configDir) await configDir.cleanup();
+    if (projectDir) await projectDir.cleanup();
+    if (keyDir) await keyDir.cleanup();
+  });
+
+  test("FOO_KEY=sk-… → config holds ${FOO_KEY}, settings.env holds enc: envelope", async () => {
+    configDir = await createTestDir("am-import-ws1-cfg-");
+    projectDir = await createTestDir("am-import-ws1-proj-");
+    keyDir = await createTestDir("am-import-ws1-key-");
+    process.env.AM_CONFIG_DIR = configDir.path;
+    // Redirect master-key storage so the auto-generated key never touches ~/.
+    process.env.AM_KEY_PATH = join(keyDir.path, "key");
+
+    await initRepo(configDir.path);
+    await writeConfig(join(configDir.path, "config.toml"), { servers: {} });
+
+    // The claude-code adapter reads project servers from <projectPath>/.mcp.json,
+    // and the import command passes projectPath: process.cwd(). Plant a server
+    // whose env carries an underscore-suffixed secret key with a plaintext value.
+    const plaintext = "sk-test-xxxx-DO-NOT-LEAK-1234567890";
+    await projectDir.write(
+      ".mcp.json",
+      JSON.stringify({
+        mcpServers: {
+          "ws1-foo-key-server": {
+            command: "npx",
+            args: ["some-mcp"],
+            env: { FOO_KEY: plaintext },
+          },
+        },
+      }),
+    );
+    process.chdir(projectDir.path);
+
+    await importCommand.run!({
+      args: { source: "claude-code", json: true, quiet: true, verbose: false },
+      cmd: importCommand,
+      rawArgs: [],
+      data: undefined,
+    } as never);
+
+    // Read back the PERSISTED config from disk — this is what would be committed.
+    const written = await readConfig(join(configDir.path, "config.toml"));
+
+    const server = written.servers?.["ws1-foo-key-server"];
+    expect(server).toBeDefined();
+    // The env value is now a ${VAR} reference, not the plaintext.
+    expect(server?.env?.FOO_KEY).toBe("${FOO_KEY}");
+    // The encrypted envelope lives in settings.env.
+    expect(written.settings?.env?.FOO_KEY?.startsWith("enc:")).toBe(true);
+    // Decisive fail-closed assertion: the plaintext appears NOWHERE on disk.
+    expect(JSON.stringify(written)).not.toContain(plaintext);
   });
 });

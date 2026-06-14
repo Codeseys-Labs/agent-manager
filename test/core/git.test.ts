@@ -50,6 +50,58 @@ describe("initRepo", () => {
     expect(commits.length).toBe(1);
     expect(commits[0].commit.message).toContain("init");
   });
+
+  // ws3 brownfield-wipe fix: when given config.toml content, initRepo folds
+  // it INTO the single init commit so the baseline tree is config-bearing.
+  describe("configToml baseline (ws3)", () => {
+    async function treeFiles(): Promise<string[]> {
+      const out: string[] = [];
+      const head = await git.resolveRef({ fs, dir, ref: "HEAD" });
+      await git.walk({
+        fs,
+        dir,
+        trees: [git.TREE({ ref: head })],
+        map: async (filepath, [entry]) => {
+          if (entry && filepath !== "." && (await entry.type()) === "blob") out.push(filepath);
+          return filepath;
+        },
+      });
+      return out;
+    }
+
+    test("commits config.toml in the SAME single init commit", async () => {
+      await initRepo(dir, { configToml: 'key = "value"\n' });
+
+      // Exactly ONE commit — `am undo` requires log length >= 2 to act, so a
+      // fresh init must stay at one commit (immediate undo = "Nothing to undo").
+      const commits = await git.log({ fs, dir, depth: 10 });
+      expect(commits.length).toBe(1);
+      expect(commits[0].commit.message).toContain("init");
+
+      // The single commit's tree contains config.toml (not just .gitignore).
+      const files = await treeFiles();
+      expect(files).toContain("config.toml");
+      expect(files).toContain(".gitignore");
+
+      // The bytes we passed are on disk and committed.
+      const onDisk = await readFile(join(dir, "config.toml"), "utf-8");
+      expect(onDisk).toBe('key = "value"\n');
+    });
+
+    test("without configToml, only .gitignore is committed (legacy)", async () => {
+      await initRepo(dir);
+      const files = await treeFiles();
+      expect(files).toContain(".gitignore");
+      expect(files).not.toContain("config.toml");
+    });
+
+    test("revertHead after a config-bearing init has no parent to revert to", async () => {
+      // The config-bearing init is still a single commit, so there is nothing
+      // to undo immediately after init — revertHead must throw.
+      await initRepo(dir, { configToml: 'key = "value"\n' });
+      expect(revertHead(dir)).rejects.toThrow();
+    });
+  });
 });
 
 describe("commitAll", () => {

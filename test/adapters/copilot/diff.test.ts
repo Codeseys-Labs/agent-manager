@@ -92,7 +92,10 @@ describe("copilot diffConfig()", () => {
     expect(added).toBeDefined();
   });
 
-  test("detects server removed locally", async () => {
+  test("labels catalog-ahead server as added-in-config, not removed-locally", async () => {
+    // Catalog-ahead (`am add server tavily`): native has only fetch, catalog
+    // has both. A FORWARD delta apply resolves, not a local removal.
+    // (ws4-drift-relabel-catalog-ahead)
     dir = await createTestDir("am-cp-diff-");
     const projectDir = `${dir.path}/project`;
     await dir.write(
@@ -121,8 +124,9 @@ describe("copilot diffConfig()", () => {
 
     const result = diffConfig(cfg, { projectPath: projectDir });
     expect(result.status).toBe("drifted");
-    const removed = result.changes.find((c) => c.name === "tavily" && c.type === "removed-locally");
-    expect(removed).toBeDefined();
+    const pending = result.changes.find((c) => c.name === "tavily");
+    expect(pending?.type).toBe("added-in-config");
+    expect(result.changes.some((c) => c.type === "removed-locally")).toBe(false);
   });
 
   test("detects modified server fields", async () => {
@@ -204,9 +208,13 @@ describe("copilot diffConfig()", () => {
     });
 
     const result = diffConfig(cfg, { projectPath: projectDir });
-    // fetch should show as removed-locally (not in native "servers" key)
+    // The native file uses the wrong key (`mcpServers`), so copilot reads it as
+    // empty: `fetch` is in the catalog but not in native — catalog-ahead, so it
+    // shows as added-in-config (a FORWARD delta apply writes), not a local
+    // removal. (ws4-drift-relabel-catalog-ahead)
     expect(result.status).toBe("drifted");
-    const removed = result.changes.find((c) => c.name === "fetch" && c.type === "removed-locally");
-    expect(removed).toBeDefined();
+    const pending = result.changes.find((c) => c.name === "fetch");
+    expect(pending?.type).toBe("added-in-config");
+    expect(result.changes.some((c) => c.type === "removed-locally")).toBe(false);
   });
 });

@@ -19,11 +19,43 @@ const GITIGNORE_ENTRIES = [
   "**/key.txt",
 ];
 
-export async function initRepo(dir: string): Promise<void> {
+/**
+ * Optional baseline content folded into the single `init` commit.
+ *
+ * ws3 brownfield-wipe fix: when `am init` only committed `.gitignore`, the
+ * freshly-written `config.toml` was left UNCOMMITTED at HEAD. A later
+ * `am undo` (`revertHead`) restores HEAD's parent tree and git-removes every
+ * file in HEAD-but-not-parent — so an `init → add → undo` sequence rewound to
+ * a tree with NO `config.toml`, and a following `am apply --force` then wrote
+ * an empty native config over a populated one. Folding `config.toml` into the
+ * SAME init commit makes the baseline tree config-bearing, so `revertHead`
+ * always restores to a config.toml-bearing parent.
+ *
+ * CRITICAL INVARIANT: this stays ONE commit — `am undo` requires `log` length
+ * >= 2 to act, so a fresh `am init` must leave the repo at exactly one commit
+ * and an immediate `am undo` must report "Nothing to undo".
+ */
+export interface InitRepoOptions {
+  /**
+   * Serialized `config.toml` content to write and commit alongside
+   * `.gitignore` in the single init commit. When omitted, only `.gitignore`
+   * is committed (legacy behavior, e.g. for tests that write/commit
+   * config.toml themselves).
+   */
+  configToml?: string;
+}
+
+export async function initRepo(dir: string, options: InitRepoOptions = {}): Promise<void> {
   await git.init({ fs, dir, defaultBranch: "main" });
   await fs.promises.mkdir(join(dir, ".agent-manager"), { recursive: true });
   await fs.promises.writeFile(join(dir, ".gitignore"), `${GITIGNORE_ENTRIES.join("\n")}\n`);
   await git.add({ fs, dir, filepath: ".gitignore" });
+  // Fold config.toml into the SAME init commit when provided so the baseline
+  // tree contains it (see InitRepoOptions). One commit, not two.
+  if (options.configToml !== undefined) {
+    await fs.promises.writeFile(join(dir, "config.toml"), options.configToml);
+    await git.add({ fs, dir, filepath: "config.toml" });
+  }
   await git.commit({
     fs,
     dir,

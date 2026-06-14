@@ -3,6 +3,7 @@ import { isAbsolute, join, resolve as resolvePath } from "node:path";
 import { defineCommand } from "citty";
 import { resolveConfigDir } from "../core/config";
 import { withConfig } from "../core/controller";
+import { type HostPathFinding, scanBodyForHostPaths } from "../core/portability";
 import type { AgentProfile, Instruction, Server, Skill } from "../core/schema";
 import { pickEnvVarName, scanServerForSecrets, substituteSecret } from "../core/secret-detection";
 import {
@@ -14,7 +15,7 @@ import {
   saveKey,
 } from "../core/secrets";
 import { AmError, requireConfig } from "../lib/errors";
-import { amError, error, info, output } from "../lib/output";
+import { amError, error, info, output, warn } from "../lib/output";
 
 const ENTITY_TYPES = ["server", "instruction", "skill", "agent"] as const;
 type EntityType = (typeof ENTITY_TYPES)[number];
@@ -401,6 +402,34 @@ async function readSkillDescription(skillMdPath: string): Promise<string | undef
   return undefined;
 }
 
+/**
+ * Read a file body and run the portability lint (R1/297e), emitting a warning
+ * for each host-absolute path found. Best-effort: an unreadable file scans as
+ * clean (the caller has already validated existence where it matters).
+ *
+ * Returns the findings so callers can include them in the JSON envelope.
+ */
+async function scanArtifactBodyForHostPaths(
+  filePath: string,
+  label: string,
+  opts: { json?: boolean; quiet?: boolean; verbose?: boolean },
+): Promise<HostPathFinding[]> {
+  let findings: HostPathFinding[] = [];
+  try {
+    const content = await readFile(filePath, "utf-8");
+    findings = scanBodyForHostPaths(content);
+  } catch {
+    return [];
+  }
+  for (const f of findings) {
+    warn(
+      `${label} contains a host-absolute path "${f.match}" (${f.kind}, line ${f.line}) — not portable across hosts/users.`,
+      opts,
+    );
+  }
+  return findings;
+}
+
 async function addSkill(
   name: string,
   args: Record<string, unknown>,
@@ -467,6 +496,9 @@ async function addSkill(
   if (!description) description = await readSkillDescription(skillMd);
   if (!description) description = `Skill: ${name}`;
 
+  // Portability lint (R1/297e): warn on host-absolute paths in the SKILL.md body.
+  const portability = await scanArtifactBodyForHostPaths(skillMd, "SKILL.md", opts);
+
   type Outcome =
     | { status: "ok"; skill: Skill }
     | { status: "duplicate" }
@@ -510,7 +542,16 @@ async function addSkill(
   info(`Skill '${name}' added. Run \`am apply\` to generate native configs.`, opts);
 
   if (args.json) {
-    output({ action: "add", entity: "skill", name, config: outcome.skill }, opts);
+    output(
+      {
+        action: "add",
+        entity: "skill",
+        name,
+        config: outcome.skill,
+        ...(portability.length > 0 && { portability }),
+      },
+      opts,
+    );
   }
 }
 
@@ -537,7 +578,9 @@ async function addAgent(
     return;
   }
 
-  // Validate prompt-file exists if supplied
+  // Validate prompt-file exists if supplied, then run the portability lint
+  // (R1/297e) over its body so host-absolute paths surface at add time.
+  let promptPortability: HostPathFinding[] = [];
   if (promptFile) {
     const resolved = isAbsolute(promptFile) ? promptFile : resolvePath(promptFile);
     if (!(await fileExists(resolved))) {
@@ -545,6 +588,7 @@ async function addAgent(
       process.exitCode = 1;
       return;
     }
+    promptPortability = await scanArtifactBodyForHostPaths(resolved, "Prompt file", opts);
   }
 
   type Outcome =
@@ -594,6 +638,15 @@ async function addAgent(
   info(`Agent '${name}' added. Run \`am apply\` to generate native configs.`, opts);
 
   if (args.json) {
-    output({ action: "add", entity: "agent", name, config: outcome.agent }, opts);
+    output(
+      {
+        action: "add",
+        entity: "agent",
+        name,
+        config: outcome.agent,
+        ...(promptPortability.length > 0 && { portability: promptPortability }),
+      },
+      opts,
+    );
   }
 }

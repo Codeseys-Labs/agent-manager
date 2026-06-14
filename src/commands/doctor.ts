@@ -4,10 +4,16 @@ import { defineCommand } from "citty";
 import { ZodError } from "zod";
 import { getAdapter, listAdapters } from "../adapters/registry";
 import { getBackupStats } from "../core/apply-backup";
-import { resolveConfigDir, resolveProjectConfig, tryReadConfig } from "../core/config";
+import {
+  buildResolvedConfig,
+  resolveConfigDir,
+  resolveProjectConfig,
+  tryReadConfig,
+} from "../core/config";
 import { getStatus } from "../core/git";
 import { scanConfigForSecrets } from "../core/secret-detection";
 import { legacyKeyPath, resolveKeyPath } from "../core/secrets";
+import { findMissingSkillAgentDeps } from "../core/skill-deps";
 import { errorMessage } from "../lib/errors";
 import { error, info, output } from "../lib/output";
 
@@ -328,6 +334,38 @@ export async function collectDoctorChecks(
     }
   } catch {
     // Config already checked above, skip silently
+  }
+
+  // 9b. Skill → agent dependency closure (R2/297e, ws6-skill-deps-missing-agent).
+  //     A skill body (SKILL.md) may delegate to a named subagent via
+  //     `Task(subagent_type='...')`. If the catalog provides no matching agent
+  //     the skill is broken at runtime, so flag each dangling reference.
+  try {
+    const configForDeps = await tryReadConfig(join(configDir, "config.toml"));
+    if (configForDeps) {
+      const profileName =
+        (configForDeps.settings?.default_profile as string | undefined) ?? "default";
+      const resolved = buildResolvedConfig(configForDeps, profileName, configDir);
+      const missingDeps = findMissingSkillAgentDeps(resolved);
+      if (missingDeps.length > 0) {
+        const detail = missingDeps
+          .map((d) => `skill ${d.skill} references missing agent ${d.agent}`)
+          .join("; ");
+        checks.push({
+          name: "Skill dependencies",
+          status: "warn",
+          message: `${missingDeps.length} skill→agent reference(s) point to an absent agent: ${detail}. Add the agent(s) to the catalog or fix the skill's Task(subagent_type=...) reference.`,
+        });
+      } else {
+        checks.push({
+          name: "Skill dependencies",
+          status: "ok",
+          message: "All skill agent references resolve to catalog agents",
+        });
+      }
+    }
+  } catch {
+    // Config already validated above; a failure here is non-fatal.
   }
 
   // 10. Betterleaks scanner

@@ -3,7 +3,7 @@ import { join } from "node:path";
 import * as clack from "@clack/prompts";
 import { defineCommand } from "citty";
 import { getDetectedAdapters } from "../adapters/registry";
-import { resolveConfigDir } from "../core/config";
+import { resolveConfigDir, serializeConfig } from "../core/config";
 import { withConfig } from "../core/controller";
 import { addRemote, initRepo } from "../core/git";
 import type { Config } from "../core/schema";
@@ -76,19 +76,6 @@ export const initCommand = defineCommand({
           return { result: false, changed: false };
         }
 
-        // First-run: initialize the git repo under the lock so concurrent
-        // `am init` invocations can't race on `git init`.
-        //
-        // initRepo makes its own "init: agent-manager repository" commit
-        // (containing .gitignore). We write config.toml here but SKIP
-        // withConfig's auto-commit by returning `changed: true` with a
-        // `noCommit: true` option on withConfig itself — the freshly-written
-        // config.toml gets swept into the next commit (e.g., the user's
-        // first `am add`). This keeps a fresh repo at exactly ONE commit,
-        // so `am undo` right after `am init` correctly reports "Nothing to
-        // undo".
-        await initRepo(configDir);
-
         const newConfig: Config = {
           settings: { default_profile: "default" },
           servers: {},
@@ -98,6 +85,25 @@ export const initCommand = defineCommand({
             },
           },
         };
+
+        // First-run: initialize the git repo under the lock so concurrent
+        // `am init` invocations can't race on `git init`.
+        //
+        // ws3 brownfield-wipe fix: initRepo now folds config.toml INTO its
+        // single "init: agent-manager repository" commit (alongside
+        // .gitignore) — we render the same TOML withConfig would write and
+        // hand it to initRepo. This guarantees the baseline tree CONTAINS
+        // config.toml, so a later `am undo` (revertHead) restores to a
+        // config.toml-bearing parent instead of unlinking it (the wipe-out
+        // chain: init → add → undo → apply --force wrote empty {} over a
+        // populated native config).
+        //
+        // CRITICAL INVARIANT: this remains exactly ONE commit. withConfig
+        // is invoked with `noCommit: true`, so the file it writes to disk
+        // (identical bytes to what initRepo committed) is NOT turned into a
+        // second commit — `am undo` right after `am init` still correctly
+        // reports "Nothing to undo" (it requires log length >= 2 to act).
+        await initRepo(configDir, { configToml: serializeConfig(newConfig) });
 
         return {
           result: true,

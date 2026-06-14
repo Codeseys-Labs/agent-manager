@@ -593,6 +593,13 @@ describe("MCP server", () => {
   // read-only, tokenless client. A Zod error echoes the offending VALUE — here
   // an invalid `transport` enum whose value is a GitHub token — so the message
   // must pass through safeErrorMessage before it leaves the process.
+  //
+  // ws2 (seed 6a89) regression guard: the config is structurally INVALID (a
+  // server missing `command`), so refreshSettings fails CLOSED. am_doctor MUST
+  // still run — it is the recovery/diagnostic tool that EXISTS to surface exactly
+  // this kind of breakage — so the scope dispatch gate exempts it (see
+  // DIAGNOSTIC_SCOPE_EXEMPT). A regression that bricked am_doctor here would mean
+  // a broken config could no longer be diagnosed over MCP.
   test("am_doctor redacts secret-shaped values in config validation errors", async () => {
     await setupConfig({});
     const secretToken = "ghp_abcdefghijklmnopqrstuvwxyz0123456789";
@@ -1306,6 +1313,112 @@ describe("MCP server", () => {
       params: { name: "am_registry_search", arguments: { query: "x" } },
     });
     // Circular chain → fail closed → out-of-scope refusal, not exposure.
+    expect(call?.error?.code).toBe(-32601);
+  });
+
+  // ws2 (seed 6a89) regression: a profile whose `scope` SUBTABLE is malformed —
+  // e.g. `tool_groups = ["bogus"]` fails the z.enum, or `scope` is not an object —
+  // makes ConfigSchema.parse THROW a ZodError. tryReadConfig rethrows it (only
+  // ENOENT is swallowed), loadResolvedConfig throws, and refreshSettings used to
+  // swallow it in its catch — leaving this.settings AND this.scope at their field
+  // defaults (undefined). isToolInScope(..., undefined) returns true for the whole
+  // ceiling, and the tools/call gate `if (this.scope && ...)` was bypassed
+  // entirely. Net: a typo in a confinement profile's scope exposed the FULL
+  // ceiling. The fix fails CLOSED: a present-but-invalid config sets this.scope to
+  // an empty (maximally-restrictive) scope so the ceiling∩∅ denies everything.
+  // This is distinct from the broken-inheritance case (resolveProfile throws);
+  // here the throw is inside ConfigSchema.parse, BEFORE resolveActiveScope runs.
+  test("a malformed profile.scope (invalid tool_groups) fails CLOSED, never exposes the ceiling", async () => {
+    dir = await createTestDir("am-mcp-badscope-");
+    const configDir = dir.path;
+    process.env.AM_CONFIG_DIR = configDir;
+    await initRepo(configDir);
+    // Write RAW TOML — writeConfig would refuse to serialize an invalid scope,
+    // so we hand-author the malformed on-disk config the bug requires. The
+    // ceiling is wide (core+registry) so a fail-OPEN regression would be obvious.
+    await dir.write(
+      "config.toml",
+      [
+        "[settings]",
+        'default_profile = "locked"',
+        "",
+        "[settings.mcp_serve]",
+        'tools = ["core", "registry"]',
+        "",
+        "[profiles.locked.scope]",
+        'tool_groups = ["bogus"]', // not in MCP_TOOL_GROUPS → z.enum throws
+        "",
+      ].join("\n"),
+    );
+    const server = new McpServer({ auth: { token: undefined, allowUnsafeLocal: true } });
+
+    // tools/list must NOT fall back to the global ceiling. The invalid scope
+    // confines to ∅, EXCEPT the always-available diagnostic/recovery tools
+    // (am_doctor, am_get_scope) that exist to surface exactly this breakage.
+    const list = await server.handleRequest({ jsonrpc: "2.0", id: 130, method: "tools/list" });
+    const names = (list?.result as JsonRpcResult).tools.map((t: { name: string }) => t.name).sort();
+    expect(names).toEqual(["am_doctor", "am_get_scope"]); // diagnostics only — fail closed
+    // The dangerous ceiling (registry + the rest of core) is NOT exposed:
+    expect(names).not.toContain("am_status");
+    expect(names).not.toContain("am_apply");
+    expect(names).not.toContain("am_registry_search");
+
+    // tools/call for an in-ceiling, NON-diagnostic tool must be REFUSED at
+    // dispatch, not silently callable. This is the core of the leak: the dispatch
+    // gate must engage even though the config never parsed.
+    const call = await server.handleRequest({
+      jsonrpc: "2.0",
+      id: 131,
+      method: "tools/call",
+      params: { name: "am_status", arguments: {} },
+    });
+    expect(call?.error).toBeDefined();
+    expect(call?.error?.code).toBe(-32601);
+
+    // A registry (non-core, dangerous) tool is likewise refused — proving the
+    // malformed scope did NOT widen the surface to the configured ceiling.
+    const reg = await server.handleRequest({
+      jsonrpc: "2.0",
+      id: 134,
+      method: "tools/call",
+      params: { name: "am_registry_search", arguments: { query: "x" } },
+    });
+    expect(reg?.error?.code).toBe(-32601);
+  });
+
+  // ws2 (seed 6a89) regression, second shape: `scope` itself is not a table
+  // (e.g. a bare string). Same fail-CLOSED requirement — distinct only in WHICH
+  // z.parse rule throws. Also selects the profile via the persisted state.toml
+  // active profile (not default_profile) to exercise that resolution term.
+  test("a profile.scope that is not a table fails CLOSED via the state.toml-active profile", async () => {
+    dir = await createTestDir("am-mcp-badscope2-");
+    const configDir = dir.path;
+    process.env.AM_CONFIG_DIR = configDir;
+    await initRepo(configDir);
+    await dir.write(
+      "config.toml",
+      [
+        "[settings.mcp_serve]",
+        'tools = ["core", "registry"]',
+        "",
+        "[profiles.locked]",
+        'scope = "not-a-table"', // scope must be an object → ConfigSchema.parse throws
+        "",
+      ].join("\n"),
+    );
+    await writeActiveProfile(configDir, "locked"); // persisted `am use locked`
+    const server = new McpServer({ auth: { token: undefined, allowUnsafeLocal: true } });
+
+    const list = await server.handleRequest({ jsonrpc: "2.0", id: 132, method: "tools/list" });
+    const names = (list?.result as JsonRpcResult).tools.map((t: { name: string }) => t.name).sort();
+    expect(names).toEqual(["am_doctor", "am_get_scope"]); // diagnostics only — fail closed
+
+    const call = await server.handleRequest({
+      jsonrpc: "2.0",
+      id: 133,
+      method: "tools/call",
+      params: { name: "am_registry_search", arguments: { query: "x" } },
+    });
     expect(call?.error?.code).toBe(-32601);
   });
 
