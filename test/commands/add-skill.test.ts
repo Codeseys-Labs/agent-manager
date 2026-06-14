@@ -299,6 +299,18 @@ describe("am add skill", () => {
     process.exitCode = 0;
   });
 
+  test("--source help text does not advertise git+/marketplace as working", async () => {
+    // Docs-truth: only local:<path> is implemented (parseSkillSource rejects
+    // git+/marketplace). The flag description must not present unimplemented
+    // sources as supported. (ws2-e5c8-docs-truth)
+    const { addCommand } = await import("../../src/commands/add");
+    const sourceArg = (addCommand.args as Record<string, { description?: string }>).source;
+    expect(sourceArg.description).toContain("local:<path>");
+    expect(sourceArg.description).not.toMatch(/git\+<url>|marketplace-ref/);
+    // The description should make the unsupported status explicit.
+    expect(sourceArg.description).toMatch(/not yet supported/);
+  });
+
   test("portability — warns on a host-absolute path in the SKILL.md body", async () => {
     ({ dir, configDir } = await setupConfigDir());
     workspace = await createTestDir("am-add-skill-ws-");

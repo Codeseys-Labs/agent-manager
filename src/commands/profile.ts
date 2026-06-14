@@ -9,8 +9,8 @@ import {
 } from "../core/config";
 import { withConfig } from "../core/controller";
 import { buildScopeManifest, resolveProfile } from "../core/resolver";
-import { DEFAULT_MCP_TOOL_GROUPS } from "../core/schema";
-import type { Config, Profile } from "../core/schema";
+import { DEFAULT_MCP_TOOL_GROUPS, MCP_TOOL_GROUPS } from "../core/schema";
+import type { Config, McpToolGroup, Profile, ProfileScope } from "../core/schema";
 import { AmError, errorMessage, requireConfig } from "../lib/errors";
 import { amError, error, info, output } from "../lib/output";
 import { toolGroupCatalog } from "../mcp/server";
@@ -23,8 +23,24 @@ export const profileCommand = defineCommand({
     show: () => Promise.resolve(profileShowCommand),
     create: () => Promise.resolve(profileCreateCommand),
     delete: () => Promise.resolve(profileDeleteCommand),
+    scope: () => Promise.resolve(profileScopeCommand),
   },
 });
+
+/**
+ * Parse a comma-separated CLI value into a trimmed, de-duped, non-empty list.
+ * Returns `undefined` for an absent flag (distinct from an empty list, which
+ * carries meaning for `tool_groups`: an explicit empty narrows every group out).
+ */
+function parseCsv(raw: unknown): string[] | undefined {
+  if (typeof raw !== "string") return undefined;
+  const out: string[] = [];
+  for (const part of raw.split(",")) {
+    const t = part.trim();
+    if (t.length > 0 && !out.includes(t)) out.push(t);
+  }
+  return out;
+}
 
 export const profileListCommand = defineCommand({
   meta: { name: "list", description: "List all profiles" },
@@ -293,6 +309,118 @@ export const profileDeleteCommand = defineCommand({
           result: undefined,
           changed: true,
           commitMessage: `delete profile: ${name}`,
+        };
+      });
+    } catch (err) {
+      amError(err, opts);
+      process.exitCode = 1;
+    }
+  },
+});
+
+export const profileScopeCommand = defineCommand({
+  meta: {
+    name: "scope",
+    description: "Set a profile's runtime MCP tool-access scope (ADR-0055)",
+  },
+  args: {
+    name: { type: "positional", description: "Profile name", required: true },
+    "tool-groups": {
+      type: "string",
+      description: `Comma-separated tool groups to allow (${MCP_TOOL_GROUPS.join(", ")})`,
+    },
+    "allow-tools": {
+      type: "string",
+      description: "Comma-separated individual tool names to allow",
+    },
+    "deny-tools": {
+      type: "string",
+      description: "Comma-separated individual tool names to deny (deny wins)",
+    },
+    clear: {
+      type: "boolean",
+      description: "Remove the scope entirely (profile exposes the full ceiling)",
+      default: false,
+    },
+    json: { type: "boolean", description: "JSON output", default: false },
+    quiet: { type: "boolean", alias: "q", default: false },
+    verbose: { type: "boolean", alias: "v", default: false },
+  },
+  async run({ args }) {
+    const opts = { json: args.json, quiet: args.quiet, verbose: args.verbose };
+    try {
+      const configDir = resolveConfigDir();
+      const name = args.name;
+
+      // Parse + VALIDATE the inputs BEFORE opening the RMW transaction. An
+      // unknown tool group must fail CLOSED — we abort with a nonzero exit and
+      // commit nothing rather than writing a partial/widened scope (SECURITY:
+      // an invalid group can never silently alter the runtime access boundary).
+      const toolGroups = parseCsv(args["tool-groups"]);
+      const allowTools = parseCsv(args["allow-tools"]);
+      const denyTools = parseCsv(args["deny-tools"]);
+
+      if (toolGroups !== undefined) {
+        const valid = new Set<string>(MCP_TOOL_GROUPS);
+        const unknown = toolGroups.filter((g) => !valid.has(g));
+        if (unknown.length > 0) {
+          process.exitCode = 1;
+          error(
+            `Unknown tool group(s): ${unknown.join(", ")}. Valid groups: ${MCP_TOOL_GROUPS.join(", ")}.`,
+            opts,
+          );
+          return;
+        }
+      }
+
+      await withConfig(configDir, async (config) => {
+        requireConfig(config);
+
+        if (!config.profiles?.[name]) {
+          process.exitCode = 1;
+          error(`Profile "${name}" does not exist.`, opts);
+          return { result: undefined, changed: false };
+        }
+
+        if (args.clear) {
+          if (config.profiles[name].scope === undefined) {
+            info(`Profile "${name}" has no scope to clear.`, opts);
+            if (args.json) output({ profile: name, scope: null, action: "clear" }, opts);
+            return { result: undefined, changed: false };
+          }
+          // Reconstruct without `scope` rather than `delete` (lint/noDelete) or
+          // `scope = undefined` (the @iarna/toml serializer rejects undefined
+          // values). Dropping the key entirely restores the global-ceiling
+          // default for this profile.
+          const { scope: _dropped, ...rest } = config.profiles[name];
+          config.profiles[name] = rest;
+          info(`Cleared scope for profile "${name}"`, opts);
+          if (args.json) output({ profile: name, scope: null, action: "clear" }, opts);
+          return {
+            result: undefined,
+            changed: true,
+            commitMessage: `set profile scope: ${name}`,
+          };
+        }
+
+        // Build the scope, dropping empty arrays so we never persist noise.
+        // `tool_groups` is preserved even when empty (an explicit empty list is
+        // a meaningful deny-all-groups boundary), but parseCsv only yields an
+        // empty array if the flag was passed as an empty string.
+        const scope: ProfileScope = {};
+        if (toolGroups !== undefined) scope.tool_groups = toolGroups as McpToolGroup[];
+        if (allowTools && allowTools.length > 0) scope.allow_tools = allowTools;
+        if (denyTools && denyTools.length > 0) scope.deny_tools = denyTools;
+
+        config.profiles[name].scope = scope;
+
+        info(`Set scope for profile "${name}"`, opts);
+        if (args.json) output({ profile: name, scope, action: "scope" }, opts);
+
+        return {
+          result: undefined,
+          changed: true,
+          commitMessage: `set profile scope: ${name}`,
         };
       });
     } catch (err) {

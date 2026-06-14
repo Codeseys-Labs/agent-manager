@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { readConfig, writeConfig } from "../../src/core/config";
 import { initRepo } from "../../src/core/git";
 import type { Config } from "../../src/core/schema";
-import type { RegistryPackage } from "../../src/registry/types";
+import type { ServerListResponse, ServerResponse } from "../../src/registry/types";
 import { type TestDir, createTestDir } from "../helpers/tmp";
 
 let consoleOutput: string[] = [];
@@ -12,23 +12,36 @@ const origLog = console.log;
 const origError = console.error;
 const origFetch = globalThis.fetch;
 
-function makePackage(overrides: Partial<RegistryPackage> = {}): RegistryPackage {
+// Build a v0 ServerResponse. `am install <short-name>` resolves through the
+// search route, so a list envelope wrapping this is the fetch body.
+function makeServer(overrides: Partial<ServerResponse["server"]> = {}): ServerResponse {
   return {
-    name: "test-mcp",
-    description: "A test MCP server",
-    author: "tester",
-    version: "1.0.0",
-    verified: true,
-    tags: ["test"],
-    downloads: 100,
-    created_at: "2024-01-01T00:00:00Z",
-    updated_at: "2024-06-01T00:00:00Z",
     server: {
-      command: "bunx",
-      args: ["test-mcp@latest"],
+      name: "io.github.tester/test-mcp",
+      description: "A test MCP server",
+      version: "1.0.0",
+      packages: [
+        {
+          registryType: "npm",
+          identifier: "test-mcp",
+          version: "1.0.0",
+          transport: { type: "stdio" },
+        },
+      ],
+      ...overrides,
     },
-    ...overrides,
+    _meta: {
+      "io.modelcontextprotocol.registry/official": {
+        publishedAt: "2024-01-01T00:00:00Z",
+        updatedAt: "2024-06-01T00:00:00Z",
+        isLatest: true,
+      },
+    },
   };
+}
+
+function makeList(server: ServerResponse): ServerListResponse {
+  return { servers: [server], metadata: { count: 1 } };
 }
 
 function mockFetchResponse(data: unknown, status = 200) {
@@ -79,8 +92,19 @@ describe("am install", () => {
     const configPath = join(configDir, "config.toml");
     await writeConfig(configPath, config);
 
-    const pkg = makePackage({ name: "tavily-mcp", version: "1.2.0" });
-    mockFetchResponse(pkg);
+    const server = makeServer({
+      name: "io.github.tavily/tavily-mcp",
+      version: "1.2.0",
+      packages: [
+        {
+          registryType: "npm",
+          identifier: "tavily-mcp",
+          version: "1.2.0",
+          transport: { type: "stdio" },
+        },
+      ],
+    });
+    mockFetchResponse(makeList(server));
 
     const { installCommand } = await import("../../src/commands/install");
     await installCommand.run!({
@@ -97,33 +121,42 @@ describe("am install", () => {
       cmd: installCommand as any,
     });
 
+    // Server is keyed by the remapped (reverse-DNS) name from the v0 wire shape.
+    const key = "io.github.tavily/tavily-mcp";
     const updated = await readConfig(configPath);
-    expect(updated.servers?.["tavily-mcp"]).toBeDefined();
-    expect(updated.servers?.["tavily-mcp"].command).toBe("bunx");
-    expect(updated.servers?.["tavily-mcp"]._registry).toBeDefined();
-    expect(updated.servers?.["tavily-mcp"]._registry!.package).toBe("tavily-mcp");
-    expect(updated.servers?.["tavily-mcp"]._registry!.version).toBe("1.2.0");
-    expect(updated.servers?.["tavily-mcp"]._registry!.source).toBe("mcp-registry");
+    expect(updated.servers?.[key]).toBeDefined();
+    // npm registryType → npx launcher, identifier pinned to version.
+    expect(updated.servers?.[key].command).toBe("npx");
+    expect(updated.servers?.[key].args).toEqual(["tavily-mcp@1.2.0"]);
+    expect(updated.servers?.[key]._registry).toBeDefined();
+    expect(updated.servers?.[key]._registry!.package).toBe(key);
+    expect(updated.servers?.[key]._registry!.version).toBe("1.2.0");
+    expect(updated.servers?.[key]._registry!.source).toBe("mcp-registry");
   });
 
-  // R4-MED2: a registry package that supplies a `url` but NO `transport` must
-  // not produce a schema-invalid stdio+url server. transport defaults to
-  // "stdio"; the url guard is keyed on the RESOLVED transport, so url is NOT
-  // set, and the persisted config round-trips through readConfig (the Wave-3
+  // R4-MED2 (carried to v0 remap): a stdio package must never produce a
+  // schema-invalid stdio+url server. The remap only sets `url` for non-stdio
+  // transports, so a stdio package round-trips through readConfig (the Wave-3
   // ServerSchema superRefine rejects stdio+url).
-  test("registry package with url but no transport persists a schema-valid server", async () => {
+  test("stdio package persists a schema-valid server with no url", async () => {
     dir = await createTestDir("am-install-");
     const configDir = dir.path;
     process.env.AM_CONFIG_DIR = configDir;
     await initRepo(configDir);
     await writeConfig(join(configDir, "config.toml"), { servers: {} });
 
-    // url present, transport ABSENT — the exact shape that bricked config reads.
-    const pkg = makePackage({
-      name: "urlonly-mcp",
-      server: { command: "", url: "https://remote.example.com/mcp" } as RegistryPackage["server"],
+    const server = makeServer({
+      name: "io.github.local/urlonly-mcp",
+      packages: [
+        {
+          registryType: "npm",
+          identifier: "urlonly-mcp",
+          version: "1.0.0",
+          transport: { type: "stdio" },
+        },
+      ],
     });
-    mockFetchResponse(pkg);
+    mockFetchResponse(makeList(server));
 
     const { installCommand } = await import("../../src/commands/install");
     await installCommand.run!({
@@ -142,31 +175,28 @@ describe("am install", () => {
 
     // The config must still PARSE (no stdio+url superRefine rejection).
     const updated = await readConfig(join(configDir, "config.toml"));
-    const srv = updated.servers?.["urlonly-mcp"];
+    const srv = updated.servers?.["io.github.local/urlonly-mcp"];
     expect(srv).toBeDefined();
     expect(srv?.transport).toBe("stdio");
     // url must NOT have been set on a stdio server.
     expect(srv?.url).toBeUndefined();
   });
 
-  // R4-MED2 positive guard: a genuine remote package (transport supplied) STILL
-  // gets its url set — the fix must not drop url for legitimate remote servers.
-  test("registry package with streamable-http transport keeps its url", async () => {
+  // R4-MED2 positive guard: a remote-only server (remotes[], no packages) STILL
+  // gets its url set — the remap must synthesize a schema-valid remote server.
+  test("remote-only server (remotes[]) keeps its url and remote transport", async () => {
     dir = await createTestDir("am-install-");
     const configDir = dir.path;
     process.env.AM_CONFIG_DIR = configDir;
     await initRepo(configDir);
     await writeConfig(join(configDir, "config.toml"), { servers: {} });
 
-    const pkg = makePackage({
-      name: "remote-mcp",
-      server: {
-        command: "",
-        transport: "streamable-http",
-        url: "https://remote.example.com/mcp",
-      } as RegistryPackage["server"],
+    const server = makeServer({
+      name: "io.github.remote/remote-mcp",
+      packages: undefined,
+      remotes: [{ type: "streamable-http", url: "https://remote.example.com/mcp" }],
     });
-    mockFetchResponse(pkg);
+    mockFetchResponse(makeList(server));
 
     const { installCommand } = await import("../../src/commands/install");
     await installCommand.run!({
@@ -184,10 +214,12 @@ describe("am install", () => {
     });
 
     const updated = await readConfig(join(configDir, "config.toml"));
-    const srv = updated.servers?.["remote-mcp"];
+    const srv = updated.servers?.["io.github.remote/remote-mcp"];
     expect(srv).toBeDefined();
     expect(srv?.transport).toBe("streamable-http");
     expect(srv?.url).toBe("https://remote.example.com/mcp");
+    // Command synthesized from the url (am stores the url in command for remotes).
+    expect(srv?.command).toBe("https://remote.example.com/mcp");
   });
 
   test("detects existing server and skips without --yes", async () => {
@@ -198,8 +230,8 @@ describe("am install", () => {
 
     const config: Config = {
       servers: {
-        "test-mcp": {
-          command: "bunx",
+        "io.github.tester/test-mcp": {
+          command: "npx",
           args: ["test-mcp@0.9.0"],
           transport: "stdio",
           enabled: true,
@@ -209,7 +241,7 @@ describe("am install", () => {
     const configPath = join(configDir, "config.toml");
     await writeConfig(configPath, config);
 
-    mockFetchResponse(makePackage());
+    mockFetchResponse(makeList(makeServer()));
 
     const { installCommand } = await import("../../src/commands/install");
     await installCommand.run!({
@@ -243,7 +275,7 @@ describe("am install", () => {
     const configPath = join(configDir, "config.toml");
     await writeConfig(configPath, config);
 
-    mockFetchResponse(makePackage({ name: "dry-run-pkg" }));
+    mockFetchResponse(makeList(makeServer({ name: "io.github.local/dry-run-pkg" })));
 
     const { installCommand } = await import("../../src/commands/install");
     await installCommand.run!({
@@ -264,7 +296,7 @@ describe("am install", () => {
     expect(allOutput).toContain("[dry-run]");
 
     const updated = await readConfig(configPath);
-    expect(updated.servers?.["dry-run-pkg"]).toBeUndefined();
+    expect(updated.servers?.["io.github.local/dry-run-pkg"]).toBeUndefined();
   });
 
   test("handles registry 404 (package not found)", async () => {
@@ -381,18 +413,26 @@ describe("am install", () => {
     const configPath = join(configDir, "config.toml");
     await writeConfig(configPath, config);
 
-    const pkg = makePackage({
-      name: "env-mcp",
-      server: {
-        command: "bunx",
-        args: ["env-mcp@latest"],
-        env: [
-          { name: "API_KEY", description: "The API key", required: true },
-          { name: "REGION", description: "AWS region", required: false, default: "us-east-1" },
-        ],
-      },
+    // CRITICAL: the live wire field is `isRequired`. A SECRET, required var must
+    // be remapped to required=true so install does NOT silently treat it as
+    // optional (the bug this workstream fixes). The optional var with a default
+    // is carried through.
+    const server = makeServer({
+      name: "io.github.acme/env-mcp",
+      packages: [
+        {
+          registryType: "npm",
+          identifier: "env-mcp",
+          version: "1.0.0",
+          transport: { type: "stdio" },
+          environmentVariables: [
+            { name: "API_KEY", description: "The API key", isRequired: true, isSecret: true },
+            { name: "REGION", description: "AWS region", isRequired: false, default: "us-east-1" },
+          ],
+        },
+      ],
     });
-    mockFetchResponse(pkg);
+    mockFetchResponse(makeList(server));
 
     const { installCommand } = await import("../../src/commands/install");
     await installCommand.run!({
@@ -410,9 +450,11 @@ describe("am install", () => {
     });
 
     const updated = await readConfig(configPath);
-    const server = updated.servers?.["env-mcp"];
-    expect(server).toBeDefined();
-    expect(server!.env?.API_KEY).toBe("${API_KEY}");
-    expect(server!.env?.REGION).toBe("us-east-1");
+    const persisted = updated.servers?.["io.github.acme/env-mcp"];
+    expect(persisted).toBeDefined();
+    // required=true (from isRequired) → non-interactive placeholder is set.
+    expect(persisted!.env?.API_KEY).toBe("${API_KEY}");
+    // optional with default → default value carried through.
+    expect(persisted!.env?.REGION).toBe("us-east-1");
   });
 });

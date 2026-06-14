@@ -320,7 +320,12 @@ describe("MCP server", () => {
 
   test("am_config_show returns config", async () => {
     await setupConfig({
+      // The active profile must actually EXIST: fix-1-0 fails CLOSED when an
+      // explicitly-named profile (`default_profile`) is absent from the profiles
+      // table, which would deny this non-diagnostic read tool. Define `dev` so
+      // the gateway resolves a real scope and the tool stays callable.
       settings: { default_profile: "dev" },
+      profiles: { dev: {} },
       servers: {
         fetch: { command: "uvx", args: ["mcp-server-fetch"], transport: "stdio", enabled: true },
       },

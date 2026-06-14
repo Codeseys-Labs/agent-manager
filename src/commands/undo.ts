@@ -1,6 +1,6 @@
 import { defineCommand } from "citty";
 import { resolveConfigDir } from "../core/config";
-import { log as gitLog, revertHead } from "../core/git";
+import { getStatus, log as gitLog, revertHead } from "../core/git";
 import { errorMessage } from "../lib/errors";
 import { error, info, output, warn } from "../lib/output";
 import { applyCommand } from "./apply";
@@ -41,6 +41,24 @@ export const undoCommand = defineCommand({
 
     const headMsg = entries[0].message;
 
+    // ws4-6fd2: `am undo` reverts COMMITTED history (git revert). Any
+    // uncommitted working-tree edits in the config repo are NOT part of that
+    // revert — and `revertHead` can fail outright when the tree is dirty. Warn
+    // BEFORE reverting so the operator understands the scope and isn't
+    // surprised by a failure or by edits that survive untouched.
+    let dirtyFiles: string[] = [];
+    try {
+      const status = await getStatus(configDir);
+      if (!status.clean) {
+        dirtyFiles = status.dirty;
+        const dirtyMsg = `Uncommitted edits in the config repo (${dirtyFiles.length} file(s): ${dirtyFiles.join(", ")}). \`am undo\` reverts COMMITTED history only — these working-tree edits are left untouched (and may block the revert). Commit or discard them first if you want a clean undo.`;
+        warn(dirtyMsg, opts);
+      }
+    } catch {
+      // Non-fatal: if status can't be read we still attempt the revert, which
+      // will surface its own error below.
+    }
+
     let oid: string;
     try {
       oid = await revertHead(configDir);
@@ -55,7 +73,17 @@ export const undoCommand = defineCommand({
     // Otherwise, emit an unmissable warning about catalog/IDE drift.
     let applied = false;
     if (args.apply) {
-      info("Regenerating native configs...", opts);
+      // ws4-6fd2: be honest about what `--apply` does. The revert restored the
+      // PREVIOUS catalog, but `am apply` runs WITHOUT --force (the fail-closed
+      // drift gate is on), so if the native config was hand-edited since the
+      // reverted change, apply will REFUSE to overwrite the drifted adapter and
+      // report a skip — it will NOT silently re-introduce the reverted state on
+      // top of local edits. Surface that expectation up front rather than
+      // letting the user assume `--apply` always rewrites every tool.
+      info(
+        "Regenerating native configs (drift gate stays on — drifted adapters are skipped, not force-overwritten)...",
+        opts,
+      );
       try {
         // Delegate to the apply command with compatible flags. Only `args`
         // is read by the apply implementation; the remaining CommandContext
@@ -94,7 +122,10 @@ export const undoCommand = defineCommand({
     }
 
     if (args.json) {
-      output({ action: "undo", reverted: headMsg, oid, applied }, opts);
+      output(
+        { action: "undo", reverted: headMsg, oid, applied, dirtyBeforeUndo: dirtyFiles },
+        opts,
+      );
     }
   },
 });

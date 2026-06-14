@@ -33,7 +33,7 @@ agent-manager is not "chezmoi for configs" — it outgrew that framing. It is
 a control plane for AI agents, built on six composing pillars:
 
 1. **Catalog + git sync.** Entity types (servers, instructions, skills, agents,
-   profiles) defined once in TOML. User's choice of git backend. Load-bearing
+   commands, profiles) defined once in TOML. User's choice of git backend. Load-bearing
    sub-features worth naming: **brownfield import** (`am import` reads native
    IDE configs with intelligent merge), **drift detection** (`am status` catches
    when any of the 13 tools diverged from your catalog), **secret hygiene**
@@ -101,7 +101,7 @@ profiles, and detect when someone edits an IDE config directly.
 | **Modes** | - | - | - | - | - | - | Y | - | - | - | Y | - | - |
 | **Plugins** | Y | - | - | - | - | - | - | - | - | - | - | - | - |
 | **Hooks** | Y | - | - | - | - | - | - | - | - | - | - | - | - |
-| **Session Harvest** | Y | Y | - | - | - | - | - | - | - | - | - | - | - |
+| **Session Harvest** | Y | Y | Y | Y | Y | - | - | - | Y | Y | Y | - | - |
 | **Import** | Y | Y | Y | Y | Y | Y | Y | Y | Y | Y | Y | Y | Y |
 | **Export** | Y | Y | Y | Y | Y | Y | Y | Y | Y | Y | Y | Y | Y |
 | **Drift Detection** | Y | Y | Y | Y | Y | Y | Y | Y | Y | Y | Y | Y | Y |
@@ -176,15 +176,16 @@ am push                    # sync to remote
 ```bash
 # One command clones your existing catalog into the config dir and applies it:
 am setup --from <your-config-remote>   # full git URL, or a user/repo shorthand
-am setup --from alice/dotfiles --ssh   # shorthand → git@github.com:alice/dotfiles.git
+am setup --from alice/dotfiles --ssh   # shorthand → git@github.com:alice/dotfiles.git (clone only)
 ```
 
 `--from` accepts a full git URL, an scp-style `git@host:org/repo`, a local path,
 or a chezmoi-style `user/repo` (default host `github.com`) / `host/user/repo`
-shorthand; `--ssh` selects the SSH remote form. The clone lands in
-`~/.config/agent-manager` (or `$AM_CONFIG_DIR`), then `am setup` runs the rest of
-the wizard (profile → apply → health check) for instant parity with your other
-machines. The manual equivalent still works if you prefer it:
+shorthand; `--ssh` selects the SSH remote form **for the initial clone shorthand
+only**. The clone lands in `~/.config/agent-manager` (or `$AM_CONFIG_DIR`), then
+`am setup` runs the rest of the wizard (profile → apply → health check) for
+instant parity with your other machines. The manual equivalent still works if
+you prefer it:
 
 ```bash
 git clone <your-config-remote> ~/.config/agent-manager
@@ -340,7 +341,20 @@ allow_tools = ["am_registry_search"]  # …plus specific re-includes (within the
 
 Scope only ever **narrows** the global `settings.mcp_serve.tools` ceiling — it can
 never widen it, and it's enforced at BOTH tool discovery (`tools/list` hides) and
-dispatch (`tools/call` refuses). Inspect exactly what a profile grants:
+dispatch (`tools/call` refuses). You can set the scope from the CLI instead of
+hand-editing TOML (the write is atomic and auto-committed):
+
+```bash
+am profile scope locked --tool-groups core,wiki     # set the allowed groups
+am profile scope locked --deny-tools am_apply       # deny a specific tool (deny wins)
+am profile scope locked --allow-tools am_registry_search  # re-include within the ceiling
+am profile scope locked --clear                      # remove the scope (back to full ceiling)
+am profile scope locked --tool-groups core --json    # machine-readable echo of the result
+```
+
+An unknown tool group is rejected before anything is written — the access
+boundary can never be silently widened by a typo. Inspect exactly what a profile
+grants:
 
 ```bash
 am profile show locked --tools          # human-readable manifest
@@ -350,6 +364,23 @@ am profile show locked --tools --json   # machine-readable
 Agents can introspect their own boundary over MCP via the read-only `am_get_scope`
 tool. The manifest is built from the same decision the gateway enforces, so it can
 never drift from what's actually allowed.
+
+#### Binding a scoped profile to `mcp-serve`
+
+`am mcp-serve` resolves its active profile (and therefore its tool scope) from, in
+precedence order:
+
+1. the `--profile <name>` flag,
+2. the `AM_MCP_PROFILE` environment variable,
+3. the persisted active profile (`am use <name>`), then `settings.default_profile`, then `default`.
+
+```bash
+am mcp-serve --profile locked        # serve with the `locked` profile's scope
+AM_MCP_PROFILE=locked am mcp-serve   # same, via env (the flag overrides this)
+```
+
+This lets you bind a confined tool surface to a specific agent without changing
+your machine's active profile. See the Claude Code example below.
 
 ### Encryption and Secret Detection
 
@@ -379,10 +410,19 @@ Every durable config change is an automatic commit. Git IS the sync protocol.
 
 ```bash
 am push                    # push config to remote
-am pull                    # pull + auto-apply
+am pull                    # pull config from remote (run `am apply` after)
 am undo                    # revert last change (git revert HEAD)
 am log                     # config change history
 ```
+
+**Transport: HTTPS only.** `am push` / `am pull` use isomorphic-git's pure-JS
+HTTP(S) client, which has no SSH transport — point your remote at an `https://`
+URL. An `ssh://` or scp-style `git@host:org/repo` remote is rejected with a clear
+error (the `--ssh` flag on `am setup --from` affects the **initial clone
+shorthand only**, not ongoing sync). For a **private** repo, set `AM_GIT_TOKEN`
+to a personal access token, or do the push/pull yourself with the system `git`
+CLI. On a non-fast-forward divergence, `am pull` stops with an actionable error;
+resolve it by hand in the config repo, then re-run `am pull`.
 
 ---
 
@@ -390,18 +430,29 @@ am log                     # config change history
 
 An LLM-optimized knowledge base following the [Karpathy llm-wiki](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f) pattern -- one markdown file per concept/entity/topic with YAML frontmatter, BM25 full-text search via [MiniSearch](https://github.com/lucaong/minisearch), and rule-based NER for automatic cross-linking.
 
-### Dual Location Storage (ADR-0022)
+### Two-Tier Storage (ADR-0044, superseding ADR-0022's symlink model)
 
-- **Global wiki** (`~/.config/agent-manager/wiki/global/`): cross-project knowledge
-- **Project wikis** (`wiki/projects/<name>/`): project-scoped knowledge
-- Projects access their wiki via symlink: `.agent-manager/wiki` -> central AM repo
-- Everything syncs via the git-backed AM repo (`am push`/`am pull`)
+ADR-0044 replaced ADR-0022's per-project symlink scheme with a **copy-based**
+two-tier model (chosen for Windows compatibility, cross-tool readability, and
+correct git treatment — symlinks committed to git store path-strings, not
+content):
+
+- **Global wiki** (`~/.config/agent-manager/wiki/`): cross-project knowledge,
+  the single source of truth synced via the git-backed AM repo (`am push`/`am pull`)
+- **Project wiki** (`.am-wiki/`): project-local knowledge, **materialised by
+  copying** entries from the global store (not symlinked), gitignored by default
+  until ADR-0042 secrets enforcement is live
+- Promote project-local entries up to the global store with `am wiki publish <slug>`
+  (or `promote: true` frontmatter); pull global entries down with `am wiki pull`
 - Browsable via the stateless web UI
+
+Legacy `.agent-manager/wiki/` symlink layouts still resolve; `am wiki migrate`
+performs the one-way upgrade to `.am-wiki/`.
 
 ### Usage
 
 ```bash
-am wiki init                    # initialize wiki for current project (symlink + gitignore)
+am wiki init                    # initialize .am-wiki/ for current project (copy-materialise + gitignore)
 am wiki search "authentication" # BM25 full-text search
 am wiki add                     # interactively add a knowledge entry
 am wiki show <slug>             # display a wiki page
@@ -420,7 +471,7 @@ am wiki import <file>           # import entries from JSON or markdown
 - **BM25 search** via MiniSearch with fuzzy matching and field boosting
 - **Rule-based NER** extracts file paths, package names, config keys, CLI commands, function names, URLs, and 38+ known tool names
 - **Knowledge graph** (JSON adjacency list) with wikilink edges and entity mention edges
-- **Session harvesting** extracts knowledge from Claude Code and Codex CLI transcripts with Jaccard similarity deduplication
+- **Session harvesting** extracts knowledge across a cross-tool pipeline — 8 adapters expose a session reader (Claude Code, Cline, Codex CLI, Copilot, Cursor, Gemini CLI, Roo Code, Windsurf) — with Jaccard similarity deduplication
 
 ---
 
@@ -646,6 +697,36 @@ Add to any tool's MCP config:
 }
 ```
 
+To bind a **scoped profile** (ADR-0055) so the agent only sees the tools that
+profile grants, pass `--profile <name>` (preferred) or set `AM_MCP_PROFILE`:
+
+```json
+{
+  "mcpServers": {
+    "agent-manager": {
+      "command": "am",
+      "args": ["mcp-serve", "--profile", "locked"]
+    }
+  }
+}
+```
+
+```json
+{
+  "mcpServers": {
+    "agent-manager": {
+      "command": "am",
+      "args": ["mcp-serve"],
+      "env": { "AM_MCP_PROFILE": "locked" }
+    }
+  }
+}
+```
+
+The `--profile` flag overrides `AM_MCP_PROFILE` when both are set. Define the
+`locked` profile's scope with `am profile scope locked --tool-groups …` (see
+[Runtime tool-access scope](#runtime-tool-access-scope-adr-0055)).
+
 ---
 
 ## Drift Detection
@@ -654,18 +735,15 @@ Add to any tool's MCP config:
 
 ```
 $ am status
-  Profile: work
-  Sync: up to date with origin/main
+Profile: work
+Servers: 4
+Git: main (clean)
+Remote: https://github.com/me/agent-config.git
 
-  Tool Status:
-    Claude Code   in sync
-    Cursor        drifted (2 changes)
-      + server "playwright-mcp" added locally
-      ~ server "tavily" args changed
-    Kiro          in sync
-
-  Run `am import cursor` to adopt changes
-  Run `am apply --target cursor` to overwrite
+Tool Status:
+  Claude Code          in sync
+  Cursor               drift detected (2 changes)
+  Kiro                 in sync
 ```
 
 Drift covers servers and instructions. Drift is surfaced, never silently overwritten.
@@ -759,7 +837,7 @@ agents = ["researcher"]
 | Command | Description |
 |---------|-------------|
 | `am push` | Push config repo to remote |
-| `am pull` | Pull from remote + auto-apply |
+| `am pull` | Pull config from remote (then run `am apply`) |
 | `am undo` | Revert last config change (git revert HEAD) |
 | `am log` | Config change history |
 

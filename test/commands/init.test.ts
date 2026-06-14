@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import * as fs from "node:fs";
+import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import git from "isomorphic-git";
 import { initCommand } from "../../src/commands/init";
@@ -162,5 +163,105 @@ describe("am init — config.toml baseline commit (ws3)", () => {
     expect(process.exitCode).toBe(1);
     const after = await gitLog(dir.path);
     expect(after.length).toBe(1);
+  });
+});
+
+// ws-config-load-errors (seed agent-manager-8cce): `am init` against an
+// EXISTING but CORRUPT config (malformed TOML / schema violation) must emit an
+// actionable message and exit nonzero — NOT propagate a raw stack and NOT
+// auto-delete or overwrite the file.
+describe("am init — corrupt existing config (ws-config-load-errors)", () => {
+  let dir: TestDir;
+  let keyDir: TestDir;
+  const origConfigDir = process.env.AM_CONFIG_DIR;
+  const origKeyPath = process.env.AM_KEY_PATH;
+  const origTTY = process.stdin.isTTY;
+  const origExitCode = process.exitCode;
+
+  // ── Console capture ──
+  let stdoutLines: string[] = [];
+  let stderrLines: string[] = [];
+  const origLog = console.log;
+  const origErr = console.error;
+
+  beforeEach(async () => {
+    dir = await createTestDir("am-init-corrupt-");
+    keyDir = await createTestDir("am-init-corrupt-key-");
+    process.env.AM_CONFIG_DIR = dir.path;
+    process.env.AM_KEY_PATH = join(keyDir.path, "key");
+    process.stdin.isTTY = false;
+    process.exitCode = 0;
+    stdoutLines = [];
+    stderrLines = [];
+    console.log = (...c: unknown[]) => {
+      stdoutLines.push(c.map(String).join(" "));
+    };
+    console.error = (...c: unknown[]) => {
+      stderrLines.push(c.map(String).join(" "));
+    };
+  });
+
+  afterEach(async () => {
+    console.log = origLog;
+    console.error = origErr;
+    process.exitCode = origExitCode ?? 0;
+    process.stdin.isTTY = origTTY;
+    if (origConfigDir === undefined) Reflect.deleteProperty(process.env, "AM_CONFIG_DIR");
+    else process.env.AM_CONFIG_DIR = origConfigDir;
+    if (origKeyPath === undefined) Reflect.deleteProperty(process.env, "AM_KEY_PATH");
+    else process.env.AM_KEY_PATH = origKeyPath;
+    if (dir) await dir.cleanup();
+    if (keyDir) await keyDir.cleanup();
+  });
+
+  async function runInit(json: boolean): Promise<void> {
+    await (initCommand as unknown as { run: (ctx: unknown) => Promise<void> }).run({
+      args: { project: false, json, yes: true, quiet: false, verbose: false },
+      cmd: initCommand,
+      rawArgs: [],
+      data: undefined,
+    });
+  }
+
+  test("malformed TOML config: actionable message, exit nonzero, no stack, file untouched", async () => {
+    const configPath = join(dir.path, "config.toml");
+    const corrupt = "this is = = not valid toml\n[unclosed\n";
+    await writeFile(configPath, corrupt);
+
+    // Must NOT throw a raw error out of run().
+    await expect(runInit(false)).resolves.toBeUndefined();
+
+    expect(process.exitCode).toBe(1);
+    const out = [...stdoutLines, ...stderrLines].join("\n");
+    expect(out).toContain("is corrupt");
+    expect(out).toContain(configPath);
+    expect(out).toMatch(/re-run am init/i);
+    // No raw stack leaked.
+    expect(out).not.toContain("at Object.");
+    expect(out).not.toContain("\n    at ");
+
+    // The corrupt file is NEITHER deleted NOR overwritten.
+    expect(await dir.exists("config.toml")).toBe(true);
+    const after = await fs.promises.readFile(configPath, "utf-8");
+    expect(after).toBe(corrupt);
+  });
+
+  test("schema-invalid config: actionable message + JSON envelope, exit nonzero", async () => {
+    const configPath = join(dir.path, "config.toml");
+    const corrupt = ["[instructions.bad]", 'content = "x"', 'scope = "nonsense"', ""].join("\n");
+    await writeFile(configPath, corrupt);
+
+    await expect(runInit(true)).resolves.toBeUndefined();
+
+    expect(process.exitCode).toBe(1);
+    const payload = JSON.parse(stdoutLines.join("\n"));
+    expect(payload.status).toBe("corrupt_config");
+    expect(payload.code).toBe("CONFIG_SCHEMA_ERROR");
+    expect(payload.configPath).toBe(configPath);
+    expect(String(payload.reason)).toContain("scope");
+
+    // File untouched.
+    const after = await fs.promises.readFile(configPath, "utf-8");
+    expect(after).toBe(corrupt);
   });
 });

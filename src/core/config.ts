@@ -3,7 +3,8 @@ import { readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join, parse as parsePath } from "node:path";
 import * as TOML from "@iarna/toml";
-import { isNotFound } from "../lib/errors";
+import { ZodError } from "zod";
+import { AmError, formatZodError, isNotFound } from "../lib/errors";
 import { tomlStringify } from "../lib/toml";
 import { atomicWriteFile } from "./atomic-write";
 import type {
@@ -40,18 +41,85 @@ export function resolveProjectConfig(startDir: string): string | null {
   }
 }
 
-/** Read and validate a global config file. Throws on missing file or validation error. */
-export async function readConfig(path: string): Promise<Config> {
-  const raw = await readFile(path, "utf-8");
-  const parsed = TOML.parse(raw);
-  return ConfigSchema.parse(parsed);
+/** Re-exported so config callers can distinguish ENOENT from parse/schema errors. */
+export { isNotFound } from "../lib/errors";
+
+/**
+ * Is `err` a `@iarna/toml` syntax error?
+ *
+ * The package does not export its error class, so we match on the `name`
+ * property it sets (`TomlError`). The error is a plain `Error` (not a
+ * `SyntaxError`), and its `message` already embeds the `row`/`col`/`pos` of
+ * the offending byte — so callers can surface that verbatim.
+ */
+function isTomlError(err: unknown): err is Error {
+  return err instanceof Error && err.name === "TomlError";
 }
 
-/** Read and validate a project config file. Throws on missing file or validation error. */
+/**
+ * Parse + validate already-read TOML bytes into a typed config.
+ *
+ * Centralizes the TOML-parse → schema-validate pipeline AND the error
+ * classification both `readConfig`/`readProjectConfig` need: a TOML syntax
+ * error becomes `AmError(CONFIG_PARSE_ERROR)` (carrying the parser's
+ * row/col message) and a Zod validation error becomes
+ * `AmError(CONFIG_SCHEMA_ERROR)` (carrying the first failing field path).
+ *
+ * ENOENT is NOT handled here — it originates from `readFile`, never from
+ * parse/validate — so the `tryReadConfig` ENOENT→null contract is unchanged.
+ */
+function parseConfigBytes<T>(
+  raw: string,
+  path: string,
+  schema: { parse: (input: unknown) => T },
+): T {
+  let parsed: unknown;
+  try {
+    parsed = TOML.parse(raw);
+  } catch (err: unknown) {
+    if (isTomlError(err)) {
+      throw new AmError(
+        `Config at ${path} is not valid TOML`,
+        err.message.trim(),
+        "CONFIG_PARSE_ERROR",
+      );
+    }
+    throw err;
+  }
+  try {
+    return schema.parse(parsed);
+  } catch (err: unknown) {
+    if (err instanceof ZodError) {
+      const issues = formatZodError(err);
+      throw new AmError(
+        `Config at ${path} failed validation`,
+        issues[0] ?? "schema validation failed",
+        "CONFIG_SCHEMA_ERROR",
+      );
+    }
+    throw err;
+  }
+}
+
+/**
+ * Read and validate a global config file.
+ *
+ * Throws on missing file (ENOENT, surfaced raw so `tryReadConfig` can map it
+ * to null), on malformed TOML (`AmError` `CONFIG_PARSE_ERROR`), and on schema
+ * violations (`AmError` `CONFIG_SCHEMA_ERROR`).
+ */
+export async function readConfig(path: string): Promise<Config> {
+  const raw = await readFile(path, "utf-8");
+  return parseConfigBytes(raw, path, ConfigSchema);
+}
+
+/**
+ * Read and validate a project config file. Same error contract as
+ * `readConfig` — see its doc comment.
+ */
 export async function readProjectConfig(path: string): Promise<ProjectConfig> {
   const raw = await readFile(path, "utf-8");
-  const parsed = TOML.parse(raw);
-  return ProjectConfigSchema.parse(parsed);
+  return parseConfigBytes(raw, path, ProjectConfigSchema);
 }
 
 /** Like readConfig but returns null on ENOENT. Rethrows other errors. */
@@ -91,6 +159,7 @@ export function serializeConfig(config: Config): string {
   if (config.skills) ordered.skills = config.skills;
   if (config.agents) ordered.agents = config.agents;
   if (config.instructions) ordered.instructions = config.instructions;
+  if (config.commands) ordered.commands = config.commands;
   if (config.profiles) ordered.profiles = config.profiles;
   if (config.adapters) ordered.adapters = config.adapters;
 
@@ -118,6 +187,7 @@ export async function writeProjectConfig(path: string, config: ProjectConfig): P
   if (config.skills) ordered.skills = config.skills;
   if (config.agents) ordered.agents = config.agents;
   if (config.instructions) ordered.instructions = config.instructions;
+  if (config.commands) ordered.commands = config.commands;
   if (config.env) ordered.env = config.env;
   if (config.adapters) ordered.adapters = config.adapters;
 
@@ -140,6 +210,7 @@ export function mergeConfigs(a: Config, b: Config): Config {
     instructions:
       a.instructions || b.instructions ? { ...a.instructions, ...b.instructions } : undefined,
     agents: a.agents || b.agents ? { ...a.agents, ...b.agents } : undefined,
+    commands: a.commands || b.commands ? { ...a.commands, ...b.commands } : undefined,
     profiles: a.profiles || b.profiles ? { ...a.profiles, ...b.profiles } : undefined,
     adapters: a.adapters || b.adapters ? { ...a.adapters, ...b.adapters } : undefined,
   };
@@ -152,6 +223,7 @@ export function projectToConfig(proj: ProjectConfig): Config {
     skills: proj.skills,
     instructions: proj.instructions,
     agents: proj.agents,
+    commands: proj.commands,
     adapters: proj.adapters,
   };
 

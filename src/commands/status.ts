@@ -12,6 +12,33 @@ import { AmError } from "../lib/errors";
 import { amError, debug, info, output } from "../lib/output";
 import { readActiveProfile } from "./use";
 
+/**
+ * Render one drifted-entity detail line for the human Tool Status block
+ * (ws4-6fd2). Each glyph maps a `DiffChange.type`:
+ *   - `~` modified
+ *   - `+` added (locally, or catalog-ahead/pending)
+ *   - `-` removed locally
+ * `added-in-config` is catalog-ahead pending work (a bare `am apply` writes
+ * it), so it is labeled distinctly from genuine native-side drift. Exported
+ * for unit testing the exact wording without driving host adapter detection.
+ */
+export function formatDriftChangeLine(change: {
+  entity: "server" | "instruction";
+  name: string;
+  type: "added-locally" | "removed-locally" | "modified" | "added-in-config";
+}): string {
+  switch (change.type) {
+    case "modified":
+      return `    ~ ${change.entity} "${change.name}" changed`;
+    case "added-locally":
+      return `    + ${change.entity} "${change.name}" added locally`;
+    case "removed-locally":
+      return `    - ${change.entity} "${change.name}" removed locally`;
+    default:
+      return `    + ${change.entity} "${change.name}" pending (in catalog, not yet applied)`;
+  }
+}
+
 export const statusCommand = defineCommand({
   meta: { name: "status", description: "Show config and drift status" },
   args: {
@@ -70,6 +97,14 @@ export const statusCommand = defineCommand({
         changes: number;
         pending: number;
         drift: number;
+        // Per-change detail so the human render can NAME the changed entities
+        // under each drifted adapter, not just count them (ws4-6fd2). Carries
+        // both the genuine-drift changes and the catalog-ahead pending ones.
+        changeDetail: Array<{
+          entity: "server" | "instruction";
+          name: string;
+          type: "added-locally" | "removed-locally" | "modified" | "added-in-config";
+        }>;
       }> = [];
 
       for (const adapter of adapters) {
@@ -83,6 +118,11 @@ export const statusCommand = defineCommand({
             changes: diffResult.changes.length,
             pending,
             drift,
+            changeDetail: diffResult.changes.map((c) => ({
+              entity: c.entity,
+              name: c.name,
+              type: c.type,
+            })),
           });
         } catch {
           toolStatuses.push({
@@ -91,6 +131,7 @@ export const statusCommand = defineCommand({
             changes: 0,
             pending: 0,
             drift: 0,
+            changeDetail: [],
           });
         }
       }
@@ -106,7 +147,10 @@ export const statusCommand = defineCommand({
               dirty: gitStatus.dirty,
               remotes: gitStatus.remotes,
             },
-            tools: toolStatuses,
+            // Preserve the established JSON shape (name/status/changes/
+            // pending/drift). The new `changeDetail` is a human-render aid; keep
+            // it out of the machine envelope so JSON consumers are unaffected.
+            tools: toolStatuses.map(({ changeDetail: _changeDetail, ...rest }) => rest),
             "missing-deps": missingDeps,
           },
           opts,
@@ -151,6 +195,17 @@ export const statusCommand = defineCommand({
             statusStr = t.status;
           }
           info(`  ${t.name.padEnd(20)} ${statusStr}`, opts);
+
+          // ws4-6fd2: under a drifted adapter, NAME the changed entities (not
+          // just the count above). Each glyph maps a DiffChange.type:
+          //   ~ modified, + added (locally / catalog-ahead), - removed locally.
+          // `added-in-config` is catalog-ahead pending work (a bare `am apply`
+          // writes it) — flag it so the user can tell it apart from real drift.
+          if (t.status === "drifted") {
+            for (const c of t.changeDetail) {
+              info(formatDriftChangeLine(c), opts);
+            }
+          }
         }
       }
 

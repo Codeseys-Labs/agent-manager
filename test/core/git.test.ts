@@ -4,7 +4,18 @@ import { mkdtemp, readFile, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import git from "isomorphic-git";
-import { addRemote, commitAll, getStatus, initRepo, log, revertHead } from "../../src/core/git.ts";
+import {
+  addRemote,
+  commitAll,
+  getStatus,
+  initRepo,
+  isSshRemote,
+  log,
+  pull,
+  push,
+  revertHead,
+} from "../../src/core/git.ts";
+import { AmError } from "../../src/lib/errors.ts";
 
 let dir: string;
 
@@ -272,5 +283,228 @@ describe("addRemote", () => {
     const upstream = remotes.find((r) => r.remote === "upstream");
     expect(upstream).toBeDefined();
     expect(upstream?.url).toBe("https://example.com/repo.git");
+  });
+});
+
+// ws-git-sync: close the gap where push/pull advertised transports/auth they
+// could not perform. isomorphic-git's HTTP client speaks HTTPS only, has no SSH
+// transport, and surfaces opaque 401/403 and FastForward errors. push()/pull()
+// now reject SSH up front and translate auth/divergence failures into typed,
+// actionable AmErrors.
+describe("isSshRemote", () => {
+  test("detects scp-style git@host:org/repo shorthand", () => {
+    expect(isSshRemote("git@github.com:org/repo.git")).toBe(true);
+  });
+
+  test("detects ssh:// scheme", () => {
+    expect(isSshRemote("ssh://git@github.com/org/repo.git")).toBe(true);
+  });
+
+  test("https/http/git/file/bare paths are NOT ssh", () => {
+    expect(isSshRemote("https://github.com/org/repo.git")).toBe(false);
+    expect(isSshRemote("http://example.com/repo.git")).toBe(false);
+    expect(isSshRemote("git://example.com/repo.git")).toBe(false);
+    expect(isSshRemote("file:///abs/path")).toBe(false);
+    expect(isSshRemote("/abs/bare/repo.git")).toBe(false);
+    expect(isSshRemote("./rel/repo")).toBe(false);
+  });
+});
+
+describe("push/pull SSH guard (SSH_UNSUPPORTED)", () => {
+  test("push against an scp-style remote throws SSH_UNSUPPORTED before any network", async () => {
+    await initRepo(dir);
+    await addRemote(dir, "git@github.com:org/repo.git");
+    let caught: unknown;
+    try {
+      await push(dir);
+    } catch (err) {
+      caught = err;
+    }
+    expect(caught).toBeInstanceOf(AmError);
+    const e = caught as AmError;
+    expect(e.code).toBe("SSH_UNSUPPORTED");
+    expect(e.message).toContain("SSH");
+    // Actionable: points at HTTPS and/or the system git CLI fallback.
+    expect(e.suggestion).toContain("HTTPS");
+  });
+
+  test("pull against an ssh:// remote throws SSH_UNSUPPORTED with a clear message", async () => {
+    await initRepo(dir);
+    await addRemote(dir, "ssh://git@github.com/org/repo.git");
+    let caught: unknown;
+    try {
+      await pull(dir);
+    } catch (err) {
+      caught = err;
+    }
+    expect(caught).toBeInstanceOf(AmError);
+    const e = caught as AmError;
+    expect(e.code).toBe("SSH_UNSUPPORTED");
+    expect(e.suggestion).toMatch(/https|git CLI/i);
+  });
+});
+
+describe("push/pull auth failure (GIT_AUTH_REQUIRED)", () => {
+  // isomorphic-git surfaces a private-repo rejection as an HttpError carrying
+  // data.statusCode. Shim git.push/git.pull to inject that shape and assert the
+  // translation into an actionable AmError (rather than a raw 401 stack).
+  function makeHttpError(status: number): Error {
+    const err = new Error(`HTTP Error: ${status} Unauthorized`);
+    (err as Error & { name: string; code: string; data: { statusCode: number } }).name =
+      "HttpError";
+    (err as Error & { name: string; code: string; data: { statusCode: number } }).code =
+      "HttpError";
+    (err as Error & { data: { statusCode: number } }).data = { statusCode: status };
+    return err;
+  }
+
+  test("push surfaces an actionable AmError on a 401", async () => {
+    await initRepo(dir);
+    await addRemote(dir, "https://github.com/private/repo.git");
+    const original = git.push;
+    (git as unknown as { push: typeof git.push }).push = async () => {
+      throw makeHttpError(401);
+    };
+    try {
+      let caught: unknown;
+      try {
+        await push(dir);
+      } catch (err) {
+        caught = err;
+      }
+      expect(caught).toBeInstanceOf(AmError);
+      const e = caught as AmError;
+      expect(e.code).toBe("GIT_AUTH_REQUIRED");
+      expect(e.suggestion).toContain("AM_GIT_TOKEN");
+    } finally {
+      (git as unknown as { push: typeof git.push }).push = original;
+    }
+  });
+
+  test("pull surfaces an actionable AmError on a 403", async () => {
+    await initRepo(dir);
+    await addRemote(dir, "https://github.com/private/repo.git");
+    const original = git.pull;
+    (git as unknown as { pull: typeof git.pull }).pull = async () => {
+      throw makeHttpError(403);
+    };
+    try {
+      let caught: unknown;
+      try {
+        await pull(dir);
+      } catch (err) {
+        caught = err;
+      }
+      expect(caught).toBeInstanceOf(AmError);
+      const e = caught as AmError;
+      expect(e.code).toBe("GIT_AUTH_REQUIRED");
+      expect(e.message).toContain("403");
+    } finally {
+      (git as unknown as { pull: typeof git.pull }).pull = original;
+    }
+  });
+
+  test("non-auth HttpError (e.g. 500) is NOT translated to GIT_AUTH_REQUIRED", async () => {
+    await initRepo(dir);
+    await addRemote(dir, "https://github.com/x/repo.git");
+    const original = git.push;
+    (git as unknown as { push: typeof git.push }).push = async () => {
+      throw makeHttpError(500);
+    };
+    try {
+      let caught: unknown;
+      try {
+        await push(dir);
+      } catch (err) {
+        caught = err;
+      }
+      // A 500 is not an auth failure — the raw error propagates unchanged.
+      expect(caught instanceof AmError && (caught as AmError).code === "GIT_AUTH_REQUIRED").toBe(
+        false,
+      );
+    } finally {
+      (git as unknown as { push: typeof git.push }).push = original;
+    }
+  });
+});
+
+describe("pull merge-conflict translation (GIT_PULL_CONFLICT)", () => {
+  // A non-fast-forward divergence makes isomorphic-git throw a FastForwardError
+  // / MergeNotSupportedError. Shim git.pull to inject each shape and assert
+  // pull() rethrows a typed, actionable AmError naming the config dir.
+  test("FastForwardError becomes an actionable AmError naming the config dir", async () => {
+    await initRepo(dir);
+    await addRemote(dir, "https://github.com/x/repo.git");
+    const original = git.pull;
+    (git as unknown as { pull: typeof git.pull }).pull = async () => {
+      const err = new Error("A simple fast-forward merge was not possible.");
+      (err as Error & { name: string; code: string }).name = "FastForwardError";
+      (err as Error & { name: string; code: string }).code = "FastForwardError";
+      throw err;
+    };
+    try {
+      let caught: unknown;
+      try {
+        await pull(dir);
+      } catch (err) {
+        caught = err;
+      }
+      expect(caught).toBeInstanceOf(AmError);
+      const e = caught as AmError;
+      expect(e.code).toBe("GIT_PULL_CONFLICT");
+      expect(e.message.toLowerCase()).toContain("diverged");
+      // Actionable: tells the user where to resolve and to re-run am pull.
+      expect(e.suggestion).toContain(dir);
+      expect(e.suggestion).toContain("am pull");
+    } finally {
+      (git as unknown as { pull: typeof git.pull }).pull = original;
+    }
+  });
+
+  test("MergeNotSupportedError also maps to GIT_PULL_CONFLICT", async () => {
+    await initRepo(dir);
+    await addRemote(dir, "https://github.com/x/repo.git");
+    const original = git.pull;
+    (git as unknown as { pull: typeof git.pull }).pull = async () => {
+      const err = new Error("Merges with conflicts are not supported yet.");
+      (err as Error & { name: string; code: string }).name = "MergeNotSupportedError";
+      (err as Error & { name: string; code: string }).code = "MergeNotSupportedError";
+      throw err;
+    };
+    try {
+      let caught: unknown;
+      try {
+        await pull(dir);
+      } catch (err) {
+        caught = err;
+      }
+      expect(caught).toBeInstanceOf(AmError);
+      expect((caught as AmError).code).toBe("GIT_PULL_CONFLICT");
+    } finally {
+      (git as unknown as { pull: typeof git.pull }).pull = original;
+    }
+  });
+
+  test("an unrelated pull error propagates unchanged (not wrapped)", async () => {
+    await initRepo(dir);
+    await addRemote(dir, "https://github.com/x/repo.git");
+    const original = git.pull;
+    const sentinel = new Error("network down");
+    (sentinel as Error & { code: string }).code = "NetworkError";
+    (git as unknown as { pull: typeof git.pull }).pull = async () => {
+      throw sentinel;
+    };
+    try {
+      let caught: unknown;
+      try {
+        await pull(dir);
+      } catch (err) {
+        caught = err;
+      }
+      expect(caught).toBe(sentinel);
+      expect(caught instanceof AmError).toBe(false);
+    } finally {
+      (git as unknown as { pull: typeof git.pull }).pull = original;
+    }
   });
 });

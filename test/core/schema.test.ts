@@ -2,6 +2,8 @@ import { describe, expect, test } from "bun:test";
 import {
   type AgentProfile,
   AgentProfileSchema,
+  type Command,
+  CommandSchema,
   type Config,
   ConfigSchema,
   type Instruction,
@@ -273,6 +275,81 @@ describe("SkillSchema", () => {
   });
 });
 
+// ADR-0058: `command` is the only entity carrying an explicit `type` literal
+// discriminant (the other five infer kind from the TOML section name). The
+// literal lets `am add command --from <file.md>` classify deterministically
+// from a declared `kind:` frontmatter rather than guessing.
+describe("CommandSchema", () => {
+  test("parses minimal valid command", () => {
+    const result: Command = CommandSchema.parse({
+      type: "command",
+      path: "commands/deploy.md",
+      description: "Deploy the project",
+    });
+    expect(result.type).toBe("command");
+    expect(result.path).toBe("commands/deploy.md");
+    expect(result.description).toBe("Deploy the project");
+  });
+
+  test("rejects a command missing the `type` literal (deterministic classification)", () => {
+    expect(() =>
+      CommandSchema.parse({
+        path: "commands/deploy.md",
+        description: "Deploy the project",
+      }),
+    ).toThrow();
+  });
+
+  test("rejects a command with the wrong `type` literal", () => {
+    expect(() =>
+      CommandSchema.parse({
+        type: "skill",
+        path: "commands/deploy.md",
+        description: "Deploy the project",
+      }),
+    ).toThrow();
+  });
+
+  test("rejects a command missing path", () => {
+    expect(() =>
+      CommandSchema.parse({
+        type: "command",
+        description: "Deploy the project",
+      }),
+    ).toThrow();
+  });
+
+  test("rejects a command missing description", () => {
+    expect(() =>
+      CommandSchema.parse({
+        type: "command",
+        path: "commands/deploy.md",
+      }),
+    ).toThrow();
+  });
+
+  test("accepts tags, _marketplace, and adapters passthrough", () => {
+    const result = CommandSchema.parse({
+      type: "command",
+      path: "commands/deploy.md",
+      description: "Deploy the project",
+      tags: ["ops"],
+      _marketplace: {
+        source: "claude-plugin",
+        package: "@anthropic/command-deploy",
+        version: "1.0.0",
+        imported_at: "2026-04-15T12:00:00Z",
+      },
+      adapters: {
+        "claude-code": { trigger: "/deploy" },
+      },
+    });
+    expect(result.tags).toEqual(["ops"]);
+    expect(result._marketplace?.source).toBe("claude-plugin");
+    expect(result.adapters?.["claude-code"]).toEqual({ trigger: "/deploy" });
+  });
+});
+
 describe("AgentProfileSchema", () => {
   test("parses minimal agent profile", () => {
     const result = AgentProfileSchema.parse({ name: "code-reviewer" });
@@ -505,6 +582,13 @@ describe("ConfigSchema", () => {
           scope: "always",
         },
       },
+      commands: {
+        deploy: {
+          type: "command",
+          path: "commands/deploy.md",
+          description: "Deploy the project",
+        },
+      },
       profiles: {
         work: {
           description: "Work profile",
@@ -520,6 +604,8 @@ describe("ConfigSchema", () => {
     expect(result.settings?.default_profile).toBe("work");
     expect(result.servers?.outlook.command).toBe("aws-outlook-mcp");
     expect(result.agents?.["code-reviewer"]?.model).toBe("sonnet");
+    expect(result.commands?.deploy.type).toBe("command");
+    expect(result.commands?.deploy.path).toBe("commands/deploy.md");
     expect(result.profiles?.work.inherits).toBe("base");
     expect(result.profiles?.work.agents).toEqual(["code-reviewer"]);
   });
@@ -556,6 +642,13 @@ describe("ProjectConfigSchema", () => {
           scope: "always",
         },
       },
+      commands: {
+        lint: {
+          type: "command",
+          path: "commands/lint.md",
+          description: "Lint the vault",
+        },
+      },
       env: { AWS_PROFILE: "work" },
       adapters: {
         "claude-code": { hooks: { Stop: "scripts/board-sync-check.sh" } },
@@ -564,6 +657,8 @@ describe("ProjectConfigSchema", () => {
     expect(result.profile).toBe("work");
     expect(result.project?.name).toBe("ADMINISTRIVIA");
     expect(result.servers?.wiki.command).toBe("amazon-wiki-mcp");
+    expect(result.commands?.lint.type).toBe("command");
+    expect(result.commands?.lint.path).toBe("commands/lint.md");
     expect(result.env).toEqual({ AWS_PROFILE: "work" });
   });
 });

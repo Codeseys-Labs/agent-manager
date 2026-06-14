@@ -159,6 +159,25 @@ describe("applyResolved — catalog-ahead delta is benign (ws4)", () => {
     expect(entry?.warnings.join(" ")).toContain("drift detected");
   });
 
+  // ws4-6fd2: the drift-gate refusal must offer the SAFE, non-destructive
+  // remedy (`am import <tool>` folds the native drift back into the catalog)
+  // ALONGSIDE the destructive `--force` overwrite.
+  test("drift refusal names both `am import <tool>` and --force remedies", async () => {
+    if (!dir) throw new Error("test setup failed");
+    __setAdapterResolverForTests(async () => [
+      makeFakeAdapter("mixed-fake", [catalogAheadChange, realDriftChange]),
+    ]);
+
+    const result = await applyResolved(dir.path, { diff: true });
+    const warning =
+      result.results.find((r) => r.adapter === "mixed-fake")?.warnings.join(" ") ?? "";
+
+    // Safe remedy first, names the specific adapter.
+    expect(warning).toContain("am import mixed-fake");
+    // Destructive remedy still offered.
+    expect(warning).toContain("--force");
+  });
+
   test("real-drift delta with --force writes (caller opted in)", async () => {
     if (!dir) throw new Error("test setup failed");
     __setAdapterResolverForTests(async () => [

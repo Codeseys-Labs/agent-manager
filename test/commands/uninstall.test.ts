@@ -202,6 +202,54 @@ describe("am uninstall", () => {
     expect(Object.keys(updated.servers!).length).toBe(2);
   });
 
+  // ── Fail-closed: non-TTY destructive confirmation gate (ws5-e7f6 gap 2) ──
+  // A destructive removal must NEVER proceed unconfirmed. Under `bun test`
+  // stdin is non-TTY, so a run without --yes and without --json cannot prompt.
+  // The command MUST refuse (exit non-zero, no mutation), not silently delete.
+  // Regression guard against the previous `&& process.stdin.isTTY` gate that
+  // failed OPEN (skipped the prompt and removed the server) in any non-TTY
+  // context (scripts, CI, piped stdin).
+  test("FAILS CLOSED: non-TTY without --yes refuses to remove (exit 1, no mutation)", async () => {
+    dir = await createTestDir("am-uninstall-");
+    const configDir = dir.path;
+    process.env.AM_CONFIG_DIR = configDir;
+    await initRepo(configDir);
+
+    const config: Config = {
+      servers: {
+        tavily: { command: "bunx", args: ["tavily-mcp"], transport: "stdio", enabled: true },
+      },
+    };
+    const configPath = join(configDir, "config.toml");
+    await writeConfig(configPath, config);
+
+    // Sanity: under bun test stdin is non-TTY (no interactive prompt possible).
+    expect(Boolean(process.stdin.isTTY)).toBe(false);
+
+    const { uninstallCommand } = await import("../../src/commands/uninstall");
+    await uninstallCommand.run!({
+      args: {
+        name: "tavily",
+        "dry-run": false,
+        yes: false, // NO force flag → must fail closed under non-TTY
+        json: false,
+        quiet: false,
+        verbose: false,
+      } as any,
+      rawArgs: [],
+      cmd: uninstallCommand as any,
+    });
+
+    // Refused: non-zero exit and a clear message…
+    expect(process.exitCode).toBe(1);
+    const allErrors = consoleErrors.join("\n");
+    expect(allErrors).toContain("Refusing to remove");
+    expect(allErrors).toContain("--yes");
+    // …and the server is STILL in the config (no destructive mutation).
+    const after = await readConfig(configPath);
+    expect(after.servers?.tavily).toBeDefined();
+  });
+
   test("outputs JSON when --json is set", async () => {
     dir = await createTestDir("am-uninstall-");
     const configDir = dir.path;

@@ -1,7 +1,7 @@
 import * as fs from "node:fs";
 import { join } from "node:path";
 import git from "isomorphic-git";
-import { WikiSyncConflictError } from "../lib/errors.ts";
+import { AmError, WikiSyncConflictError } from "../lib/errors.ts";
 import { stripUrlUserinfo } from "../lib/redact.ts";
 
 const DEFAULT_AUTHOR = { name: "agent-manager", email: "am@localhost" };
@@ -99,27 +99,144 @@ export async function commitAll(dir: string, message: string): Promise<string> {
   return git.commit({ fs, dir, message, author: DEFAULT_AUTHOR });
 }
 
+/**
+ * Detect a remote URL that requires SSH transport — an `ssh://` scheme or the
+ * scp-style `git@host:org/repo` shorthand. Sibling of {@link isLocalRemote}.
+ *
+ * isomorphic-git's HTTP client (`isomorphic-git/http/node`) speaks ONLY the
+ * git-over-HTTP(S) smart protocol; it has no SSH transport. An SSH remote would
+ * otherwise reach `git.push`/`git.pull` and fail with an opaque error (or hang),
+ * so push()/pull() reject it up front with an actionable message.
+ *
+ * `file://` and bare local paths are NOT SSH (and are not network at all). A
+ * `git://` remote is also not SSH. We deliberately keep this narrow: only the
+ * two forms isomorphic-git can never serve.
+ */
+export function isSshRemote(url: string): boolean {
+  if (/^ssh:\/\//i.test(url)) return true; // ssh://git@host/org/repo
+  if (/^[^/@\s]+@[^/:\s]+:/.test(url)) return true; // scp-style git@host:org/repo
+  return false;
+}
+
+/**
+ * Throw a typed {@link AmError} for an SSH remote that the isomorphic-git HTTP
+ * client cannot serve. Called by push()/pull() before any network attempt.
+ */
+function rejectSshRemote(url: string, op: "push" | "pull"): never {
+  throw new AmError(
+    `Cannot ${op}: SSH remotes are not supported (${stripUrlUserinfo(url)})`,
+    `agent-manager syncs over HTTPS only. Use an https:// remote (e.g. \`am setup --from <user/repo>\` without --ssh), or run \`git ${op}\` with the system git CLI to use SSH.`,
+    "SSH_UNSUPPORTED",
+  );
+}
+
+/**
+ * When `AM_GIT_TOKEN` is set, return an isomorphic-git `onAuth` callback that
+ * supplies the token as the HTTP basic-auth password (the github.com /
+ * GitLab / Bitbucket convention: any username + token-as-password). Returns
+ * `undefined` when the env var is unset so the call site omits `onAuth` and
+ * behaves exactly as before. Additive and opt-in.
+ */
+function tokenAuth(): ((url: string) => { username: string; password: string }) | undefined {
+  const token = process.env.AM_GIT_TOKEN;
+  if (!token) return undefined;
+  return () => ({ username: process.env.AM_GIT_USER ?? "x-access-token", password: token });
+}
+
+/**
+ * Translate an opaque isomorphic-git transport failure into an actionable
+ * {@link AmError}. Returns the rethrow value (never the original) when the
+ * error is a recognised auth failure; otherwise returns `undefined` so the
+ * caller rethrows the original error unchanged.
+ *
+ * Recognised: `HttpError` with statusCode 401/403 (private repo, no/invalid
+ * credentials). isomorphic-git surfaces these as a single `HttpError` whose
+ * `.data.statusCode` carries the HTTP status.
+ */
+function authErrorFor(err: unknown, op: "push" | "pull"): AmError | undefined {
+  const name = (err as { name?: string })?.name;
+  const code = (err as { code?: string })?.code;
+  const status = (err as { data?: { statusCode?: number } })?.data?.statusCode;
+  const isHttp = name === "HttpError" || code === "HttpError";
+  if (isHttp && (status === 401 || status === 403)) {
+    return new AmError(
+      `Cannot ${op}: the remote rejected the request (HTTP ${status}) — credentials required`,
+      "This looks like a private repository. Set AM_GIT_TOKEN to a personal access token (with repo scope), or embed credentials via your git credential helper, then retry.",
+      "GIT_AUTH_REQUIRED",
+    );
+  }
+  return undefined;
+}
+
 export async function push(dir: string, remote = "origin", branch?: string): Promise<void> {
   const ref = branch ?? (await git.currentBranch({ fs, dir })) ?? "main";
-  await git.push({
-    fs,
-    http: (await import("isomorphic-git/http/node")).default,
-    dir,
-    remote,
-    ref,
-  });
+  // Reject SSH up front — the HTTP client below cannot serve it, so attempting
+  // the push would fail opaquely (ADR-less transport guard, ws-git-sync).
+  const remoteUrl = (await git.listRemotes({ fs, dir })).find((r) => r.remote === remote)?.url;
+  if (remoteUrl && isSshRemote(remoteUrl)) rejectSshRemote(remoteUrl, "push");
+  try {
+    await git.push({
+      fs,
+      http: (await import("isomorphic-git/http/node")).default,
+      onAuth: tokenAuth(),
+      dir,
+      remote,
+      ref,
+    });
+  } catch (err) {
+    const authErr = authErrorFor(err, "push");
+    if (authErr) throw authErr;
+    throw err;
+  }
 }
 
 export async function pull(dir: string, remote = "origin", branch?: string): Promise<void> {
   const ref = branch ?? (await git.currentBranch({ fs, dir })) ?? "main";
-  await git.pull({
-    fs,
-    http: (await import("isomorphic-git/http/node")).default,
-    dir,
-    remote,
-    ref,
-    author: DEFAULT_AUTHOR,
-  });
+  const remoteUrl = (await git.listRemotes({ fs, dir })).find((r) => r.remote === remote)?.url;
+  if (remoteUrl && isSshRemote(remoteUrl)) rejectSshRemote(remoteUrl, "pull");
+  try {
+    await git.pull({
+      fs,
+      http: (await import("isomorphic-git/http/node")).default,
+      onAuth: tokenAuth(),
+      dir,
+      remote,
+      ref,
+      author: DEFAULT_AUTHOR,
+    });
+  } catch (err) {
+    const authErr = authErrorFor(err, "pull");
+    if (authErr) throw authErr;
+    const conflictErr = pullConflictError(err, dir);
+    if (conflictErr) throw conflictErr;
+    throw err;
+  }
+}
+
+/**
+ * Translate a non-fast-forward / merge-conflict failure from `git.pull` into an
+ * actionable {@link AmError}. isomorphic-git surfaces a divergent pull as one of
+ * `MergeNotSupportedError` (it can't auto-merge), `MergeConflictError`, or
+ * `FastForwardError`. Without translation the CLI prints a raw stack the user
+ * can't act on. Returns `undefined` for unrelated errors so the caller rethrows
+ * the original.
+ */
+function pullConflictError(err: unknown, dir: string): AmError | undefined {
+  const name = (err as { name?: string })?.name;
+  const code = (err as { code?: string })?.code;
+  const divergent =
+    name === "MergeNotSupportedError" ||
+    code === "MergeNotSupportedError" ||
+    name === "MergeConflictError" ||
+    code === "MergeConflictError" ||
+    name === "FastForwardError" ||
+    code === "FastForwardError";
+  if (!divergent) return undefined;
+  return new AmError(
+    "Cannot pull: local and remote have diverged and cannot be auto-merged",
+    `Resolve by hand in the config repo at ${dir} (e.g. \`git pull\` / \`git merge\` / \`git rebase\` with the system git CLI), then re-run \`am pull\`.`,
+    "GIT_PULL_CONFLICT",
+  );
 }
 
 /**

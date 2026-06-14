@@ -141,8 +141,24 @@ export const updateCommand = defineCommand({
           return { result: undefined, changed: false };
         }
 
-        // Confirm updates
-        if (!skipConfirm && !args.json && process.stdin.isTTY) {
+        // Confirm updates.
+        // FAIL CLOSED: applying registry updates overwrites existing server
+        // definitions in the catalog, so it must never proceed unconfirmed.
+        // When confirmation is required (no --yes) but we cannot interactively
+        // prompt (non-TTY stdin: scripts, CI, piped input) and --json was not
+        // passed, REFUSE rather than silently mutating the config. The previous
+        // `&& process.stdin.isTTY` guard failed OPEN — under a non-TTY it
+        // skipped the prompt and applied every update without consent. Operators
+        // in non-TTY contexts must pass --yes (or --dry-run to preview).
+        if (!skipConfirm && !args.json) {
+          if (!process.stdin.isTTY) {
+            error(
+              `Refusing to apply ${candidates.length} update(s) without confirmation. stdin is not a TTY — pass --yes to confirm non-interactively, or --dry-run to preview.`,
+              opts,
+            );
+            process.exitCode = 1;
+            return { result: undefined, changed: false };
+          }
           const confirm = await clack.confirm({
             message: `Apply ${candidates.length} update(s)?`,
             initialValue: true,

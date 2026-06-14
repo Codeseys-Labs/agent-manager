@@ -556,9 +556,13 @@ export async function applyResolved(
             adapter: adapter.meta.name,
             files: [],
             warnings: [
+              // Offer BOTH remedies (ws4-6fd2): `--force` overwrites the native
+              // drift (destructive — loses the hand edits), while
+              // `am import <tool>` folds the drifted native state back into the
+              // catalog NON-destructively. Lead with the safe option.
               `drift detected (${driftSummary?.changes ?? 0} change${
                 (driftSummary?.changes ?? 0) === 1 ? "" : "s"
-              }); refusing to overwrite — re-run with --force to apply anyway`,
+              }); refusing to overwrite — run \`am import ${adapter.meta.name}\` to fold the native changes into the catalog, or re-run with --force to overwrite them`,
             ],
             ...(driftSummary ? { diff: driftSummary } : {}),
           });

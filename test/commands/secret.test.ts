@@ -215,5 +215,39 @@ describe("am secret", () => {
       // Decrypting with wrong key should throw
       await expect(decryptValue(encrypted, keyB)).rejects.toThrow();
     });
+
+    // UX polish (ws4-6fd2): a wrong-key decrypt must surface an actionable
+    // AmError naming the key-path remedy — NOT a raw WebCrypto `OperationError`
+    // ("Cipher job failed"). The message must never echo ciphertext or key
+    // material.
+    test("decrypt with wrong key throws an actionable AmError, not raw WebCrypto noise", async () => {
+      dir = await createTestDir("am-secret-wrongkey-amerror-");
+      const keyA = await importKey(await generateKey());
+      const keyB = await importKey(await generateKey());
+
+      const { encryptValue } = await import("../../src/core/secrets");
+      const { AmError } = await import("../../src/lib/errors");
+      const plaintext = "sk-live-supersecret";
+      const encrypted = await encryptValue(plaintext, keyA);
+
+      let caught: unknown;
+      try {
+        await decryptValue(encrypted, keyB);
+      } catch (e) {
+        caught = e;
+      }
+
+      expect(caught).toBeInstanceOf(AmError);
+      const err = caught as InstanceType<typeof AmError>;
+      expect(err.code).toBe("SECRET_DECRYPT_FAILED");
+      expect(err.message).toContain("does not match this envelope");
+      // Names the key-path remedy.
+      expect(err.suggestion).toContain(process.env.AM_KEY_PATH!);
+      expect(err.suggestion).toContain("am secret generate-key");
+      // NEVER leaks the plaintext, the ciphertext body, or key material.
+      const combined = `${err.message} ${err.suggestion ?? ""}`;
+      expect(combined).not.toContain(plaintext);
+      expect(combined).not.toContain(encrypted.slice("enc:v1:".length));
+    });
   });
 });

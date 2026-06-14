@@ -89,4 +89,32 @@ describe("am pull", () => {
     const { pull } = await import("../../src/core/git");
     await expect(pull(configDir)).rejects.toThrow();
   });
+
+  // ws-git-sync: an SSH remote must surface a typed SSH_UNSUPPORTED AmError
+  // (no transport it cannot perform) rather than a raw isomorphic-git stack.
+  test("pull against an SSH remote surfaces SSH_UNSUPPORTED", async () => {
+    dir = await createTestDir("am-pull-");
+    const configDir = dir.path;
+    await initRepo(configDir);
+
+    const config: Config = {
+      settings: { default_profile: "default" },
+      servers: {},
+    };
+    await writeConfig(join(configDir, "config.toml"), config);
+    await commitAll(configDir, "init config");
+
+    await addRemote(configDir, "git@github.com:org/repo.git");
+
+    const { pull } = await import("../../src/core/git");
+    const { AmError } = await import("../../src/lib/errors");
+    let caught: unknown;
+    try {
+      await pull(configDir);
+    } catch (err) {
+      caught = err;
+    }
+    expect(caught).toBeInstanceOf(AmError);
+    expect((caught as InstanceType<typeof AmError>).code).toBe("SSH_UNSUPPORTED");
+  });
 });

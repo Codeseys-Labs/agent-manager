@@ -2,6 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import * as TOML from "@iarna/toml";
+import { validateCommand } from "../../src/commands/config";
 import { loadResolvedConfig, writeConfig } from "../../src/core/config";
 import { initRepo } from "../../src/core/git";
 import { ConfigSchema } from "../../src/core/schema";
@@ -84,6 +85,139 @@ scope = "always"
     const result = ConfigSchema.safeParse(parsed);
 
     expect(result.success).toBe(false);
+  });
+});
+
+// ws3-cdc6: `am config validate` must catch profile-inheritance defects that
+// ConfigSchema alone cannot — circular and self-referential `inherits` chains
+// (and unknown parents) parse clean against the schema but blow up at resolve
+// time. validateCommand now runs resolveProfile per profile and surfaces the
+// thrown message as a validation error.
+describe("am config validate — profile inheritance (ws3-cdc6)", () => {
+  let dir: TestDir;
+  const origConfigDir = process.env.AM_CONFIG_DIR;
+  const origLog = console.log;
+  let logged: string[] = [];
+
+  const handler = validateCommand as unknown as {
+    run: (ctx: { args: Record<string, unknown> }) => Promise<void>;
+  };
+
+  function capture(): void {
+    logged = [];
+    console.log = (...args: unknown[]) => {
+      logged.push(args.map(String).join(" "));
+    };
+  }
+
+  afterEach(async () => {
+    console.log = origLog;
+    if (origConfigDir === undefined) Reflect.deleteProperty(process.env, "AM_CONFIG_DIR");
+    else process.env.AM_CONFIG_DIR = origConfigDir;
+    process.exitCode = 0;
+    if (dir) await dir.cleanup();
+  });
+
+  async function runValidate(configDir: string): Promise<{ valid: boolean; errors: string[] }> {
+    process.env.AM_CONFIG_DIR = configDir;
+    process.exitCode = 0;
+    capture();
+    await handler.run({ args: { json: true, quiet: false, verbose: false } });
+    return JSON.parse(logged.join("\n"));
+  }
+
+  test("reports an error on mutually-circular profile inheritance", async () => {
+    dir = await createTestDir("am-config-validate-circular-");
+    const configDir = dir.path;
+    await initRepo(configDir);
+
+    await dir.write(
+      "config.toml",
+      `
+[settings]
+default_profile = "a"
+
+[profiles.a]
+inherits = "b"
+
+[profiles.b]
+inherits = "a"
+`,
+    );
+
+    const result = await runValidate(configDir);
+    expect(result.valid).toBe(false);
+    expect(result.errors.some((e) => /[Cc]ircular inheritance/.test(e))).toBe(true);
+    expect(process.exitCode).toBe(1);
+  });
+
+  test("reports an error on self-referential profile inheritance", async () => {
+    dir = await createTestDir("am-config-validate-self-");
+    const configDir = dir.path;
+    await initRepo(configDir);
+
+    await dir.write(
+      "config.toml",
+      `
+[settings]
+default_profile = "loop"
+
+[profiles.loop]
+inherits = "loop"
+`,
+    );
+
+    const result = await runValidate(configDir);
+    expect(result.valid).toBe(false);
+    expect(result.errors.some((e) => /[Cc]ircular inheritance/.test(e))).toBe(true);
+    expect(process.exitCode).toBe(1);
+  });
+
+  test("reports an error when a profile inherits from an unknown parent", async () => {
+    dir = await createTestDir("am-config-validate-unknown-");
+    const configDir = dir.path;
+    await initRepo(configDir);
+
+    await dir.write(
+      "config.toml",
+      `
+[settings]
+default_profile = "child"
+
+[profiles.child]
+inherits = "ghost"
+`,
+    );
+
+    const result = await runValidate(configDir);
+    expect(result.valid).toBe(false);
+    expect(result.errors.some((e) => /[Uu]nknown profile/.test(e))).toBe(true);
+    expect(process.exitCode).toBe(1);
+  });
+
+  test("passes a clean linear inheritance chain", async () => {
+    dir = await createTestDir("am-config-validate-linear-");
+    const configDir = dir.path;
+    await initRepo(configDir);
+
+    await dir.write(
+      "config.toml",
+      `
+[settings]
+default_profile = "child"
+
+[profiles.base]
+description = "Base profile"
+
+[profiles.child]
+description = "Child profile"
+inherits = "base"
+`,
+    );
+
+    const result = await runValidate(configDir);
+    expect(result.valid).toBe(true);
+    expect(result.errors).toEqual([]);
   });
 });
 

@@ -1,6 +1,7 @@
 import { mkdir, readFile, stat, unlink } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
+import { AmError } from "../lib/errors";
 import { atomicWriteFile } from "./atomic-write";
 import type { Config } from "./schema";
 import type { SecretEnvelope, SecretsBackend } from "./secrets-backend";
@@ -202,7 +203,23 @@ export async function decryptValue(encrypted: string, key: CryptoKey): Promise<s
   const ctB64 = payload.slice(colonIdx + 1);
   const iv = Uint8Array.from(atob(ivB64), (c) => c.charCodeAt(0));
   const ct = Uint8Array.from(atob(ctB64), (c) => c.charCodeAt(0));
-  const plaintext = await crypto.subtle.decrypt({ name: ALGO, iv }, key, ct);
+  let plaintext: ArrayBuffer;
+  try {
+    plaintext = await crypto.subtle.decrypt({ name: ALGO, iv }, key, ct);
+  } catch (err) {
+    // AES-GCM authenticated decryption throws a bare `OperationError`
+    // ("Cipher job failed" / "The operation failed for an operation-specific
+    // reason") when the key doesn't match the envelope (or the ciphertext is
+    // corrupt) — raw WebCrypto noise with no actionable guidance. Re-raise as
+    // an AmError that names the key-path remedy. We deliberately echo NEITHER
+    // the ciphertext (`encrypted`/`ct`) NOR any key material — only the
+    // key-file location, which is non-secret.
+    throw new AmError(
+      "Failed to decrypt secret — the encryption key does not match this envelope (or the value is corrupt).",
+      `Check that the correct key is present at ${resolveKeyPath()} (run \`am secret generate-key\` or \`am pair\` to provision it). Original error: ${err instanceof Error ? err.name : String(err)}`,
+      "SECRET_DECRYPT_FAILED",
+    );
+  }
   return new TextDecoder().decode(plaintext);
 }
 

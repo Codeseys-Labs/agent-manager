@@ -142,7 +142,11 @@ describe("FIX 1 — am_config_show redaction + token-gating", () => {
 
   test("am_config_show with a matching bearer token is ALLOWED when a token is configured", async () => {
     await writeConfig(join(dir.path, "config.toml"), {
+      // The active profile must EXIST: fix-1-0 fails CLOSED when an explicitly
+      // named non-"default" profile is absent from the profiles table, which
+      // would deny this (non-diagnostic) read tool regardless of the token.
       settings: { default_profile: "dev" },
+      profiles: { dev: {} },
       servers: {
         fetch: { command: "uvx", args: ["mcp"], transport: "stdio", enabled: true },
       },

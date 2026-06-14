@@ -8,9 +8,84 @@ import { withConfig } from "../core/controller";
 import { addRemote, initRepo } from "../core/git";
 import type { Config } from "../core/schema";
 import { generateKey, resolveKeyPath, saveKey } from "../core/secrets";
-import { errorMessage } from "../lib/errors";
-import { error, info, output } from "../lib/output";
+import { AmError, errorMessage } from "../lib/errors";
+import { type OutputOptions, error, info, output } from "../lib/output";
 import { initProject } from "./init-project";
+
+/**
+ * Serialized read-modify-write for the first-run / already-initialized decision.
+ *
+ * Returns `true` when a fresh config was initialized (caller proceeds with
+ * detect/key/remote next-steps), `false` when a valid config already exists
+ * (already-initialized message emitted, exit code set). A CORRUPT existing
+ * config (malformed TOML / schema violation) propagates the typed AmError
+ * thrown by `tryReadConfig` so the caller can render an actionable message
+ * instead of a raw stack — see the `run` handler's catch.
+ *
+ * REV-1 MEDIUM-2: serialize RMW via withConfig (was raw tryReadConfig +
+ * writeConfig). initRepo is only run on the first-run path because it is not
+ * idempotent (it makes an "init" commit).
+ */
+async function runInitRmw(
+  configDir: string,
+  configPath: string,
+  args: { json: boolean },
+  opts: OutputOptions,
+): Promise<boolean> {
+  return withConfig(
+    configDir,
+    async (existing) => {
+      if (existing) {
+        process.exitCode = 1;
+        if (args.json) {
+          output({ status: "already_initialized", configDir }, opts);
+        } else {
+          error(`Already initialized. Config exists at ${configPath}`, opts);
+        }
+        return { result: false, changed: false };
+      }
+
+      const newConfig: Config = {
+        settings: { default_profile: "default" },
+        servers: {},
+        profiles: {
+          default: {
+            description: "Default profile — all servers",
+          },
+        },
+      };
+
+      // First-run: initialize the git repo under the lock so concurrent
+      // `am init` invocations can't race on `git init`.
+      //
+      // ws3 brownfield-wipe fix: initRepo now folds config.toml INTO its
+      // single "init: agent-manager repository" commit (alongside
+      // .gitignore) — we render the same TOML withConfig would write and
+      // hand it to initRepo. This guarantees the baseline tree CONTAINS
+      // config.toml, so a later `am undo` (revertHead) restores to a
+      // config.toml-bearing parent instead of unlinking it (the wipe-out
+      // chain: init → add → undo → apply --force wrote empty {} over a
+      // populated native config).
+      //
+      // CRITICAL INVARIANT: this remains exactly ONE commit. withConfig
+      // is invoked with `noCommit: true`, so the file it writes to disk
+      // (identical bytes to what initRepo committed) is NOT turned into a
+      // second commit — `am undo` right after `am init` still correctly
+      // reports "Nothing to undo" (it requires log length >= 2 to act).
+      await initRepo(configDir, { configToml: serializeConfig(newConfig) });
+
+      return {
+        result: true,
+        changed: true,
+        updated: newConfig,
+        // commitMessage intentionally omitted — withConfig's noCommit
+        // option (below) short-circuits the commit path regardless, but
+        // leaving this undefined makes the intent explicit.
+      };
+    },
+    { noCommit: true },
+  );
+}
 
 export const initCommand = defineCommand({
   meta: { name: "init", description: "Initialize agent-manager config and git repo" },
@@ -54,68 +129,49 @@ export const initCommand = defineCommand({
     const configDir = resolveConfigDir();
     const configPath = join(configDir, "config.toml");
 
-    // REV-1 MEDIUM-2: serialize RMW via withConfig (was raw tryReadConfig + writeConfig).
-    // The initialize-if-absent path returns { changed: true, updated: newConfig };
-    // the already-initialized path short-circuits with { changed: false }
-    // after setting exitCode. Create the config dir (idempotent) up front so
-    // withConfig's tryReadConfig has a stable path to probe. initRepo is only
-    // run on the first-run path because it is not idempotent (it makes an
-    // "init" commit).
+    // Create the config dir (idempotent) up front so withConfig's
+    // tryReadConfig has a stable path to probe.
     await mkdir(configDir, { recursive: true });
 
-    const wasInitialized = await withConfig(
-      configDir,
-      async (existing) => {
-        if (existing) {
-          process.exitCode = 1;
-          if (args.json) {
-            output({ status: "already_initialized", configDir }, opts);
-          } else {
-            error(`Already initialized. Config exists at ${configPath}`, opts);
-          }
-          return { result: false, changed: false };
-        }
-
-        const newConfig: Config = {
-          settings: { default_profile: "default" },
-          servers: {},
-          profiles: {
-            default: {
-              description: "Default profile — all servers",
+    // runInitRmw probes the existing config via tryReadConfig. A MISSING
+    // config returns null (first-run path → wasInitialized=true); a VALID
+    // existing one short-circuits with wasInitialized=false (already-init
+    // message emitted, exit code set); a CORRUPT one (malformed TOML or schema
+    // violation) now throws a typed AmError (CONFIG_PARSE_ERROR /
+    // CONFIG_SCHEMA_ERROR) instead of being collapsed to "not found". Catch
+    // that here and emit an actionable message rather than propagating a raw
+    // stack. We do NOT auto-delete or overwrite the file — the user owns it.
+    let wasInitialized: boolean;
+    try {
+      wasInitialized = await runInitRmw(configDir, configPath, args, opts);
+    } catch (err) {
+      if (
+        err instanceof AmError &&
+        (err.code === "CONFIG_PARSE_ERROR" || err.code === "CONFIG_SCHEMA_ERROR")
+      ) {
+        const reason = err.suggestion ? `${err.message} (${err.suggestion})` : err.message;
+        process.exitCode = 1;
+        if (args.json) {
+          output(
+            {
+              status: "corrupt_config",
+              configDir,
+              configPath,
+              code: err.code,
+              reason,
             },
-          },
-        };
-
-        // First-run: initialize the git repo under the lock so concurrent
-        // `am init` invocations can't race on `git init`.
-        //
-        // ws3 brownfield-wipe fix: initRepo now folds config.toml INTO its
-        // single "init: agent-manager repository" commit (alongside
-        // .gitignore) — we render the same TOML withConfig would write and
-        // hand it to initRepo. This guarantees the baseline tree CONTAINS
-        // config.toml, so a later `am undo` (revertHead) restores to a
-        // config.toml-bearing parent instead of unlinking it (the wipe-out
-        // chain: init → add → undo → apply --force wrote empty {} over a
-        // populated native config).
-        //
-        // CRITICAL INVARIANT: this remains exactly ONE commit. withConfig
-        // is invoked with `noCommit: true`, so the file it writes to disk
-        // (identical bytes to what initRepo committed) is NOT turned into a
-        // second commit — `am undo` right after `am init` still correctly
-        // reports "Nothing to undo" (it requires log length >= 2 to act).
-        await initRepo(configDir, { configToml: serializeConfig(newConfig) });
-
-        return {
-          result: true,
-          changed: true,
-          updated: newConfig,
-          // commitMessage intentionally omitted — withConfig's noCommit
-          // option (below) short-circuits the commit path regardless, but
-          // leaving this undefined makes the intent explicit.
-        };
-      },
-      { noCommit: true },
-    );
+            opts,
+          );
+        } else {
+          error(
+            `Existing config at ${configPath} is corrupt: ${reason}. Fix it by hand or remove it, then re-run am init`,
+            opts,
+          );
+        }
+        return;
+      }
+      throw err;
+    }
 
     if (!wasInitialized) {
       return;

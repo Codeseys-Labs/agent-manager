@@ -3,6 +3,7 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { diffConfig } from "../../src/adapters/claude-code/diff";
 import type { ResolvedConfig, ResolvedServer } from "../../src/adapters/types";
+import { formatDriftChangeLine } from "../../src/commands/status";
 import { buildResolvedConfig, loadResolvedConfig, writeConfig } from "../../src/core/config";
 import { commitAll, getStatus, initRepo } from "../../src/core/git";
 import type { Config } from "../../src/core/schema";
@@ -156,6 +157,90 @@ describe("am status", () => {
 
     expect(pending).toBe(0);
     expect(drift).toBeGreaterThan(0);
+  });
+
+  // ws4-6fd2: `am status` must NAME the drifted entities under a drifted
+  // adapter, not just count them. Construct a resolved catalog + a native
+  // config that drifts in three ways (modified, added-locally, removed-locally)
+  // and assert each change's NAME surfaces in the rendered detail lines.
+  test("names drifted entities under a drifted adapter (modified / added / removed)", async () => {
+    dir = await createTestDir("am-status-");
+    // Native `.claude.json`: `fetch` hand-edited (modified) + a local-only
+    // `playwright` (added-locally). Catalog also has `tavily` which the native
+    // config lacks (catalog-ahead pending) — and is missing nothing the native
+    // has beyond playwright.
+    await dir.write(
+      ".claude.json",
+      JSON.stringify({
+        mcpServers: {
+          fetch: { command: "npx", args: ["mcp-server-fetch"] },
+          playwright: { command: "npx", args: ["@playwright/mcp"] },
+        },
+      }),
+    );
+
+    const mk = (overrides: Partial<ResolvedServer> & { command: string }): ResolvedServer => ({
+      name: "test",
+      args: [],
+      env: {},
+      transport: "stdio",
+      description: "",
+      tags: [],
+      enabled: true,
+      adapters: {},
+      ...overrides,
+    });
+    const resolved: ResolvedConfig = {
+      servers: {
+        fetch: mk({ name: "fetch", command: "uvx", args: ["mcp-server-fetch"] }),
+        tavily: mk({ name: "tavily", command: "bunx", args: ["tavily-mcp@latest"] }),
+      },
+      instructions: {},
+      skills: {},
+      agents: {},
+      profile: "default",
+      adapters: {},
+    };
+
+    const diffResult = diffConfig(resolved, {}, dir.path);
+    expect(diffResult.status).toBe("drifted");
+
+    // Render the detail lines exactly as `am status` does.
+    const lines = diffResult.changes.map(formatDriftChangeLine);
+    const joined = lines.join("\n");
+
+    // Every changed entity NAME is present (the core of the fix).
+    for (const c of diffResult.changes) {
+      expect(joined).toContain(`"${c.name}"`);
+    }
+
+    // Spot-check the glyph/wording per change type that actually surfaced.
+    const fetchChange = diffResult.changes.find((c) => c.name === "fetch");
+    expect(fetchChange?.type).toBe("modified");
+    expect(joined).toContain(`~ server "fetch" changed`);
+
+    const playwrightChange = diffResult.changes.find((c) => c.name === "playwright");
+    expect(playwrightChange?.type).toBe("added-locally");
+    expect(joined).toContain(`+ server "playwright" added locally`);
+
+    const tavilyChange = diffResult.changes.find((c) => c.name === "tavily");
+    expect(tavilyChange?.type).toBe("added-in-config");
+    expect(joined).toContain(`+ server "tavily" pending`);
+  });
+
+  test("formatDriftChangeLine renders each change type with the entity name", () => {
+    expect(formatDriftChangeLine({ entity: "server", name: "tavily", type: "modified" })).toBe(
+      `    ~ server "tavily" changed`,
+    );
+    expect(
+      formatDriftChangeLine({ entity: "server", name: "playwright", type: "added-locally" }),
+    ).toBe(`    + server "playwright" added locally`);
+    expect(formatDriftChangeLine({ entity: "server", name: "exa", type: "removed-locally" })).toBe(
+      `    - server "exa" removed locally`,
+    );
+    expect(
+      formatDriftChangeLine({ entity: "instruction", name: "rules", type: "added-in-config" }),
+    ).toBe(`    + instruction "rules" pending (in catalog, not yet applied)`);
   });
 
   // ws6-skill-deps-missing-agent (R2/297e): a skill whose SKILL.md body calls

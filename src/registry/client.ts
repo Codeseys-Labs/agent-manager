@@ -1,4 +1,16 @@
-import type { RegistryPackage, RegistrySearchFilters, RegistrySearchResult } from "./types";
+import type {
+  Argument,
+  Package,
+  RegistryEnvVar,
+  RegistryPackage,
+  RegistrySearchFilters,
+  RegistrySearchResult,
+  RegistryServerConfig,
+  Remote,
+  ServerDetail,
+  ServerListResponse,
+  ServerResponse,
+} from "./types";
 
 // ── LRU Cache ───────────────────────────────────────────────────
 
@@ -158,6 +170,158 @@ export class RegistryError extends Error {
   }
 }
 
+// ── Remap layer (v0 wire shape → internal RegistryPackage) ──────
+//
+// The live API speaks the MCP registry v0 schema (ServerResponse / ServerDetail
+// / Package / Remote / KeyValueInput). The rest of `am` (install/update/search/
+// mcp) depends on the internal RegistryPackage contract. These helpers are the
+// single boundary that translates between the two — consumers are untouched.
+
+const MAX_SEARCH_LIMIT = 100;
+
+// registryType → launcher command. runtimeHint, when the publisher supplies it,
+// overrides this (it is exactly "the command to run the package").
+const REGISTRY_TYPE_COMMAND: Record<string, string> = {
+  npm: "npx",
+  pypi: "uvx",
+  oci: "docker",
+  nuget: "dnx",
+};
+
+/** Render one v0 Argument to a CLI token (named → `--flag value`-ish, positional → value). */
+function argTokens(arg: Argument): string[] {
+  const value = arg.value ?? arg.default ?? arg.valueHint;
+  if (arg.type === "named" && arg.name) {
+    return value !== undefined ? [arg.name, value] : [arg.name];
+  }
+  // Positional (or untyped): emit the value if we have one, else the hint.
+  return value !== undefined ? [value] : [];
+}
+
+/** Derive a {command,args} pair from a v0 Package. */
+function packageInvocation(pkg: Package): { command: string; args: string[] } {
+  const command = pkg.runtimeHint ?? REGISTRY_TYPE_COMMAND[pkg.registryType] ?? pkg.identifier;
+  const runtimeArgs = (pkg.runtimeArguments ?? []).flatMap(argTokens);
+  const packageArgs = (pkg.packageArguments ?? []).flatMap(argTokens);
+
+  // For npm-style launchers the identifier is the package spec (e.g. `npx
+  // tavily-mcp@1.0.0`); pin the version when present. For oci/docker the
+  // identifier already carries its tag, so don't re-append. When runtimeHint
+  // supplied the command verbatim we still pass the identifier as the target.
+  let target = pkg.identifier;
+  if (pkg.version && (pkg.registryType === "npm" || pkg.registryType === "pypi")) {
+    target = `${pkg.identifier}@${pkg.version}`;
+  }
+
+  return { command, args: [...runtimeArgs, target, ...packageArgs] };
+}
+
+/** Translate the v0 transport string to the internal transport union. */
+function normalizeTransport(t: string | undefined): RegistryServerConfig["transport"] {
+  if (t === "sse") return "sse";
+  if (t === "streamable-http") return "streamable-http";
+  return "stdio";
+}
+
+/** Map a v0 KeyValueInput env var to the internal RegistryEnvVar (isRequired→required). */
+function mapEnvVar(kv: {
+  name: string;
+  description?: string;
+  isRequired?: boolean;
+  default?: string;
+}): RegistryEnvVar {
+  return {
+    name: kv.name,
+    description: kv.description ?? "",
+    // CRITICAL: the live field is `isRequired`; the internal contract uses
+    // `required`. Honor it so install.ts no longer treats every var as optional.
+    required: kv.isRequired ?? false,
+    ...(kv.default !== undefined ? { default: kv.default } : {}),
+  };
+}
+
+/** Build the internal server config from a package (preferred) or a remote. */
+function deriveServerConfig(detail: ServerDetail): RegistryServerConfig {
+  const pkg = detail.packages?.[0];
+  if (pkg) {
+    const { command, args } = packageInvocation(pkg);
+    const env = (pkg.environmentVariables ?? []).map(mapEnvVar);
+    const transport = normalizeTransport(pkg.transport?.type);
+    const config: RegistryServerConfig = {
+      command,
+      ...(args.length > 0 ? { args } : {}),
+      ...(env.length > 0 ? { env } : {}),
+      transport,
+    };
+    // Local stdio packages never carry a url. Remote-typed packages may.
+    if (transport !== "stdio" && pkg.transport?.url) {
+      config.url = pkg.transport.url;
+    }
+    return config;
+  }
+
+  // Remote-only server: synthesize the command from the url (schema.ts:42-44 —
+  // `am` stores the remote URL in `command` for remote transports). Pick the
+  // streamable-http remote first, falling back to whatever is present.
+  const remotes = detail.remotes ?? [];
+  const remote: Remote | undefined =
+    remotes.find((r) => r.type === "streamable-http") ?? remotes[0];
+  if (remote) {
+    return {
+      command: remote.url,
+      transport: normalizeTransport(remote.type),
+      url: remote.url,
+    };
+  }
+
+  // Neither packages nor remotes — degenerate. Keep command non-empty-ish so
+  // downstream schema validation has something; default to stdio.
+  return { command: detail.name, transport: "stdio" };
+}
+
+/** Derive a display author from a reverse-DNS server name (e.g. io.github.foo/bar → foo). */
+function deriveAuthor(name: string): string {
+  const slash = name.indexOf("/");
+  const org = slash >= 0 ? name.slice(0, slash) : name;
+  const parts = org.split(".").filter(Boolean);
+  // Reverse-DNS: the org token is the last DNS label before the name segment
+  // (io.github.<org>) — fall back to the whole org string when it isn't DNS-y.
+  return parts.length > 0 ? parts[parts.length - 1] : org;
+}
+
+/** Remap one v0 ServerResponse to the internal RegistryPackage contract. */
+export function mapServerResponse(raw: ServerResponse): RegistryPackage {
+  const detail = raw.server;
+  const meta = raw._meta?.["io.modelcontextprotocol.registry/official"];
+  const publishedAt = meta?.publishedAt ?? "";
+  const updatedAt = meta?.updatedAt ?? publishedAt;
+
+  return {
+    name: detail.name,
+    description: detail.description,
+    author: deriveAuthor(detail.name),
+    version: detail.version,
+    ...(detail.repository?.url ? { repository: detail.repository.url } : {}),
+    ...(detail.websiteUrl ? { homepage: detail.websiteUrl } : {}),
+    // The v0 API does not expose downloads/verification/tags/license — supply
+    // sensible internal defaults the consumers already tolerate.
+    downloads: undefined,
+    verified: false,
+    tags: [],
+    created_at: publishedAt,
+    updated_at: updatedAt,
+    server: deriveServerConfig(detail),
+  };
+}
+
+/** Remap a v0 ServerListResponse to the internal RegistrySearchResult. */
+export function mapListResponse(raw: ServerListResponse): RegistrySearchResult {
+  return {
+    packages: (raw.servers ?? []).map(mapServerResponse),
+    ...(raw.metadata?.nextCursor ? { nextCursor: raw.metadata.nextCursor } : {}),
+  };
+}
+
 // ── Public API ──────────────────────────────────────────────────
 
 /**
@@ -169,17 +333,21 @@ export async function search(
   opts?: RegistryClientOptions,
 ): Promise<RegistrySearchResult> {
   const params = new URLSearchParams();
-  params.set("q", query);
-  if (filters?.tag) params.set("tag", filters.tag);
-  if (filters?.verified !== undefined) params.set("verified", String(filters.verified));
-  if (filters?.limit) params.set("limit", String(filters.limit));
-  if (filters?.page) params.set("page", String(filters.page));
+  params.set("search", query);
+  // Always pin to the latest version of each server — `am` resolves a single
+  // installable, not a version history.
+  params.set("version", "latest");
+  if (filters?.limit) {
+    params.set("limit", String(Math.min(filters.limit, MAX_SEARCH_LIMIT)));
+  }
+  if (filters?.cursor) params.set("cursor", filters.cursor);
 
-  const path = `/api/packages?${params.toString()}`;
+  const path = `/v0/servers?${params.toString()}`;
   const skipCache = opts?.skipCache ?? false;
 
   try {
-    return await getJson<RegistrySearchResult>(path, { skipCache });
+    const raw = await getJson<ServerListResponse>(path, { skipCache });
+    return mapListResponse(raw);
   } catch (err) {
     if (err instanceof RegistryError) throw err;
     throw new RegistryError(`Search failed: ${(err as Error).message}`, 0);
@@ -188,20 +356,56 @@ export async function search(
 
 /**
  * Get a specific package by name from the registry.
+ *
+ * There is no bare `/v0/servers/{name}` route, so resolution is:
+ *   - reverse-DNS name (contains "/"): GET /v0/servers/{name}/versions/latest
+ *   - short name: GET /v0/servers?search=<name>&version=latest, pick best match
+ * Returns null when no server matches.
  */
 export async function getPackage(
   name: string,
   opts?: RegistryClientOptions,
 ): Promise<RegistryPackage | null> {
   const skipCache = opts?.skipCache ?? false;
+
+  if (name.includes("/")) {
+    try {
+      const raw = await getJson<ServerResponse>(
+        `/v0/servers/${encodeURIComponent(name)}/versions/latest`,
+        { skipCache },
+      );
+      // A null/empty body is the "not found" shape for the latest-version route.
+      if (!raw?.server) return null;
+      return mapServerResponse(raw);
+    } catch (err) {
+      if (err instanceof RegistryError && err.statusCode === 404) return null;
+      throw err;
+    }
+  }
+
+  // Short name: search then match. version=latest collapses to one entry/server.
+  let raw: ServerListResponse;
   try {
-    return await getJson<RegistryPackage>(`/api/packages/${encodeURIComponent(name)}`, {
-      skipCache,
-    });
+    const params = new URLSearchParams({ search: name, version: "latest" });
+    raw = await getJson<ServerListResponse>(`/v0/servers?${params.toString()}`, { skipCache });
   } catch (err) {
     if (err instanceof RegistryError && err.statusCode === 404) return null;
     throw err;
   }
+
+  const servers = raw?.servers ?? [];
+  if (servers.length === 0) return null;
+
+  // Prefer an exact name match, then a trailing-segment match (the part after
+  // the reverse-DNS prefix), else the first result.
+  const exact = servers.find((s) => s.server.name === name);
+  const segment = servers.find((s) => {
+    const n = s.server.name;
+    const seg = n.includes("/") ? n.slice(n.indexOf("/") + 1) : n;
+    return seg === name;
+  });
+  const match = exact ?? segment ?? servers[0];
+  return mapServerResponse(match);
 }
 
 /**
@@ -210,9 +414,11 @@ export async function getPackage(
 export async function getVersions(name: string, opts?: RegistryClientOptions): Promise<string[]> {
   const skipCache = opts?.skipCache ?? false;
   try {
-    return await getJson<string[]>(`/api/packages/${encodeURIComponent(name)}/versions`, {
-      skipCache,
-    });
+    const raw = await getJson<ServerListResponse>(
+      `/v0/servers/${encodeURIComponent(name)}/versions`,
+      { skipCache },
+    );
+    return (raw?.servers ?? []).map((s) => s.server.version);
   } catch (err) {
     if (err instanceof RegistryError && err.statusCode === 404) return [];
     throw err;

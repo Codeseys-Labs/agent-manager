@@ -35,7 +35,7 @@ import type { Config, McpToolGroup, Settings } from "../core/schema";
 import { interpolateEnvAsync, legacyKeyPath, loadKey, resolveKeyPath } from "../core/secrets";
 import { filterMessages, formatJson, formatMarkdown } from "../core/session";
 import type { SessionSummary } from "../core/session";
-import { isNotFound } from "../lib/errors";
+import { errorDetail, isNotFound } from "../lib/errors";
 import {
   redactConfigPlaintextSecrets,
   redactConfigSecrets,
@@ -864,9 +864,7 @@ const TOOL_SCHEMAS: Record<string, z.ZodTypeAny> = {
   // ── registry ──────────────────────────────────────────────
   am_registry_search: withAuth({
     query: zStrNonEmpty,
-    tag: zStr.optional(),
-    verified: zBool.optional(),
-    limit: zNum.int().positive().max(1000).optional(),
+    limit: zNum.int().positive().max(100).optional(),
   }),
   am_registry_install: withAuth({ name: zStrNonEmpty, env: zStrMap.optional() }),
   am_registry_list_installed: withAuth({}),
@@ -1219,10 +1217,13 @@ function defineTools(): ToolEntry[] {
           checks.push({
             name: "config.toml",
             status: "fail",
-            // safeErrorMessage (not errorMessage): a malformed config can echo a
-            // secret value back inside a Zod/TOML parse error; am_doctor is
-            // read-only and reachable by a tokenless client (R2-LOW).
-            message: `Parse/validation error: ${safeErrorMessage(err)}`,
+            // errorDetail (not errorMessage) folds the AmError suggestion — which
+            // carries the offending field path (e.g. a secret-shaped server name)
+            // for CONFIG_SCHEMA_ERROR/CONFIG_PARSE_ERROR — back into the surfaced
+            // text; redactSecretish (not raw) then scrubs it, because a malformed
+            // config can echo a secret value and am_doctor is read-only and
+            // reachable by a tokenless client (R2-LOW).
+            message: `Parse/validation error: ${redactSecretish(errorDetail(err))}`,
           });
         }
 
@@ -1947,14 +1948,9 @@ function defineTools(): ToolEntry[] {
           type: "object",
           properties: {
             query: { type: "string", description: "Search query" },
-            tag: { type: "string", description: "Filter by tag" },
-            verified: {
-              type: "boolean",
-              description: "Show only verified packages",
-            },
             limit: {
               type: "number",
-              description: "Max results (default: 20)",
+              description: "Max results (default: 20, max: 100)",
             },
           },
           required: ["query"],
@@ -1964,8 +1960,6 @@ function defineTools(): ToolEntry[] {
       handler: async (args) => {
         const { search } = await import("../registry/client");
         const filters: import("../registry/types").RegistrySearchFilters = {};
-        if (args.tag) filters.tag = args.tag as string;
-        if (args.verified) filters.verified = true;
         filters.limit = (args.limit as number) ?? 20;
         const result = await search(args.query as string, filters);
         return result;
@@ -3254,7 +3248,11 @@ export class McpServer {
   // the auth check: JSON-RPC envelope validation, init-state gating,
   // protocolVersion negotiation, and batch id deduplication. See
   // handleRequest and serve below for entry points.
-  constructor(opts?: { auth?: AuthConfig; enforceInitGate?: boolean }) {
+  constructor(opts?: {
+    auth?: AuthConfig;
+    enforceInitGate?: boolean;
+    connectionProfile?: string;
+  }) {
     this.tools = defineTools();
     // Secure default: no token, no unsafe-local escape hatch. Write-tier tool
     // calls are refused until the caller wires an AuthConfig explicitly.
@@ -3265,6 +3263,15 @@ export class McpServer {
     // use) default to already-initialized so they don't need to simulate
     // the handshake.
     if (opts?.enforceInitGate) this.initialized = false;
+    // ADR-0055: an explicit `connectionProfile` (fed by `am mcp-serve
+    // --profile <name>`) seeds the connection-scoped profile and takes
+    // PRECEDENCE over the AM_MCP_PROFILE env. The `initialize` handler only
+    // falls back to the experimental capability / env when this is still
+    // unset, so a flag-supplied profile always wins the resolution in
+    // resolveActiveScope (connectionProfile is the first term it considers).
+    if (typeof opts?.connectionProfile === "string" && opts.connectionProfile.length > 0) {
+      this.connectionProfile = opts.connectionProfile;
+    }
   }
 
   /** Override auth config (useful for tests). */
@@ -3285,8 +3292,14 @@ export class McpServer {
       const projectFile = resolveProjectConfig(process.cwd());
       const config = await loadResolvedConfig({ configDir, projectFile });
       this.settings = config.settings;
+      // Reset to normal semantics BEFORE resolving — the config parsed cleanly,
+      // so the only way the gateway still ends up failing closed is if
+      // resolveActiveScope hit the explicit-but-missing profile branch (an
+      // operator/client named a confinement profile that is a typo or was
+      // deleted). That branch sets `scopeFailClosed = true` itself, so we must
+      // not clobber it afterwards. (fix-1-0)
+      this.scopeFailClosed = false;
       this.scope = await this.resolveActiveScope(config, configDir);
-      this.scopeFailClosed = false; // config parsed cleanly → normal semantics
     } catch (err) {
       // ws2 (seed 6a89) K-CRIT: distinguish "config genuinely absent" from
       // "config present but INVALID". loadResolvedConfig swallows ENOENT inside
@@ -3318,11 +3331,27 @@ export class McpServer {
    * precedence: this connection's `am.profile` (initialize) → the persisted
    * active profile (state.toml) → settings.default_profile → "default".
    *
-   * Fail-safe directions (an access boundary must NEVER widen):
-   *  - Profile NAME absent from config.profiles (typo, implicit "default" with
-   *    no profiles table, removed profile): return `undefined` = the global
-   *    ceiling unchanged (today's behaviour). There is no declared boundary to
-   *    enforce, so we don't invent a narrower one.
+   * Fail-safe directions (an access boundary must NEVER widen). The pivotal
+   * distinction is whether the active-profile name was supplied EXPLICITLY (a
+   * connection `am.profile`, the persisted state.toml profile, or
+   * `settings.default_profile`) versus produced by the bare hardcoded `"default"`
+   * literal fallback (no profile named anywhere) — AND whether the name is the
+   * conventional `"default"` sentinel:
+   *  - Name absent from config.profiles, came from an EXPLICIT source, AND is a
+   *    NON-`"default"` name (typo, deleted/renamed confinement profile): an
+   *    operator/client who deliberately named a confining profile must NEVER be
+   *    silently widened to the global ceiling. Fail CLOSED to a
+   *    maximally-restrictive scope (mirrors the broken-inheritance branch below
+   *    and refreshSettings' invalid-config branch), and set `scopeFailClosed` so
+   *    the diagnostic-tool exemption still lets the operator SEE + fix the
+   *    breakage over MCP.
+   *  - Name absent from config.profiles but it resolves to the `"default"`
+   *    sentinel (the bare literal fallback with nothing named anywhere, OR an
+   *    explicit `default_profile = "default"`) with no `default` profile defined:
+   *    return `undefined` = the global ceiling unchanged. This is the universal
+   *    "I want the implicit default" idiom — a fresh/minimal config with no
+   *    profiles table never declared a boundary, so we don't invent a narrower
+   *    one (and we don't break the fresh-install case).
    *  - Profile EXISTS but `resolveProfile` THROWS (unknown `inherits` parent, or
    *    circular inheritance — K-CRIT): the profile is structurally broken. We do
    *    NOT fail open to `undefined` (that would expose the full ceiling and
@@ -3336,17 +3365,44 @@ export class McpServer {
     config: Config,
     configDir: string,
   ): Promise<ResolvedScope | undefined> {
-    const profileName =
+    // Capture which source supplied the name BEFORE the `?? "default"` fallback.
+    // `explicit !== undefined` means an operator/client deliberately named a
+    // profile (connection am.profile → persisted state.toml → default_profile);
+    // `explicit === undefined` means we fell through to the bare hardcoded
+    // "default" literal (no profile named anywhere). The fail-safe direction
+    // for a MISSING profile depends entirely on this distinction. (fix-1-0)
+    const explicit =
       this.connectionProfile ??
       (await readActiveProfile(configDir)) ??
-      config.settings?.default_profile ??
-      "default";
+      config.settings?.default_profile;
+    const profileName = explicit ?? "default";
     // Record the resolved name so am_get_scope reports the SAME active profile
     // the gateway gated on (Decision 6 no-drift), regardless of which branch
     // below produces the scope.
     this.activeProfileName = profileName;
     if (!config.profiles?.[profileName]) {
-      // No such profile → no declared boundary → global ceiling (never wider).
+      // Distinguish a deliberately-named CONFINEMENT profile from the
+      // conventional "default" sentinel. `profileName === "default"` (whether it
+      // arrived via the bare hardcoded fallback OR an explicit
+      // `default_profile = "default"`) with no `default` profile defined is the
+      // universal "I want the implicit default" idiom — there is no declared
+      // boundary, so the global ceiling is correct (never wider) and the
+      // fresh/minimal-config case stays working.
+      if (explicit !== undefined && profileName !== "default") {
+        // The name came from an EXPLICIT source, names a NON-default profile,
+        // but that profile does not exist (typo, or a confinement profile that
+        // was deleted/renamed). An access boundary must NEVER widen: do NOT fall
+        // through to `undefined` (the global ceiling) — that would silently void
+        // a confinement profile the operator deliberately bound. Fail CLOSED to
+        // a maximally-restrictive scope (mirrors the broken-inheritance branch
+        // and refreshSettings' invalid-config branch) and pin scopeFailClosed so
+        // the diagnostic-tool exemption (DIAGNOSTIC_SCOPE_EXEMPT) still lets the
+        // operator see + fix the breakage over MCP. K-CRIT: never widen on a
+        // missing explicit name.
+        this.scopeFailClosed = true;
+        return { toolGroups: [], allowTools: [], denyTools: [] };
+      }
+      // No declared boundary → global ceiling (never wider).
       return undefined;
     }
     try {
@@ -3529,14 +3585,21 @@ export class McpServer {
         // the AM_MCP_PROFILE env fallback). stdio is one-client-per-process, so
         // this scopes the whole process. The Scope itself is resolved lazily in
         // refreshSettings (which runs before tools/list and tools/call).
-        const caps = params.capabilities as Record<string, unknown> | undefined;
-        const experimental = caps?.experimental as Record<string, unknown> | undefined;
-        const expProfile = experimental?.["am.profile"];
-        const envProfile = process.env.AM_MCP_PROFILE;
-        if (typeof expProfile === "string" && expProfile.length > 0) {
-          this.connectionProfile = expProfile;
-        } else if (typeof envProfile === "string" && envProfile.length > 0) {
-          this.connectionProfile = envProfile;
+        //
+        // Precedence: an explicit `--profile` flag (seeded into
+        // `connectionProfile` by the constructor) is the operator's deliberate
+        // binding and OUTRANKS both the experimental capability and the env —
+        // so we only consult those channels when no flag was supplied.
+        if (this.connectionProfile === undefined) {
+          const caps = params.capabilities as Record<string, unknown> | undefined;
+          const experimental = caps?.experimental as Record<string, unknown> | undefined;
+          const expProfile = experimental?.["am.profile"];
+          const envProfile = process.env.AM_MCP_PROFILE;
+          if (typeof expProfile === "string" && expProfile.length > 0) {
+            this.connectionProfile = expProfile;
+          } else if (typeof envProfile === "string" && envProfile.length > 0) {
+            this.connectionProfile = envProfile;
+          }
         }
         // Flip the init flag AFTER we've decided this is a valid initialize.
         // A failed negotiation (above) does NOT mark the session initialized.

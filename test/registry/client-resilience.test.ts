@@ -36,26 +36,48 @@ import {
   resolveLatest,
   search,
 } from "../../src/registry/client";
-import type { RegistryPackage, RegistrySearchResult } from "../../src/registry/types";
+import type { ServerListResponse, ServerResponse } from "../../src/registry/types";
 
-const MOCK_PACKAGE: RegistryPackage = {
-  name: "tavily-mcp",
-  description: "Tavily web search MCP server",
-  author: "tavily",
-  version: "1.0.0",
-  verified: true,
-  tags: ["search", "web"],
-  created_at: "2024-01-01T00:00:00Z",
-  updated_at: "2024-06-01T00:00:00Z",
-  server: { command: "bunx", args: ["tavily-mcp@latest"], transport: "stdio" },
+// Real /v0/servers wire shape. Reverse-DNS name so getPackage("tavily-mcp") and
+// resolveLatest("io.github.tavily/tavily-mcp") both resolve through the remap.
+const MOCK_SERVER: ServerResponse = {
+  server: {
+    name: "io.github.tavily/tavily-mcp",
+    description: "Tavily web search MCP server",
+    version: "1.0.0",
+    packages: [
+      {
+        registryType: "npm",
+        identifier: "tavily-mcp",
+        version: "1.0.0",
+        transport: { type: "stdio" },
+      },
+    ],
+  },
+  _meta: {
+    "io.modelcontextprotocol.registry/official": {
+      publishedAt: "2024-01-01T00:00:00Z",
+      updatedAt: "2024-06-01T00:00:00Z",
+      isLatest: true,
+    },
+  },
 };
 
-const MOCK_SEARCH_RESULT: RegistrySearchResult = {
-  packages: [MOCK_PACKAGE],
-  total: 1,
-  page: 1,
-  per_page: 20,
+const MOCK_SEARCH_RESULT: ServerListResponse = {
+  servers: [MOCK_SERVER],
+  metadata: { count: 1 },
 };
+
+/** A versions-list envelope: each entry is a ServerResponse carrying one version. */
+function versionsResponse(versions: string[]): ServerListResponse {
+  return {
+    servers: versions.map((v) => ({
+      server: { ...MOCK_SERVER.server, version: v },
+      _meta: MOCK_SERVER._meta,
+    })),
+    metadata: { count: versions.length },
+  };
+}
 
 function jsonResponse(body: unknown, init?: ResponseInit): Response {
   return new Response(JSON.stringify(body), {
@@ -106,7 +128,7 @@ describe("registry/client resilience", () => {
       globalThis.fetch = fetchMock as unknown as typeof fetch;
 
       const result = await search("q", undefined, { skipCache: true });
-      expect(result.total).toBe(1);
+      expect(result.packages).toHaveLength(1);
       // 429, 429, 200 → exactly 3 fetches (2 backoff sleeps in between).
       expect(fetchMock).toHaveBeenCalledTimes(3);
     });
@@ -132,12 +154,13 @@ describe("registry/client resilience", () => {
 
   describe("cache fallback", () => {
     test("returns primed cache value with X-Cache: fallback when fetch fails", async () => {
-      // 1) Prime: a successful fetch (skipCache OFF) stores the value.
+      // 1) Prime: a successful fetch (skipCache OFF) stores the value. A short
+      //    name resolves via the search route, so prime the list envelope.
       globalThis.fetch = mock(() =>
-        Promise.resolve(jsonResponse(MOCK_PACKAGE)),
+        Promise.resolve(jsonResponse(MOCK_SEARCH_RESULT)),
       ) as unknown as typeof fetch;
       const primed = await getPackage("tavily-mcp"); // cached under this base URL
-      expect(primed?.name).toBe("tavily-mcp");
+      expect(primed?.name).toBe("io.github.tavily/tavily-mcp");
 
       // 2) Now every fetch rejects (offline). With cache present and skipCache
       //    OFF, fetchWithRetry returns a synthetic X-Cache: fallback 200 instead
@@ -148,7 +171,7 @@ describe("registry/client resilience", () => {
 
       const fallback = await getPackage("tavily-mcp");
       expect(fallback).not.toBeNull();
-      expect(fallback?.name).toBe("tavily-mcp");
+      expect(fallback?.name).toBe("io.github.tavily/tavily-mcp");
     });
 
     test("network failure with skipCache:true (no cache consulted) throws RegistryError(0)", async () => {
@@ -173,9 +196,9 @@ describe("registry/client resilience", () => {
     test("evicts the oldest entry once capacity (50) is exceeded", async () => {
       const CACHE_MAX_ENTRIES = 50;
       // Each getVersions(name) call caches under a distinct URL
-      // (/api/packages/<name>/versions). Prime CACHE_MAX_ENTRIES distinct keys
+      // (/v0/servers/<name>/versions). Prime CACHE_MAX_ENTRIES distinct keys
       // with a live fetch, then add ONE more to force eviction of the oldest.
-      const liveFetch = mock(() => Promise.resolve(jsonResponse(["1.0.0"])));
+      const liveFetch = mock(() => Promise.resolve(jsonResponse(versionsResponse(["1.0.0"]))));
       globalThis.fetch = liveFetch as unknown as typeof fetch;
 
       // Prime entries pkg-0 .. pkg-49 (the first inserted, pkg-0, is the LRU head).
@@ -211,7 +234,7 @@ describe("registry/client resilience", () => {
   describe("getVersions", () => {
     test("returns the version list on 200", async () => {
       globalThis.fetch = mock(() =>
-        Promise.resolve(jsonResponse(["1.0.0", "1.1.0", "2.0.0"])),
+        Promise.resolve(jsonResponse(versionsResponse(["1.0.0", "1.1.0", "2.0.0"]))),
       ) as unknown as typeof fetch;
       const versions = await getVersions("multi-version-pkg", { skipCache: true });
       expect(versions).toEqual(["1.0.0", "1.1.0", "2.0.0"]);
@@ -238,13 +261,23 @@ describe("registry/client resilience", () => {
   // ── resolveLatest ───────────────────────────────────────────────
 
   describe("resolveLatest", () => {
-    test("resolves to the package on 200", async () => {
+    test("resolves to the package on 200 via search-match (short name)", async () => {
       globalThis.fetch = mock(() =>
-        Promise.resolve(jsonResponse(MOCK_PACKAGE)),
+        Promise.resolve(jsonResponse(MOCK_SEARCH_RESULT)),
       ) as unknown as typeof fetch;
       const pkg = await resolveLatest("tavily-mcp", { skipCache: true });
       expect(pkg).not.toBeNull();
       expect(pkg?.version).toBe("1.0.0");
+    });
+
+    test("resolves a reverse-DNS name via /versions/latest", async () => {
+      globalThis.fetch = mock(() =>
+        Promise.resolve(jsonResponse(MOCK_SERVER)),
+      ) as unknown as typeof fetch;
+      const pkg = await resolveLatest("io.github.tavily/tavily-mcp", { skipCache: true });
+      expect(pkg).not.toBeNull();
+      expect(pkg?.version).toBe("1.0.0");
+      expect(pkg?.server.command).toBe("npx");
     });
 
     test("returns null when the package is missing (404)", async () => {

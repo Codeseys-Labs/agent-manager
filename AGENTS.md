@@ -87,7 +87,7 @@ IDE UX, NOT a general-purpose dotfile manager.
 ## Architecture
 
 Layered Core + Dual-Axis Adapter Extensions (ADR-0001, ADR-0013). The core engine owns
-five entity types:
+six entity types:
 
 | Entity | Purpose | Config key |
 |--------|---------|------------|
@@ -95,6 +95,7 @@ five entity types:
 | **Instructions** | Markdown rules with activation scope (always/glob/agent-decision/manual) | `[instructions.<name>]` |
 | **Skills** | Reusable prompt/skill bundles with paths and descriptions | `[skills.<name>]` |
 | **Agent Profiles** | Named agent configurations (prompt, model, tools, MCP servers) | `[agents.<name>]` |
+| **Commands** | Slash-command markdown artifacts. Carries an explicit `type: "command"` discriminant so `am add command --from <file.md>` classifies deterministically (ADR-0058). | `[commands.<name>]` |
 | **Profiles** | Named config subsets with inheritance and tag-based server selection | `[profiles.<name>]` |
 
 Each entity supports `[entity.adapters.<tool>]` subtables for tool-specific extensions

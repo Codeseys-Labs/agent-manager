@@ -4,7 +4,14 @@ import type { Config } from "../core/schema";
 import { AmError } from "../lib/errors";
 import { amError, error, info, output } from "../lib/output";
 
-const ENTITY_TYPES = ["servers", "instructions", "skills", "agents", "profiles"] as const;
+const ENTITY_TYPES = [
+  "servers",
+  "instructions",
+  "skills",
+  "agents",
+  "commands",
+  "profiles",
+] as const;
 type EntityType = (typeof ENTITY_TYPES)[number];
 
 function parseEntityType(raw: string | undefined): EntityType {
@@ -20,6 +27,8 @@ function parseEntityType(raw: string | undefined): EntityType {
     skills: "skills",
     agent: "agents",
     agents: "agents",
+    command: "commands",
+    commands: "commands",
     profile: "profiles",
     profiles: "profiles",
   };
@@ -81,6 +90,8 @@ export const listCommand = defineCommand({
           return listSkills(config, opts);
         case "agents":
           return listAgents(config, opts);
+        case "commands":
+          return listCommands(config, opts);
         case "profiles":
           return listProfiles(config, opts);
       }
@@ -184,6 +195,38 @@ function listSkills(config: Config, opts: { json?: boolean; quiet?: boolean; ver
     info(`${s.name.padEnd(25)} ${s.path.padEnd(35)} ${s.tags.join(", ")}`, opts);
   }
   info(`\n${entries.length} skill(s)`, opts);
+}
+
+// ADR-0058: commands is the 6th catalog entity. v1 is round-trip persistence
+// only, so `am list commands` just surfaces what's stored (no resolver wiring).
+function listCommands(
+  config: Config,
+  opts: { json?: boolean; quiet?: boolean; verbose?: boolean },
+) {
+  const commands = config.commands ?? {};
+  const entries = Object.entries(commands).map(([name, command]) => ({
+    name,
+    path: command.path,
+    description: command.description ?? "",
+    tags: command.tags ?? [],
+  }));
+
+  if (opts.json) {
+    output({ commands: entries }, opts);
+    return;
+  }
+
+  if (entries.length === 0) {
+    info("No commands configured.", opts);
+    return;
+  }
+
+  info(`${"Name".padEnd(25)} ${"Path".padEnd(35)} ${"Tags"}`, opts);
+  info(`${"─".repeat(25)} ${"─".repeat(35)} ${"─".repeat(20)}`, opts);
+  for (const c of entries) {
+    info(`${c.name.padEnd(25)} ${c.path.padEnd(35)} ${c.tags.join(", ")}`, opts);
+  }
+  info(`\n${entries.length} command(s)`, opts);
 }
 
 function listAgents(config: Config, opts: { json?: boolean; quiet?: boolean; verbose?: boolean }) {

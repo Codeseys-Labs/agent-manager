@@ -10,9 +10,11 @@ import {
   readConfig,
   readProjectConfig,
   resolveConfigDir,
+  tryReadConfig,
   writeConfig,
 } from "../../src/core/config";
 import type { Config } from "../../src/core/schema";
+import { AmError } from "../../src/lib/errors";
 import { toPosix } from "../helpers/path";
 
 const FIXTURES = join(import.meta.dir, "..", "fixtures");
@@ -77,6 +79,76 @@ describe("readProjectConfig", () => {
   });
 });
 
+// ws-config-load-errors (seed agent-manager-8cce): parse/schema failures must
+// surface as TYPED AmErrors (CONFIG_PARSE_ERROR / CONFIG_SCHEMA_ERROR) rather
+// than being collapsed to "not found". ENOENT still maps to null in
+// tryReadConfig (unchanged contract) so callers can distinguish the three.
+describe("tryReadConfig — error classification", () => {
+  let tmpDir: string;
+
+  beforeEach(async () => {
+    tmpDir = await mkdtemp(join(tmpdir(), "am-cfg-err-"));
+  });
+
+  afterEach(async () => {
+    await rm(tmpDir, { recursive: true, force: true });
+  });
+
+  test("(a) missing file returns null", async () => {
+    const result = await tryReadConfig(join(tmpDir, "does-not-exist.toml"));
+    expect(result).toBeNull();
+  });
+
+  test("(b) malformed TOML throws CONFIG_PARSE_ERROR (not null, not CONFIG_NOT_FOUND)", async () => {
+    const { writeFile } = await import("node:fs/promises");
+    const path = join(tmpDir, "config.toml");
+    // Unterminated table header / stray tokens — a TOML syntax error.
+    await writeFile(path, "this is = = not valid toml\n[unclosed\n");
+
+    let caught: unknown;
+    try {
+      await tryReadConfig(path);
+    } catch (err) {
+      caught = err;
+    }
+    expect(caught).toBeInstanceOf(AmError);
+    expect((caught as AmError).code).toBe("CONFIG_PARSE_ERROR");
+    expect((caught as AmError).code).not.toBe("CONFIG_NOT_FOUND");
+    // The parser's row/col detail is carried through as the suggestion.
+    expect((caught as AmError).message).toContain(path);
+    expect((caught as AmError).suggestion).toMatch(/row|col/i);
+  });
+
+  test("(c) schema-invalid TOML throws CONFIG_SCHEMA_ERROR", async () => {
+    const { writeFile } = await import("node:fs/promises");
+    const path = join(tmpDir, "config.toml");
+    // Valid TOML, but `scope` violates the InstructionSchema enum.
+    await writeFile(
+      path,
+      ["[instructions.bad]", 'content = "x"', 'scope = "nonsense"', ""].join("\n"),
+    );
+
+    let caught: unknown;
+    try {
+      await tryReadConfig(path);
+    } catch (err) {
+      caught = err;
+    }
+    expect(caught).toBeInstanceOf(AmError);
+    expect((caught as AmError).code).toBe("CONFIG_SCHEMA_ERROR");
+    expect((caught as AmError).code).not.toBe("CONFIG_NOT_FOUND");
+    expect((caught as AmError).message).toContain(path);
+    // First failing field path is surfaced as the suggestion.
+    expect((caught as AmError).suggestion).toContain("scope");
+  });
+
+  test("valid TOML still parses through tryReadConfig", async () => {
+    const config = await tryReadConfig(join(FIXTURES, "valid-config.toml"));
+    expect(config).not.toBeNull();
+    expect(config?.settings?.default_profile).toBe("work");
+  });
+});
+
 describe("writeConfig", () => {
   let tmpDir: string;
 
@@ -101,6 +173,32 @@ describe("writeConfig", () => {
       original.skills?.["research-rabbithole"].path,
     );
     expect(reread.profiles?.work.inherits).toBe(original.profiles?.work.inherits);
+  });
+
+  // ADR-0058: commands is the 6th catalog entity. serializeConfig MUST carry
+  // it through or the data is silently dropped on the first write. This guards
+  // that bright line — write a commands record, re-read, assert it survives.
+  test("round-trips a commands record (silent-data-loss guard)", async () => {
+    const config: Config = {
+      settings: { default_profile: "default" },
+      commands: {
+        deploy: {
+          type: "command",
+          path: "commands/deploy.md",
+          description: "Deploy the project",
+          tags: ["ops"],
+        },
+      },
+    };
+    const outPath = join(tmpDir, "commands-roundtrip.toml");
+    await writeConfig(outPath, config);
+    const reread = await readConfig(outPath);
+
+    expect(reread.commands?.deploy).toBeDefined();
+    expect(reread.commands?.deploy.type).toBe("command");
+    expect(reread.commands?.deploy.path).toBe("commands/deploy.md");
+    expect(reread.commands?.deploy.description).toBe("Deploy the project");
+    expect(reread.commands?.deploy.tags).toEqual(["ops"]);
   });
 
   test("preserves section ordering in output", async () => {
@@ -178,6 +276,18 @@ describe("mergeConfigs", () => {
     const merged = mergeConfigs(a, b);
     expect(merged.instructions?.i1).toBeDefined();
     expect(merged.instructions?.i2).toBeDefined();
+  });
+
+  test("merges commands as union (ADR-0058)", () => {
+    const a: Config = {
+      commands: { deploy: { type: "command", path: "commands/deploy.md", description: "Deploy" } },
+    };
+    const b: Config = {
+      commands: { lint: { type: "command", path: "commands/lint.md", description: "Lint" } },
+    };
+    const merged = mergeConfigs(a, b);
+    expect(merged.commands?.deploy).toBeDefined();
+    expect(merged.commands?.lint).toBeDefined();
   });
 
   test("settings shallow merge — higher precedence key wins", () => {
@@ -399,6 +509,15 @@ describe("projectToConfig", () => {
     const proj = { agents: { reviewer: { name: "reviewer", description: "Code reviewer" } } };
     const config = projectToConfig(proj as any);
     expect(config.agents?.reviewer).toBeDefined();
+  });
+
+  test("projectToConfig preserves commands (ADR-0058)", () => {
+    const proj = {
+      commands: { deploy: { type: "command", path: "commands/deploy.md", description: "Deploy" } },
+    };
+    const config = projectToConfig(proj as any);
+    expect(config.commands?.deploy).toBeDefined();
+    expect(config.commands?.deploy.type).toBe("command");
   });
 });
 
