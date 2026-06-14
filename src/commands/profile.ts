@@ -373,6 +373,27 @@ export const profileScopeCommand = defineCommand({
         }
       }
 
+      // Fail CLOSED when no scope is specified and --clear is absent. An empty
+      // `scope = {}` resolves to scopeDeclared=true with toolGroups=undefined,
+      // which isToolInScope evaluates as the FULL ceiling — so writing it would
+      // silently WIDEN a previously-narrowed profile (e.g. tool_groups=["core"])
+      // back to everything. That contradicts the command's invariant and is a
+      // fail-open hole in the keystone access-control write surface. Require an
+      // explicit scope or an explicit --clear; commit nothing otherwise.
+      if (
+        !args.clear &&
+        toolGroups === undefined &&
+        allowTools === undefined &&
+        denyTools === undefined
+      ) {
+        process.exitCode = 1;
+        error(
+          "Specify at least one of --tool-groups / --allow-tools / --deny-tools, or use --clear to remove the scope.",
+          opts,
+        );
+        return;
+      }
+
       await withConfig(configDir, async (config) => {
         requireConfig(config);
 

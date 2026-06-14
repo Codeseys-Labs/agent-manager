@@ -352,6 +352,27 @@ describe("am profile scope", () => {
     expect(consoleErrors.some((l) => /does not exist|ghost/i.test(l))).toBe(true);
   });
 
+  test("(f) no scope flags + no --clear fails CLOSED and does NOT widen an existing narrowed scope", async () => {
+    const configDir = await setup();
+
+    // Narrow the profile to a single group.
+    await runScope({ name: "default", "tool-groups": "core" });
+    expect(process.exitCode).not.toBe(1);
+    let updated = await readConfig(join(configDir, "config.toml"));
+    expect(updated.profiles?.default?.scope?.tool_groups).toEqual(["core"]);
+
+    // Re-run with NO scope flags and NO --clear. This must NOT write an empty
+    // `scope = {}` (which resolves to the full ceiling) over the narrowing.
+    consoleErrors = [];
+    await runScope({ name: "default" });
+    expect(process.exitCode).toBe(1);
+    expect(consoleErrors.some((l) => /at least one of|--clear|--tool-groups/i.test(l))).toBe(true);
+
+    // SECURITY: the persisted scope is UNCHANGED — still narrowed, not widened.
+    updated = await readConfig(join(configDir, "config.toml"));
+    expect(updated.profiles?.default?.scope?.tool_groups).toEqual(["core"]);
+  });
+
   test("--json echoes the resulting scope", async () => {
     await setup();
 
