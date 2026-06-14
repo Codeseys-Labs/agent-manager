@@ -1,9 +1,10 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, setDefaultTimeout, test } from "bun:test";
 import * as fs from "node:fs";
-import { mkdtemp, readFile, readdir, rm } from "node:fs/promises";
+import { mkdtemp, readFile, readdir, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import git from "isomorphic-git";
+import { atomicWriteFileSync } from "../../src/core/atomic-write.ts";
 import {
   addRemote,
   commitAll,
@@ -15,7 +16,12 @@ import {
   push,
   revertHead,
 } from "../../src/core/git.ts";
+import { AgeSecretsBackend } from "../../src/core/secrets-age.ts";
 import { AmError } from "../../src/lib/errors.ts";
+
+// age scrypt identity wrap is several seconds per op; the 5s default would time
+// out the e737 regression test below.
+setDefaultTimeout(30_000);
 
 let dir: string;
 
@@ -53,6 +59,15 @@ describe("initRepo", () => {
     expect(content).toContain(".agent-manager/key.txt");
     expect(content).toContain(".agent-manager/key");
     expect(content).toContain("**/key.txt");
+    // SECURITY (e737): the passphrase-wrapped age PRIVATE identity now lives
+    // in the OS data dir and is migrated out of the config dir. These entries
+    // are defence-in-depth so a stray identity/recipients/rotation-state file
+    // that lands back in the repo is NEVER staged by commitAll.
+    expect(content).toContain("identities/");
+    expect(content).toContain("identity.age");
+    expect(content).toContain("**/identity.age*");
+    expect(content).toContain("recipients/");
+    expect(content).toContain(".am-rotation-state.json");
   });
 
   test("creates initial commit", async () => {
@@ -505,6 +520,201 @@ describe("pull merge-conflict translation (GIT_PULL_CONFLICT)", () => {
       expect(caught instanceof AmError).toBe(false);
     } finally {
       (git as unknown as { pull: typeof git.pull }).pull = original;
+    }
+  });
+});
+
+// SECURITY (e737): the passphrase-wrapped age PRIVATE identity must never end
+// up in the committed/pushed config tree. The headline fix RELOCATES the
+// identity dir to the OS data dir so it physically lives outside the repo; the
+// .gitignore entries are defence-in-depth for a stray copy. These regression
+// tests prove BOTH: (1) a real generated identity in its own (data-dir) dir is
+// never staged when commitAll runs over the config repo, and (2) even a stray
+// identity that lands INSIDE the repo is gitignored and never staged.
+describe("commitAll never commits the age private identity (e737)", () => {
+  async function treeFiles(repoDir: string): Promise<string[]> {
+    const out: string[] = [];
+    const head = await git.resolveRef({ fs, dir: repoDir, ref: "HEAD" });
+    await git.walk({
+      fs,
+      dir: repoDir,
+      trees: [git.TREE({ ref: head })],
+      map: async (filepath, [entry]) => {
+        if (entry && filepath !== "." && (await entry.type()) === "blob") out.push(filepath);
+        return filepath;
+      },
+    });
+    return out;
+  }
+
+  async function stagedFiles(repoDir: string): Promise<string[]> {
+    const matrix = await git.statusMatrix({ fs, dir: repoDir });
+    // stage column (index 3) !== 0 means the path is in the index.
+    return matrix.filter(([_f, _h, _w, stage]) => stage !== 0).map(([f]) => f);
+  }
+
+  test("identity generated in the relocated (data-dir) dir is outside the repo entirely", async () => {
+    // Simulate the default install: the config repo lives at `dir`, and the
+    // identity dir is a SEPARATE OS-data-dir-style location. Generate a real
+    // passphrase-wrapped identity there.
+    const identityDir = await mkdtemp(join(tmpdir(), "am-id-datadir-"));
+    // Pin AM_AGE_IDENTITY_DIR so initialize()'s legacy-dir migration is a no-op
+    // (we don't want it reaching into the real ~/.config of the dev machine).
+    const prevAgeDir = process.env.AM_AGE_IDENTITY_DIR;
+    process.env.AM_AGE_IDENTITY_DIR = identityDir;
+    try {
+      const backend = new AgeSecretsBackend({
+        identityPath: join(identityDir, "identity.age"),
+        recipientsDir: join(identityDir, "recipients"),
+        passphraseProvider: async () => "correct horse battery staple",
+        keychain: {
+          async getPassword() {
+            return null;
+          },
+          async setPassword() {},
+        },
+      });
+      await backend.initialize();
+      // The on-disk wrapped identity exists in the data dir...
+      await expect(stat(join(identityDir, "identity.age"))).resolves.toBeDefined();
+
+      // ...and the config repo, after a normal commitAll, contains NONE of it.
+      await initRepo(dir);
+      await fs.promises.writeFile(join(dir, "config.toml"), "key = 'value'\n");
+      await commitAll(dir, "add config");
+
+      const files = await treeFiles(dir);
+      expect(files).toContain("config.toml");
+      expect(files).not.toContain("identity.age");
+      expect(files.some((f) => f.endsWith("identity.age"))).toBe(false);
+      expect(files.some((f) => f.includes("recipients/"))).toBe(false);
+    } finally {
+      if (prevAgeDir === undefined) Reflect.deleteProperty(process.env, "AM_AGE_IDENTITY_DIR");
+      else process.env.AM_AGE_IDENTITY_DIR = prevAgeDir;
+      await rm(identityDir, { recursive: true, force: true });
+    }
+  });
+
+  test("a stray identity that lands inside the repo is gitignored and never staged", async () => {
+    await initRepo(dir);
+
+    // Plant a stray wrapped identity + rotation sidecars INSIDE the repo, as if
+    // a downgraded build or manual copy dropped them back into the config dir.
+    await fs.promises.mkdir(join(dir, "identities", "recipients"), { recursive: true });
+    await fs.promises.writeFile(
+      join(dir, "identities", "identity.age"),
+      "age-encryption.org/v1\n-> scrypt STRAY\nSTRAYWRAPPEDPRIVATEKEY\n",
+    );
+    await fs.promises.writeFile(
+      join(dir, "identities", "identity.age.old"),
+      "age-encryption.org/v1\nOLDSTRAY\n",
+    );
+    await fs.promises.writeFile(
+      join(dir, "identities", ".am-rotation-state.json"),
+      '{"old_recipient":"age1x","new_recipient":"age1y","started_at":"now"}',
+    );
+    await fs.promises.writeFile(
+      join(dir, "identities", "recipients", "laptop.pub"),
+      "age1strayrecipient\n",
+    );
+    // Also a legitimate change so commitAll has SOMETHING to commit.
+    await fs.promises.writeFile(join(dir, "config.toml"), "key = 'value'\n");
+
+    const oid = await commitAll(dir, "add config (stray identity present)");
+    expect(oid).toMatch(/^[0-9a-f]{40}$/);
+
+    // The stray identity material was NEITHER staged NOR committed.
+    const staged = await stagedFiles(dir);
+    const tree = await treeFiles(dir);
+    for (const set of [staged, tree]) {
+      expect(set.some((f) => f.endsWith("identity.age"))).toBe(false);
+      expect(set.some((f) => f.endsWith("identity.age.old"))).toBe(false);
+      expect(set.some((f) => f.endsWith(".am-rotation-state.json"))).toBe(false);
+      expect(set.some((f) => f.includes("recipients/"))).toBe(false);
+    }
+    // The legitimate file WAS committed — gitignore didn't over-block.
+    expect(tree).toContain("config.toml");
+
+    // And the stray bytes are still on disk (gitignore hides, never deletes).
+    await expect(stat(join(dir, "identities", "identity.age"))).resolves.toBeDefined();
+  });
+});
+
+// SECURITY (H4 side-effect): `am apply` forces backup-before-overwrite for every
+// native config it touches (writeExportFiles passes { backup: true }). Each
+// snapshot lands in `$AM_CONFIG_DIR/backups/<key>/`, which is INSIDE this git
+// repo. A snapshot of a hand-edited `~/.claude.json` can carry a plaintext API
+// key, so if `backups/` were not gitignored, `commitAll` would sweep the
+// snapshot into the tree and `am sync` would push it. This regression proves the
+// backup root is never staged/committed (mirrors the e737 defence-in-depth).
+describe("commitAll never commits native-config apply backups (H4 side-effect)", () => {
+  async function treeFiles(repoDir: string): Promise<string[]> {
+    const out: string[] = [];
+    const head = await git.resolveRef({ fs, dir: repoDir, ref: "HEAD" });
+    await git.walk({
+      fs,
+      dir: repoDir,
+      trees: [git.TREE({ ref: head })],
+      map: async (filepath, [entry]) => {
+        if (entry && filepath !== "." && (await entry.type()) === "blob") out.push(filepath);
+        return filepath;
+      },
+    });
+    return out;
+  }
+
+  async function stagedFiles(repoDir: string): Promise<string[]> {
+    const matrix = await git.statusMatrix({ fs, dir: repoDir });
+    return matrix.filter(([_f, _h, _w, stage]) => stage !== 0).map(([f]) => f);
+  }
+
+  test("an apply backup snapshot under backups/ is gitignored and never staged", async () => {
+    // The backup root is derived from AM_CONFIG_DIR — point it at the repo dir
+    // so the snapshot lands INSIDE the config repo, exactly as in production.
+    const prevConfigDir = process.env.AM_CONFIG_DIR;
+    process.env.AM_CONFIG_DIR = dir;
+    try {
+      await initRepo(dir);
+
+      // A native config OUTSIDE the repo (e.g. ~/.claude.json) carrying a secret.
+      const nativeDir = await mkdtemp(join(tmpdir(), "am-native-"));
+      const nativeFile = join(nativeDir, "claude.json");
+      await fs.promises.writeFile(
+        nativeFile,
+        `${JSON.stringify({ apiKey: "sk-PLAINTEXT-SECRET-do-not-leak" })}\n`,
+      );
+
+      // `am apply` path: atomicWriteFileSync with { backup: true } snapshots the
+      // prior contents into $AM_CONFIG_DIR/backups/<key>/ before overwriting.
+      atomicWriteFileSync(nativeFile, `${JSON.stringify({ mcpServers: {} })}\n`, { backup: true });
+
+      // The snapshot exists on disk inside the repo...
+      await expect(stat(join(dir, "backups"))).resolves.toBeDefined();
+
+      // ...but a normal commitAll (driven by any later mutating command) must NOT
+      // sweep it into the tree. Add a legitimate change so there's something to
+      // commit.
+      await fs.promises.writeFile(join(dir, "config.toml"), "key = 'value'\n");
+      const oid = await commitAll(dir, "add config (apply backup present)");
+      expect(oid).toMatch(/^[0-9a-f]{40}$/);
+
+      const staged = await stagedFiles(dir);
+      const tree = await treeFiles(dir);
+      for (const set of [staged, tree]) {
+        expect(set.some((f) => f.startsWith("backups/"))).toBe(false);
+        expect(set.some((f) => f.endsWith(".bak"))).toBe(false);
+        expect(set.some((f) => f.includes("backups/") && f.endsWith("manifest.json"))).toBe(false);
+      }
+      // The legitimate file WAS committed — gitignore didn't over-block.
+      expect(tree).toContain("config.toml");
+
+      // And the snapshot bytes are still on disk (gitignore hides, never deletes).
+      await expect(stat(join(dir, "backups"))).resolves.toBeDefined();
+
+      await rm(nativeDir, { recursive: true, force: true });
+    } finally {
+      if (prevConfigDir === undefined) Reflect.deleteProperty(process.env, "AM_CONFIG_DIR");
+      else process.env.AM_CONFIG_DIR = prevConfigDir;
     }
   });
 });

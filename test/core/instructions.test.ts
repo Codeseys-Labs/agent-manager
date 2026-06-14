@@ -167,6 +167,52 @@ describe("generateClaudeMd", () => {
     const result = generateClaudeMd({});
     expect(result).toBe("");
   });
+
+  // ── Marker splice guard (H3): malformed markers must NOT corrupt content ──
+
+  test("refuses to splice when am:end precedes am:begin (out-of-order)", () => {
+    // User prose sits BETWEEN an out-of-order end/begin pair. The old code
+    // sliced before+after with after starting before beginIdx, dropping this
+    // prose and scrambling the result. Guard must refuse and return unchanged.
+    const userProse = "IMPORTANT user prose that must survive.";
+    const existing = `# Project\n\n<!-- am:end -->\n${userProse}\n<!-- am:begin -->\n\nTail.`;
+    const instructions = {
+      rule1: makeInstruction({ content: "New managed." }),
+    };
+    const result = generateClaudeMd(instructions, existing);
+    // Refuse: existing content returned UNCHANGED (no corruption, no new block).
+    expect(result).toBe(existing);
+    expect(result).toContain(userProse);
+    // Did not inject the new managed block (would be a second/duplicate block).
+    expect(result).not.toContain("New managed.");
+  });
+
+  test("refuses to splice when only am:begin present (unpaired marker)", () => {
+    // Only a begin marker exists. The old guard was false so it fell through
+    // to the append branch, emitting a SECOND begin/end block (duplication).
+    const existing = "# Project\n\n<!-- am:begin -->\nDangling managed content.";
+    const instructions = {
+      rule1: makeInstruction({ content: "New managed." }),
+    };
+    const result = generateClaudeMd(instructions, existing);
+    // Refuse: returned unchanged, no duplicate block appended.
+    expect(result).toBe(existing);
+    const beginCount = (result.match(/<!-- am:begin -->/g) || []).length;
+    expect(beginCount).toBe(1);
+    expect(result).not.toContain("New managed.");
+  });
+
+  test("refuses to splice when only am:end present (unpaired marker)", () => {
+    const existing = "# Project\n\nManual content.\n<!-- am:end -->\nMore.";
+    const instructions = {
+      rule1: makeInstruction({ content: "New managed." }),
+    };
+    const result = generateClaudeMd(instructions, existing);
+    expect(result).toBe(existing);
+    const endCount = (result.match(/<!-- am:end -->/g) || []).length;
+    expect(endCount).toBe(1);
+    expect(result).not.toContain("New managed.");
+  });
 });
 
 // ── generateAgentsMd ────────────────────────────────────────────
@@ -377,5 +423,25 @@ describe("generateKiroSteering", () => {
     expect(result).toContain("Some manual content.");
     expect(result).toContain("<!-- am:begin -->");
     expect(result).toContain("Managed.");
+  });
+
+  test("refuses to splice when am:end precedes am:begin (out-of-order)", () => {
+    const userProse = "Steering prose that must survive.";
+    const existing = `---\ninclusion: always\n---\n\n<!-- am:end -->\n${userProse}\n<!-- am:begin -->`;
+    const instr = makeInstruction({ content: "New managed." });
+    const result = generateKiroSteering(instr, existing);
+    expect(result).toBe(existing);
+    expect(result).toContain(userProse);
+    expect(result).not.toContain("New managed.");
+  });
+
+  test("refuses to splice when only am:begin present (unpaired marker)", () => {
+    const existing = "---\ninclusion: always\n---\n\n<!-- am:begin -->\nDangling.";
+    const instr = makeInstruction({ content: "New managed." });
+    const result = generateKiroSteering(instr, existing);
+    expect(result).toBe(existing);
+    const beginCount = (result.match(/<!-- am:begin -->/g) || []).length;
+    expect(beginCount).toBe(1);
+    expect(result).not.toContain("New managed.");
   });
 });

@@ -1,12 +1,14 @@
 import { beforeEach, describe, expect, setDefaultTimeout, test } from "bun:test";
-import { mkdtemp, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { generateIdentity, identityToRecipient } from "age-encryption";
 import {
   AgeSecretsBackend,
   type KeychainAdapter,
   envPassphraseProvider,
+  legacyIdentityDir,
+  migrateLegacyIdentityDir,
   resolveIdentityDir,
   resolveIdentityPath,
 } from "../../src/core/secrets-age";
@@ -44,6 +46,7 @@ async function makeTempIdentityPath(): Promise<{ dir: string; path: string }> {
 
 describe("AgeSecretsBackend — paths", () => {
   const origEnv: Record<string, string | undefined> = {};
+  const origPlatform = process.platform;
   function setEnv(key: string, value: string | undefined) {
     if (!(key in origEnv)) origEnv[key] = process.env[key];
     if (value === undefined) delete process.env[key];
@@ -55,6 +58,12 @@ describe("AgeSecretsBackend — paths", () => {
       else process.env[key] = value;
     }
     for (const key of Object.keys(origEnv)) delete (origEnv as Record<string, unknown>)[key];
+  }
+  function setPlatform(platform: NodeJS.Platform) {
+    Object.defineProperty(process, "platform", { value: platform, configurable: true });
+  }
+  function restorePlatform() {
+    Object.defineProperty(process, "platform", { value: origPlatform, configurable: true });
   }
 
   test("resolveIdentityDir respects AM_AGE_IDENTITY_DIR override", () => {
@@ -71,14 +80,248 @@ describe("AgeSecretsBackend — paths", () => {
     }
   });
 
-  test("resolveIdentityDir defaults to XDG_CONFIG_HOME or ~/.config", () => {
-    const xdg = join(tmpdir(), "xdg");
+  // SECURITY (e737): resolveIdentityDir now resolves to the OS DATA dir
+  // (mirroring resolveKeyPath), NOT the git-tracked config dir. The wrapped
+  // private identity must live physically outside the repo.
+  test("macOS: defaults to ~/Library/Application Support/agent-manager/identities", () => {
     setEnv("AM_AGE_IDENTITY_DIR", undefined);
-    setEnv("XDG_CONFIG_HOME", xdg);
+    setPlatform("darwin");
     try {
-      expect(resolveIdentityDir()).toBe(join(xdg, "agent-manager", "identities"));
+      expect(resolveIdentityDir()).toBe(
+        join(homedir(), "Library", "Application Support", "agent-manager", "identities"),
+      );
     } finally {
       restoreEnv();
+      restorePlatform();
+    }
+  });
+
+  test("Linux: uses XDG_DATA_HOME (the DATA dir, not the config dir)", () => {
+    setEnv("AM_AGE_IDENTITY_DIR", undefined);
+    setEnv("XDG_DATA_HOME", join(tmpdir(), "custom-xdg-data"));
+    setPlatform("linux");
+    try {
+      expect(resolveIdentityDir()).toBe(
+        join(join(tmpdir(), "custom-xdg-data"), "agent-manager", "identities"),
+      );
+    } finally {
+      restoreEnv();
+      restorePlatform();
+    }
+  });
+
+  test("Linux: falls back to ~/.local/share when XDG_DATA_HOME unset", () => {
+    setEnv("AM_AGE_IDENTITY_DIR", undefined);
+    setEnv("XDG_DATA_HOME", undefined);
+    setPlatform("linux");
+    try {
+      expect(resolveIdentityDir()).toBe(
+        join(homedir(), ".local", "share", "agent-manager", "identities"),
+      );
+    } finally {
+      restoreEnv();
+      restorePlatform();
+    }
+  });
+
+  test("Windows: uses %APPDATA% when set", () => {
+    setEnv("AM_AGE_IDENTITY_DIR", undefined);
+    setEnv("APPDATA", "C:\\Users\\Test\\AppData\\Roaming");
+    setPlatform("win32");
+    try {
+      expect(resolveIdentityDir()).toBe(
+        join("C:\\Users\\Test\\AppData\\Roaming", "agent-manager", "identities"),
+      );
+    } finally {
+      restoreEnv();
+      restorePlatform();
+    }
+  });
+
+  test("regression: never resolves inside ~/.config/agent-manager (the config repo)", () => {
+    // The whole point of e737: the identity must NOT live under the config dir,
+    // which is a git repo that commitAll stages-and-pushes wholesale.
+    setEnv("AM_AGE_IDENTITY_DIR", undefined);
+    setEnv("XDG_DATA_HOME", undefined);
+    setEnv("XDG_CONFIG_HOME", undefined);
+    try {
+      for (const platform of ["darwin", "linux", "win32"] as NodeJS.Platform[]) {
+        setPlatform(platform);
+        const dir = resolveIdentityDir();
+        // Normalise to forward slashes so the substring check is portable.
+        const normalised = dir.replace(/\\/g, "/");
+        expect(normalised).not.toContain(".config/agent-manager");
+      }
+    } finally {
+      restoreEnv();
+      restorePlatform();
+    }
+  });
+
+  test("legacyIdentityDir points inside the config dir (the old, leaky location)", () => {
+    setEnv("XDG_CONFIG_HOME", join(tmpdir(), "xdg-config"));
+    try {
+      expect(legacyIdentityDir()).toBe(
+        join(join(tmpdir(), "xdg-config"), "agent-manager", "identities"),
+      );
+    } finally {
+      restoreEnv();
+    }
+  });
+});
+
+// SECURITY (e737): a pre-e737 install wrote the wrapped PRIVATE identity into
+// the git-tracked config dir. migrateLegacyIdentityDir() moves it out to the
+// data-dir location on next backend init so the key stops living in the repo.
+describe("AgeSecretsBackend — legacy identity-dir migration (e737)", () => {
+  const origEnv: Record<string, string | undefined> = {};
+  function setEnv(key: string, value: string | undefined) {
+    if (!(key in origEnv)) origEnv[key] = process.env[key];
+    if (value === undefined) delete process.env[key];
+    else process.env[key] = value;
+  }
+  function restoreEnv() {
+    for (const [key, value] of Object.entries(origEnv)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+    for (const key of Object.keys(origEnv)) delete (origEnv as Record<string, unknown>)[key];
+  }
+
+  test("moves a legacy identity + recipients out of the config dir to the data dir", async () => {
+    const xdgConfig = await mkdtemp(join(tmpdir(), "am-e737-cfg-"));
+    const dataDir = await mkdtemp(join(tmpdir(), "am-e737-data-"));
+    setEnv("XDG_CONFIG_HOME", xdgConfig);
+    // Migration only fires on the DEFAULT layout — ensure no override leaks in
+    // from the ambient env or a prior describe block.
+    setEnv("AM_AGE_IDENTITY_DIR", undefined);
+    try {
+      // Seed a legacy install: identity.age (+ rotation sidecars + recipients)
+      // living under ~/.config/agent-manager/identities.
+      const legacy = legacyIdentityDir();
+      await mkdir(join(legacy, "recipients"), { recursive: true });
+      await writeFile(join(legacy, "identity.age"), "LEGACY-WRAPPED-PRIVATE-KEY");
+      await writeFile(join(legacy, "identity.age.old"), "LEGACY-OLD");
+      await writeFile(join(legacy, ".am-rotation-state.json"), "{}");
+      const recip = await identityToRecipient(await generateIdentity());
+      await writeFile(join(legacy, "recipients", "laptop.pub"), `${recip}\n`);
+
+      const target = join(dataDir, "identities");
+      const result = await migrateLegacyIdentityDir(target);
+
+      expect(result.kind).toBe("migrated");
+      if (result.kind !== "migrated") throw new Error("unreachable");
+      expect(result.from).toBe(legacy);
+      expect(result.to).toBe(target);
+      expect(result.files).toContain("identity.age");
+
+      // Identity is now in the data dir...
+      expect(await readFile(join(target, "identity.age"), "utf8")).toBe(
+        "LEGACY-WRAPPED-PRIVATE-KEY",
+      );
+      expect(await readFile(join(target, "identity.age.old"), "utf8")).toBe("LEGACY-OLD");
+      expect(await readFile(join(target, ".am-rotation-state.json"), "utf8")).toBe("{}");
+      expect(await readFile(join(target, "recipients", "laptop.pub"), "utf8")).toBe(`${recip}\n`);
+
+      // ...and the LEAKY legacy copy is GONE (the private key no longer lives
+      // in the git-tracked config dir).
+      await expect(stat(join(legacy, "identity.age"))).rejects.toThrow();
+      await expect(stat(join(legacy, "identity.age.old"))).rejects.toThrow();
+      await expect(stat(join(legacy, ".am-rotation-state.json"))).rejects.toThrow();
+      await expect(stat(join(legacy, "recipients", "laptop.pub"))).rejects.toThrow();
+    } finally {
+      restoreEnv();
+      await rm(xdgConfig, { recursive: true, force: true });
+      await rm(dataDir, { recursive: true, force: true });
+    }
+  });
+
+  test("migrated identity file is mode 0600 (POSIX)", async () => {
+    if (process.platform === "win32") return;
+    const xdgConfig = await mkdtemp(join(tmpdir(), "am-e737-cfg-"));
+    const dataDir = await mkdtemp(join(tmpdir(), "am-e737-data-"));
+    setEnv("XDG_CONFIG_HOME", xdgConfig);
+    // Migration only fires on the DEFAULT layout — ensure no override leaks in
+    // from the ambient env or a prior describe block.
+    setEnv("AM_AGE_IDENTITY_DIR", undefined);
+    try {
+      const legacy = legacyIdentityDir();
+      await mkdir(legacy, { recursive: true });
+      await writeFile(join(legacy, "identity.age"), "SECRET", { mode: 0o644 });
+
+      const target = join(dataDir, "identities");
+      await migrateLegacyIdentityDir(target);
+
+      const st = await stat(join(target, "identity.age"));
+      expect(st.mode & 0o777).toBe(0o600);
+    } finally {
+      restoreEnv();
+      await rm(xdgConfig, { recursive: true, force: true });
+      await rm(dataDir, { recursive: true, force: true });
+    }
+  });
+
+  test("no legacy identity → kind='none', no files created", async () => {
+    const xdgConfig = await mkdtemp(join(tmpdir(), "am-e737-cfg-"));
+    const dataDir = await mkdtemp(join(tmpdir(), "am-e737-data-"));
+    setEnv("XDG_CONFIG_HOME", xdgConfig);
+    // Migration only fires on the DEFAULT layout — ensure no override leaks in
+    // from the ambient env or a prior describe block.
+    setEnv("AM_AGE_IDENTITY_DIR", undefined);
+    try {
+      const result = await migrateLegacyIdentityDir(join(dataDir, "identities"));
+      expect(result.kind).toBe("none");
+      await expect(stat(join(dataDir, "identities", "identity.age"))).rejects.toThrow();
+    } finally {
+      restoreEnv();
+      await rm(xdgConfig, { recursive: true, force: true });
+      await rm(dataDir, { recursive: true, force: true });
+    }
+  });
+
+  test("conflict: data-dir identity already exists → legacy left untouched, never clobbered", async () => {
+    const xdgConfig = await mkdtemp(join(tmpdir(), "am-e737-cfg-"));
+    const dataDir = await mkdtemp(join(tmpdir(), "am-e737-data-"));
+    setEnv("XDG_CONFIG_HOME", xdgConfig);
+    // Migration only fires on the DEFAULT layout — ensure no override leaks in
+    // from the ambient env or a prior describe block.
+    setEnv("AM_AGE_IDENTITY_DIR", undefined);
+    try {
+      const legacy = legacyIdentityDir();
+      await mkdir(legacy, { recursive: true });
+      await writeFile(join(legacy, "identity.age"), "LEGACY");
+
+      const target = join(dataDir, "identities");
+      await mkdir(target, { recursive: true });
+      await writeFile(join(target, "identity.age"), "DATA-DIR-WINS");
+
+      const result = await migrateLegacyIdentityDir(target);
+      expect(result.kind).toBe("conflict");
+      // Data-dir copy is untouched (the live key wins)...
+      expect(await readFile(join(target, "identity.age"), "utf8")).toBe("DATA-DIR-WINS");
+      // ...and the legacy copy is NOT deleted (recovery path preserved).
+      expect(await readFile(join(legacy, "identity.age"), "utf8")).toBe("LEGACY");
+    } finally {
+      restoreEnv();
+      await rm(xdgConfig, { recursive: true, force: true });
+      await rm(dataDir, { recursive: true, force: true });
+    }
+  });
+
+  test("skipped when legacy and target resolve to the same directory", async () => {
+    const xdgConfig = await mkdtemp(join(tmpdir(), "am-e737-cfg-"));
+    setEnv("XDG_CONFIG_HOME", xdgConfig);
+    // Migration only fires on the DEFAULT layout — ensure no override leaks in
+    // from the ambient env or a prior describe block.
+    setEnv("AM_AGE_IDENTITY_DIR", undefined);
+    try {
+      const legacy = legacyIdentityDir();
+      // Target == legacy (e.g. AM_AGE_IDENTITY_DIR points at the old location).
+      const result = await migrateLegacyIdentityDir(legacy);
+      expect(result.kind).toBe("skipped");
+    } finally {
+      restoreEnv();
+      await rm(xdgConfig, { recursive: true, force: true });
     }
   });
 });

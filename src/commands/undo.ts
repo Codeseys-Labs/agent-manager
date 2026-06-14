@@ -1,9 +1,32 @@
+import * as clack from "@clack/prompts";
 import { defineCommand } from "citty";
 import { resolveConfigDir } from "../core/config";
 import { getStatus, log as gitLog, revertHead } from "../core/git";
 import { errorMessage } from "../lib/errors";
 import { error, info, output, warn } from "../lib/output";
 import { applyCommand } from "./apply";
+
+/**
+ * The subset of `@clack/prompts` the dirty-tree confirmation path uses. Pulled
+ * into a named type so a test can inject a deterministic, non-blocking double
+ * for the TTY confirm branch WITHOUT a process-global
+ * `mock.module("@clack/prompts", …)` — that approach leaks into every other
+ * parallel test file that imports clack (see the same seam in
+ * commands/apply.ts and commands/setup.ts).
+ */
+export type ClackLike = Pick<typeof clack, "confirm" | "isCancel">;
+
+let clackOverride: ClackLike | null = null;
+
+/** @internal test seam — inject a clack double for the dirty-tree confirm path. */
+export function __setUndoClackForTests(impl: ClackLike | null): void {
+  clackOverride = impl;
+}
+
+/** Resolve the clack implementation (real module, or a test-injected double). */
+function getClack(): ClackLike {
+  return clackOverride ?? clack;
+}
 
 export const undoCommand = defineCommand({
   meta: { name: "undo", description: "Revert the last config change" },
@@ -13,6 +36,15 @@ export const undoCommand = defineCommand({
       description:
         "Regenerate IDE configs after revert by running `am apply` automatically. " +
         "Without this flag, native configs remain stale until you run `am apply` manually.",
+      default: false,
+    },
+    force: {
+      type: "boolean",
+      description:
+        "Revert even when the config repo has uncommitted edits. The revert " +
+        "overwrites the working tree with the parent commit, so uncommitted " +
+        "changes to reverted files are DISCARDED. Without this flag a dirty " +
+        "tree is refused (or, in a TTY, prompted) to prevent silent data loss.",
       default: false,
     },
     json: { type: "boolean", description: "JSON output", default: false },
@@ -41,22 +73,68 @@ export const undoCommand = defineCommand({
 
     const headMsg = entries[0].message;
 
-    // ws4-6fd2: `am undo` reverts COMMITTED history (git revert). Any
-    // uncommitted working-tree edits in the config repo are NOT part of that
-    // revert — and `revertHead` can fail outright when the tree is dirty. Warn
-    // BEFORE reverting so the operator understands the scope and isn't
-    // surprised by a failure or by edits that survive untouched.
+    // c47a CLEAN GATE: `am undo` reverts via `revertHead`, which fs.writeFile's
+    // every parent-commit blob over the working tree (and removes files absent
+    // from the parent). That UNCONDITIONALLY clobbers any uncommitted edits to
+    // a file present in the parent tree (e.g. config.toml) with NO recovery —
+    // the edits were never committed, so they are simply gone. The old code
+    // only WARNED then proceeded. We now refuse (fail closed) unless the
+    // operator opts in. The gate runs AFTER the "Nothing to undo" check above
+    // and BEFORE revertHead / --apply below, so neither side effect fires when
+    // we refuse.
     let dirtyFiles: string[] = [];
+    let dirty = false;
     try {
       const status = await getStatus(configDir);
       if (!status.clean) {
+        dirty = true;
         dirtyFiles = status.dirty;
-        const dirtyMsg = `Uncommitted edits in the config repo (${dirtyFiles.length} file(s): ${dirtyFiles.join(", ")}). \`am undo\` reverts COMMITTED history only — these working-tree edits are left untouched (and may block the revert). Commit or discard them first if you want a clean undo.`;
-        warn(dirtyMsg, opts);
       }
     } catch {
-      // Non-fatal: if status can't be read we still attempt the revert, which
-      // will surface its own error below.
+      // Non-fatal: if status can't be read we cannot prove the tree is clean,
+      // but failing closed here would block every undo on an unreadable repo.
+      // Fall through to the revert, which surfaces its own error below.
+    }
+
+    if (dirty) {
+      const fileList = dirtyFiles.join(", ");
+      // Static body kept as a plain-string constant so the dynamic prefix below
+      // is the ONLY interpolation — biome's useTemplate rule rejects mixing a
+      // `${…}` template literal with `+` string concatenation, so we join the
+      // dynamic head and the static tail with a single template literal instead.
+      const dirtyBody =
+        "`am undo` overwrites the working tree with the previous commit, which would " +
+        "PERMANENTLY DISCARD these uncommitted changes (they were never committed, so " +
+        "they cannot be recovered).";
+      const dirtyMsg = `Uncommitted edits in the config repo (${dirtyFiles.length} file(s): ${fileList}). ${dirtyBody}`;
+      const cleanupHint =
+        "Commit or discard them first " +
+        "(e.g. `git -C <config dir> commit` / `git -C <config dir> checkout -- .`), " +
+        "or pass `--force` to undo and discard them.";
+
+      if (args.force) {
+        // Operator explicitly opted in; surface the data-loss warning but proceed.
+        warn(`${dirtyMsg} Proceeding anyway because --force was passed.`, opts);
+      } else {
+        const interactive = !args.json && !args.quiet && Boolean(process.stdin.isTTY);
+        if (interactive) {
+          warn(dirtyMsg, opts);
+          const prompt = getClack();
+          const confirmed = await prompt.confirm({
+            message: "Discard these uncommitted edits and undo anyway?",
+            initialValue: false,
+          });
+          if (prompt.isCancel(confirmed) || !confirmed) {
+            info("Undo aborted — working tree left untouched.", opts);
+            return;
+          }
+        } else {
+          // Non-interactive (scripts/CI, --json, --quiet, or no TTY): refuse.
+          error(`${dirtyMsg} ${cleanupHint}`, opts);
+          process.exitCode = 1;
+          return;
+        }
+      }
     }
 
     let oid: string;

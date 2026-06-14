@@ -17,6 +17,32 @@ const GITIGNORE_ENTRIES = [
   ".agent-manager/key",
   ".agent-manager/key.*",
   "**/key.txt",
+  // SECURITY (e737): the passphrase-wrapped age PRIVATE identity now lives in
+  // the OS data dir (see `resolveIdentityDir` in src/core/secrets-age.ts) and
+  // is migrated out of the config dir on backend init. These entries are
+  // defence-in-depth: if a stray identity ever lands back in the repo (old
+  // install, manual copy, a downgraded/forked build, or a failed migration
+  // unlink), `commitAll` must NEVER stage and push it. `identity.age*` also
+  // covers the rotation archive `identity.age.old`.
+  "identities/",
+  "**/identities/",
+  "identity.age",
+  "**/identity.age",
+  "identity.age.old",
+  "**/identity.age*",
+  "recipients/",
+  "**/recipients/",
+  ".am-rotation-state.json",
+  "**/.am-rotation-state.json",
+  // SECURITY (H4 side-effect): `am apply` snapshots the prior contents of every
+  // native config it overwrites into `$AM_CONFIG_DIR/backups/<key>/` (see
+  // `maybeBackupSync` in src/core/atomic-write.ts, forced on by
+  // `writeExportFiles`). That backup root lives INSIDE this git repo, so a
+  // snapshot of a hand-edited `~/.claude.json` — which may hold a plaintext API
+  // key — would otherwise be swept into the tree by `commitAll` and pushed by
+  // `am sync`. Ignore it so the recovery snapshots stay local-only.
+  "backups/",
+  "**/backups/",
 ];
 
 /**

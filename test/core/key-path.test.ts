@@ -8,9 +8,11 @@ import {
   legacyKeyPath,
   loadKey,
   migrateLegacyKey,
+  resolveDataDir,
   resolveKeyPath,
   saveKey,
 } from "../../src/core/secrets";
+import { resolveIdentityDir } from "../../src/core/secrets-age";
 import { type TestDir, createTestDir } from "../helpers/tmp";
 
 /**
@@ -124,6 +126,121 @@ describe("resolveKeyPath", () => {
     // Regression: the whole point of Wave 1.C is that the key is NOT under
     // ~/.config/agent-manager (which is the default config dir and a git repo).
     expect(p).not.toContain(".config/agent-manager");
+  });
+});
+
+describe("resolveDataDir (M15 — shared OS-data-dir helper)", () => {
+  const env = envSandbox();
+  const origPlatform = process.platform;
+
+  function setPlatform(platform: NodeJS.Platform) {
+    Object.defineProperty(process, "platform", {
+      value: platform,
+      configurable: true,
+    });
+  }
+
+  afterEach(() => {
+    env.restore();
+    setPlatform(origPlatform);
+  });
+
+  test("macOS: ~/Library/Application Support/<subpath>", () => {
+    setPlatform("darwin");
+    expect(resolveDataDir(join("agent-manager", "key"))).toBe(
+      join(homedir(), "Library", "Application Support", "agent-manager", "key"),
+    );
+  });
+
+  test("Linux: uses XDG_DATA_HOME when set", () => {
+    env.set("XDG_DATA_HOME", "/custom/xdg-data");
+    setPlatform("linux");
+    expect(resolveDataDir(join("agent-manager", "identities"))).toBe(
+      join("/custom/xdg-data", "agent-manager", "identities"),
+    );
+  });
+
+  test("Linux: falls back to ~/.local/share when XDG_DATA_HOME unset", () => {
+    env.set("XDG_DATA_HOME", undefined);
+    setPlatform("linux");
+    expect(resolveDataDir(join("agent-manager", "key"))).toBe(
+      join(homedir(), ".local", "share", "agent-manager", "key"),
+    );
+  });
+
+  test("Windows: uses %APPDATA% when set", () => {
+    env.set("APPDATA", "C:\\Users\\Test\\AppData\\Roaming");
+    setPlatform("win32");
+    expect(resolveDataDir(join("agent-manager", "key"))).toBe(
+      join("C:\\Users\\Test\\AppData\\Roaming", "agent-manager", "key"),
+    );
+  });
+
+  test("Windows: falls back to ~/AppData/Roaming when APPDATA unset", () => {
+    env.set("APPDATA", undefined);
+    setPlatform("win32");
+    expect(resolveDataDir(join("agent-manager", "identities"))).toBe(
+      join(homedir(), "AppData", "Roaming", "agent-manager", "identities"),
+    );
+  });
+
+  test("Unknown platform: XDG-style fallback", () => {
+    env.set("XDG_DATA_HOME", undefined);
+    setPlatform("freebsd" as NodeJS.Platform);
+    expect(resolveDataDir(join("agent-manager", "key"))).toBe(
+      join(homedir(), ".local", "share", "agent-manager", "key"),
+    );
+  });
+});
+
+// M15 regression: the AES master key and the age identity are the SAME class
+// of per-machine private key material. They MUST share one platform switch so
+// they can never diverge to inconsistent OS locations again. This is the whole
+// point of factoring resolveDataDir() out of the two duplicated switches.
+describe("resolveKeyPath / resolveIdentityDir share one base (M15 divergence guard)", () => {
+  const env = envSandbox();
+  const origPlatform = process.platform;
+
+  function setPlatform(platform: NodeJS.Platform) {
+    Object.defineProperty(process, "platform", {
+      value: platform,
+      configurable: true,
+    });
+  }
+
+  afterEach(() => {
+    env.restore();
+    setPlatform(origPlatform);
+  });
+
+  // For each platform, the key and the identity dir must resolve as siblings
+  // under the SAME `agent-manager` data-dir root — i.e. dirname(key) ===
+  // dirname(identityDir). If the two switches drifted, this fails.
+  for (const platform of ["darwin", "linux", "win32", "freebsd"] as NodeJS.Platform[]) {
+    test(`${platform}: key and identity dir share the agent-manager data root`, () => {
+      // Default layout: no overrides, deterministic env for the data-dir branch.
+      env.set("AM_KEY_PATH", undefined);
+      env.set("AM_AGE_IDENTITY_DIR", undefined);
+      env.set("XDG_DATA_HOME", undefined);
+      env.set("APPDATA", undefined);
+      setPlatform(platform);
+
+      const keyPath = resolveKeyPath(); // .../agent-manager/key
+      const identityDir = resolveIdentityDir(); // .../agent-manager/identities
+
+      expect(keyPath).toBe(resolveDataDir(join("agent-manager", "key")));
+      expect(identityDir).toBe(resolveDataDir(join("agent-manager", "identities")));
+      // Siblings under the same agent-manager root.
+      expect(join(keyPath, "..")).toBe(join(identityDir, ".."));
+    });
+  }
+
+  test("env overrides still win independently (key vs identity)", () => {
+    env.set("AM_KEY_PATH", "/tmp/override/key");
+    env.set("AM_AGE_IDENTITY_DIR", "/tmp/override/identities");
+    setPlatform("linux");
+    expect(resolveKeyPath()).toBe("/tmp/override/key");
+    expect(resolveIdentityDir()).toBe("/tmp/override/identities");
   });
 });
 

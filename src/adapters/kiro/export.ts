@@ -67,7 +67,7 @@ export async function exportConfig(
 
   // 3. Generate steering files (instructions)
   if (options.projectPath) {
-    const steeringFiles = generateSteeringFiles(config, options.projectPath);
+    const steeringFiles = generateSteeringFiles(config, options.projectPath, warnings);
     files.push(...steeringFiles);
 
     // 4. Inject apply-time wiki context (ADR-0054 R7). Kiro has no single
@@ -93,7 +93,11 @@ export async function exportConfig(
 }
 
 /** Generate steering markdown files from instructions. */
-function generateSteeringFiles(config: ResolvedConfig, projectPath: string): WrittenFile[] {
+function generateSteeringFiles(
+  config: ResolvedConfig,
+  projectPath: string,
+  warnings: string[],
+): WrittenFile[] {
   const files: WrittenFile[] = [];
 
   for (const [name, instr] of Object.entries(config.instructions)) {
@@ -114,7 +118,7 @@ function generateSteeringFiles(config: ResolvedConfig, projectPath: string): Wri
       // No existing file
     }
 
-    const content = generateKiroSteering(instr, existingContent);
+    const content = generateKiroSteering(instr, existingContent, warnings);
     files.push({ path: filePath, content, written: false });
   }
 

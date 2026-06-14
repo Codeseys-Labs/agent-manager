@@ -318,6 +318,37 @@ export async function scanServerForSecrets(
 }
 
 /**
+ * Synthetic server name used for `settings.env` findings so they flow through
+ * the same report/JSON shape as server findings. `settings` is not a valid MCP
+ * server name (no server can be named via a reserved word here), so it's a safe
+ * sentinel for "this secret lives in [settings.env], not under any server".
+ */
+export const SETTINGS_ENV_SCOPE = "settings";
+
+/**
+ * Full scan of `settings.env` — the global env block (`SettingsSchema.env`,
+ * a `Record<string,string>`). `scanConfigForSecrets` only ever looked at
+ * `config.servers`, so a plaintext secret stashed in `settings.env` was
+ * invisible to `am secret scan` (false-clean → committed credential, M6).
+ *
+ * Runs the SAME Tier-1 (key name) + Tier-2 (betterleaks) value detection used
+ * for `server.env`, by treating the env block as a synthetic server with no
+ * command/args (so only the env values are inspected). URL-credential (Tier
+ * 1.5) detection is skipped — settings.env holds plain string values, not
+ * command/args/adapter URLs.
+ *
+ * Returns a `SecretScanResult` tagged with the `SETTINGS_ENV_SCOPE` server name
+ * (empty `secrets` when nothing is found). Callers MUST surface findings in the
+ * same report shape so `formatScanReport`, the JSON output, and the M5 exit-code
+ * gate all count them.
+ */
+export async function scanSettingsEnvForSecrets(
+  env: Record<string, string> | undefined,
+): Promise<SecretScanResult> {
+  return scanServerForSecrets(SETTINGS_ENV_SCOPE, { command: "", env });
+}
+
+/**
  * Full scan across all servers.
  */
 export async function scanConfigForSecrets(

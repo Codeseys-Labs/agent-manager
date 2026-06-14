@@ -117,6 +117,70 @@ describe("exportConfig()", () => {
     expect(agentsFile!.content).toContain("<!-- am:end -->");
   });
 
+  test("refuses to rewrite AGENTS.md with out-of-order markers and warns", async () => {
+    // H3: malformed (out-of-order) markers must not scramble user prose.
+    dir = await createTestDir("am-kc-export-");
+    const userProse = "IMPORTANT hand-written prose that must survive.";
+    const existing = `# Project\n\n<!-- am:end -->\n${userProse}\n<!-- am:begin -->\n\nTail.`;
+    // exportConfig's generateAgentsMd reads <projectPath>/AGENTS.md, so the
+    // fixture must live at the project root we pass below.
+    await dir.write("AGENTS.md", existing);
+
+    const cfg = config({
+      instructions: {
+        "ts-rules": {
+          name: "ts-rules",
+          content: "New managed content.",
+          scope: "always",
+          globs: [],
+          description: "",
+          targets: ["kilo-code"],
+          adapters: {},
+        },
+      },
+    });
+
+    const result = await exportConfig(cfg, { projectPath: dir.path, dryRun: true }, dir.path);
+    const agentsFile = result.files.find((f) => f.path.endsWith("AGENTS.md"));
+    expect(agentsFile).toBeDefined();
+    // Content returned UNCHANGED — no corruption, no new managed block.
+    expect(agentsFile!.content).toBe(existing);
+    expect(agentsFile!.content).toContain(userProse);
+    expect(agentsFile!.content).not.toContain("New managed content.");
+    // A warning was surfaced to the caller.
+    expect(result.warnings.some((w) => w.includes("AGENTS.md"))).toBe(true);
+  });
+
+  test("refuses to rewrite AGENTS.md with a single unpaired am:begin (no duplicate block)", async () => {
+    dir = await createTestDir("am-kc-export-");
+    const existing = "# Project\n\n<!-- am:begin -->\nDangling managed content.";
+    await dir.write("AGENTS.md", existing);
+
+    const cfg = config({
+      instructions: {
+        "ts-rules": {
+          name: "ts-rules",
+          content: "New managed content.",
+          scope: "always",
+          globs: [],
+          description: "",
+          targets: ["kilo-code"],
+          adapters: {},
+        },
+      },
+    });
+
+    const result = await exportConfig(cfg, { projectPath: dir.path, dryRun: true }, dir.path);
+    const agentsFile = result.files.find((f) => f.path.endsWith("AGENTS.md"));
+    expect(agentsFile).toBeDefined();
+    // Left unchanged — no second managed block appended.
+    expect(agentsFile!.content).toBe(existing);
+    const beginCount = (agentsFile!.content.match(/<!-- am:begin -->/g) || []).length;
+    expect(beginCount).toBe(1);
+    expect(agentsFile!.content).not.toContain("New managed content.");
+    expect(result.warnings.some((w) => w.includes("AGENTS.md"))).toBe(true);
+  });
+
   test("dry run doesn't write files", async () => {
     dir = await createTestDir("am-kc-export-");
     const cfg = config({

@@ -111,6 +111,67 @@ describe("exportConfig()", () => {
     expect(claudeMdFile!.content).toContain("<!-- am:end -->");
   });
 
+  test("refuses to rewrite CLAUDE.md with out-of-order markers and warns", async () => {
+    // H3: malformed (out-of-order) markers must not scramble user prose.
+    dir = await createTestDir("am-export-");
+    const userProse = "IMPORTANT hand-written prose that must survive.";
+    const existing = `# Project\n\n<!-- am:end -->\n${userProse}\n<!-- am:begin -->\n\nTail.`;
+    await dir.write("CLAUDE.md", existing);
+
+    const cfg = config({
+      instructions: {
+        "ts-rules": {
+          name: "ts-rules",
+          content: "New managed content.",
+          scope: "always",
+          globs: [],
+          description: "",
+          targets: ["claude-code"],
+          adapters: {},
+        },
+      },
+    });
+
+    const result = await exportConfig(cfg, { projectPath: dir.path, dryRun: true }, dir.path);
+    const claudeMdFile = result.files.find((f) => f.path.endsWith("CLAUDE.md"));
+    expect(claudeMdFile).toBeDefined();
+    // Content returned UNCHANGED — no corruption, no new managed block.
+    expect(claudeMdFile!.content).toBe(existing);
+    expect(claudeMdFile!.content).toContain(userProse);
+    expect(claudeMdFile!.content).not.toContain("New managed content.");
+    // A warning was surfaced to the caller.
+    expect(result.warnings.some((w) => w.includes("CLAUDE.md"))).toBe(true);
+  });
+
+  test("refuses to rewrite CLAUDE.md with a single unpaired am:begin (no duplicate block)", async () => {
+    dir = await createTestDir("am-export-");
+    const existing = "# Project\n\n<!-- am:begin -->\nDangling managed content.";
+    await dir.write("CLAUDE.md", existing);
+
+    const cfg = config({
+      instructions: {
+        "ts-rules": {
+          name: "ts-rules",
+          content: "New managed content.",
+          scope: "always",
+          globs: [],
+          description: "",
+          targets: ["claude-code"],
+          adapters: {},
+        },
+      },
+    });
+
+    const result = await exportConfig(cfg, { projectPath: dir.path, dryRun: true }, dir.path);
+    const claudeMdFile = result.files.find((f) => f.path.endsWith("CLAUDE.md"));
+    expect(claudeMdFile).toBeDefined();
+    expect(claudeMdFile!.content).toBe(existing);
+    const beginCount = (claudeMdFile!.content.match(/<!-- am:begin -->/g) || []).length;
+    expect(beginCount).toBe(1);
+    expect(claudeMdFile!.content).not.toContain("New managed content.");
+    expect(result.warnings.some((w) => w.includes("CLAUDE.md"))).toBe(true);
+  });
+
   test("dry run doesn't write files", async () => {
     dir = await createTestDir("am-export-");
     const cfg = config({

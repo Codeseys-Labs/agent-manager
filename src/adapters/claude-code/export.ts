@@ -7,7 +7,11 @@
 
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { generateWikiContext, spliceWikiBlock } from "../../core/instructions.ts";
+import {
+  generateWikiContext,
+  spliceMarkerBlock,
+  spliceWikiBlock,
+} from "../../core/instructions.ts";
 import { buildMcpServersJson, writeExportFiles } from "../shared/export-utils.ts";
 import type {
   ExportOptions,
@@ -120,7 +124,15 @@ function generateInstructionBlock(config: ResolvedConfig): string | null {
   return parts.join("\n\n");
 }
 
-/** Generate CLAUDE.md content, preserving content outside am markers. */
+/**
+ * Generate CLAUDE.md content, preserving content outside am markers.
+ *
+ * Reads the existing file (if any) and delegates the marker splice to the
+ * shared {@link spliceMarkerBlock} helper so the fail-closed guard (H3) is
+ * enforced in ONE place: well-formed markers are replaced in place; malformed
+ * (out-of-order / unpaired) markers leave the file UNCHANGED and push a warning
+ * rather than scrambling user prose or duplicating the managed block.
+ */
 function generateClaudeMd(
   existingPath: string,
   managedContent: string,
@@ -128,24 +140,14 @@ function generateClaudeMd(
 ): string {
   const block = `${AM_BEGIN}\n${managedContent}\n${AM_END}`;
 
-  let existingContent = "";
+  let existingContent: string | undefined;
   try {
     const fs = require("node:fs");
     existingContent = fs.readFileSync(existingPath, "utf-8");
   } catch {
-    // No existing file — just return the managed block
-    return `${block}\n`;
+    // No existing file — just return the managed block.
+    existingContent = undefined;
   }
 
-  // Replace existing managed section if present
-  const beginIdx = existingContent.indexOf(AM_BEGIN);
-  const endIdx = existingContent.indexOf(AM_END);
-  if (beginIdx !== -1 && endIdx !== -1) {
-    const before = existingContent.slice(0, beginIdx);
-    const after = existingContent.slice(endIdx + AM_END.length);
-    return before + block + after;
-  }
-
-  // Append managed section to existing content
-  return `${existingContent.trimEnd()}\n\n${block}\n`;
+  return spliceMarkerBlock(block, existingContent, warnings, "CLAUDE.md");
 }

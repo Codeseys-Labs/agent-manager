@@ -8,6 +8,7 @@ import {
   scanConfigForSecrets,
   scanServerEnvVars,
   scanServerForSecrets,
+  scanSettingsEnvForSecrets,
   substituteSecret,
 } from "../../src/core/secret-detection";
 
@@ -237,6 +238,41 @@ describe("scanConfigForSecrets (combined)", () => {
 
     expect(results).toHaveLength(1);
     expect(results[0].serverName).toBe("s1");
+  });
+});
+
+// ── settings.env scanning (M6: scan never looked at [settings.env]) ──────
+
+describe("scanSettingsEnvForSecrets", () => {
+  test("flags a plaintext secret stored in settings.env (key-name tier)", async () => {
+    const result = await scanSettingsEnvForSecrets({
+      GITHUB_TOKEN: "ghp_realtokenvalue1234567890",
+      LOG_LEVEL: "info",
+    });
+
+    expect(result).not.toBeNull();
+    expect(result!.serverName).toBe("settings");
+    const tokenSecret = result!.secrets.find((s) => s.key === "GITHUB_TOKEN");
+    expect(tokenSecret).toBeDefined();
+    expect(tokenSecret!.location).toBe("env");
+    expect(tokenSecret!.source).toBe("key-name");
+    expect(tokenSecret!.value).toBe("ghp_realtokenvalue1234567890");
+    // Non-secret key is not flagged.
+    expect(result!.secrets.find((s) => s.key === "LOG_LEVEL")).toBeUndefined();
+  });
+
+  test("does not flag already-templated or encrypted settings.env values", async () => {
+    const result = await scanSettingsEnvForSecrets({
+      OPENAI_API_KEY: "${OPENAI_API_KEY}",
+      ANTHROPIC_API_KEY: "enc:v2:age:Y2lwaGVydGV4dA==",
+    });
+
+    expect(result!.secrets).toHaveLength(0);
+  });
+
+  test("returns an empty result for undefined / empty settings.env", async () => {
+    expect((await scanSettingsEnvForSecrets(undefined))!.secrets).toHaveLength(0);
+    expect((await scanSettingsEnvForSecrets({}))!.secrets).toHaveLength(0);
   });
 });
 

@@ -6,9 +6,13 @@
  *   1. Generates a per-machine X25519 age identity (`AGE-SECRET-KEY-1...`)
  *      via `age-encryption`'s `generateIdentity()`.
  *   2. Stores the identity passphrase-wrapped at
- *      `~/.config/agent-manager/identities/identity.age`. The wrapping
- *      uses age's built-in scrypt recipient (so the on-disk file is a
- *      normal passphrase-encrypted age file, loadable by any age
+ *      `<os-data-dir>/agent-manager/identities/identity.age` (e.g.
+ *      `~/.local/share/agent-manager/identities/identity.age` on Linux —
+ *      see `resolveIdentityDir`). SECURITY (e737): this lives in the OS
+ *      DATA dir, NOT the git-tracked config dir, so the wrapped private
+ *      key is never staged/pushed by `commitAll`. The wrapping uses
+ *      age's built-in scrypt recipient (so the on-disk file is a normal
+ *      passphrase-encrypted age file, loadable by any age
  *      implementation).
  *   3. Caches the passphrase in the OS keychain via `cross-keychain`
  *      (macOS Keychain / libsecret / Windows Credential Manager) so
@@ -34,9 +38,10 @@
 import { createHash } from "node:crypto";
 import { mkdir, readFile, readdir, stat, unlink } from "node:fs/promises";
 import { homedir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { Decrypter, Encrypter, generateIdentity, identityToRecipient } from "age-encryption";
 import { atomicWriteFile } from "./atomic-write";
+import { resolveDataDir } from "./secrets";
 import type { RecipientInfo, SecretEnvelope, SecretsBackend } from "./secrets-backend";
 import { registerBackend } from "./secrets-backend";
 
@@ -176,14 +181,55 @@ export function resolveArgon2idParams(override?: Partial<Argon2idParams>): Argon
 // --- Paths -------------------------------------------------------------
 
 /**
- * Resolve the identity directory. Defaults to
- * `~/.config/agent-manager/identities` per ADR-0042. Overridable via
- * `AM_AGE_IDENTITY_DIR` for tests and non-standard layouts.
+ * Resolve the identity directory — where the passphrase-wrapped age
+ * PRIVATE identity (`identity.age`), its rotation sidecars, and the
+ * `recipients/` directory live.
+ *
+ * SECURITY (e737): the identity MUST live OUTSIDE the agent-manager
+ * config dir, which is a git repo that `commitAll` stages-and-pushes
+ * wholesale. The old default (`~/.config/agent-manager/identities`)
+ * resolved under the SAME tree as `resolveConfigDir()`, so the wrapped
+ * private key was committed and pushed to the config remote. We now
+ * resolve to the OS DATA dir, mirroring `resolveKeyPath()` in
+ * `core/secrets.ts` exactly, so the identity is physically outside the
+ * repo regardless of `AM_CONFIG_DIR` / `XDG_CONFIG_HOME` layout.
+ *
+ * M15: the darwin/win32/XDG platform switch is factored into the shared
+ * `resolveDataDir()` helper in `core/secrets.ts` and reused by BOTH this
+ * function and `resolveKeyPath()`. The AES master key and the age identity
+ * are the same class of per-machine private material; sharing one switch
+ * guarantees they can never drift to inconsistent OS locations again.
+ *
+ * - macOS:   ~/Library/Application Support/agent-manager/identities
+ * - Linux:   $XDG_DATA_HOME/agent-manager/identities
+ *            (default ~/.local/share/agent-manager/identities)
+ * - Windows: %APPDATA%/agent-manager/identities
+ * - Other:   ~/.local/share/agent-manager/identities (XDG fallback)
+ *
+ * Overridable via `AM_AGE_IDENTITY_DIR` (absolute) for tests and
+ * non-standard layouts — that override is checked FIRST, ahead of the
+ * shared helper, so the identity keeps its own independent override.
  */
 export function resolveIdentityDir(): string {
   if (process.env.AM_AGE_IDENTITY_DIR) {
     return process.env.AM_AGE_IDENTITY_DIR;
   }
+
+  return resolveDataDir("agent-manager/identities");
+}
+
+/**
+ * Resolve the LEGACY identity directory inside the git-tracked config
+ * dir. Pre-e737 installs wrote `identity.age` here (under
+ * `~/.config/agent-manager/identities`, the SAME tree as the config
+ * repo), which leaked the wrapped private key into the committed/pushed
+ * tree. `migrateLegacyIdentityDir()` moves any such files out to the
+ * data-dir location returned by `resolveIdentityDir()`.
+ *
+ * Honours the historical `XDG_CONFIG_HOME` → `~/.config` resolution so
+ * an upgrade-in-place finds the old file where the old code wrote it.
+ */
+export function legacyIdentityDir(): string {
   const xdgConfigHome = process.env.XDG_CONFIG_HOME ?? join(homedir(), ".config");
   return join(xdgConfigHome, "agent-manager", "identities");
 }
@@ -201,6 +247,135 @@ export function resolveRecipientsDir(): string {
   return join(resolveIdentityDir(), RECIPIENTS_DIRNAME);
 }
 
+/**
+ * Result of a legacy-identity-dir migration attempt.
+ * - `migrated`: moved one or more files from the legacy config-dir
+ *   location to the data-dir location.
+ * - `none`:     no legacy identity present, no action needed.
+ * - `conflict`: a data-dir identity already exists; the legacy copy is
+ *   left in place (the data-dir one wins) so the caller can warn.
+ * - `skipped`:  legacy and target resolve to the SAME directory (e.g.
+ *   `AM_AGE_IDENTITY_DIR` points at the legacy location, or a custom
+ *   layout) — nothing to move.
+ */
+export type IdentityMigrationResult =
+  | { kind: "none" }
+  | { kind: "skipped" }
+  | { kind: "migrated"; from: string; to: string; files: string[] }
+  | { kind: "conflict"; legacy: string; current: string };
+
+/**
+ * Files this module owns inside the identity directory. Migration moves
+ * exactly these (when present) — never an unbounded glob — so a stray
+ * unrelated file in the legacy dir is left alone.
+ */
+const IDENTITY_DIR_FILES = [
+  IDENTITY_FILENAME,
+  IDENTITY_OLD_FILENAME,
+  ROTATION_STATE_FILENAME,
+] as const;
+
+/**
+ * SECURITY (e737) migration shim — mirrors `migrateLegacyKey()` in
+ * `core/secrets.ts`. If a pre-e737 install wrote `identity.age` (and its
+ * rotation sidecars / `recipients/` dir) into the git-tracked config dir
+ * and the new data-dir location has no identity yet, MOVE them out so
+ * the private key stops living inside the repo. Idempotent and
+ * best-effort: safe to call on every backend `initialize()`.
+ *
+ * Conflict handling matches `migrateLegacyKey`: if a data-dir identity
+ * already exists, the data-dir copy wins and the legacy copy is left in
+ * place (flagged via `conflict`) for the user to delete — we never
+ * clobber a live key.
+ *
+ * @param targetDir defaults to `resolveIdentityDir()`. Passed explicitly
+ *   by the backend so a custom `identityPath`/`recipientsDir` is
+ *   respected (and so the legacy==target no-op is detectable).
+ */
+export async function migrateLegacyIdentityDir(
+  targetDir: string = resolveIdentityDir(),
+): Promise<IdentityMigrationResult> {
+  // Only the DEFAULT install layout ever leaked the identity into the config
+  // dir (because `resolveIdentityDir` used to derive from XDG_CONFIG_HOME).
+  // When `AM_AGE_IDENTITY_DIR` is set, the caller/test is managing its own
+  // layout — we must NOT reach into the real user's `~/.config` and relocate
+  // their identity into a custom/test directory (data-loss + test pollution).
+  if (process.env.AM_AGE_IDENTITY_DIR) {
+    return { kind: "skipped" };
+  }
+
+  const legacy = legacyIdentityDir();
+
+  // Same directory → nothing to do (override points at the legacy location, or
+  // a custom layout collapses the two). Compare normalised absolute paths.
+  if (resolveAbs(legacy) === resolveAbs(targetDir)) {
+    return { kind: "skipped" };
+  }
+
+  const legacyIdentity = join(legacy, IDENTITY_FILENAME);
+  if (!(await pathExists(legacyIdentity))) {
+    return { kind: "none" };
+  }
+
+  const targetIdentity = join(targetDir, IDENTITY_FILENAME);
+  if (await pathExists(targetIdentity)) {
+    // Data-dir identity already exists — it wins. Leave legacy for the
+    // user to delete; never clobber a live key.
+    return { kind: "conflict", legacy, current: targetDir };
+  }
+
+  await mkdir(targetDir, { recursive: true });
+  const moved: string[] = [];
+
+  // Move the owned top-level files.
+  for (const name of IDENTITY_DIR_FILES) {
+    const src = join(legacy, name);
+    if (!(await pathExists(src))) continue;
+    const dst = join(targetDir, name);
+    // Preserve 0600 on the private-key files; rotation-state is also
+    // per-machine state — 0600 is fine.
+    const buf = await readFile(src);
+    await atomicWriteFile(dst, Buffer.from(buf), { mode: 0o600 });
+    try {
+      await unlink(src);
+    } catch {
+      // If unlink fails the new copy is still in place — the leak is
+      // closed (the data-dir copy is authoritative). The stale legacy
+      // copy is covered by the .gitignore defence-in-depth entries.
+    }
+    moved.push(name);
+  }
+
+  // Move the recipients/ directory contents (public keys — not secret,
+  // but they belong next to the identity).
+  const legacyRecipients = join(legacy, RECIPIENTS_DIRNAME);
+  if (await pathExists(legacyRecipients)) {
+    const targetRecipients = join(targetDir, RECIPIENTS_DIRNAME);
+    await mkdir(targetRecipients, { recursive: true });
+    let names: string[] = [];
+    try {
+      names = await readdir(legacyRecipients);
+    } catch {
+      names = [];
+    }
+    for (const name of names) {
+      const src = join(legacyRecipients, name);
+      const dst = join(targetRecipients, name);
+      try {
+        const buf = await readFile(src);
+        await atomicWriteFile(dst, Buffer.from(buf), { mode: 0o644 });
+        await unlink(src);
+      } catch {
+        // Best-effort per-file; the identity itself (the secret) has
+        // already been relocated above.
+      }
+    }
+    if (names.length > 0) moved.push(`${RECIPIENTS_DIRNAME}/`);
+  }
+
+  return { kind: "migrated", from: legacy, to: targetDir, files: moved };
+}
+
 // --- File helpers ------------------------------------------------------
 
 async function pathExists(p: string): Promise<boolean> {
@@ -210,6 +385,16 @@ async function pathExists(p: string): Promise<boolean> {
   } catch {
     return false;
   }
+}
+
+/**
+ * Normalise a path to an absolute, separator-canonical form for safe
+ * equality comparison (used by `migrateLegacyIdentityDir` to detect a
+ * legacy==target no-op). `resolve` collapses `.`/`..` and applies the
+ * cwd to relative inputs.
+ */
+function resolveAbs(p: string): string {
+  return resolve(p);
 }
 
 // --- Passphrase provider -----------------------------------------------
@@ -440,6 +625,19 @@ export class AgeSecretsBackend implements SecretsBackend {
    */
   async initialize(): Promise<void> {
     if (this.#identity) return;
+
+    // SECURITY (e737): one-shot best-effort migration. If a pre-e737
+    // install left the wrapped private identity inside the git-tracked
+    // config dir, move it out to the data-dir location BEFORE we decide
+    // whether an identity exists — so an upgrade-in-place transparently
+    // relocates the leaked key (and a fresh create lands in the safe
+    // location). Best-effort: a migration failure must never block
+    // unlock/create of a perfectly good local identity.
+    try {
+      await migrateLegacyIdentityDir(dirname(this.#identityPath));
+    } catch {
+      // Non-fatal — fall through to the normal create/unlock flow.
+    }
 
     const exists = await pathExists(this.#identityPath);
     if (!exists) {

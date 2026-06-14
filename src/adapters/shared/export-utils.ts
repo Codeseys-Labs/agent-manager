@@ -129,6 +129,16 @@ export function buildMcpServersJson(
  * string and continues (never throws). This is the shared
  * `mkdirSync + atomicWriteFileSync` loop every adapter carried inline.
  *
+ * Every path written here is a native config the user could have hand-edited
+ * (`~/.claude.json`, `.mcp.json`, `CLAUDE.md`, …) and `am apply` renames over
+ * it. So backup-before-overwrite is forced ON here (`{ backup: true }`) rather
+ * than left to the AM_APPLY_BACKUP opt-in default — otherwise the issue-#1
+ * (claude.json wipe) recovery snapshot would never be taken on a normal
+ * `am apply`. atomicWriteFileSync only snapshots when the target already
+ * exists AND its content differs, and the keep-window is bounded
+ * (DEFAULT_KEEP_COUNT), so disk growth stays contained. The `dryRun`
+ * short-circuit below runs BEFORE any write or backup.
+ *
  * @param files    Files to write (their `written` flags are mutated in place).
  * @param warnings Warning sink — failures are appended here.
  * @param opts     `{ dryRun }` — when true, nothing is written.
@@ -144,7 +154,7 @@ export function writeExportFiles(
   for (const file of files) {
     try {
       fs.mkdirSync(dirname(file.path), { recursive: true });
-      atomicWriteFileSync(file.path, file.content);
+      atomicWriteFileSync(file.path, file.content, { backup: true });
       file.written = true;
     } catch (err) {
       warnings.push(

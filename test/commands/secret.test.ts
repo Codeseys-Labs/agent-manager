@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { secretCommand } from "../../src/commands/secret";
 import { readConfig, writeConfig } from "../../src/core/config";
 import { initRepo } from "../../src/core/git";
 import type { Config } from "../../src/core/schema";
@@ -198,6 +199,187 @@ describe("am secret", () => {
       expect(secrets.find((s) => s.name === "EXA_KEY")).toBeDefined();
       // PLAIN_VAR should NOT appear
       expect(secrets.find((s) => s.name === "PLAIN_VAR")).toBeUndefined();
+    });
+  });
+
+  // ws 1f08-secret-scan-exit-code (M5): `am secret scan` (no --fix) must exit
+  // nonzero when plaintext secrets are found so it can gate CI. The report
+  // branch previously printed findings then returned with no exit code set.
+  describe("scan exit code", () => {
+    const origConfigDir = process.env.AM_CONFIG_DIR;
+    const origLog = console.log;
+    let logged: string[] = [];
+
+    // Reach the `scan` subcommand handler the same way doctor.test.ts reaches
+    // its command — resolve it off the parent command's subCommands map. The
+    // map is typed as a citty `Resolvable<SubCommandsDef>`, so we cast to a
+    // record of lazy resolvers before indexing `scan`.
+    async function resolveScan(): Promise<{
+      run: (ctx: { args: Record<string, unknown> }) => Promise<void>;
+    }> {
+      const subCommands = secretCommand.subCommands as unknown as Record<
+        string,
+        () => Promise<unknown>
+      >;
+      const scan = await subCommands.scan();
+      return scan as { run: (ctx: { args: Record<string, unknown> }) => Promise<void> };
+    }
+
+    function capture(): void {
+      logged = [];
+      console.log = (...args: unknown[]) => {
+        logged.push(args.map(String).join(" "));
+      };
+    }
+
+    afterEach(() => {
+      console.log = origLog;
+      if (origConfigDir === undefined) Reflect.deleteProperty(process.env, "AM_CONFIG_DIR");
+      else process.env.AM_CONFIG_DIR = origConfigDir;
+      process.exitCode = 0;
+    });
+
+    test("exits 1 and still prints findings when plaintext secrets are found (human)", async () => {
+      dir = await createTestDir("am-secret-scan-exit-found-");
+      // setupConfigDir seeds a tavily server with a plaintext TAVILY_API_KEY,
+      // which Tier-1 key-name detection flags.
+      const { configDir } = await setupConfigDir(dir);
+      process.env.AM_CONFIG_DIR = configDir;
+
+      const scan = await resolveScan();
+      process.exitCode = 0;
+      capture();
+      await scan.run({ args: { fix: false, json: false, quiet: false, verbose: false } });
+
+      expect(process.exitCode).toBe(1);
+      // Findings are still printed — the gate doesn't suppress the report.
+      const out = logged.join("\n");
+      expect(out).toContain("secret(s) found");
+      expect(out).toContain("TAVILY_API_KEY");
+    });
+
+    test("exits 1 and emits the findings payload in JSON mode", async () => {
+      dir = await createTestDir("am-secret-scan-exit-found-json-");
+      const { configDir } = await setupConfigDir(dir);
+      process.env.AM_CONFIG_DIR = configDir;
+
+      const scan = await resolveScan();
+      process.exitCode = 0;
+      capture();
+      await scan.run({ args: { fix: false, json: true, quiet: false, verbose: false } });
+
+      expect(process.exitCode).toBe(1);
+      const payload = JSON.parse(logged.join("\n"));
+      expect(payload.action).toBe("scan");
+      expect(payload.secrets.length).toBeGreaterThan(0);
+    });
+
+    // M6 (ws 01ae-secret-scan-settings-env): a plaintext secret stored in
+    // [settings.env] must be surfaced by `am secret scan` and counted by the
+    // M5 exit-code gate. scanConfigForSecrets only looks at servers, so before
+    // the fix a settings.env secret was invisible (false-clean → leaked cred).
+    test("flags a plaintext secret in settings.env and exits 1", async () => {
+      dir = await createTestDir("am-secret-scan-settings-env-");
+      const configDir = dir.path;
+      await initRepo(configDir);
+      const configPath = join(configDir, "config.toml");
+      // Servers are clean; the only plaintext secret lives in settings.env.
+      const config: Config = {
+        settings: {
+          default_profile: "default",
+          env: { GITHUB_TOKEN: "ghp_realtokenvalue1234567890" },
+        } as Config["settings"],
+        servers: {
+          memory: {
+            command: "bunx",
+            args: ["@modelcontextprotocol/server-memory"],
+            transport: "stdio",
+            enabled: true,
+            env: { LOG_LEVEL: "info" },
+          },
+        },
+        profiles: { default: { description: "Default profile" } },
+      };
+      await writeConfig(configPath, config);
+      process.env.AM_CONFIG_DIR = configDir;
+
+      const scan = await resolveScan();
+      process.exitCode = 0;
+      capture();
+      await scan.run({ args: { fix: false, json: true, quiet: false, verbose: false } });
+
+      expect(process.exitCode).toBe(1);
+      const payload = JSON.parse(logged.join("\n"));
+      expect(payload.action).toBe("scan");
+      // The settings.env finding is present, tagged with the synthetic scope.
+      const settingsResult = payload.secrets.find(
+        (r: { server: string }) => r.server === "settings",
+      );
+      expect(settingsResult).toBeDefined();
+      expect(
+        settingsResult.secrets.find((s: { key: string }) => s.key === "GITHUB_TOKEN"),
+      ).toBeDefined();
+    });
+
+    // M6: --fix must encrypt a plaintext settings.env secret IN PLACE (the
+    // value already lives where encrypted secrets belong), leaving no plaintext.
+    test("--fix encrypts a plaintext settings.env secret in place", async () => {
+      dir = await createTestDir("am-secret-scan-fix-settings-env-");
+      const configDir = dir.path;
+      await initRepo(configDir);
+      const configPath = join(configDir, "config.toml");
+      const config: Config = {
+        settings: {
+          default_profile: "default",
+          env: { GITHUB_TOKEN: "ghp_realtokenvalue1234567890" },
+        } as Config["settings"],
+        profiles: { default: { description: "Default profile" } },
+      };
+      await writeConfig(configPath, config);
+      // --fix generates a key if none exists; AM_KEY_PATH already points at tmp.
+      process.env.AM_CONFIG_DIR = configDir;
+
+      const scan = await resolveScan();
+      process.exitCode = 0;
+      capture();
+      await scan.run({ args: { fix: true, json: true, quiet: false, verbose: false } });
+
+      const after = await readConfig(configPath);
+      const settingsEnv = (after.settings as { env?: Record<string, string> } | undefined)?.env;
+      expect(settingsEnv?.GITHUB_TOKEN).toBeDefined();
+      // Encrypted in place — plaintext is gone, ciphertext is an enc: envelope.
+      expect(settingsEnv!.GITHUB_TOKEN).not.toBe("ghp_realtokenvalue1234567890");
+      expect(isEncrypted(settingsEnv!.GITHUB_TOKEN)).toBe(true);
+    });
+
+    test("exits 0 when no secrets are detected", async () => {
+      dir = await createTestDir("am-secret-scan-exit-clean-");
+      const configDir = dir.path;
+      await initRepo(configDir);
+      const configPath = join(configDir, "config.toml");
+      // A server with no secret-shaped env keys and no inline credentials.
+      const config: Config = {
+        settings: { default_profile: "default" },
+        servers: {
+          memory: {
+            command: "bunx",
+            args: ["@modelcontextprotocol/server-memory"],
+            transport: "stdio",
+            enabled: true,
+            env: { LOG_LEVEL: "info" },
+          },
+        },
+        profiles: { default: { description: "Default profile" } },
+      };
+      await writeConfig(configPath, config);
+      process.env.AM_CONFIG_DIR = configDir;
+
+      const scan = await resolveScan();
+      process.exitCode = 0;
+      capture();
+      await scan.run({ args: { fix: false, json: false, quiet: false, verbose: false } });
+
+      expect(process.exitCode).toBe(0);
     });
   });
 

@@ -8,6 +8,7 @@ import {
   readAdaptersToml,
   removeCommunityAdapterConfig,
   setCommunityAdapterConfig,
+  verifyChecksum,
   writeAdaptersToml,
 } from "../adapters/community/loader";
 import { CommunityAdapterProxy } from "../adapters/community/proxy";
@@ -322,11 +323,13 @@ const updateSubcommand = defineCommand({
           continue;
         }
 
+        const isNpm = config.source.startsWith("npm:");
+
         // For npm sources, re-run npm install to get latest.
         // --ignore-scripts: community adapter; lifecycle scripts would run
         // as the user on update without a prompt, giving an attacker a path
         // to RCE via a compromised package version.
-        if (config.source.startsWith("npm:")) {
+        if (isNpm) {
           const adapterDir = join(configDir, "adapters", name);
           const pkg = config.source.replace("npm:", "");
           const proc = Bun.spawn(["npm", "install", pkg, "--ignore-scripts"], {
@@ -338,6 +341,26 @@ const updateSubcommand = defineCommand({
           if (exitCode !== 0) {
             error(`Failed to update "${name}".`, opts);
             results.push({ name, action: "failed" });
+            process.exitCode = 1;
+            continue;
+          }
+        } else {
+          // git/local sources are NOT re-fetched here, so the bytes on disk are
+          // exactly what was pinned at install time. Verify them against the
+          // recorded pin BEFORE spawning — otherwise we would (a) execute
+          // tampered code during validation and (b) re-pin its hash as the new
+          // "trusted" checksum, laundering the tamper. Mirrors the loader's
+          // pre-spawn integrity gate (loader.ts verifyChecksum at load time).
+          try {
+            await verifyChecksum(name, config.command, config.checksum, config.source);
+          } catch (err) {
+            error(
+              `Refusing to update "${name}": ${err instanceof Error ? err.message : err}`,
+              opts,
+            );
+            // Fail closed: do NOT spawn, do NOT re-pin tampered bytes.
+            results.push({ name, action: "tampered" });
+            process.exitCode = 1;
             continue;
           }
         }
@@ -347,15 +370,22 @@ const updateSubcommand = defineCommand({
           const proxy = await CommunityAdapterProxy.create(config.command);
           info(`Updated "${name}" — ${proxy.meta.displayName} v${proxy.meta.version}`, opts);
           proxy.kill();
-          // Re-pin the checksum against the freshly installed bits. Without
-          // this, the next load would fail because the hash on disk no
-          // longer matches the stored hash.
-          const newChecksum = await computeChecksum(config.command);
-          await setCommunityAdapterConfig(configDir, name, { ...config, checksum: newChecksum });
+          if (isNpm) {
+            // Re-pin the checksum against the freshly installed bits. Without
+            // this, the next load would fail because the hash on disk no longer
+            // matches the stored hash. Only legitimately re-fetched sources
+            // earn a new pin.
+            const newChecksum = await computeChecksum(config.command);
+            await setCommunityAdapterConfig(configDir, name, { ...config, checksum: newChecksum });
+          }
+          // git/local: bytes were not re-fetched and just passed verification
+          // above, so the pin is already correct — leave it untouched. Re-pinning
+          // here is what blessed tampered bytes in the H5 finding.
           results.push({ name, action: "updated" });
         } catch {
           error(`Adapter "${name}" failed validation after update.`, opts);
           results.push({ name, action: "failed" });
+          process.exitCode = 1;
         }
       }
 
@@ -375,6 +405,11 @@ const verifySubcommand = defineCommand({
   meta: { name: "verify", description: "Health-check a community adapter" },
   args: {
     name: { type: "positional", description: "Adapter name", required: true },
+    exec: {
+      type: "boolean",
+      description: "Spawn the adapter after the checksum gate. --no-exec verifies the pin only.",
+      default: true,
+    },
     json: { type: "boolean", description: "JSON output", default: false },
     quiet: { type: "boolean", alias: "q", default: false },
     verbose: { type: "boolean", alias: "v", default: false },
@@ -394,6 +429,46 @@ const verifySubcommand = defineCommand({
 
       info(`Verifying "${name}"...`, opts);
       debug(`Command: ${config.command}`, opts);
+
+      // H6 fix: verify the pinned checksum BEFORE spawning. `verify` is the
+      // documented recovery path the loader points users to when integrity
+      // checks fail — it must not be the one command that executes tampered
+      // bytes. Mirror the loader's pre-spawn gate (loader.ts verifyChecksum):
+      // on mismatch (or missing pin on a non-local source) emit a
+      // verification-error result and fail closed without spawning.
+      try {
+        await verifyChecksum(name, config.command, config.checksum, config.source);
+      } catch (err) {
+        const result = {
+          adapter: name,
+          status: "error" as const,
+          error: err instanceof Error ? err.message : String(err),
+        };
+        if (args.json) {
+          output(result, opts);
+        } else {
+          error(`Verification failed: ${result.error}`, opts);
+        }
+        process.exitCode = 1;
+        return;
+      }
+
+      // --no-exec (exec=false): static verification only. The checksum just
+      // passed; report success without spawning the (now-trusted) binary.
+      if (!args.exec) {
+        const result = {
+          adapter: name,
+          status: "ok" as const,
+          checksumVerified: true,
+        };
+        if (args.json) {
+          output(result, opts);
+        } else {
+          info("  Checksum:     verified", opts);
+          info("  Status:       ok (checksum only, --no-exec)", opts);
+        }
+        return;
+      }
 
       let proxy: CommunityAdapterProxy;
       try {

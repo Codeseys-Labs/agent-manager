@@ -5,10 +5,13 @@ import { atomicWriteFile } from "../core/atomic-write";
 import { resolveConfigDir, tryReadConfig } from "../core/config";
 import { withConfig } from "../core/controller";
 import {
+  SETTINGS_ENV_SCOPE,
+  type SecretScanResult,
   formatScanReport,
   pickEnvVarName,
   redactSecret,
   scanConfigForSecrets,
+  scanSettingsEnvForSecrets,
   substituteSecret,
 } from "../core/secret-detection";
 import {
@@ -289,7 +292,12 @@ const scanCommand = defineCommand({
       const config = await tryReadConfig(configPath);
       requireConfig(config);
 
-      if (!config.servers || Object.keys(config.servers).length === 0) {
+      const hasServers = !!config.servers && Object.keys(config.servers).length > 0;
+      const hasSettingsEnv = !!config.settings?.env && Object.keys(config.settings.env).length > 0;
+      // Nothing to scan only when BOTH the server table AND settings.env are
+      // empty. A config with no servers can still carry a plaintext secret in
+      // [settings.env] (M6) — that must not be reported as "nothing to scan".
+      if (!hasServers && !hasSettingsEnv) {
         info("No servers configured.", opts);
         return;
       }
@@ -304,7 +312,13 @@ const scanCommand = defineCommand({
         );
       }
 
-      const scanResults = await scanConfigForSecrets(config.servers);
+      // Scan servers AND settings.env. The settings.env block is surfaced under
+      // the synthetic `settings` scope so it flows through formatScanReport, the
+      // JSON output, and the M5 exit-code gate identically to server findings.
+      const serverResults = config.servers ? await scanConfigForSecrets(config.servers) : [];
+      const settingsResult = await scanSettingsEnvForSecrets(config.settings?.env);
+      const scanResults: SecretScanResult[] =
+        settingsResult.secrets.length > 0 ? [...serverResults, settingsResult] : serverResults;
 
       if (scanResults.length === 0) {
         if (args.json) {
@@ -345,6 +359,11 @@ const scanCommand = defineCommand({
           info("", opts);
           info("Run `am secret scan --fix` to auto-substitute and encrypt.", opts);
         }
+        // Gate CI: report-mode (no --fix) must exit nonzero when plaintext
+        // secrets were found, or `am secret scan` can never fail a pipeline
+        // (ws 1f08-secret-scan-exit-code, M5). We reach this branch only after
+        // the zero-findings early return above, so scanResults is non-empty.
+        process.exitCode = 1;
         if (!useBetterleaks) {
           info("", opts);
           info("Tip: Install betterleaks for Tier 2 inline secret scanning:", opts);
@@ -376,6 +395,26 @@ const scanCommand = defineCommand({
 
         // Re-scan inside the lock so we operate on the current state.
         const freshScan = config.servers ? await scanConfigForSecrets(config.servers) : [];
+
+        // settings.env secrets (M6): a plaintext value under an obviously-secret
+        // key in [settings.env]. The value already lives where encrypted secrets
+        // belong, so the fix is to encrypt IN PLACE — no substitution / move.
+        const freshSettings = await scanSettingsEnvForSecrets(config.settings?.env);
+        for (const secret of freshSettings.secrets) {
+          // Only key-name env findings have a stable home key we can rewrite in
+          // place. Anything else (no key) is skipped rather than risk leaving a
+          // plaintext copy beside an encrypted one (review A+F invariant).
+          if (secret.location !== "env" || !secret.key) continue;
+          const settingsEnv = config.settings?.env;
+          if (!settingsEnv || settingsEnv[secret.key] !== secret.value) continue;
+          settingsEnv[secret.key] = await encryptValue(secret.value, encryptionKey);
+          fixedSecrets.push({
+            server: SETTINGS_ENV_SCOPE,
+            key: secret.key,
+            envVar: secret.key,
+          });
+          substituted++;
+        }
 
         for (const result of freshScan) {
           const server = config.servers![result.serverName];

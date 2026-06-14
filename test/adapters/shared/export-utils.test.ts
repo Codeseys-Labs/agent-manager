@@ -1,9 +1,10 @@
-import { describe, expect, test } from "bun:test";
-import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { buildMcpServersJson, writeExportFiles } from "../../../src/adapters/shared/export-utils";
 import type { ResolvedServer, WrittenFile } from "../../../src/adapters/types";
+import { listBackupsForTarget } from "../../../src/core/atomic-write";
 
 function makeServer(overrides: Partial<ResolvedServer> = {}): ResolvedServer {
   return {
@@ -116,5 +117,90 @@ describe("writeExportFiles", () => {
     writeExportFiles(files, warnings, { dryRun: true });
     expect(files[0].written).toBe(false);
     expect(() => readFileSync(files[0].path, "utf-8")).toThrow();
+  });
+});
+
+describe("writeExportFiles backup-by-default (H4 / issue #1)", () => {
+  let savedConfigDir: string | undefined;
+  let savedApplyBackup: string | undefined;
+  let configDir: string;
+
+  beforeEach(() => {
+    savedConfigDir = process.env.AM_CONFIG_DIR;
+    savedApplyBackup = process.env.AM_APPLY_BACKUP;
+    // Isolate the backup root under a fresh temp dir so assertions about
+    // "no backup appeared" can only ever see backups this test produced.
+    configDir = mkdtempSync(join(tmpdir(), "am-cfg-"));
+    process.env.AM_CONFIG_DIR = configDir;
+    // Crucial: leave AM_APPLY_BACKUP UNSET — the fix must back up regardless.
+    // biome-ignore lint/performance/noDelete: env var cleanup
+    delete process.env.AM_APPLY_BACKUP;
+  });
+
+  afterEach(() => {
+    if (savedConfigDir === undefined) {
+      // biome-ignore lint/performance/noDelete: env var cleanup
+      delete process.env.AM_CONFIG_DIR;
+    } else {
+      process.env.AM_CONFIG_DIR = savedConfigDir;
+    }
+    if (savedApplyBackup === undefined) {
+      // biome-ignore lint/performance/noDelete: env var cleanup
+      delete process.env.AM_APPLY_BACKUP;
+    } else {
+      process.env.AM_APPLY_BACKUP = savedApplyBackup;
+    }
+  });
+
+  test("backs up a pre-existing differing native file even with AM_APPLY_BACKUP unset", async () => {
+    const targetDir = mkdtempSync(join(tmpdir(), "am-tgt-"));
+    const target = join(targetDir, "claude.json");
+    // A pre-existing, hand-edited native config the user could lose.
+    writeFileSync(target, '{ "numStartups": 7 }\n');
+
+    const files: WrittenFile[] = [
+      { path: target, content: '{ "numStartups": 0, "mcpServers": {} }\n', written: false },
+    ];
+    const warnings: string[] = [];
+    writeExportFiles(files, warnings);
+
+    expect(files[0].written).toBe(true);
+    expect(warnings).toEqual([]);
+    // New content landed.
+    expect(readFileSync(target, "utf-8")).toBe('{ "numStartups": 0, "mcpServers": {} }\n');
+
+    // A snapshot of the OLD content was taken under $AM_CONFIG_DIR/backups/<sha8>/.
+    const backups = await listBackupsForTarget(target);
+    expect(backups.length).toBe(1);
+    expect(backups[0].path.startsWith(join(configDir, "backups"))).toBe(true);
+    expect(readFileSync(backups[0].path, "utf-8")).toBe('{ "numStartups": 7 }\n');
+  });
+
+  test("no backup when target did not previously exist", async () => {
+    const targetDir = mkdtempSync(join(tmpdir(), "am-tgt-"));
+    const target = join(targetDir, "fresh.json");
+    const files: WrittenFile[] = [{ path: target, content: "new\n", written: false }];
+    const warnings: string[] = [];
+    writeExportFiles(files, warnings);
+
+    expect(files[0].written).toBe(true);
+    expect(await listBackupsForTarget(target)).toEqual([]);
+  });
+
+  test("dryRun writes nothing and creates no backup", async () => {
+    const targetDir = mkdtempSync(join(tmpdir(), "am-tgt-"));
+    const target = join(targetDir, "claude.json");
+    writeFileSync(target, '{ "numStartups": 7 }\n');
+
+    const files: WrittenFile[] = [{ path: target, content: "changed\n", written: false }];
+    const warnings: string[] = [];
+    writeExportFiles(files, warnings, { dryRun: true });
+
+    expect(files[0].written).toBe(false);
+    // Original untouched.
+    expect(readFileSync(target, "utf-8")).toBe('{ "numStartups": 7 }\n');
+    // No backup root created, no entries listed.
+    expect(await listBackupsForTarget(target)).toEqual([]);
+    expect(existsSync(join(configDir, "backups"))).toBe(false);
   });
 });

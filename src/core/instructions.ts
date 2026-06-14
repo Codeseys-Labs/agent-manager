@@ -94,18 +94,64 @@ export function generateAgentsMd(
   return spliceMarkerBlock(block, existingContent);
 }
 
-/** Splice a managed block into existing content, preserving content outside markers. */
-function spliceMarkerBlock(block: string, existingContent?: string): string {
+/**
+ * Splice a managed block into existing content, preserving content outside
+ * markers.
+ *
+ * Marker handling is fail-closed (H3). The previous implementation spliced
+ * whenever *both* an `am:begin` and an `am:end` existed, regardless of order
+ * or pairing, which corrupted user files in two ways:
+ *   1. Out-of-order markers (`am:end` before `am:begin`): `after` started
+ *      before `beginIdx`, so the region between the real markers was dropped
+ *      and the surviving content was scrambled.
+ *   2. A single unpaired marker: the both-present guard was false, so it fell
+ *      through to the append branch and emitted a SECOND managed block.
+ *
+ * We now only splice when the markers are well-formed
+ * (`begin !== -1 && end !== -1 && end > begin`). When markers are PRESENT but
+ * MALFORMED we refuse: the function returns `existingContent` UNCHANGED and,
+ * when a `warnings` sink is supplied, pushes a diagnostic so the caller can
+ * surface it. We never silently splice or append over malformed markers —
+ * leaving the file untouched is the only non-destructive option.
+ *
+ * @param label  Human-readable file label used in warnings (e.g. "CLAUDE.md").
+ */
+export function spliceMarkerBlock(
+  block: string,
+  existingContent?: string,
+  warnings?: string[],
+  label = "instruction file",
+): string {
   if (!existingContent) {
     return `${block}\n`;
   }
 
   const beginIdx = existingContent.indexOf(AM_BEGIN);
   const endIdx = existingContent.indexOf(AM_END);
-  if (beginIdx !== -1 && endIdx !== -1) {
+  const hasBegin = beginIdx !== -1;
+  const hasEnd = endIdx !== -1;
+
+  // Well-formed paired markers — splice in place.
+  if (hasBegin && hasEnd && endIdx > beginIdx) {
     const before = existingContent.slice(0, beginIdx);
     const after = existingContent.slice(endIdx + AM_END.length);
     return before + block + after;
+  }
+
+  // Markers present but malformed (out-of-order or unpaired) — refuse rather
+  // than corrupt the file. Return existing content unchanged.
+  if (hasBegin || hasEnd) {
+    warnings?.push(
+      `${label}: refusing to update managed block — am:begin/am:end markers are malformed ` +
+        `(${
+          hasBegin && hasEnd
+            ? "am:end precedes am:begin"
+            : hasBegin
+              ? "missing am:end"
+              : "missing am:begin"
+        }). Fix or remove the markers and re-run.`,
+    );
+    return existingContent;
   }
 
   // No existing markers — append
@@ -319,19 +365,17 @@ function scopeToKiroInclusion(scope: "always" | "glob" | "agent-decision" | "man
 export function generateKiroSteering(
   instruction: ResolvedInstruction,
   existingContent?: string,
+  warnings?: string[],
 ): string {
   const inclusion = scopeToKiroInclusion(instruction.scope);
   const managedBlock = `${AM_BEGIN}\n${instruction.content}\n${AM_END}`;
 
   if (existingContent) {
-    const beginIdx = existingContent.indexOf(AM_BEGIN);
-    const endIdx = existingContent.indexOf(AM_END);
-    if (beginIdx !== -1 && endIdx !== -1) {
-      const before = existingContent.slice(0, beginIdx);
-      const after = existingContent.slice(endIdx + AM_END.length);
-      return before + managedBlock + after;
-    }
-    return `${existingContent.trimEnd()}\n\n${managedBlock}\n`;
+    // Route through the shared splice helper so the fail-closed marker guard
+    // (H3) applies identically to Kiro steering files: well-formed markers are
+    // replaced in place; malformed (out-of-order / unpaired) markers cause the
+    // existing content to be returned UNCHANGED rather than corrupted.
+    return spliceMarkerBlock(managedBlock, existingContent, warnings, ".kiro/steering file");
   }
 
   // New file — generate with frontmatter
