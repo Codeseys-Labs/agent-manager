@@ -381,4 +381,28 @@ describe("rewriteUserinfoCredential (write-path-safe userinfo rewrite)", () => {
   test("returns the input unchanged for a non-URL string", () => {
     expect(rewriteUserinfoCredential("not-a-url", "password", "${X}")).toBe("not-a-url");
   });
+
+  test("seed 756a: two-pass user:pass@host leaves BOTH placeholders well-formed ${VAR}", () => {
+    // A user:pass@host URL emits TWO userinfo hits, so --fix runs this twice
+    // against the same mutating value. Pass 1 (password) writes ${HOST_PASSWORD};
+    // pass 2 (username) must NOT re-percent-encode the sibling placeholder into
+    // $%7BHOST_PASSWORD%7D (which the interpolation engine cannot read back).
+    const afterPass1 = rewriteUserinfoCredential(
+      "https://adminUSER:s3cr3tpass@host.example.com/mcp",
+      "password",
+      "${HOST_PASSWORD}",
+    );
+    const afterPass2 = rewriteUserinfoCredential(afterPass1, "username", "${HOST_USERNAME}");
+
+    // No plaintext survives either pass.
+    expect(afterPass2).not.toContain("s3cr3tpass");
+    expect(afterPass2).not.toContain("adminUSER");
+    // BOTH placeholders are literal ${VAR}, NOT percent-encoded.
+    expect(afterPass2).toContain("${HOST_USERNAME}");
+    expect(afterPass2).toContain("${HOST_PASSWORD}");
+    expect(afterPass2).not.toContain("%7B"); // no $%7B...%7D corruption
+    expect(afterPass2).not.toContain("%24"); // no double-encoded $
+    // The well-formed result matches the interpolation engine's ${VAR} pattern.
+    expect(afterPass2).toMatch(/\$\{HOST_USERNAME\}:\$\{HOST_PASSWORD\}@/);
+  });
 });

@@ -149,7 +149,18 @@ export function rewriteUrlParam(url: string, queryKey: string, replacement: stri
  *
  * URL setters percent-encode `${VAR}` braces, so the literal placeholder is
  * restored afterwards (what the interpolation engine expects to read back).
+ *
+ * CRITICAL (seed 756a): a `user:pass@host` URL produces TWO userinfo hits, so
+ * this runs twice against the same value. The second pass's URL setter
+ * re-percent-encodes the FIRST pass's already-written sibling placeholder
+ * (`${V}` → `$%7BV%7D`). Restoring only the field we just wrote would leave the
+ * sibling corrupted, and `$%7BV%7D` does NOT match the interpolation engine's
+ * `${VAR}` pattern — the stored URL becomes non-functional (no plaintext leak,
+ * but a broken config). So we restore EVERY percent-encoded `${VAR}` placeholder
+ * in the output, not just the one field.
  */
+const PERCENT_ENCODED_VAR = /\$%7B([^%]+?)%7D/gi;
+
 export function rewriteUserinfoCredential(
   url: string,
   field: "username" | "password",
@@ -160,10 +171,14 @@ export function rewriteUserinfoCredential(
     if (field === "password") u.password = replacement;
     else u.username = replacement;
     // The setter percent-encodes the placeholder's braces (e.g. `${VAR}` →
-    // `$%7BVAR%7D`); restore the literal form so the stored URL is `user:${VAR}@`.
+    // `$%7BVAR%7D`). Restore the literal form for the field we just wrote AND any
+    // sibling placeholder a prior pass already wrote (seed 756a) so every stored
+    // `${VAR}` is well-formed for the interpolation engine.
     const encoded = field === "password" ? u.password : u.username;
-    const out = u.toString();
-    return encoded && encoded !== replacement ? out.replace(encoded, replacement) : out;
+    let out = u.toString();
+    if (encoded && encoded !== replacement) out = out.replace(encoded, replacement);
+    // Restore any remaining percent-encoded placeholders (the sibling field).
+    return out.replace(PERCENT_ENCODED_VAR, (_m, name) => `\${${name}}`);
   } catch {
     return url; // not a URL — leave as-is
   }
