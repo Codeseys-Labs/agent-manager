@@ -1098,27 +1098,39 @@ function defineTools(): ToolEntry[] {
         if (ctx?.activeScope) {
           const { profileName, scope, ceiling, scopeFailClosed } = ctx.activeScope;
           const manifest = buildScopeManifest(profileName, catalog, ceiling, scope);
-          // R2-4 no-drift: while failing CLOSED, `isToolScoped` admits the
-          // DIAGNOSTIC_SCOPE_EXEMPT tools (am_doctor, am_get_scope) even though
-          // scope ∩ ceiling is empty — that's how this very handler ran. The raw
-          // manifest would list them as excluded (effectiveTools=[]),
-          // contradicting "the manifest can NEVER drift from enforcement". Move
-          // the exempt names into effectiveTools and out of excludedTools,
-          // preserving sorted order so the audit surface matches what the gate
-          // actually allows.
-          if (scopeFailClosed) {
+          // R2-4 / seed 22b7 no-drift: the gateway ALWAYS admits the
+          // DIAGNOSTIC_SCOPE_EXEMPT tools (am_doctor, am_get_scope) regardless of
+          // the scope verdict — `isToolScoped` exempts them while failing CLOSED,
+          // and `isOutsideExplicitCeiling` (seed f747) exempts them under an
+          // explicit ceiling that omits their `core` group with no active
+          // profile. In both of those states the raw `isToolInScope` manifest
+          // lists them as excluded (rule 1: group ∉ ceiling), contradicting "the
+          // manifest can NEVER drift from enforcement" — that very contradiction
+          // is how THIS handler ran. Promote the exempt names into
+          // effectiveTools (and out of excludedTools) whenever they would
+          // otherwise show as excluded, so the audit surface matches what the
+          // gate actually allows. The promotion is non-widening: only the two
+          // fixed recovery tools move, and only if the catalog registers them.
+          void scopeFailClosed; // enforcement is unconditional; flag no longer gates this.
+          {
             // Only promote exempt names that the catalog actually contains (the
             // manifest's effective ∪ excluded IS the catalog projection), so we
             // never invent a tool that isn't registered. Handlers are free
             // functions (no `this`), so derive the catalog from the manifest.
             const known = new Set([...manifest.effectiveTools, ...manifest.excludedTools]);
-            const exemptSet = new Set(
-              [...DIAGNOSTIC_SCOPE_EXEMPT].filter((name) => known.has(name)),
+            const excludedExempt = new Set(
+              manifest.excludedTools.filter(
+                (name) => DIAGNOSTIC_SCOPE_EXEMPT.has(name) && known.has(name),
+              ),
             );
-            const effective = new Set(manifest.effectiveTools);
-            for (const name of exemptSet) effective.add(name);
-            manifest.effectiveTools = [...effective].sort();
-            manifest.excludedTools = manifest.excludedTools.filter((name) => !exemptSet.has(name));
+            if (excludedExempt.size > 0) {
+              const effective = new Set(manifest.effectiveTools);
+              for (const name of excludedExempt) effective.add(name);
+              manifest.effectiveTools = [...effective].sort();
+              manifest.excludedTools = manifest.excludedTools.filter(
+                (name) => !excludedExempt.has(name),
+              );
+            }
           }
           return manifest;
         }
@@ -3519,6 +3531,17 @@ export class McpServer {
    * the profile-scope gate first).
    */
   private isOutsideExplicitCeiling(toolName: string): boolean {
+    // seed f747 (regression fix): the diagnostic/recovery tools (am_doctor,
+    // am_get_scope) are NEVER outside any ceiling. The profile-scope gate above
+    // already exempts them via `isToolScoped`, but that gate only engages when a
+    // Scope is active (`this.scope` defined). With an explicit ceiling that omits
+    // `core` and NO active profile, the profile-scope gate is skipped, so this
+    // gate would brick the exact tools an operator needs to SEE and FIX the
+    // broken config. Match the profile-scope path's exemption semantics here so
+    // diagnostics stay callable regardless of how the ceiling is configured —
+    // pre-e900 behaviour. This carve-out is non-widening: it only re-admits the
+    // two fixed recovery tools, never any other group.
+    if (DIAGNOSTIC_SCOPE_EXEMPT.has(toolName)) return false;
     // Fail-closed states (malformed/missing-confinement config) set
     // `this.settings = { mcp_serve: { tools: [] } }` — an EXPLICIT empty ceiling
     // — but their surface is authoritatively owned by the profile-scope gate via

@@ -3,9 +3,12 @@
  *
  * The delete handler used to call @clack/prompts confirm() whenever --yes was
  * absent, which hangs forever under --json or a non-TTY stdin (scripts, CI,
- * MCP). It now skips the prompt and proceeds when running non-interactively
- * (--json or no TTY), mirroring `am uninstall` / `am update`. The change is
- * recoverable via `am undo` because withConfig auto-commits.
+ * MCP). It now FAILS CLOSED: under a non-TTY without --yes (and without --json,
+ * the automation contract) it REFUSES the destructive delete and exits 1,
+ * mirroring the fail-closed guard in `am uninstall` / `am update`. The --json
+ * automation contract and an explicit --yes both still permit non-interactive
+ * deletion. The change is recoverable via `am undo` because withConfig
+ * auto-commits.
  *
  * These tests drive the actual exported command handler (not a simulation) so
  * a regression that reintroduces the hang would be caught: the test process
@@ -91,13 +94,28 @@ describe("am profile delete (UX-2 non-interactive)", () => {
     expect(payload).toEqual({ action: "delete", profile: "staging" });
   });
 
-  test("non-TTY without --json or --yes deletes without prompting", async () => {
-    // The test runner's stdin is not a TTY, so the guard short-circuits the
-    // confirm prompt and the delete proceeds.
+  test("non-TTY without --json or --yes refuses and exits 1 (fail closed)", async () => {
+    // The test runner's stdin is not a TTY. Without --yes (and without the
+    // --json automation contract) the destructive delete must REFUSE rather
+    // than proceed unconfirmed: exit 1, profile untouched.
     await handler.run({ args: makeArgs() });
 
+    expect(process.exitCode).toBe(1);
+    const updated = await readConfig(join(dir.path, "config.toml"));
+    expect(updated.profiles?.staging).toBeDefined();
+    expect(consoleErrors.join("\n")).toContain("Refusing to delete profile");
+    expect(consoleErrors.join("\n")).toContain("stdin is not a TTY");
+  });
+
+  test("non-TTY with --yes deletes without prompting", async () => {
+    // An explicit --yes satisfies the confirmation requirement, so the delete
+    // proceeds non-interactively even without a TTY.
+    await handler.run({ args: makeArgs({ yes: true }) });
+
+    expect(process.exitCode).toBe(0);
     const updated = await readConfig(join(dir.path, "config.toml"));
     expect(updated.profiles?.staging).toBeUndefined();
+    expect(updated.profiles?.default).toBeDefined();
     expect(consoleOutput.join("\n")).toContain('Deleted profile "staging"');
   });
 

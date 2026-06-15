@@ -116,6 +116,28 @@ describe("am adapter verify — checksum gate before spawn (H6)", () => {
     return { command, pin };
   }
 
+  /**
+   * Install a `local:` adapter with NO stored checksum — exactly what
+   * `am adapter install <local-path>` produces (local sources are the user's
+   * own code under active development, so install records no pin). The loader's
+   * verifyChecksum warn-and-skips this case; verify --no-exec must not pretend
+   * an integrity check happened.
+   */
+  async function installLocalAdapterNoPin(): Promise<{ command: string }> {
+    const command = await dir.write(
+      join("adapters", "verifytest", "bin", "adapter.js"),
+      adapterBody(tripwirePath),
+    );
+    await Bun.spawn(["chmod", "+x", command]).exited;
+    await setCommunityAdapterConfig(dir.path, "verifytest", {
+      source: "local:/some/dev/path/am-adapter-verifytest",
+      command,
+      installed_at: "2026-06-14T00:00:00Z",
+      // NOTE: no `checksum` — local adapters are pinned with none.
+    });
+    return { command };
+  }
+
   test("REFUSES to spawn a tampered git adapter, exits nonzero, reports the mismatch", async () => {
     const { command, pin } = await installGitAdapter();
 
@@ -203,6 +225,39 @@ describe("am adapter verify — checksum gate before spawn (H6)", () => {
     expect(parsed.adapter).toBe("verifytest");
     expect(parsed.status).toBe("ok");
     expect(parsed.checksumVerified).toBe(true);
+  });
+
+  test("--no-exec on a local adapter with NO pin reports checksumVerified:false, NOT true (seed 38bf)", async () => {
+    // Regression: verifyChecksum warn-SKIPS a local adapter that has no stored
+    // checksum (returns without throwing). The old --no-exec path then claimed
+    // status:"ok", checksumVerified:true even though NOTHING was verified — a
+    // lie for a command whose whole job is integrity confirmation.
+    await installLocalAdapterNoPin();
+
+    let captured = "";
+    const origLog = console.log;
+    console.log = (...a: unknown[]) => {
+      captured += `${a.map(String).join(" ")}\n`;
+    };
+    try {
+      await runCommand(adapterCommand, {
+        rawArgs: ["verify", "verifytest", "--no-exec", "--json"],
+      });
+    } finally {
+      console.log = origLog;
+    }
+
+    // It does not fail — skipping a local pin is allowed — but it must NEVER
+    // be spawned (this is --no-exec).
+    expect(process.exitCode === 0 || process.exitCode === undefined).toBe(true);
+    expect(await Bun.file(tripwirePath).exists()).toBe(false);
+
+    const parsed = JSON.parse(captured);
+    expect(parsed.adapter).toBe("verifytest");
+    // The whole point of the fix: NOT true, because no checksum was verified.
+    expect(parsed.checksumVerified).toBe(false);
+    // And the status must signal that the check was skipped, not "ok".
+    expect(parsed.status).toBe("skipped");
   });
 
   test("--no-exec on a tampered adapter fails closed without spawning", async () => {

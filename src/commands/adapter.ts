@@ -437,8 +437,9 @@ const verifySubcommand = defineCommand({
       // bytes. Mirror the loader's pre-spawn gate (loader.ts verifyChecksum):
       // on mismatch (or missing pin on a non-local source) emit a
       // verification-error result and fail closed without spawning.
+      let verification: Awaited<ReturnType<typeof verifyChecksum>>;
       try {
-        await verifyChecksum(name, config.command, config.checksum, config.source);
+        verification = await verifyChecksum(name, config.command, config.checksum, config.source);
       } catch (err) {
         const result = {
           adapter: name,
@@ -454,9 +455,31 @@ const verifySubcommand = defineCommand({
         return;
       }
 
-      // --no-exec (exec=false): static verification only. The checksum just
-      // passed; report success without spawning the (now-trusted) binary.
+      // --no-exec (exec=false): static verification only, no spawn. What we
+      // report depends on whether a pin actually existed to verify:
+      //   - genuine pin matched (git/npm/local with a stored checksum) →
+      //     status:"ok", checksumVerified:true.
+      //   - local adapter with NO stored checksum → verifyChecksum warn-skips
+      //     (nothing was verified). Reporting checksumVerified:true here would
+      //     be a lie for a command whose job is integrity confirmation. Report
+      //     status:"skipped", checksumVerified:false so the operator knows no
+      //     integrity check happened.
       if (!args.exec) {
+        if (verification.skipped) {
+          const result = {
+            adapter: name,
+            status: "skipped" as const,
+            checksumVerified: false,
+            reason: "no checksum pinned (local adapter)",
+          };
+          if (args.json) {
+            output(result, opts);
+          } else {
+            info("  Checksum:     skipped (no pin — local adapter)", opts);
+            info("  Status:       skipped (no checksum to verify, --no-exec)", opts);
+          }
+          return;
+        }
         const result = {
           adapter: name,
           status: "ok" as const,

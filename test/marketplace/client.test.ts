@@ -265,6 +265,40 @@ describe("marketplace/client", () => {
     test("throws when marketplace not found", async () => {
       await expect(removeMarketplace("nonexistent")).rejects.toThrow(MarketplaceError);
     });
+
+    test("removes a legacy entry whose name no longer passes name validation", async () => {
+      // An entry added before the name regex existed (e.g. uppercase) must stay
+      // removable. validateMarketplaceName() would reject it on lookup, leaving
+      // no cleanup path. removeMarketplace skips the regex (keeping only the
+      // traversal floor) so the trusted local entry can still be removed.
+      const legacyName = "UPPERCASE-Name";
+      // Sanity: this name genuinely fails today's add-path validation.
+      expect(() => validateMarketplaceName(legacyName)).toThrow(MarketplaceError);
+
+      const mpDir = resolveMarketplacesDir();
+      await fs.promises.mkdir(join(mpDir, legacyName), { recursive: true });
+      await fs.promises.writeFile(
+        join(mpDir, "marketplaces.json"),
+        JSON.stringify({
+          marketplaces: [
+            {
+              name: legacyName,
+              url: "https://example.com/x.git",
+              source: "github",
+              added_at: "2024-01-01",
+            },
+          ],
+        }),
+      );
+
+      // Should succeed (NOT throw) and remove the entry.
+      await removeMarketplace(legacyName);
+
+      const data = await readMarketplacesFile();
+      expect(data.marketplaces).toHaveLength(0);
+      // The on-disk directory is gone too.
+      expect(await Bun.file(join(mpDir, legacyName)).exists()).toBe(false);
+    });
   });
 
   // ── listMarketplaces ───────────────────────────────────────────

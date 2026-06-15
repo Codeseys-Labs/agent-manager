@@ -13,7 +13,7 @@ import {
   tryReadConfig,
   writeConfig,
 } from "../../src/core/config";
-import type { Config } from "../../src/core/schema";
+import { type Config, ServerSchema } from "../../src/core/schema";
 import { AmError } from "../../src/lib/errors";
 import { toPosix } from "../helpers/path";
 
@@ -440,6 +440,66 @@ describe("mergeConfigs", () => {
     const merged = mergeConfigs(a, b);
     expect(merged.servers?.fetch.command).toBe("fetch");
     expect(merged.servers?.outlook.command).toBe("outlook");
+  });
+
+  // seed 1fcc (data-loss): the field-grain deep-merge is transport-blind, so a
+  // remote lower layer ({ transport: "sse", url }) restated as stdio by a higher
+  // layer ({ command, transport: "stdio" }) leaves a stale `url` on the merged
+  // stdio entry. StdioServerSchema forbids `url` (z.undefined()), so the merged
+  // server is schema-INVALID and loadResolvedConfig does NOT re-validate — the
+  // dead remote endpoint flows downstream silently. mergeConfigs must shed the
+  // url once the merged entry resolves to stdio (mirroring merge.ts/mergeServers).
+  test("remote->stdio transport change drops the stale url (seed 1fcc)", () => {
+    const a: Config = {
+      servers: {
+        x: {
+          command: "https://host.example/sse",
+          transport: "sse",
+          url: "https://host.example/sse",
+          enabled: true,
+        },
+      },
+    };
+    // Higher layer restates the same server as stdio (command, no url).
+    const b: Config = {
+      servers: { x: { command: "stdio-mcp", transport: "stdio", enabled: true } },
+    };
+    const merged = mergeConfigs(a, b);
+
+    // The merged entry must NOT carry the inherited remote url.
+    expect(merged.servers?.x.transport).toBe("stdio");
+    expect("url" in (merged.servers?.x ?? {})).toBe(false);
+    expect(merged.servers?.x.command).toBe("stdio-mcp");
+
+    // And it must round-trip through the schema cleanly (the symptom of the bug).
+    const parsed = ServerSchema.safeParse(merged.servers?.x);
+    expect(parsed.success).toBe(true);
+  });
+
+  // Companion guard: a remote->remote restatement (or a higher layer that omits
+  // transport but keeps it remote) must KEEP its url — the reconciliation only
+  // fires for stdio results, never strips a legitimate remote endpoint.
+  test("remote server keeps its url across a same-transport merge", () => {
+    const a: Config = {
+      servers: {
+        x: {
+          command: "https://host.example/sse",
+          transport: "sse",
+          url: "https://host.example/sse",
+          enabled: true,
+        },
+      },
+    };
+    // Higher layer flips only `enabled`, leaving transport/url implicit.
+    const b: Config = {
+      servers: { x: { command: "https://host.example/sse", transport: "sse", enabled: false } },
+    };
+    const merged = mergeConfigs(a, b);
+
+    expect(merged.servers?.x.transport).toBe("sse");
+    expect(merged.servers?.x.url).toBe("https://host.example/sse");
+    expect(merged.servers?.x.enabled).toBe(false);
+    expect(ServerSchema.safeParse(merged.servers?.x).success).toBe(true);
   });
 });
 

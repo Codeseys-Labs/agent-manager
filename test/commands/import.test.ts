@@ -15,6 +15,13 @@ import { type TestDir, createTestDir } from "../helpers/tmp";
 // there). 30s gives headroom without hiding regressions. (Wave CI / P0-5.)
 setDefaultTimeout(30_000);
 
+// Order-independence guard (seed 8c51): these tests chdir into per-test tmp dirs
+// and restore cwd in afterEach. Capturing the restore target from process.cwd()
+// at module load is fragile — if an earlier test file leaked a (now-deleted) tmp
+// cwd, that poisoned value would be reinstated and leak onward to later files.
+// Pin the restore target to the repo root deterministically instead.
+const REPO_ROOT = join(import.meta.dir, "..", "..");
+
 describe("extractServerIdentity", () => {
   test("strips npx -y prefix and @version suffix", () => {
     expect(extractServerIdentity("npx", ["-y", "tavily-mcp@latest"])).toBe("tavily-mcp");
@@ -160,7 +167,7 @@ describe("import auto-encrypts underscore-suffixed secret keys (ws1 regression)"
   let keyDir: TestDir;
   const origConfigDir = process.env.AM_CONFIG_DIR;
   const origKeyPath = process.env.AM_KEY_PATH;
-  const origCwd = process.cwd();
+  const origCwd = REPO_ROOT;
   const origExitCode = process.exitCode;
 
   afterEach(async () => {
@@ -241,7 +248,7 @@ describe("import preserves url + transport for remote servers (W-m11)", () => {
   let homeDir: TestDir;
   const origConfigDir = process.env.AM_CONFIG_DIR;
   const origHome = process.env.HOME;
-  const origCwd = process.cwd();
+  const origCwd = REPO_ROOT;
   const origExitCode = process.exitCode;
 
   afterEach(async () => {
@@ -312,7 +319,7 @@ describe("import preserves adapter-scoped extras (W-m11)", () => {
   let homeDir: TestDir;
   const origConfigDir = process.env.AM_CONFIG_DIR;
   const origHome = process.env.HOME;
-  const origCwd = process.cwd();
+  const origCwd = REPO_ROOT;
   const origExitCode = process.exitCode;
 
   afterEach(async () => {

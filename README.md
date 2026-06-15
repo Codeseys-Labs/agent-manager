@@ -199,8 +199,13 @@ am search tavily                        # search the MCP registry
 am install tavily-mcp                   # install with env var prompts + encryption
 am install tavily-mcp --version 1.2.0   # pin version
 am update                               # check for newer versions
-am uninstall tavily                     # remove a package
+am uninstall io.github.tavily/tavily-mcp # remove a package (by its reverse-DNS key)
 ```
+
+> `am install` keys `config.servers` by the package's reverse-DNS registry name
+> (e.g. `io.github.tavily/tavily-mcp`), not the short name you typed. Use that
+> reverse-DNS key for `am uninstall` and for profile `servers`/`server_tags`
+> references — run `am list servers` to see the exact stored keys.
 
 ### Bundles from git
 
@@ -845,7 +850,7 @@ agents = ["researcher"]
 
 | Command | Description |
 |---------|-------------|
-| `am search <query>` | Search MCP registry (`--tag`, `--verified`, `--limit`, `--json`) |
+| `am search <query>` | Search MCP registry (`--limit`, `--no-cache`, `--json`) |
 | `am install <package...>` | Install MCP server packages (`--version`, `--dry-run`, `--yes`) |
 | `am uninstall <name>` | Remove a server package (`--dry-run`, `--yes`) |
 | `am update` | Check for and apply registry updates (`--dry-run`, `--yes`) |

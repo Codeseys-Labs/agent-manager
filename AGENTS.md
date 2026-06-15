@@ -238,7 +238,7 @@ install.sh                  # curl-based installer (repo root, not scripts/)
 | `am session list/export/search` | Cross-tool session harvest |
 | `am tui` | Interactive terminal dashboard (Silvery/React) |
 | `am serve` | Local web UI server (Hono) |
-| `am search <query>` | Search the MCP registry for packages (`--tag`, `--verified`) |
+| `am search <query>` | Search the MCP registry for packages (`--limit`, `--no-cache`) |
 | `am install <packages>` | Install MCP server packages from the registry (`--version`, `--dry-run`) |
 | `am uninstall <name>` | Remove an MCP server package from config (`--dry-run`) |
 | `am update` | Check for and apply MCP registry updates (`--dry-run`) |

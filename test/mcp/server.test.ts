@@ -1528,6 +1528,68 @@ describe("MCP server", () => {
     expect(call?.error?.code).not.toBe(-32601);
   });
 
+  // seed f747 (regression): an explicit ceiling that OMITS `core` with NO active
+  // profile (this.scope === undefined) skips the profile-scope gate entirely — so
+  // only the explicit-ceiling gate runs. That gate must still exempt the
+  // diagnostic/recovery tools (am_doctor, am_get_scope), or it bricks the very
+  // tools an operator needs to SEE and FIX the broken ceiling. Pre-e900 these
+  // were callable regardless of the ceiling; the e900 change regressed it.
+  test("seed f747: an explicit ceiling omitting core still dispatches diagnostics (am_doctor, am_get_scope) but blocks non-diagnostic core tools", async () => {
+    // tools = ['registry'] omits core. No profile → this.scope is undefined, so
+    // the profile-scope gate (which exempts diagnostics via isToolScoped) never
+    // engages — only isOutsideExplicitCeiling runs.
+    await setupConfig({
+      settings: { mcp_serve: { tools: ["registry"] } },
+    });
+    const server = new McpServer({ auth: { token: undefined, allowUnsafeLocal: true } });
+
+    // am_doctor (core, DIAGNOSTIC_SCOPE_EXEMPT) must NOT be refused by the ceiling.
+    const doctor = await server.handleRequest({
+      jsonrpc: "2.0",
+      id: 220,
+      method: "tools/call",
+      params: { name: "am_doctor", arguments: {} },
+    });
+    expect(doctor?.error?.code).not.toBe(-32601);
+
+    // am_get_scope (core, DIAGNOSTIC_SCOPE_EXEMPT) must NOT be refused either.
+    const scope = await server.handleRequest({
+      jsonrpc: "2.0",
+      id: 221,
+      method: "tools/call",
+      params: { name: "am_get_scope", arguments: {} },
+    });
+    expect(scope?.error?.code).not.toBe(-32601);
+
+    // A non-diagnostic core tool (am_status — am_init is not an MCP tool) IS
+    // blocked: core is outside the explicit ['registry'] ceiling. -32601 with a
+    // ceiling message proves the gate is the boundary, not auth/zod.
+    const status = await server.handleRequest({
+      jsonrpc: "2.0",
+      id: 222,
+      method: "tools/call",
+      params: { name: "am_status", arguments: {} },
+    });
+    expect(status?.error).toBeDefined();
+    expect(status?.error?.code).toBe(-32601);
+    expect(status?.error?.message).toContain("ceiling");
+
+    // seed 22b7 (no-drift): am_get_scope's manifest must NOT report an empty
+    // effectiveTools while the diagnostics are actually callable. The raw
+    // isToolInScope manifest would exclude am_doctor/am_get_scope (core ∉
+    // ['registry'] ceiling), contradicting enforcement. The handler promotes the
+    // exempt names into effectiveTools so the manifest matches the gate.
+    const m = JSON.parse((scope?.result as JsonRpcResult).content[0].text);
+    expect(m.ceiling).toEqual(["registry"]);
+    expect(m.effectiveTools).toContain("am_doctor");
+    expect(m.effectiveTools).toContain("am_get_scope");
+    expect(m.excludedTools).not.toContain("am_doctor");
+    expect(m.excludedTools).not.toContain("am_get_scope");
+    // The blocked non-diagnostic core tool stays excluded.
+    expect(m.effectiveTools).not.toContain("am_status");
+    expect(m.excludedTools).toContain("am_status");
+  });
+
   test("AM_MCP_PROFILE env selects the connection scope at initialize", async () => {
     await setupConfig({
       settings: { mcp_serve: { tools: ["core", "registry"] } },

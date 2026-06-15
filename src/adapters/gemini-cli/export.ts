@@ -87,13 +87,13 @@ export async function exportConfig(
       } catch {
         // No existing file
       }
-      let geminiMdContent = generateGeminiMd(targeted, existingContent);
+      let geminiMdContent = generateGeminiMd(targeted, existingContent, warnings);
 
       // Inject wiki context if enabled (ADR-0054 R7)
       const configDir = options.projectPath;
       const wikiBlock = await generateWikiContext(configDir, config.settings);
       if (wikiBlock) {
-        geminiMdContent = spliceWikiBlock(wikiBlock, geminiMdContent);
+        geminiMdContent = spliceWikiBlock(wikiBlock, geminiMdContent, warnings, "GEMINI.md");
       }
 
       files.push({

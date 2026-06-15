@@ -2,6 +2,19 @@
 
 ## [Unreleased]
 
+### Changed
+- **`am install <short-name>` now keys `config.servers` by the reverse-DNS
+  registry name, not the short name.** Installing a package (e.g. `am install
+  tavily-mcp`) resolves the registry package and stores it under its canonical
+  reverse-DNS identity (e.g. `io.github.tavily/tavily-mcp`) rather than the short
+  name passed on the command line. This is the catalog identity used by `am
+  uninstall <name>`, profile `servers`/`server_tags` references, and every other
+  config lookup — reference the reverse-DNS key, not the short install name.
+- **Registry v0 migration: `am search` dropped the `--tag` and `--verified`
+  flags.** `am search <query>` and the `am_registry_search` MCP tool now accept
+  only `query`, `--limit` (max 100), `--no-cache`, and `--json`. Filtering by tag
+  or verification status is no longer supported at the search layer.
+
 ## [0.5.0-rc.8] - 2026-06-09
 
 ### Added

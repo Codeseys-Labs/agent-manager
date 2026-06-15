@@ -227,18 +227,61 @@ function mergeKeyedMap<V>(
 }
 
 /**
+ * Servers carry a `transport` discriminant (ADR-0057): a stdio server forbids
+ * `url` (StdioServerSchema's `url: z.undefined()`), while a remote one allows
+ * it. The field-grain deep-merge in `mergeKeyedMap` is discriminant-BLIND, so a
+ * lower remote layer (`{ transport: "sse", url }`) restated as stdio by a higher
+ * layer (`{ command, transport: "stdio" }`) leaves a stale `url` on the merged
+ * stdio entry — schema-invalid, and `loadResolvedConfig` does NOT re-validate,
+ * so a stdio adapter export could leak the dead remote endpoint downstream.
+ *
+ * This post-merge step mirrors `merge.ts/mergeServers`, which drops `url` once
+ * the result resolves to stdio. We apply it ONLY to the servers map: the other
+ * keyed maps (skills/agents/instructions/commands/profiles) have no transport
+ * discriminant and need no field reconciliation.
+ *
+ * `transport` is treated as defaulting to "stdio" when absent, matching
+ * `ServerSchema`'s preprocess step — an entry that drops transport AND restates
+ * no url is already valid, but one that inherits a remote url from the lower
+ * layer while resolving to stdio must shed it.
+ */
+function reconcileServerDiscriminant<V>(
+  servers: Record<string, V> | undefined,
+): Record<string, V> | undefined {
+  if (!servers) return servers;
+  const result: Record<string, V> = {};
+  for (const [name, srv] of Object.entries(servers)) {
+    if (srv && typeof srv === "object") {
+      const entry = srv as Record<string, unknown>;
+      const transport = entry.transport ?? "stdio";
+      if (transport === "stdio" && "url" in entry) {
+        const { url: _url, ...rest } = entry;
+        result[name] = rest as V;
+        continue;
+      }
+    }
+    result[name] = srv;
+  }
+  return result;
+}
+
+/**
  * Merge two configs. `b` has higher precedence than `a`.
  *
  * - Servers/Skills/Instructions/Agents/Commands/Profiles: union of keys;
  *   a same-named entry present in both layers is DEEP-merged at the field grain
  *   (b's fields win, a's untouched fields survive) — see `mergeKeyedMap`.
+ * - Servers additionally pass through `reconcileServerDiscriminant`, which sheds
+ *   a stale `url` inherited from a remote lower layer when the merged entry
+ *   resolves to stdio — without it the merged server is StdioServerSchema-invalid
+ *   (seed 1fcc).
  * - Settings: shallow merge, b's keys override a's
  * - Adapters: shallow merge by adapter name
  */
 export function mergeConfigs(a: Config, b: Config): Config {
   return {
     settings: a.settings || b.settings ? { ...a.settings, ...b.settings } : undefined,
-    servers: mergeKeyedMap(a.servers, b.servers),
+    servers: reconcileServerDiscriminant(mergeKeyedMap(a.servers, b.servers)),
     skills: mergeKeyedMap(a.skills, b.skills),
     instructions: mergeKeyedMap(a.instructions, b.instructions),
     agents: mergeKeyedMap(a.agents, b.agents),

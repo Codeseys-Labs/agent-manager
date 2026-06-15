@@ -57,10 +57,15 @@ export function filterByTarget(
  * Generate managed content block for CLAUDE.md.
  * Concatenates all instruction content, wrapped in am markers.
  * Preserves content outside markers in existingContent.
+ *
+ * When `warnings` is supplied it is threaded into {@link spliceMarkerBlock} so a
+ * malformed-marker refusal (fail-closed, H3) surfaces a diagnostic instead of
+ * being silently dropped.
  */
 export function generateClaudeMd(
   instructions: Record<string, ResolvedInstruction>,
   existingContent?: string,
+  warnings?: string[],
 ): string {
   const parts: string[] = [];
   for (const [, instr] of Object.entries(instructions)) {
@@ -71,16 +76,21 @@ export function generateClaudeMd(
   const managedContent = parts.join("\n\n");
   const block = `${AM_BEGIN}\n${managedContent}\n${AM_END}`;
 
-  return spliceMarkerBlock(block, existingContent);
+  return spliceMarkerBlock(block, existingContent, warnings, "CLAUDE.md");
 }
 
 /**
  * Generate managed content block for AGENTS.md.
  * Same marker-based approach as CLAUDE.md.
+ *
+ * When `warnings` is supplied it is threaded into {@link spliceMarkerBlock} so a
+ * malformed-marker refusal (fail-closed, H3) surfaces a diagnostic instead of
+ * being silently dropped (e.g. the windsurf adapter routes through here).
  */
 export function generateAgentsMd(
   instructions: Record<string, ResolvedInstruction>,
   existingContent?: string,
+  warnings?: string[],
 ): string {
   const parts: string[] = [];
   for (const [, instr] of Object.entries(instructions)) {
@@ -91,7 +101,7 @@ export function generateAgentsMd(
   const managedContent = parts.join("\n\n");
   const block = `${AM_BEGIN}\n${managedContent}\n${AM_END}`;
 
-  return spliceMarkerBlock(block, existingContent);
+  return spliceMarkerBlock(block, existingContent, warnings, "AGENTS.md");
 }
 
 /**
@@ -161,10 +171,15 @@ export function spliceMarkerBlock(
 /**
  * Generate managed content block for GEMINI.md.
  * Same marker-based approach as CLAUDE.md.
+ *
+ * When `warnings` is supplied it is threaded into {@link spliceMarkerBlock} so a
+ * malformed-marker refusal (fail-closed, H3) surfaces a diagnostic instead of
+ * being silently dropped (the gemini-cli adapter routes through here).
  */
 export function generateGeminiMd(
   instructions: Record<string, ResolvedInstruction>,
   existingContent?: string,
+  warnings?: string[],
 ): string {
   const parts: string[] = [];
   for (const [, instr] of Object.entries(instructions)) {
@@ -175,7 +190,7 @@ export function generateGeminiMd(
   const managedContent = parts.join("\n\n");
   const block = `${AM_BEGIN}\n${managedContent}\n${AM_END}`;
 
-  return spliceMarkerBlock(block, existingContent);
+  return spliceMarkerBlock(block, existingContent, warnings, "GEMINI.md");
 }
 
 // ── Wiki Context Injection ──────────────────────────────────────
@@ -236,18 +251,53 @@ export async function generateWikiContext(
 /**
  * Splice a wiki context block into existing content, preserving content
  * outside wiki markers. If no wiki block exists, appends before the am:end marker.
+ *
+ * Marker handling is fail-closed, mirroring {@link spliceMarkerBlock} (H3). We
+ * only replace an existing wiki block when the markers are well-formed
+ * (`begin !== -1 && end !== -1 && end > begin`). When the `am:wiki` markers are
+ * PRESENT but MALFORMED (out-of-order or unpaired) we refuse: the function
+ * returns `content` UNCHANGED and, when a `warnings` sink is supplied, pushes a
+ * diagnostic so the caller can surface it. The previous guard checked only
+ * presence (`!== -1`), so a reversed `am:wiki:end`/`am:wiki:begin` pair sliced
+ * with `after` starting before `beginIdx`, dropping the content between the real
+ * markers and scrambling the file.
+ *
+ * @param label  Human-readable file label used in warnings (e.g. "AGENTS.md").
  */
-export function spliceWikiBlock(wikiBlock: string, content: string): string {
+export function spliceWikiBlock(
+  wikiBlock: string,
+  content: string,
+  warnings?: string[],
+  label = "instruction file",
+): string {
   if (!wikiBlock) return content;
 
   const beginIdx = content.indexOf(WIKI_BEGIN);
   const endIdx = content.indexOf(WIKI_END);
+  const hasBegin = beginIdx !== -1;
+  const hasEnd = endIdx !== -1;
 
-  if (beginIdx !== -1 && endIdx !== -1) {
-    // Replace existing wiki block
+  // Well-formed paired wiki markers — replace existing wiki block in place.
+  if (hasBegin && hasEnd && endIdx > beginIdx) {
     const before = content.slice(0, beginIdx);
     const after = content.slice(endIdx + WIKI_END.length);
     return before + wikiBlock + after;
+  }
+
+  // Wiki markers present but malformed (out-of-order or unpaired) — refuse
+  // rather than corrupt the file. Return content unchanged.
+  if (hasBegin || hasEnd) {
+    warnings?.push(
+      `${label}: refusing to inject wiki context — am:wiki:begin/am:wiki:end markers are malformed ` +
+        `(${
+          hasBegin && hasEnd
+            ? "am:wiki:end precedes am:wiki:begin"
+            : hasBegin
+              ? "missing am:wiki:end"
+              : "missing am:wiki:begin"
+        }). Fix or remove the markers and re-run.`,
+    );
+    return content;
   }
 
   // Insert before the am:end marker if present

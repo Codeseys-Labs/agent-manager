@@ -9,6 +9,7 @@ import {
   getBetterleaksPath,
   getBetterleaksVersion,
   isBetterleaksAvailable,
+  platformBinaryName,
   scanWithBetterleaks,
   spawnFailed,
   verifyBetterleaksChecksum,
@@ -63,6 +64,37 @@ describe("betterleaks", () => {
   });
 });
 
+// seed 4b76 (a): the release-asset naming was wrong (`amd64`, no extension),
+// pointing downloadUrl() at a 404 and never matching the pin map. The fixed
+// name must use `x64`/`arm64` and carry the ARCHIVE extension (.tar.gz on
+// darwin/linux, .zip on windows) — matching .github/workflows/ci.yml which
+// downloads `betterleaks_<ver>_linux_x64.tar.gz`.
+describe("betterleaks release-asset naming (seed 4b76)", () => {
+  test("platformBinaryName uses x64/arm64 (never amd64) + an archive extension", () => {
+    const name = platformBinaryName();
+    // Never the broken `amd64` token.
+    expect(name).not.toContain("amd64");
+    // Always one of the two valid arch tokens.
+    expect(/_(x64|arm64)(\.|$)/.test(name)).toBe(true);
+    // Archive extension per platform.
+    if (process.platform === "win32") {
+      expect(name.endsWith(".zip")).toBe(true);
+    } else {
+      expect(name.endsWith(".tar.gz")).toBe(true);
+    }
+    // x64 hosts must produce the `_x64` token (regression on the amd64 bug).
+    if (process.arch === "x64") {
+      expect(name).toContain("_x64");
+    }
+  });
+
+  test("downloadable asset name is keyed in the pin map (no 404 / no missing-pin)", () => {
+    // The exact name we download must have a real digest in the built-in map.
+    const pin = expectedBetterleaksSha256(platformBinaryName());
+    expect(pin).toMatch(/^[0-9a-f]{64}$/);
+  });
+});
+
 // P2-H: pinned-SHA-256 verification before chmod+exec.
 describe("betterleaks checksum verification (P2-H)", () => {
   const ASSET = "betterleaks-test-asset";
@@ -87,17 +119,24 @@ describe("betterleaks checksum verification (P2-H)", () => {
     for (const [name, val] of Object.entries(orig)) setEnv(name, val);
   });
 
-  test("FAILS CLOSED when no pin is available (built-in pins are TODO placeholders)", () => {
-    // No env pin, no built-in pin for an unknown asset → must refuse.
+  test("FAILS CLOSED when no pin is available for an UNKNOWN asset", () => {
+    // No env pin, and no built-in pin for an unknown (non-release) asset name
+    // → must refuse. (Real release assets DO have pins; see the tests below.)
     const res = verifyBetterleaksChecksum(payload, ASSET);
     expect(res.ok).toBe(false);
     if (!res.ok) expect(res.reason).toContain("No pinned SHA-256");
   });
 
-  test("the shipped built-in pins are empty placeholders → install fails closed by default", () => {
-    // Regression guard: until real upstream SHAs are filled in, the default
-    // platform asset has no pin, so production install must fail closed.
-    expect(expectedBetterleaksSha256()).toBeNull();
+  // seed 4b76 (b): the built-in pin map now carries REAL digests keyed on the
+  // archive asset name platformBinaryName() produces. The current platform's
+  // asset must resolve to a non-empty, well-formed 64-hex SHA-256 — without
+  // any env override.
+  test("the current platform's built-in pin is a real 64-hex digest (matches platformBinaryName)", () => {
+    const pin = expectedBetterleaksSha256();
+    expect(pin).not.toBeNull();
+    expect(pin).toMatch(/^[0-9a-f]{64}$/);
+    // And it must be keyed on EXACTLY the name platformBinaryName() produces.
+    expect(expectedBetterleaksSha256(platformBinaryName())).toBe(pin);
   });
 
   test("matches an operator-supplied env pin", () => {
@@ -132,6 +171,32 @@ describe("betterleaks checksum verification (P2-H)", () => {
     process.env.AM_BETTERLEAKS_SHA256 = "0".repeat(64);
     const res = verifyBetterleaksChecksum(payload, ASSET);
     expect(res.ok).toBe(false);
+  });
+
+  // seed 4b76 (c): verify logic accepts matching bytes and rejects mismatched
+  // bytes for a given digest — exercised offline with known bytes + their SHA
+  // (no network download). The checksum is computed over the ARCHIVE bytes, so
+  // this same logic gates the real archive in installBetterleaks().
+  test("accepts when the digest matches the (archive) bytes, rejects when it does not", () => {
+    const archiveBytes = new TextEncoder().encode("pretend-this-is-the-tar-gz-archive");
+    const matchingSha = createHash("sha256").update(archiveBytes).digest("hex");
+
+    // ACCEPT: digest is exactly the sha of the bytes.
+    process.env.AM_BETTERLEAKS_SHA256 = matchingSha;
+    const accepted = verifyBetterleaksChecksum(archiveBytes, ASSET);
+    expect(accepted.ok).toBe(true);
+    if (accepted.ok) expect(accepted.sha256).toBe(matchingSha);
+
+    // REJECT: same bytes, a different (valid-shaped) digest.
+    const wrongSha = "f".repeat(64);
+    expect(wrongSha).not.toBe(matchingSha);
+    process.env.AM_BETTERLEAKS_SHA256 = wrongSha;
+    const rejected = verifyBetterleaksChecksum(archiveBytes, ASSET);
+    expect(rejected.ok).toBe(false);
+    if (!rejected.ok) {
+      expect(rejected.reason).toContain("Checksum mismatch");
+      expect(rejected.sha256).toBe(matchingSha); // observed digest is the real one
+    }
   });
 });
 

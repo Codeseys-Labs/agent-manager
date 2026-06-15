@@ -115,12 +115,55 @@ export function deriveBareEnvName(queryKey: string): string {
  * pass, so masking siblings here would destroy a value we still need to encrypt.
  * `${VAR}`-style replacements are de-percent-encoded so the stored command is
  * literally `?key=${VAR}` (what the interpolation engine expects).
+ *
+ * Guard: if `queryKey` is NOT an actual query param of the URL, `set()` would
+ * APPEND a bogus `?key=replacement` while leaving the real credential (e.g. a
+ * `user:pass@` userinfo authority) PLAINTEXT in place — a leak (seed 2ce0).
+ * Userinfo credentials must go through `rewriteUserinfoCredential`, not here, so
+ * when the key is absent we leave the URL untouched and let the caller's
+ * post-check fail closed rather than emit a corrupted-yet-still-leaking URL.
  */
 export function rewriteUrlParam(url: string, queryKey: string, replacement: string): string {
   try {
     const u = new URL(url);
+    // Only rewrite a key that is genuinely present as a query param. Appending a
+    // new param for a non-query key (e.g. a "password" userinfo key) corrupts the
+    // URL without removing the real plaintext credential.
+    if (!u.searchParams.has(queryKey)) return url;
     u.searchParams.set(queryKey, replacement);
     return u.toString().replace(encodeURIComponent(replacement), replacement);
+  } catch {
+    return url; // not a URL — leave as-is
+  }
+}
+
+/**
+ * Write-path-safe userinfo-credential rewrite. A userinfo credential
+ * (`https://user:s3cret@host`) is NOT a query param, so `rewriteUrlParam` cannot
+ * scrub it (it would append a bogus query param and leave `user:s3cret@` in the
+ * authority — seed 2ce0). This rewrites the targeted userinfo field
+ * (`username` or `password`) DIRECTLY to `replacement`, mirroring the display
+ * path in `buildSuggestedReplacementUrl` but WITHOUT masking the sibling field
+ * (the ingest loop encrypts each hit in its own pass, so masking the sibling
+ * would destroy a value we still need to encrypt).
+ *
+ * URL setters percent-encode `${VAR}` braces, so the literal placeholder is
+ * restored afterwards (what the interpolation engine expects to read back).
+ */
+export function rewriteUserinfoCredential(
+  url: string,
+  field: "username" | "password",
+  replacement: string,
+): string {
+  try {
+    const u = new URL(url);
+    if (field === "password") u.password = replacement;
+    else u.username = replacement;
+    // The setter percent-encodes the placeholder's braces (e.g. `${VAR}` →
+    // `$%7BVAR%7D`); restore the literal form so the stored URL is `user:${VAR}@`.
+    const encoded = field === "password" ? u.password : u.username;
+    const out = u.toString();
+    return encoded && encoded !== replacement ? out.replace(encoded, replacement) : out;
   } catch {
     return url; // not a URL — leave as-is
   }

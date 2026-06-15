@@ -40,6 +40,25 @@ describe("isSecretKeyName", () => {
     expect(isSecretKeyName("SIGNING_KEY")).toBe(true);
   });
 
+  test("matches auth-suffixed key names (seed 2829: \\bauth\\b missed across underscores)", () => {
+    // `/\bauth\b/i` does NOT fire across `_`/`-` (both word chars), so a
+    // bearer-valued key like HTTP_BEARER_AUTH / FOO_AUTH escaped detection
+    // (false negative → leaked credential). The `auth$` suffix anchor catches
+    // *_AUTH / *-AUTH / bare AUTH.
+    expect(isSecretKeyName("HTTP_BEARER_AUTH")).toBe(true);
+    expect(isSecretKeyName("FOO_AUTH")).toBe(true);
+    expect(isSecretKeyName("AUTH")).toBe(true);
+    expect(isSecretKeyName("X-AUTH")).toBe(true);
+  });
+
+  test("auth-suffix anchor does NOT false-positive on AUTHOR / AUTHORITY / OAUTH_CLIENT_ID", () => {
+    // Bound the blast radius: `auth` as a prefix (AUTHOR, AUTHORITY) or
+    // mid-string (OAUTH_CLIENT_ID) is NOT a credential — only an `auth` SUFFIX is.
+    expect(isSecretKeyName("AUTHOR")).toBe(false);
+    expect(isSecretKeyName("AUTHORITY")).toBe(false);
+    expect(isSecretKeyName("OAUTH_CLIENT_ID")).toBe(false);
+  });
+
   test("matches anchored bearer key names (ws5: free /bearer/i was unanchored)", () => {
     // The old free-floating /bearer/i fired on ANY substring `bearer`, so
     // config flags like BEARER_ENABLED were encrypted as if they were secrets.
@@ -375,7 +394,77 @@ describe("substituteSecret", () => {
     expect(server.env.MCP_ENDPOINT).not.toContain("abcdefghijklmnop1234");
     expect(server.command).toBe("npx");
   });
+
+  // ── seed 2ce0: userinfo url-credential WRITE path (was: leaked plaintext) ──
+  test("seed 2ce0: userinfo command credential is REMOVED (no surviving plaintext)", () => {
+    // The bug: substituteSecret routed a userinfo hit through rewriteUrlParam,
+    // which only does searchParams.set — it APPENDED a bogus `?password=${VAR}`
+    // and left `user:s3cr3tpass@` PLAINTEXT in the authority. Round-trip property:
+    // (a) returns true, (b) NO plaintext "s3cr3tpass" anywhere, (c) the userinfo
+    // is replaced with the ${VAR} placeholder.
+    const server = { command: "https://user:s3cr3tpass@host.example.com/mcp", args: [] };
+    const secrets = scanServerForUrlCredentials("u", server);
+    const pwHit = secrets.find((s) => s.key === "password");
+    expect(pwHit, "userinfo password not detected").toBeDefined();
+    expect(pwHit?.value).toBe("s3cr3tpass");
+
+    const removed = substituteSecret(server, pwHit as DetectedSecret, "HOST_PASSWORD");
+    // (a) success
+    expect(removed).toBe(true);
+    // (b) NO plaintext anywhere
+    expect(server.command, "plaintext password survived").not.toContain("s3cr3tpass");
+    // (c) the userinfo is the ${VAR} placeholder, literal (not percent-encoded)
+    expect(server.command).toContain("${HOST_PASSWORD}");
+    expect(server.command).not.toContain("%24%7B");
+  });
+
+  test("seed 2ce0: in-place-mutation guard — unsubstitutable credential leaves command UNCHANGED", () => {
+    // If the rewrite cannot remove the plaintext, substituteSecret must NOT
+    // mutate server.command (no half-corrupted+still-leaking config). We force a
+    // genuine no-op where the value SURVIVES: the secret claims key "api_key",
+    // but the plaintext actually lives in a `session` param. rewriteUrlParam's
+    // guard finds no `api_key` param, returns the URL untouched, the value still
+    // sits there → the clone-and-commit guard reports false AND leaves the command
+    // byte-for-byte intact (the old code mutated in place before the post-check).
+    const original = "https://host.example.com/mcp?session=the-real-leaked-secret-value-xyz";
+    const server = { command: original, args: [] };
+    const secret: DetectedSecret = {
+      location: "command",
+      key: "api_key", // not a param of the URL above; value lives in `session`
+      value: "the-real-leaked-secret-value-xyz",
+      source: "url-credential",
+      urlSource: "command",
+      suggestedEnvVar: "API_KEY",
+    };
+
+    const removed = substituteSecret(server, secret, "API_KEY");
+    expect(removed).toBe(false);
+    // command must be UNCHANGED — not half-rewritten with a bogus appended param.
+    expect(server.command).toBe(original);
+  });
+
+  test("seed 2ce0: a SIBLING success does not persist a corrupted userinfo command", () => {
+    // The original report: substituteSecret mutated server.command IN PLACE
+    // before its failed post-check, so if a sibling secret succeeded the whole
+    // corrupted+leaking config persisted. With the clone-and-commit guard, a
+    // userinfo rewrite that fully removes the plaintext is committed cleanly —
+    // and nothing about the failed-rewrite path can leave a half-edit behind.
+    const server = { command: "https://user:s3cr3tpass@host.example.com/mcp", args: [] };
+    const secrets = scanServerForUrlCredentials("u", server);
+    // Substitute every detected userinfo hit; after the dust settles NO raw
+    // plaintext may remain and the command must still be a valid URL.
+    for (const s of secrets) {
+      substituteSecret(server, s, deriveEnvName(s));
+    }
+    expect(server.command).not.toContain("s3cr3tpass");
+    expect(server.command).not.toContain("user:s3cr3tpass");
+  });
 });
+
+// Helper for the sibling-success test: a stable per-hit env name.
+function deriveEnvName(s: DetectedSecret): string {
+  return `HOST_${(s.key ?? "CRED").toUpperCase()}`;
+}
 
 // ── Display utilities ────────────────────────────────────────────────────
 

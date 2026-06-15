@@ -35,6 +35,11 @@ let consoleErrors: string[] = [];
 const origLog = console.log;
 const origError = console.error;
 const origConfigDir = process.env.AM_CONFIG_DIR;
+// Order-independence guard (seed 8c51): the chdir-based describe blocks below
+// restore cwd in afterEach. Pin the restore target to the repo root rather than
+// process.cwd() at module load, so a leaked (deleted) tmp cwd from an earlier
+// test file can never be captured and reinstated here.
+const REPO_ROOT = join(import.meta.dir, "..", "..");
 
 function captureConsole(): void {
   consoleOutput = [];
@@ -379,7 +384,7 @@ describe("am wiki: --global threading for lint/graph (BUG-1 regression)", () => 
   let configDir: string;
   let globalWikiDir: string;
   let projectDir: string;
-  const origCwd = process.cwd();
+  const origCwd = REPO_ROOT;
 
   beforeEach(async () => {
     dir = await createTestDir("am-wiki-global-");
@@ -502,7 +507,7 @@ describe("am wiki: --global threading for briefing/export (QW-followup)", () => 
   let configDir: string;
   let globalWikiDir: string;
   let projectDir: string;
-  const origCwd = process.cwd();
+  const origCwd = REPO_ROOT;
 
   beforeEach(async () => {
     dir = await createTestDir("am-wiki-global-be-");
@@ -886,7 +891,7 @@ describe("am wiki show: supersession + coverage read surfaces (WAVE G-WIKIREAD)"
 describe("am wiki add: visibility-boundary feedback (W1-3)", () => {
   let dir: TestDir;
   let projectDir: string;
-  const origCwd = process.cwd();
+  const origCwd = REPO_ROOT;
 
   async function getAdd(): Promise<{
     run: (ctx: { args: Record<string, unknown> }) => Promise<void>;

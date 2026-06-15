@@ -283,12 +283,25 @@ export const profileDeleteCommand = defineCommand({
           }
         }
 
-        // Confirmation prompt. Skipped (and the delete proceeds) when --yes is
-        // passed OR when running non-interactively (--json or no TTY), matching
-        // the codebase convention used by `am uninstall`/`am update`. This
-        // keeps the command from hanging on a prompt in scripts/CI; the change
-        // is recoverable via `am undo` (withConfig auto-commits).
-        if (!args.yes && !args.json && process.stdin.isTTY) {
+        // Confirmation prompt.
+        // FAIL CLOSED: deleting a profile is destructive, so it must never
+        // proceed unconfirmed. When confirmation is required (no --yes) but we
+        // cannot interactively prompt (non-TTY stdin: scripts, CI, piped input)
+        // and --json was not passed (the structured/automation contract),
+        // REFUSE rather than silently deleting. The previous
+        // `&& process.stdin.isTTY` guard failed OPEN — under a non-TTY it
+        // skipped the prompt and deleted the profile without consent. This now
+        // matches the fail-closed convention used by `am uninstall`/`am update`;
+        // operators in non-TTY contexts must pass --yes.
+        if (!args.yes && !args.json) {
+          if (!process.stdin.isTTY) {
+            process.exitCode = 1;
+            error(
+              `Refusing to delete profile "${name}" without confirmation. stdin is not a TTY — pass --yes to confirm non-interactively.`,
+              opts,
+            );
+            return { result: undefined, changed: false };
+          }
           const confirmed = await confirm({
             message: `Delete profile '${name}'? This cannot be undone.`,
           });

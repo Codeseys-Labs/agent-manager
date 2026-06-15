@@ -19,6 +19,7 @@ import {
   type CredentialHit,
   deriveBareEnvName,
   rewriteUrlParam,
+  rewriteUserinfoCredential,
   scanServersForUrlCredentials,
 } from "./url-credentials";
 
@@ -45,7 +46,14 @@ const SECRET_KEY_PATTERNS: RegExp[] = [
   // END of the string so blast radius is bounded to the *suffix* (e.g.
   // LICENSE_KEY / PUBLIC_KEY now match — acceptable, substitution is reversible)
   // rather than a free `key` substring (which would catch KEYBOARD, MONKEY…).
-  /(^|[_-])(key|token|secret|password|pass|pwd|credential)$/i,
+  //
+  // `auth` is folded into this suffix group (seed 2829): the bare `/\bauth\b/i`
+  // above does NOT fire across `_`/`-` (both word chars), so bearer-valued keys
+  // like HTTP_BEARER_AUTH / FOO_AUTH escaped detection (false negative → leaked
+  // credential). The suffix anchor matches `*_AUTH`/`*-AUTH`/bare `AUTH` while
+  // staying off AUTHOR / AUTHORITY (no `auth$` boundary) and OAUTH_CLIENT_ID
+  // (auth is mid-string, not the suffix).
+  /(^|[_-])(key|token|secret|password|pass|pwd|credential|auth)$/i,
   // Anchored bearer: matches a bare `BEARER` or a bearer-SUFFIXED key
   // (AUTH_BEARER). A free `/bearer/i` substring match treated config flags as
   // secrets (BEARER_ENABLED, BEARER_TOKEN_TTL) and false-fired on FORBEARER /
@@ -470,22 +478,43 @@ export function substituteSecret(
       return false;
     }
     case "command": {
-      // URL-embedded credential: rewrite ONLY the offending query param to the
-      // placeholder, via rewriteUrlParam (URL.searchParams-safe; does not touch
-      // sibling params). The credential URL may live in command, an arg, or an
-      // adapter url field.
+      // URL-embedded credential: rewrite ONLY the offending credential to the
+      // placeholder. A userinfo hit (`https://user:s3cret@host`, key
+      // "username"/"password") lives in the URL authority, NOT the query string,
+      // so it goes through rewriteUserinfoCredential; a query-param hit goes
+      // through rewriteUrlParam (URL.searchParams-safe; does not touch siblings).
+      // The credential URL may live in command, an arg, an adapter url, or an env
+      // value.
       if (secret.source === "url-credential" && secret.key) {
+        // Userinfo hits synthesize queryKey "username"/"password" (they came from
+        // parsed.username/password, not searchParams). Route them to the
+        // authority-rewriting helper instead of the query-param helper, which
+        // would append a bogus `?password=${VAR}` and leave `user:s3cret@`
+        // PLAINTEXT in the authority (seed 2ce0).
+        const isUserinfo = secret.key === "username" || secret.key === "password";
+        const rewrite = (url: string): string =>
+          isUserinfo
+            ? rewriteUserinfoCredential(url, secret.key as "username" | "password", placeholder)
+            : rewriteUrlParam(url, secret.key as string, placeholder);
+
+        // Operate on a CLONE and only commit the mutation back if the post-check
+        // (plaintext provably removed) passes — NEVER mutate in place before
+        // verifying, or a half-corrupted+still-leaking config persists when a
+        // rewrite fails (seed 2ce0: substituteSecret mutated before its check).
         if (secret.urlSource === "args" && server.args && secret.index !== undefined) {
           const before = server.args[secret.index];
-          server.args[secret.index] = rewriteUrlParam(before, secret.key, placeholder);
-          return !server.args[secret.index].includes(secret.value);
+          const rewritten = rewrite(before);
+          if (rewritten.includes(secret.value)) return false; // not removed — leave unchanged
+          server.args[secret.index] = rewritten;
+          return true;
         }
         if (secret.urlSource === "adapter" && secret.adapterName) {
           const adapter = server.adapters?.[secret.adapterName] as { url?: unknown } | undefined;
           if (adapter && typeof adapter.url === "string") {
-            const rewritten = rewriteUrlParam(adapter.url, secret.key, placeholder);
+            const rewritten = rewrite(adapter.url);
+            if (rewritten.includes(secret.value)) return false; // not removed — leave unchanged
             adapter.url = rewritten;
-            return !rewritten.includes(secret.value);
+            return true;
           }
           return false; // adapter/url vanished — cannot rewrite
         }
@@ -495,14 +524,17 @@ export function substituteSecret(
         // env (the "detection > substitution = plaintext leak" failure mode).
         if (secret.urlSource === "env" && secret.envKey) {
           if (server.env && typeof server.env[secret.envKey] === "string") {
-            const rewritten = rewriteUrlParam(server.env[secret.envKey], secret.key, placeholder);
+            const rewritten = rewrite(server.env[secret.envKey]);
+            if (rewritten.includes(secret.value)) return false; // not removed — leave unchanged
             server.env[secret.envKey] = rewritten;
-            return !rewritten.includes(secret.value);
+            return true;
           }
           return false; // env entry vanished — cannot rewrite (fail closed)
         }
-        server.command = rewriteUrlParam(server.command, secret.key, placeholder);
-        return !server.command.includes(secret.value);
+        const rewrittenCommand = rewrite(server.command);
+        if (rewrittenCommand.includes(secret.value)) return false; // not removed — leave unchanged
+        server.command = rewrittenCommand;
+        return true;
       }
       // Legacy inline `key=value` form in the command string (non-URL).
       if (secret.key) {

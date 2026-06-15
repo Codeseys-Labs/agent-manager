@@ -231,6 +231,43 @@ describe("gemini-cli exportConfig()", () => {
     expect(geminiMdFile).toBeUndefined();
   });
 
+  // FIX 1 (seed 0967): gemini-cli routes GEMINI.md through the core
+  // generateGeminiMd helper. A malformed marker must be fail-closed (file
+  // preserved) AND surface a warning — not silently dropped.
+  test("surfaces a warning when existing GEMINI.md has malformed markers", async () => {
+    dir = await createTestDir("am-gc-export-");
+    const userProse = "Hand-written prose that must survive.";
+    // Out-of-order: am:end precedes am:begin.
+    await dir.write("GEMINI.md", `# Notes\n\n<!-- am:end -->\n${userProse}\n<!-- am:begin -->\n`);
+    const cfg = config({
+      instructions: {
+        "ts-rules": {
+          name: "ts-rules",
+          content: "Use strict TypeScript.",
+          scope: "always",
+          globs: [],
+          description: "",
+          targets: ["gemini-cli"],
+          adapters: {},
+        },
+      },
+    });
+
+    const result = await exportConfig(cfg, { projectPath: dir.path, dryRun: true }, dir.path);
+
+    // Warning surfaced (not silently dropped).
+    expect(result.warnings.length).toBeGreaterThanOrEqual(1);
+    expect(result.warnings.some((w) => w.includes("GEMINI.md") && w.includes("malformed"))).toBe(
+      true,
+    );
+
+    // Fail-closed: the GEMINI.md file content is preserved unchanged.
+    const geminiMdFile = result.files.find((f) => f.path.endsWith("GEMINI.md"));
+    expect(geminiMdFile).toBeDefined();
+    expect(geminiMdFile!.content).toContain(userProse);
+    expect(geminiMdFile!.content).not.toContain("Use strict TypeScript.");
+  });
+
   test("generates project .gemini/settings.json for project-scoped servers", async () => {
     dir = await createTestDir("am-gc-export-");
     const projectDir = `${dir.path}/project`;

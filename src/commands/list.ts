@@ -44,12 +44,13 @@ export const listCommand = defineCommand({
   meta: {
     name: "list",
     description:
-      "List entities in the config (servers, instructions, skills, agents, profiles). For the unified agent roster (config + ACP built-ins + A2A roster), use `am agent list`.",
+      "List entities in the config (servers, instructions, skills, agents, commands, profiles). For the unified agent roster (config + ACP built-ins + A2A roster), use `am agent list`.",
   },
   args: {
     entity: {
       type: "positional",
-      description: "Entity type: servers (default), instructions, skills, agents, profiles",
+      description:
+        "Entity type: servers (default), instructions, skills, agents, commands, profiles",
       required: false,
     },
     json: { type: "boolean", description: "JSON output", default: false },

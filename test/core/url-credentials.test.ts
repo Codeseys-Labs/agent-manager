@@ -21,6 +21,7 @@ import {
   deriveBareEnvName,
   formatCredentialHits,
   rewriteUrlParam,
+  rewriteUserinfoCredential,
   scanServersForUrlCredentials,
   scanUrlForCredentials,
 } from "../../src/core/url-credentials";
@@ -336,5 +337,48 @@ describe("rewriteUrlParam (write-path-safe, non-masking)", () => {
     expect(display).toContain("api_key=${API_KEY}");
     expect(display).not.toContain("SECRETTWO67890"); // masked for safe copy-paste
     expect(display).toContain("REDACTED");
+  });
+
+  test("seed 2ce0: does NOT append a bogus param when the key is not a query param", () => {
+    // A userinfo "password" key is NOT a query param. The old code did
+    // searchParams.set("password", …) which APPENDED `?password=${VAR}` while
+    // leaving `user:s3cret@` PLAINTEXT in the authority. The guard now leaves the
+    // URL untouched so the caller's post-check fails closed instead of emitting a
+    // corrupted-yet-still-leaking URL.
+    const url = "https://user:s3cret@host.example.com/mcp";
+    const out = rewriteUrlParam(url, "password", "${HOST_PASSWORD}");
+    expect(out).toBe(url); // unchanged — no bogus ?password=
+    expect(out).not.toContain("?password=");
+    expect(out).not.toContain("&password=");
+  });
+});
+
+describe("rewriteUserinfoCredential (write-path-safe userinfo rewrite)", () => {
+  test("rewrites the userinfo password to a literal ${VAR}, removing plaintext", () => {
+    const out = rewriteUserinfoCredential(
+      "https://user:s3cr3tpass@host.example.com/mcp",
+      "password",
+      "${HOST_PASSWORD}",
+    );
+    expect(out).not.toContain("s3cr3tpass");
+    expect(out).toContain("${HOST_PASSWORD}");
+    expect(out).not.toContain("%24%7B"); // literal, not percent-encoded
+  });
+
+  test("rewrites the userinfo username and leaves the password sibling intact", () => {
+    // Unlike the display path, the write path must NOT mask the sibling — the
+    // ingest loop encrypts each hit in its own pass.
+    const out = rewriteUserinfoCredential(
+      "https://adminUSER:s3cr3tpass@host.example.com/mcp",
+      "username",
+      "${HOST_USERNAME}",
+    );
+    expect(out).not.toContain("adminUSER");
+    expect(out).toContain("${HOST_USERNAME}");
+    expect(out).toContain("s3cr3tpass"); // sibling preserved for its own pass
+  });
+
+  test("returns the input unchanged for a non-URL string", () => {
+    expect(rewriteUserinfoCredential("not-a-url", "password", "${X}")).toBe("not-a-url");
   });
 });

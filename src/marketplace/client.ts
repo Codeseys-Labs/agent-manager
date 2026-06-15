@@ -52,6 +52,24 @@ const GIT_AUTHOR = { name: "agent-manager", email: "am@localhost" };
 const MARKETPLACE_NAME_RE = /^[a-z0-9][a-z0-9_-]{0,63}$/;
 
 /**
+ * Reject the path-traversal subset of an invalid name: `..`, `/`, `\`. These
+ * are the only characters that escape the marketplaces directory when fed to
+ * `join(marketplacesDir, name)` → `symlink()`/`clone()`/`rm()`. This guard is
+ * the *security* floor and applies on every code path that turns a name into a
+ * filesystem op — including remove, where the rest of the name regex
+ * (uppercase, length, leading dash) is intentionally NOT enforced so that a
+ * pre-existing entry with a now-"invalid" but harmless name can still be
+ * cleaned up.
+ */
+function assertNoPathTraversal(name: string): void {
+  if (name.includes("..") || name.includes("/") || name.includes("\\")) {
+    throw new MarketplaceError(
+      `Invalid marketplace name "${name}": must not contain "..", "/", or "\\" (would escape the marketplaces directory).`,
+    );
+  }
+}
+
+/**
  * Validate a marketplace name (user-supplied `--name` or one derived from a
  * URL) before it is used to build a filesystem path. The resolved name is
  * fed to `join(marketplacesDir, name)` which then drives `symlink()`,
@@ -60,18 +78,15 @@ const MARKETPLACE_NAME_RE = /^[a-z0-9][a-z0-9_-]{0,63}$/;
  *
  * Throws {@link MarketplaceError} (fail closed) so every entry point rejects
  * before any filesystem mutation. Exported so tests and other call sites can
- * reuse the same rule.
+ * reuse the same rule. This is the strict ADD-path rule: a *new* name must
+ * conform to {@link MARKETPLACE_NAME_RE} in full. The REMOVE path uses only the
+ * {@link assertNoPathTraversal} floor — see {@link removeMarketplace}.
  */
 export function validateMarketplaceName(name: string): void {
   if (!name || typeof name !== "string") {
     throw new MarketplaceError("Invalid marketplace name: empty or non-string value.");
   }
-  // Reject obvious separator/traversal abuse first for an actionable message.
-  if (name.includes("..") || name.includes("/") || name.includes("\\")) {
-    throw new MarketplaceError(
-      `Invalid marketplace name "${name}": must not contain "..", "/", or "\\" (would escape the marketplaces directory).`,
-    );
-  }
+  assertNoPathTraversal(name);
   if (!MARKETPLACE_NAME_RE.test(name)) {
     throw new MarketplaceError(
       `Invalid marketplace name "${name}": must match /^[a-z0-9][a-z0-9_-]{0,63}$/ (lowercase letters/digits, dash, underscore; start with alnum; 1–64 chars). Pass a valid --name.`,
@@ -354,12 +369,17 @@ export async function updateMarketplace(
  * Remove a marketplace repo and its entry.
  */
 export async function removeMarketplace(name: string): Promise<void> {
-  // Validate BEFORE join()/rm(): a traversal name (whether passed directly or
-  // forged into marketplaces.json) would otherwise let rm delete an arbitrary
-  // path outside the marketplaces directory. Fail closed.
-  validateMarketplaceName(name);
+  // We do NOT run the full add-path name validation here. The name regex
+  // (lowercase, ≤64 chars, leading alnum) is a rule for *new* entries; a
+  // marketplace added before the regex existed (e.g. an uppercase name) is
+  // already a trusted value sitting in the local marketplaces file and must
+  // remain removable. Enforcing validateMarketplaceName() would strand such an
+  // entry with no cleanup path. We keep only the path-traversal floor below,
+  // which is the actual security boundary for the join()/rm() that follows.
+  assertNoPathTraversal(name);
 
   const data = await readMarketplacesFile();
+  // Look up by exact string match — the entry is already trusted local state.
   const idx = data.marketplaces.findIndex((m) => m.name === name);
   if (idx === -1) {
     throw new MarketplaceError(`Marketplace "${name}" not found.`);
