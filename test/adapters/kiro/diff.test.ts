@@ -104,7 +104,10 @@ describe("kiro diffConfig()", () => {
     expect(added?.type).toBe("added-locally");
   });
 
-  test("detects server removed locally", async () => {
+  test("labels catalog-ahead server as added-in-config, not removed-locally", async () => {
+    // Catalog-ahead (`am add server fetch`): the native config is empty, the
+    // catalog has fetch. A FORWARD delta apply resolves by writing, not a local
+    // removal. (ws4-drift-relabel-catalog-ahead)
     dir = await createTestDir("am-kiro-diff-");
     await dir.write(
       ".kiro/settings/mcp.json",
@@ -121,9 +124,10 @@ describe("kiro diffConfig()", () => {
 
     const result = diffConfig(config, {}, dir.path);
     expect(result.status).toBe("drifted");
-    const removed = result.changes.find((c) => c.name === "fetch");
-    expect(removed).toBeDefined();
-    expect(removed?.type).toBe("removed-locally");
+    const pending = result.changes.find((c) => c.name === "fetch");
+    expect(pending).toBeDefined();
+    expect(pending?.type).toBe("added-in-config");
+    expect(result.changes.some((c) => c.type === "removed-locally")).toBe(false);
   });
 
   test("detects modified server (command changed)", async () => {

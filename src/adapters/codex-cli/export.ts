@@ -142,7 +142,7 @@ function generateInstructionBlock(config: ResolvedConfig): string | null {
 function generateAgentsMd(
   existingPath: string,
   managedContent: string,
-  _warnings: string[],
+  warnings: string[],
 ): string {
   const block = `${AM_BEGIN}\n${managedContent}\n${AM_END}`;
 
@@ -154,5 +154,7 @@ function generateAgentsMd(
     // No existing file
   }
 
-  return spliceMarkerBlock(block, existingContent);
+  // Fail-closed marker guard (H3): malformed markers leave the file unchanged
+  // and surface a warning rather than scrambling user prose.
+  return spliceMarkerBlock(block, existingContent, warnings, "AGENTS.md");
 }

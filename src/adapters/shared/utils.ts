@@ -11,6 +11,20 @@ import type { ResolvedServer } from "../types.ts";
 export const AM_BEGIN = "<!-- am:begin -->";
 export const AM_END = "<!-- am:end -->";
 
+// ── Line-ending normalization ───────────────────────────────────
+
+/**
+ * Normalize line endings to LF.
+ *
+ * Managed instruction blocks are always written with `\n`, but native files
+ * read on Windows arrive with `\r\n` (and legacy files may use lone `\r`).
+ * Comparing the two byte-for-byte produces permanent false drift on every
+ * internal newline. Normalize both operands with this helper before comparing.
+ */
+export function normalizeLineEndings(s: string): string {
+  return s.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+}
+
 // ── Sort / Normalize ────────────────────────────────────────────
 
 /** Sort keys of an object for deterministic comparison. */
@@ -134,21 +148,62 @@ export function readJsonFile(path: string): unknown | null {
 // ── Marker-based content splicing ───────────────────────────────
 
 /**
- * Splice a managed block into existing content, preserving content outside markers.
- * If no existing content, returns the block alone. If existing content has markers,
- * replaces the managed section. Otherwise appends.
+ * Splice a managed block into existing content, preserving content outside
+ * markers.
+ *
+ * Marker handling is fail-closed (H3) — mirrors the guard in
+ * `core/instructions.ts`. The previous implementation spliced whenever *both*
+ * an `am:begin` and an `am:end` existed regardless of order or pairing, which
+ * corrupted user files in two ways:
+ *   1. Out-of-order markers (`am:end` before `am:begin`): `after` started
+ *      before `beginIdx`, dropping the region between the real markers and
+ *      scrambling the surviving content.
+ *   2. A single unpaired marker: the both-present guard was false, so it fell
+ *      through to the append branch and emitted a SECOND managed block.
+ *
+ * We now only splice when the markers are well-formed
+ * (`begin !== -1 && end !== -1 && end > begin`). When markers are PRESENT but
+ * MALFORMED we refuse: return `existingContent` UNCHANGED and, when a
+ * `warnings` sink is supplied, push a diagnostic for the caller to surface.
+ *
+ * @param label  Human-readable file label used in warnings (e.g. "AGENTS.md").
  */
-export function spliceMarkerBlock(block: string, existingContent?: string): string {
+export function spliceMarkerBlock(
+  block: string,
+  existingContent?: string,
+  warnings?: string[],
+  label = "instruction file",
+): string {
   if (!existingContent) {
     return `${block}\n`;
   }
 
   const beginIdx = existingContent.indexOf(AM_BEGIN);
   const endIdx = existingContent.indexOf(AM_END);
-  if (beginIdx !== -1 && endIdx !== -1) {
+  const hasBegin = beginIdx !== -1;
+  const hasEnd = endIdx !== -1;
+
+  // Well-formed paired markers — splice in place.
+  if (hasBegin && hasEnd && endIdx > beginIdx) {
     const before = existingContent.slice(0, beginIdx);
     const after = existingContent.slice(endIdx + AM_END.length);
     return before + block + after;
+  }
+
+  // Markers present but malformed (out-of-order or unpaired) — refuse rather
+  // than corrupt the file. Return existing content unchanged.
+  if (hasBegin || hasEnd) {
+    warnings?.push(
+      `${label}: refusing to update managed block — am:begin/am:end markers are malformed ` +
+        `(${
+          hasBegin && hasEnd
+            ? "am:end precedes am:begin"
+            : hasBegin
+              ? "missing am:end"
+              : "missing am:begin"
+        }). Fix or remove the markers and re-run.`,
+    );
+    return existingContent;
   }
 
   // No existing markers — append

@@ -44,7 +44,6 @@ export const TOP_LEVEL_COMMANDS = [
   "flow",
   "marketplace",
   "completion",
-  "init-project",
 ] as const;
 
 /** Commands that have subcommands, with their subcommand lists. */

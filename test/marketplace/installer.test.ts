@@ -315,6 +315,97 @@ describe("marketplace/installer", () => {
       expect(adaptersToml.adapters["zed-adapter-plugin"].source).toBe("npm:am-adapter-zed@0.2.0");
     });
 
+    // Security (W-l12-installer-name): when a manifest declares an `adapter`,
+    // the installer uses `manifest.name` AS the adapters.toml key. A malicious
+    // or malformed manifest name (path traversal, spaces, uppercase) would
+    // otherwise flow unvalidated into the catalog key (and downstream path
+    // composition `am-adapter-<name>`). The installer MUST run the canonical
+    // `validateAdapterName` and reject BEFORE any catalog write. These fail
+    // before the guard is added (the name is written, no error thrown).
+    test("rejects a plugin whose adapter manifest name is path-traversing before any catalog write", async () => {
+      const configDir = dir.path;
+      await initRepo(configDir);
+      await writeConfig(join(configDir, "config.toml"), {
+        settings: { default_profile: "default" },
+        servers: {},
+      });
+
+      const mpDir = join(dir.path, "evil-adapter-marketplace");
+      await createMockPlugin(mpDir, "evil-adapter-plugin", {
+        // path-traversal name: would escape the adapters directory.
+        name: "../evil",
+        description: "Plugin with a traversing adapter name",
+        version: "0.1.0",
+        adapter: {
+          command: "/usr/local/bin/am-adapter-evil",
+          source: "npm:am-adapter-evil@0.1.0",
+        },
+      } as PluginManifest);
+      await addMarketplace(mpDir, "evil-adapter-mp");
+
+      await expect(installPlugin("../evil")).rejects.toThrow(/adapter name/i);
+
+      // No catalog write may have leaked through: adapters.toml must be empty.
+      const adaptersToml = await readAdaptersToml(configDir);
+      expect(Object.keys(adaptersToml.adapters)).toHaveLength(0);
+    });
+
+    test("rejects a plugin whose adapter manifest name has spaces/uppercase before any catalog write", async () => {
+      const configDir = dir.path;
+      await initRepo(configDir);
+      await writeConfig(join(configDir, "config.toml"), {
+        settings: { default_profile: "default" },
+        servers: {},
+      });
+
+      const mpDir = join(dir.path, "bad-name-adapter-marketplace");
+      await createMockPlugin(mpDir, "bad-name-adapter-plugin", {
+        name: "Bad Name",
+        description: "Plugin with an invalid adapter name",
+        version: "0.1.0",
+        adapter: {
+          command: "/usr/local/bin/am-adapter-bad",
+          source: "npm:am-adapter-bad@0.1.0",
+        },
+      } as PluginManifest);
+      await addMarketplace(mpDir, "bad-name-adapter-mp");
+
+      await expect(installPlugin("Bad Name")).rejects.toThrow(/adapter name/i);
+
+      const adaptersToml = await readAdaptersToml(configDir);
+      expect(Object.keys(adaptersToml.adapters)).toHaveLength(0);
+    });
+
+    test("installs a plugin whose adapter manifest name is valid", async () => {
+      const configDir = dir.path;
+      await initRepo(configDir);
+      await writeConfig(join(configDir, "config.toml"), {
+        settings: { default_profile: "default" },
+        servers: {},
+      });
+
+      const mpDir = join(dir.path, "valid-adapter-marketplace");
+      await createMockPlugin(mpDir, "good-adapter-plugin", {
+        name: "good-adapter-plugin",
+        description: "Plugin with a valid adapter name",
+        version: "0.3.0",
+        adapter: {
+          command: "/usr/local/bin/am-adapter-good",
+          source: "npm:am-adapter-good@0.3.0",
+        },
+      } as PluginManifest);
+      await addMarketplace(mpDir, "valid-adapter-mp");
+
+      const result = await installPlugin("good-adapter-plugin");
+      expect(result.adapter).toBe("good-adapter-plugin");
+
+      const adaptersToml = await readAdaptersToml(configDir);
+      expect(adaptersToml.adapters["good-adapter-plugin"]).toBeDefined();
+      expect(adaptersToml.adapters["good-adapter-plugin"].command).toBe(
+        "/usr/local/bin/am-adapter-good",
+      );
+    });
+
     test("does not touch adapters.toml when manifest has no adapter field", async () => {
       const configDir = dir.path;
       await initRepo(configDir);

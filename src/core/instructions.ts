@@ -57,10 +57,15 @@ export function filterByTarget(
  * Generate managed content block for CLAUDE.md.
  * Concatenates all instruction content, wrapped in am markers.
  * Preserves content outside markers in existingContent.
+ *
+ * When `warnings` is supplied it is threaded into {@link spliceMarkerBlock} so a
+ * malformed-marker refusal (fail-closed, H3) surfaces a diagnostic instead of
+ * being silently dropped.
  */
 export function generateClaudeMd(
   instructions: Record<string, ResolvedInstruction>,
   existingContent?: string,
+  warnings?: string[],
 ): string {
   const parts: string[] = [];
   for (const [, instr] of Object.entries(instructions)) {
@@ -71,16 +76,21 @@ export function generateClaudeMd(
   const managedContent = parts.join("\n\n");
   const block = `${AM_BEGIN}\n${managedContent}\n${AM_END}`;
 
-  return spliceMarkerBlock(block, existingContent);
+  return spliceMarkerBlock(block, existingContent, warnings, "CLAUDE.md");
 }
 
 /**
  * Generate managed content block for AGENTS.md.
  * Same marker-based approach as CLAUDE.md.
+ *
+ * When `warnings` is supplied it is threaded into {@link spliceMarkerBlock} so a
+ * malformed-marker refusal (fail-closed, H3) surfaces a diagnostic instead of
+ * being silently dropped (e.g. the windsurf adapter routes through here).
  */
 export function generateAgentsMd(
   instructions: Record<string, ResolvedInstruction>,
   existingContent?: string,
+  warnings?: string[],
 ): string {
   const parts: string[] = [];
   for (const [, instr] of Object.entries(instructions)) {
@@ -91,21 +101,67 @@ export function generateAgentsMd(
   const managedContent = parts.join("\n\n");
   const block = `${AM_BEGIN}\n${managedContent}\n${AM_END}`;
 
-  return spliceMarkerBlock(block, existingContent);
+  return spliceMarkerBlock(block, existingContent, warnings, "AGENTS.md");
 }
 
-/** Splice a managed block into existing content, preserving content outside markers. */
-function spliceMarkerBlock(block: string, existingContent?: string): string {
+/**
+ * Splice a managed block into existing content, preserving content outside
+ * markers.
+ *
+ * Marker handling is fail-closed (H3). The previous implementation spliced
+ * whenever *both* an `am:begin` and an `am:end` existed, regardless of order
+ * or pairing, which corrupted user files in two ways:
+ *   1. Out-of-order markers (`am:end` before `am:begin`): `after` started
+ *      before `beginIdx`, so the region between the real markers was dropped
+ *      and the surviving content was scrambled.
+ *   2. A single unpaired marker: the both-present guard was false, so it fell
+ *      through to the append branch and emitted a SECOND managed block.
+ *
+ * We now only splice when the markers are well-formed
+ * (`begin !== -1 && end !== -1 && end > begin`). When markers are PRESENT but
+ * MALFORMED we refuse: the function returns `existingContent` UNCHANGED and,
+ * when a `warnings` sink is supplied, pushes a diagnostic so the caller can
+ * surface it. We never silently splice or append over malformed markers —
+ * leaving the file untouched is the only non-destructive option.
+ *
+ * @param label  Human-readable file label used in warnings (e.g. "CLAUDE.md").
+ */
+export function spliceMarkerBlock(
+  block: string,
+  existingContent?: string,
+  warnings?: string[],
+  label = "instruction file",
+): string {
   if (!existingContent) {
     return `${block}\n`;
   }
 
   const beginIdx = existingContent.indexOf(AM_BEGIN);
   const endIdx = existingContent.indexOf(AM_END);
-  if (beginIdx !== -1 && endIdx !== -1) {
+  const hasBegin = beginIdx !== -1;
+  const hasEnd = endIdx !== -1;
+
+  // Well-formed paired markers — splice in place.
+  if (hasBegin && hasEnd && endIdx > beginIdx) {
     const before = existingContent.slice(0, beginIdx);
     const after = existingContent.slice(endIdx + AM_END.length);
     return before + block + after;
+  }
+
+  // Markers present but malformed (out-of-order or unpaired) — refuse rather
+  // than corrupt the file. Return existing content unchanged.
+  if (hasBegin || hasEnd) {
+    warnings?.push(
+      `${label}: refusing to update managed block — am:begin/am:end markers are malformed ` +
+        `(${
+          hasBegin && hasEnd
+            ? "am:end precedes am:begin"
+            : hasBegin
+              ? "missing am:end"
+              : "missing am:begin"
+        }). Fix or remove the markers and re-run.`,
+    );
+    return existingContent;
   }
 
   // No existing markers — append
@@ -115,10 +171,15 @@ function spliceMarkerBlock(block: string, existingContent?: string): string {
 /**
  * Generate managed content block for GEMINI.md.
  * Same marker-based approach as CLAUDE.md.
+ *
+ * When `warnings` is supplied it is threaded into {@link spliceMarkerBlock} so a
+ * malformed-marker refusal (fail-closed, H3) surfaces a diagnostic instead of
+ * being silently dropped (the gemini-cli adapter routes through here).
  */
 export function generateGeminiMd(
   instructions: Record<string, ResolvedInstruction>,
   existingContent?: string,
+  warnings?: string[],
 ): string {
   const parts: string[] = [];
   for (const [, instr] of Object.entries(instructions)) {
@@ -129,7 +190,7 @@ export function generateGeminiMd(
   const managedContent = parts.join("\n\n");
   const block = `${AM_BEGIN}\n${managedContent}\n${AM_END}`;
 
-  return spliceMarkerBlock(block, existingContent);
+  return spliceMarkerBlock(block, existingContent, warnings, "GEMINI.md");
 }
 
 // ── Wiki Context Injection ──────────────────────────────────────
@@ -190,18 +251,53 @@ export async function generateWikiContext(
 /**
  * Splice a wiki context block into existing content, preserving content
  * outside wiki markers. If no wiki block exists, appends before the am:end marker.
+ *
+ * Marker handling is fail-closed, mirroring {@link spliceMarkerBlock} (H3). We
+ * only replace an existing wiki block when the markers are well-formed
+ * (`begin !== -1 && end !== -1 && end > begin`). When the `am:wiki` markers are
+ * PRESENT but MALFORMED (out-of-order or unpaired) we refuse: the function
+ * returns `content` UNCHANGED and, when a `warnings` sink is supplied, pushes a
+ * diagnostic so the caller can surface it. The previous guard checked only
+ * presence (`!== -1`), so a reversed `am:wiki:end`/`am:wiki:begin` pair sliced
+ * with `after` starting before `beginIdx`, dropping the content between the real
+ * markers and scrambling the file.
+ *
+ * @param label  Human-readable file label used in warnings (e.g. "AGENTS.md").
  */
-export function spliceWikiBlock(wikiBlock: string, content: string): string {
+export function spliceWikiBlock(
+  wikiBlock: string,
+  content: string,
+  warnings?: string[],
+  label = "instruction file",
+): string {
   if (!wikiBlock) return content;
 
   const beginIdx = content.indexOf(WIKI_BEGIN);
   const endIdx = content.indexOf(WIKI_END);
+  const hasBegin = beginIdx !== -1;
+  const hasEnd = endIdx !== -1;
 
-  if (beginIdx !== -1 && endIdx !== -1) {
-    // Replace existing wiki block
+  // Well-formed paired wiki markers — replace existing wiki block in place.
+  if (hasBegin && hasEnd && endIdx > beginIdx) {
     const before = content.slice(0, beginIdx);
     const after = content.slice(endIdx + WIKI_END.length);
     return before + wikiBlock + after;
+  }
+
+  // Wiki markers present but malformed (out-of-order or unpaired) — refuse
+  // rather than corrupt the file. Return content unchanged.
+  if (hasBegin || hasEnd) {
+    warnings?.push(
+      `${label}: refusing to inject wiki context — am:wiki:begin/am:wiki:end markers are malformed ` +
+        `(${
+          hasBegin && hasEnd
+            ? "am:wiki:end precedes am:wiki:begin"
+            : hasBegin
+              ? "missing am:wiki:end"
+              : "missing am:wiki:begin"
+        }). Fix or remove the markers and re-run.`,
+    );
+    return content;
   }
 
   // Insert before the am:end marker if present
@@ -319,19 +415,17 @@ function scopeToKiroInclusion(scope: "always" | "glob" | "agent-decision" | "man
 export function generateKiroSteering(
   instruction: ResolvedInstruction,
   existingContent?: string,
+  warnings?: string[],
 ): string {
   const inclusion = scopeToKiroInclusion(instruction.scope);
   const managedBlock = `${AM_BEGIN}\n${instruction.content}\n${AM_END}`;
 
   if (existingContent) {
-    const beginIdx = existingContent.indexOf(AM_BEGIN);
-    const endIdx = existingContent.indexOf(AM_END);
-    if (beginIdx !== -1 && endIdx !== -1) {
-      const before = existingContent.slice(0, beginIdx);
-      const after = existingContent.slice(endIdx + AM_END.length);
-      return before + managedBlock + after;
-    }
-    return `${existingContent.trimEnd()}\n\n${managedBlock}\n`;
+    // Route through the shared splice helper so the fail-closed marker guard
+    // (H3) applies identically to Kiro steering files: well-formed markers are
+    // replaced in place; malformed (out-of-order / unpaired) markers cause the
+    // existing content to be returned UNCHANGED rather than corrupted.
+    return spliceMarkerBlock(managedBlock, existingContent, warnings, ".kiro/steering file");
   }
 
   // New file — generate with frontmatter

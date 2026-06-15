@@ -42,10 +42,10 @@ export const COMMAND_GROUPS: ReadonlyArray<{
       ["update", "Check for package updates"],
     ],
   },
-  {
-    heading: "Marketplace commands",
-    commands: [["marketplace", "Manage git-based plugin marketplaces"]],
-  },
+  // Pillar 4 (marketplace) is deferred to v2 (README "Bundles from git";
+  // supersedes ADR-0039/ADR-0052). The `marketplace` command stays registered
+  // in cli.ts and still routes, but is omitted from `am --help` discovery for
+  // v1 — hidden, not deleted.
   {
     heading: "Agent commands",
     commands: [
@@ -69,6 +69,7 @@ export const COMMAND_GROUPS: ReadonlyArray<{
     commands: [
       ["import", "Import from IDE native configs"],
       ["adapter", "Manage IDE adapters"],
+      ["mcp-superset", "Enforce project .mcp.json is a superset of global config"],
       ["doctor", "Health check"],
       ["secret", "Manage secrets and encryption"],
       ["secrets", "Backend-level secrets ops (migrate, rewrap, rotate, revoke)"],
@@ -81,7 +82,6 @@ export const COMMAND_GROUPS: ReadonlyArray<{
     heading: "Interface commands",
     commands: [
       ["mcp-serve", "Start MCP server"],
-      ["mcp-superset", "Enforce project .mcp.json is a superset of global config"],
       ["tui", "Terminal dashboard"],
       ["serve", "Start web server"],
       ["completion", "Generate shell completions"],

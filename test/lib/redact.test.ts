@@ -77,6 +77,66 @@ describe("redactSecretish — free-form envelope redaction", () => {
   });
 });
 
+describe("redactSecretish — bare vendor tokens & connection strings (L6)", () => {
+  // L6: SECRET_PATTERNS was a known-prefix allowlist with no rule for the
+  // distinctive vendor token shapes already keyed by NAME in
+  // src/core/secret-detection.ts (tvly-, r8_) nor for credential-less
+  // connection strings. These passed verbatim into free-form error output.
+  test("redacts a Tavily tvly- token embedded in an error message", () => {
+    const out = redactSecretish("Request failed: invalid key tvly-FAKEFIXTURE1234567890 supplied");
+    expect(out).not.toContain("tvly-FAKEFIXTURE1234567890");
+    expect(out).toContain("[REDACTED_TAVILY_KEY]");
+  });
+
+  test("redacts a Replicate r8_ token embedded in an error message", () => {
+    const out = redactSecretish(
+      "auth error: token r8_abCDef0123456789ABCDef0123456789abcdef rejected",
+    );
+    expect(out).not.toContain("r8_abCDef0123456789ABCDef0123456789abcdef");
+    expect(out).toContain("[REDACTED_REPLICATE_KEY]");
+  });
+
+  test("redacts a credential-less postgres:// connection string", () => {
+    const out = redactSecretish(
+      "could not connect to postgres://app_user@db.internal:5432/prod the host is down",
+    );
+    expect(out).not.toContain("app_user");
+    expect(out).not.toContain("db.internal");
+    expect(out).not.toContain("prod");
+    expect(out).toContain("[REDACTED_CONNECTION_STRING]");
+    // surrounding prose is preserved
+    expect(out).toContain("could not connect to");
+    expect(out).toContain("the host is down");
+  });
+
+  test("redacts mysql://, mongodb:// and redis:// connection strings (with creds)", () => {
+    const out = redactSecretish(
+      [
+        "mysql://root:hunter2@10.0.0.1:3306/app",
+        "mongodb://u:p4ss@cluster0.mongodb.net/db",
+        "redis://default:s3cr3t@cache:6379/0",
+      ].join(" | "),
+    );
+    expect(out).not.toContain("hunter2");
+    expect(out).not.toContain("p4ss");
+    expect(out).not.toContain("s3cr3t");
+    expect(out).not.toContain("cluster0.mongodb.net");
+    expect(out).not.toContain("10.0.0.1");
+  });
+
+  test("leaves an ordinary sentence unchanged", () => {
+    const plain = "The server returned a 500 error while loading the dashboard.";
+    expect(redactSecretish(plain)).toBe(plain);
+  });
+
+  test("does not redact a benign URL that merely resembles a scheme", () => {
+    // https:// is not in the connection-string scheme set, so a plain web URL
+    // with no credential must survive (no over-redaction).
+    const plain = "see https://example.com/docs/postgres for setup help";
+    expect(redactSecretish(plain)).toBe(plain);
+  });
+});
+
 describe("stripUrlUserinfo", () => {
   test("removes user:token@ from a URL", () => {
     expect(stripUrlUserinfo("https://user:p4ss@host/repo.git")).toBe(

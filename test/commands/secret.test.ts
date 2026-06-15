@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { secretCommand } from "../../src/commands/secret";
 import { readConfig, writeConfig } from "../../src/core/config";
 import { initRepo } from "../../src/core/git";
 import type { Config } from "../../src/core/schema";
@@ -89,6 +90,124 @@ describe("am secret", () => {
       const keyPath = process.env.AM_KEY_PATH!;
       const keyContents = await readFile(keyPath, "utf-8");
       expect(keyContents.trim()).toBe(base64);
+    });
+
+    // L5 (ws W-l5-secret-genkey): `am secret generate-key` must NOT leak the raw
+    // base64 master key into shell history / logs / captured JSON by default.
+    // The raw key is only emitted when --show-key is explicitly passed.
+    describe("does not leak the raw master key by default", () => {
+      const origConfigDir = process.env.AM_CONFIG_DIR;
+      const origLog = console.log;
+      let logged: string[] = [];
+
+      // Reach the `generate-key` subcommand handler off the parent command's
+      // lazy subCommands map (same pattern as the scan tests above).
+      async function resolveGenerateKey(): Promise<{
+        run: (ctx: { args: Record<string, unknown> }) => Promise<void>;
+      }> {
+        const subCommands = secretCommand.subCommands as unknown as Record<
+          string,
+          () => Promise<unknown>
+        >;
+        const gen = await subCommands["generate-key"]();
+        return gen as { run: (ctx: { args: Record<string, unknown> }) => Promise<void> };
+      }
+
+      function capture(): void {
+        logged = [];
+        console.log = (...args: unknown[]) => {
+          logged.push(args.map(String).join(" "));
+        };
+      }
+
+      afterEach(() => {
+        console.log = origLog;
+        if (origConfigDir === undefined) Reflect.deleteProperty(process.env, "AM_CONFIG_DIR");
+        else process.env.AM_CONFIG_DIR = origConfigDir;
+      });
+
+      test("--json (no --show-key) omits the key and reports the path + keyShown:false", async () => {
+        dir = await createTestDir("am-secret-genkey-json-noshow-");
+        const configDir = dir.path;
+        await initRepo(configDir);
+        process.env.AM_CONFIG_DIR = configDir;
+
+        const gen = await resolveGenerateKey();
+        capture();
+        await gen.run({
+          args: { json: true, quiet: false, verbose: false, "show-key": false, showKey: false },
+        });
+
+        const payload = JSON.parse(logged.join("\n"));
+        expect(payload.action).toBe("generate-key");
+        // The raw key MUST NOT be present in the JSON payload by default.
+        expect(payload.key).toBeUndefined();
+        expect("key" in payload).toBe(false);
+        // The path to the key file IS reported so callers know where it landed.
+        expect(payload.path).toBeDefined();
+        expect(typeof payload.path).toBe("string");
+        // An explicit indicator that the key was withheld.
+        expect(payload.keyShown).toBe(false);
+      });
+
+      test("default text output never contains the base64 key", async () => {
+        dir = await createTestDir("am-secret-genkey-text-noshow-");
+        const configDir = dir.path;
+        await initRepo(configDir);
+        process.env.AM_CONFIG_DIR = configDir;
+
+        const gen = await resolveGenerateKey();
+        capture();
+        await gen.run({
+          args: { json: false, quiet: false, verbose: false, "show-key": false, showKey: false },
+        });
+
+        const out = logged.join("\n");
+        // Read the actual key off disk and prove it does NOT appear in stdout.
+        const keyContents = (await readFile(process.env.AM_KEY_PATH!, "utf-8")).trim();
+        expect(keyContents.length).toBeGreaterThan(0);
+        expect(out).not.toContain(keyContents);
+        // A safe message points at the key file path instead.
+        expect(out).toContain(process.env.AM_KEY_PATH!);
+      });
+
+      test("--show-key --json includes the raw key and keyShown:true", async () => {
+        dir = await createTestDir("am-secret-genkey-json-show-");
+        const configDir = dir.path;
+        await initRepo(configDir);
+        process.env.AM_CONFIG_DIR = configDir;
+
+        const gen = await resolveGenerateKey();
+        capture();
+        await gen.run({
+          args: { json: true, quiet: false, verbose: false, "show-key": true, showKey: true },
+        });
+
+        const payload = JSON.parse(logged.join("\n"));
+        expect(payload.action).toBe("generate-key");
+        expect(payload.keyShown).toBe(true);
+        expect(typeof payload.key).toBe("string");
+        // The emitted key matches what was written to disk.
+        const keyContents = (await readFile(process.env.AM_KEY_PATH!, "utf-8")).trim();
+        expect(payload.key).toBe(keyContents);
+      });
+
+      test("--show-key text output prints the raw key inline", async () => {
+        dir = await createTestDir("am-secret-genkey-text-show-");
+        const configDir = dir.path;
+        await initRepo(configDir);
+        process.env.AM_CONFIG_DIR = configDir;
+
+        const gen = await resolveGenerateKey();
+        capture();
+        await gen.run({
+          args: { json: false, quiet: false, verbose: false, "show-key": true, showKey: true },
+        });
+
+        const out = logged.join("\n");
+        const keyContents = (await readFile(process.env.AM_KEY_PATH!, "utf-8")).trim();
+        expect(out).toContain(keyContents);
+      });
     });
   });
 
@@ -201,6 +320,239 @@ describe("am secret", () => {
     });
   });
 
+  // ws 1f08-secret-scan-exit-code (M5): `am secret scan` (no --fix) must exit
+  // nonzero when plaintext secrets are found so it can gate CI. The report
+  // branch previously printed findings then returned with no exit code set.
+  describe("scan exit code", () => {
+    const origConfigDir = process.env.AM_CONFIG_DIR;
+    const origLog = console.log;
+    let logged: string[] = [];
+
+    // Reach the `scan` subcommand handler the same way doctor.test.ts reaches
+    // its command — resolve it off the parent command's subCommands map. The
+    // map is typed as a citty `Resolvable<SubCommandsDef>`, so we cast to a
+    // record of lazy resolvers before indexing `scan`.
+    async function resolveScan(): Promise<{
+      run: (ctx: { args: Record<string, unknown> }) => Promise<void>;
+    }> {
+      const subCommands = secretCommand.subCommands as unknown as Record<
+        string,
+        () => Promise<unknown>
+      >;
+      const scan = await subCommands.scan();
+      return scan as { run: (ctx: { args: Record<string, unknown> }) => Promise<void> };
+    }
+
+    function capture(): void {
+      logged = [];
+      console.log = (...args: unknown[]) => {
+        logged.push(args.map(String).join(" "));
+      };
+    }
+
+    afterEach(() => {
+      console.log = origLog;
+      if (origConfigDir === undefined) Reflect.deleteProperty(process.env, "AM_CONFIG_DIR");
+      else process.env.AM_CONFIG_DIR = origConfigDir;
+      process.exitCode = 0;
+    });
+
+    test("exits 1 and still prints findings when plaintext secrets are found (human)", async () => {
+      dir = await createTestDir("am-secret-scan-exit-found-");
+      // setupConfigDir seeds a tavily server with a plaintext TAVILY_API_KEY,
+      // which Tier-1 key-name detection flags.
+      const { configDir } = await setupConfigDir(dir);
+      process.env.AM_CONFIG_DIR = configDir;
+
+      const scan = await resolveScan();
+      process.exitCode = 0;
+      capture();
+      await scan.run({ args: { fix: false, json: false, quiet: false, verbose: false } });
+
+      expect(process.exitCode).toBe(1);
+      // Findings are still printed — the gate doesn't suppress the report.
+      const out = logged.join("\n");
+      expect(out).toContain("secret(s) found");
+      expect(out).toContain("TAVILY_API_KEY");
+    });
+
+    test("exits 1 and emits the findings payload in JSON mode", async () => {
+      dir = await createTestDir("am-secret-scan-exit-found-json-");
+      const { configDir } = await setupConfigDir(dir);
+      process.env.AM_CONFIG_DIR = configDir;
+
+      const scan = await resolveScan();
+      process.exitCode = 0;
+      capture();
+      await scan.run({ args: { fix: false, json: true, quiet: false, verbose: false } });
+
+      expect(process.exitCode).toBe(1);
+      const payload = JSON.parse(logged.join("\n"));
+      expect(payload.action).toBe("scan");
+      expect(payload.secrets.length).toBeGreaterThan(0);
+    });
+
+    // M6 (ws 01ae-secret-scan-settings-env): a plaintext secret stored in
+    // [settings.env] must be surfaced by `am secret scan` and counted by the
+    // M5 exit-code gate. scanConfigForSecrets only looks at servers, so before
+    // the fix a settings.env secret was invisible (false-clean → leaked cred).
+    test("flags a plaintext secret in settings.env and exits 1", async () => {
+      dir = await createTestDir("am-secret-scan-settings-env-");
+      const configDir = dir.path;
+      await initRepo(configDir);
+      const configPath = join(configDir, "config.toml");
+      // Servers are clean; the only plaintext secret lives in settings.env.
+      const config: Config = {
+        settings: {
+          default_profile: "default",
+          env: { GITHUB_TOKEN: "ghp_realtokenvalue1234567890" },
+        } as Config["settings"],
+        servers: {
+          memory: {
+            command: "bunx",
+            args: ["@modelcontextprotocol/server-memory"],
+            transport: "stdio",
+            enabled: true,
+            env: { LOG_LEVEL: "info" },
+          },
+        },
+        profiles: { default: { description: "Default profile" } },
+      };
+      await writeConfig(configPath, config);
+      process.env.AM_CONFIG_DIR = configDir;
+
+      const scan = await resolveScan();
+      process.exitCode = 0;
+      capture();
+      await scan.run({ args: { fix: false, json: true, quiet: false, verbose: false } });
+
+      expect(process.exitCode).toBe(1);
+      const payload = JSON.parse(logged.join("\n"));
+      expect(payload.action).toBe("scan");
+      // The settings.env finding is present, tagged with the synthetic scope.
+      const settingsResult = payload.secrets.find(
+        (r: { server: string }) => r.server === "settings",
+      );
+      expect(settingsResult).toBeDefined();
+      expect(
+        settingsResult.secrets.find((s: { key: string }) => s.key === "GITHUB_TOKEN"),
+      ).toBeDefined();
+    });
+
+    // M6: --fix must encrypt a plaintext settings.env secret IN PLACE (the
+    // value already lives where encrypted secrets belong), leaving no plaintext.
+    test("--fix encrypts a plaintext settings.env secret in place", async () => {
+      dir = await createTestDir("am-secret-scan-fix-settings-env-");
+      const configDir = dir.path;
+      await initRepo(configDir);
+      const configPath = join(configDir, "config.toml");
+      const config: Config = {
+        settings: {
+          default_profile: "default",
+          env: { GITHUB_TOKEN: "ghp_realtokenvalue1234567890" },
+        } as Config["settings"],
+        profiles: { default: { description: "Default profile" } },
+      };
+      await writeConfig(configPath, config);
+      // --fix generates a key if none exists; AM_KEY_PATH already points at tmp.
+      process.env.AM_CONFIG_DIR = configDir;
+
+      const scan = await resolveScan();
+      process.exitCode = 0;
+      capture();
+      await scan.run({ args: { fix: true, json: true, quiet: false, verbose: false } });
+
+      const after = await readConfig(configPath);
+      const settingsEnv = (after.settings as { env?: Record<string, string> } | undefined)?.env;
+      expect(settingsEnv?.GITHUB_TOKEN).toBeDefined();
+      // Encrypted in place — plaintext is gone, ciphertext is an enc: envelope.
+      expect(settingsEnv!.GITHUB_TOKEN).not.toBe("ghp_realtokenvalue1234567890");
+      expect(isEncrypted(settingsEnv!.GITHUB_TOKEN)).toBe(true);
+    });
+
+    // W5R (ws f5ab-secret-scan-inplace-msg): the human --fix report must not
+    // claim a `key -> ${VAR}` substitution for a settings.env value encrypted
+    // IN PLACE — no ${VAR} placeholder was written, so the arrow misleads. The
+    // in-place case prints an "encrypted in place" message instead.
+    test("--fix human output says 'encrypted in place' (no arrow) for settings.env", async () => {
+      dir = await createTestDir("am-secret-scan-fix-inplace-msg-");
+      const configDir = dir.path;
+      await initRepo(configDir);
+      const configPath = join(configDir, "config.toml");
+      const config: Config = {
+        settings: {
+          default_profile: "default",
+          env: { GITHUB_TOKEN: "ghp_realtokenvalue1234567890" },
+        } as Config["settings"],
+        profiles: { default: { description: "Default profile" } },
+      };
+      await writeConfig(configPath, config);
+      process.env.AM_CONFIG_DIR = configDir;
+
+      const scan = await resolveScan();
+      process.exitCode = 0;
+      capture();
+      await scan.run({ args: { fix: true, json: false, quiet: false, verbose: false } });
+
+      const out = logged.join("\n");
+      // The misleading substitution arrow must NOT appear for the in-place key.
+      expect(out).not.toContain("-> ${GITHUB_TOKEN}");
+      expect(out).not.toContain("${GITHUB_TOKEN}");
+      // It reports in-place encryption instead.
+      expect(out).toContain("GITHUB_TOKEN");
+      expect(out).toContain("encrypted in place");
+    });
+
+    // W5R: a genuine server substitution still prints the `key -> ${VAR}` arrow
+    // — the in-place message must NOT swallow the real-substitution case.
+    test("--fix human output keeps the arrow form for a real server substitution", async () => {
+      dir = await createTestDir("am-secret-scan-fix-arrow-msg-");
+      const { configDir } = await setupConfigDir(dir);
+      process.env.AM_CONFIG_DIR = configDir;
+
+      const scan = await resolveScan();
+      process.exitCode = 0;
+      capture();
+      await scan.run({ args: { fix: true, json: false, quiet: false, verbose: false } });
+
+      const out = logged.join("\n");
+      // setupConfigDir seeds tavily.env.TAVILY_API_KEY = "plain-key"; the fix
+      // moves it to settings.env and rewrites the server env to ${TAVILY_API_KEY}.
+      expect(out).toContain("-> ${TAVILY_API_KEY}");
+      expect(out).not.toContain("encrypted in place");
+    });
+
+    test("exits 0 when no secrets are detected", async () => {
+      dir = await createTestDir("am-secret-scan-exit-clean-");
+      const configDir = dir.path;
+      await initRepo(configDir);
+      const configPath = join(configDir, "config.toml");
+      // A server with no secret-shaped env keys and no inline credentials.
+      const config: Config = {
+        settings: { default_profile: "default" },
+        servers: {
+          memory: {
+            command: "bunx",
+            args: ["@modelcontextprotocol/server-memory"],
+            transport: "stdio",
+            enabled: true,
+            env: { LOG_LEVEL: "info" },
+          },
+        },
+        profiles: { default: { description: "Default profile" } },
+      };
+      await writeConfig(configPath, config);
+      process.env.AM_CONFIG_DIR = configDir;
+
+      const scan = await resolveScan();
+      process.exitCode = 0;
+      capture();
+      await scan.run({ args: { fix: false, json: false, quiet: false, verbose: false } });
+
+      expect(process.exitCode).toBe(0);
+    });
+  });
+
   describe("wrong key", () => {
     test("decrypt fails with wrong key", async () => {
       dir = await createTestDir("am-secret-wrongkey-");
@@ -214,6 +566,40 @@ describe("am secret", () => {
 
       // Decrypting with wrong key should throw
       await expect(decryptValue(encrypted, keyB)).rejects.toThrow();
+    });
+
+    // UX polish (ws4-6fd2): a wrong-key decrypt must surface an actionable
+    // AmError naming the key-path remedy — NOT a raw WebCrypto `OperationError`
+    // ("Cipher job failed"). The message must never echo ciphertext or key
+    // material.
+    test("decrypt with wrong key throws an actionable AmError, not raw WebCrypto noise", async () => {
+      dir = await createTestDir("am-secret-wrongkey-amerror-");
+      const keyA = await importKey(await generateKey());
+      const keyB = await importKey(await generateKey());
+
+      const { encryptValue } = await import("../../src/core/secrets");
+      const { AmError } = await import("../../src/lib/errors");
+      const plaintext = "sk-live-supersecret";
+      const encrypted = await encryptValue(plaintext, keyA);
+
+      let caught: unknown;
+      try {
+        await decryptValue(encrypted, keyB);
+      } catch (e) {
+        caught = e;
+      }
+
+      expect(caught).toBeInstanceOf(AmError);
+      const err = caught as InstanceType<typeof AmError>;
+      expect(err.code).toBe("SECRET_DECRYPT_FAILED");
+      expect(err.message).toContain("does not match this envelope");
+      // Names the key-path remedy.
+      expect(err.suggestion).toContain(process.env.AM_KEY_PATH!);
+      expect(err.suggestion).toContain("am secret generate-key");
+      // NEVER leaks the plaintext, the ciphertext body, or key material.
+      const combined = `${err.message} ${err.suggestion ?? ""}`;
+      expect(combined).not.toContain(plaintext);
+      expect(combined).not.toContain(encrypted.slice("enc:v1:".length));
     });
   });
 });

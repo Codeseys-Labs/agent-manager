@@ -4,6 +4,7 @@ import * as TOML from "@iarna/toml";
 import { defineCommand } from "citty";
 import { listAdapters } from "../adapters/registry";
 import { loadResolvedConfig, resolveConfigDir, resolveProjectConfig } from "../core/config";
+import { resolveProfile } from "../core/resolver";
 import { ConfigSchema } from "../core/schema";
 import { AmError, errorMessage, isNotFound } from "../lib/errors";
 import { amError, error, info, output, warn } from "../lib/output";
@@ -65,6 +66,19 @@ export const validateCommand = defineCommand({
             }
           }
         }
+        // Profile inheritance: the schema accepts circular / self-referential /
+        // unknown-parent `inherits` chains, but resolveProfile throws on them.
+        // Run the resolver per profile so `am validate` catches what only blows
+        // up at apply/serve time (ws3-cdc6).
+        if (result.data.profiles) {
+          for (const name of Object.keys(result.data.profiles)) {
+            try {
+              resolveProfile(name, result.data);
+            } catch (err: unknown) {
+              errors.push(`config.toml: profiles.${name}: ${errorMessage(err)}`);
+            }
+          }
+        }
       }
     } catch (err: unknown) {
       if (isNotFound(err)) {
@@ -95,6 +109,10 @@ export const validateCommand = defineCommand({
     const valid = errors.length === 0;
 
     if (args.json) {
+      // Mirror the non-JSON branch: an invalid config sets a nonzero exit code.
+      // Previously this branch returned before the exit-code logic below, so
+      // `am validate --json` always exited 0 even when `valid: false`.
+      if (!valid) process.exitCode = 1;
       output({ valid, errors, warnings }, opts);
       return;
     }

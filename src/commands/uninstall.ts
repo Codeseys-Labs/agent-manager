@@ -52,8 +52,23 @@ export const uninstallCommand = defineCommand({
           return { result: undefined, changed: false };
         }
 
-        // Confirm removal
-        if (!skipConfirm && !args.json && process.stdin.isTTY) {
+        // Confirm removal.
+        // FAIL CLOSED: a destructive removal must never proceed unconfirmed.
+        // When confirmation is required (no --yes) but we cannot interactively
+        // prompt (non-TTY stdin: scripts, CI, piped input) and --json was not
+        // passed (the structured/automation contract), REFUSE rather than
+        // silently deleting. The previous `&& process.stdin.isTTY` guard failed
+        // OPEN — under a non-TTY it skipped the prompt and removed the server
+        // without consent. Operators in non-TTY contexts must pass --yes.
+        if (!skipConfirm && !args.json) {
+          if (!process.stdin.isTTY) {
+            error(
+              `Refusing to remove server "${name}" without confirmation. stdin is not a TTY — pass --yes to confirm non-interactively.`,
+              opts,
+            );
+            process.exitCode = 1;
+            return { result: undefined, changed: false };
+          }
           const confirm = await clack.confirm({
             message: `Remove server "${name}"?`,
             initialValue: false,

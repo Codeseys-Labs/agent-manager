@@ -19,6 +19,7 @@ import {
   type CredentialHit,
   deriveBareEnvName,
   rewriteUrlParam,
+  rewriteUserinfoCredential,
   scanServersForUrlCredentials,
 } from "./url-credentials";
 
@@ -36,6 +37,31 @@ const SECRET_KEY_PATTERNS: RegExp[] = [
   /private[_-]?key/i,
   /access[_-]?key/i,
   /\bauth\b/i,
+
+  // Generic suffix-anchored secret indicators. `\b…\b` word boundaries do NOT
+  // fire on `_`/`-` (both are word chars), so `/\btoken\b/` misses MY_TOKEN /
+  // FOO_AUTH and there was no bare key/pwd pattern at all — FOO_KEY, *_TOKEN,
+  // *_PWD slipped through as plaintext while the scan reported clean (false
+  // negative → committed credential). Anchor on a `_`/`-`/start prefix and the
+  // END of the string so blast radius is bounded to the *suffix* (e.g.
+  // LICENSE_KEY / PUBLIC_KEY now match — acceptable, substitution is reversible)
+  // rather than a free `key` substring (which would catch KEYBOARD, MONKEY…).
+  //
+  // `auth` is folded into this suffix group (seed 2829): the bare `/\bauth\b/i`
+  // above does NOT fire across `_`/`-` (both word chars), so bearer-valued keys
+  // like HTTP_BEARER_AUTH / FOO_AUTH escaped detection (false negative → leaked
+  // credential). The suffix anchor matches `*_AUTH`/`*-AUTH`/bare `AUTH` while
+  // staying off AUTHOR / AUTHORITY (no `auth$` boundary) and OAUTH_CLIENT_ID
+  // (auth is mid-string, not the suffix).
+  /(^|[_-])(key|token|secret|password|pass|pwd|credential|auth)$/i,
+  // Anchored bearer: matches a bare `BEARER` or a bearer-SUFFIXED key
+  // (AUTH_BEARER). A free `/bearer/i` substring match treated config flags as
+  // secrets (BEARER_ENABLED, BEARER_TOKEN_TTL) and false-fired on FORBEARER /
+  // BEARERTOWN — harmless config encrypted as a credential. Anchoring on a
+  // `_`/`-`/start prefix and the END of the string bounds the match to the
+  // bearer suffix. BEARER_TOKEN already matches via the `token$` suffix group
+  // above, so it stays a secret without re-admitting the false positives.
+  /(^|[_-])bearer$/i,
 
   // Cloud providers
   /aws[_-]secret/i,
@@ -105,11 +131,14 @@ export interface DetectedSecret {
   /**
    * For a url-credential: where the credential-bearing URL lives. `substituteSecret`
    * uses this to pick the right field to rewrite via `rewriteUrlParam`. `"adapter"`
-   * means it lives in `server.adapters[adapterName].url`.
+   * means it lives in `server.adapters[adapterName].url`; `"env"` means it lives
+   * in `server.env[envKey]` (M7: a credential URL stashed in an env value).
    */
-  urlSource?: "command" | "args" | "adapter";
+  urlSource?: "command" | "args" | "adapter" | "env";
   /** Adapter name when urlSource === "adapter". */
   adapterName?: string;
+  /** Env-var key when urlSource === "env" (the env entry holding the URL). */
+  envKey?: string;
   /** Suggested ${VAR} replacement name (bare name, e.g. TAVILYAPIKEY) */
   suggestedEnvVar: string;
 }
@@ -261,6 +290,7 @@ export function scanServerForUrlCredentials(
     urlSource: h.source,
     ...(h.source === "args" ? { index: h.argIndex } : {}),
     ...(h.source === "adapter" ? { adapterName: h.adapterName } : {}),
+    ...(h.source === "env" ? { envKey: h.envKey } : {}),
     suggestedEnvVar: deriveBareEnvName(h.queryKey),
   }));
 }
@@ -304,6 +334,37 @@ export async function scanServerForSecrets(
   }
 
   return { serverName: name, secrets: allSecrets };
+}
+
+/**
+ * Synthetic server name used for `settings.env` findings so they flow through
+ * the same report/JSON shape as server findings. `settings` is not a valid MCP
+ * server name (no server can be named via a reserved word here), so it's a safe
+ * sentinel for "this secret lives in [settings.env], not under any server".
+ */
+export const SETTINGS_ENV_SCOPE = "settings";
+
+/**
+ * Full scan of `settings.env` — the global env block (`SettingsSchema.env`,
+ * a `Record<string,string>`). `scanConfigForSecrets` only ever looked at
+ * `config.servers`, so a plaintext secret stashed in `settings.env` was
+ * invisible to `am secret scan` (false-clean → committed credential, M6).
+ *
+ * Runs the SAME Tier-1 (key name) + Tier-2 (betterleaks) value detection used
+ * for `server.env`, by treating the env block as a synthetic server with no
+ * command/args (so only the env values are inspected). URL-credential (Tier
+ * 1.5) detection is skipped — settings.env holds plain string values, not
+ * command/args/adapter URLs.
+ *
+ * Returns a `SecretScanResult` tagged with the `SETTINGS_ENV_SCOPE` server name
+ * (empty `secrets` when nothing is found). Callers MUST surface findings in the
+ * same report shape so `formatScanReport`, the JSON output, and the M5 exit-code
+ * gate all count them.
+ */
+export async function scanSettingsEnvForSecrets(
+  env: Record<string, string> | undefined,
+): Promise<SecretScanResult> {
+  return scanServerForSecrets(SETTINGS_ENV_SCOPE, { command: "", env });
 }
 
 /**
@@ -417,27 +478,63 @@ export function substituteSecret(
       return false;
     }
     case "command": {
-      // URL-embedded credential: rewrite ONLY the offending query param to the
-      // placeholder, via rewriteUrlParam (URL.searchParams-safe; does not touch
-      // sibling params). The credential URL may live in command, an arg, or an
-      // adapter url field.
+      // URL-embedded credential: rewrite ONLY the offending credential to the
+      // placeholder. A userinfo hit (`https://user:s3cret@host`, key
+      // "username"/"password") lives in the URL authority, NOT the query string,
+      // so it goes through rewriteUserinfoCredential; a query-param hit goes
+      // through rewriteUrlParam (URL.searchParams-safe; does not touch siblings).
+      // The credential URL may live in command, an arg, an adapter url, or an env
+      // value.
       if (secret.source === "url-credential" && secret.key) {
+        // Userinfo hits synthesize queryKey "username"/"password" (they came from
+        // parsed.username/password, not searchParams). Route them to the
+        // authority-rewriting helper instead of the query-param helper, which
+        // would append a bogus `?password=${VAR}` and leave `user:s3cret@`
+        // PLAINTEXT in the authority (seed 2ce0).
+        const isUserinfo = secret.key === "username" || secret.key === "password";
+        const rewrite = (url: string): string =>
+          isUserinfo
+            ? rewriteUserinfoCredential(url, secret.key as "username" | "password", placeholder)
+            : rewriteUrlParam(url, secret.key as string, placeholder);
+
+        // Operate on a CLONE and only commit the mutation back if the post-check
+        // (plaintext provably removed) passes — NEVER mutate in place before
+        // verifying, or a half-corrupted+still-leaking config persists when a
+        // rewrite fails (seed 2ce0: substituteSecret mutated before its check).
         if (secret.urlSource === "args" && server.args && secret.index !== undefined) {
           const before = server.args[secret.index];
-          server.args[secret.index] = rewriteUrlParam(before, secret.key, placeholder);
-          return !server.args[secret.index].includes(secret.value);
+          const rewritten = rewrite(before);
+          if (rewritten.includes(secret.value)) return false; // not removed — leave unchanged
+          server.args[secret.index] = rewritten;
+          return true;
         }
         if (secret.urlSource === "adapter" && secret.adapterName) {
           const adapter = server.adapters?.[secret.adapterName] as { url?: unknown } | undefined;
           if (adapter && typeof adapter.url === "string") {
-            const rewritten = rewriteUrlParam(adapter.url, secret.key, placeholder);
+            const rewritten = rewrite(adapter.url);
+            if (rewritten.includes(secret.value)) return false; // not removed — leave unchanged
             adapter.url = rewritten;
-            return !rewritten.includes(secret.value);
+            return true;
           }
           return false; // adapter/url vanished — cannot rewrite
         }
-        server.command = rewriteUrlParam(server.command, secret.key, placeholder);
-        return !server.command.includes(secret.value);
+        // M7: a credential URL stashed in an env value. Rewrite the EXACT env
+        // entry — falling through to the command rewrite below would scan the
+        // wrong field, detect-but-not-substitute, and leave the plaintext in
+        // env (the "detection > substitution = plaintext leak" failure mode).
+        if (secret.urlSource === "env" && secret.envKey) {
+          if (server.env && typeof server.env[secret.envKey] === "string") {
+            const rewritten = rewrite(server.env[secret.envKey]);
+            if (rewritten.includes(secret.value)) return false; // not removed — leave unchanged
+            server.env[secret.envKey] = rewritten;
+            return true;
+          }
+          return false; // env entry vanished — cannot rewrite (fail closed)
+        }
+        const rewrittenCommand = rewrite(server.command);
+        if (rewrittenCommand.includes(secret.value)) return false; // not removed — leave unchanged
+        server.command = rewrittenCommand;
+        return true;
       }
       // Legacy inline `key=value` form in the command string (non-URL).
       if (secret.key) {

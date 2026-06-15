@@ -2,6 +2,7 @@
 import { defineCommand, runMain } from "citty";
 import { showGroupedUsage } from "./help";
 import { resolveParentHelp } from "./lib/parent-help";
+import { crossTreeSecretHint } from "./lib/secret-alias-hint";
 import { AM_VERSION } from "./lib/version";
 
 const main = defineCommand({
@@ -82,6 +83,17 @@ const main = defineCommand({
  */
 async function start(): Promise<void> {
   const rawArgs = process.argv.slice(2);
+
+  // ws4-6fd2 UX polish: cross-pointer between the intentionally-separate
+  // `am secret` (values) and `am secrets` (backend ops) trees. A typo'd
+  // cross-tree verb (`am secret migrate`, `am secrets get`) gets a friendly
+  // breadcrumb to its sibling on stderr BEFORE citty raises its bare
+  // `Unknown command` error + exit 1. We do not merge the trees.
+  const hint = crossTreeSecretHint(rawArgs);
+  if (hint) {
+    console.error(hint);
+  }
+
   const parentHelp = await resolveParentHelp(main, rawArgs);
   if (parentHelp) {
     await showGroupedUsage(parentHelp.cmd, parentHelp.parent);

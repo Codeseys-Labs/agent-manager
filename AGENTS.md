@@ -87,7 +87,7 @@ IDE UX, NOT a general-purpose dotfile manager.
 ## Architecture
 
 Layered Core + Dual-Axis Adapter Extensions (ADR-0001, ADR-0013). The core engine owns
-five entity types:
+six entity types:
 
 | Entity | Purpose | Config key |
 |--------|---------|------------|
@@ -95,6 +95,7 @@ five entity types:
 | **Instructions** | Markdown rules with activation scope (always/glob/agent-decision/manual) | `[instructions.<name>]` |
 | **Skills** | Reusable prompt/skill bundles with paths and descriptions | `[skills.<name>]` |
 | **Agent Profiles** | Named agent configurations (prompt, model, tools, MCP servers) | `[agents.<name>]` |
+| **Commands** | Slash-command markdown artifacts. Carries an explicit `type: "command"` discriminant so `am add command --from <file.md>` classifies deterministically (ADR-0058). | `[commands.<name>]` |
 | **Profiles** | Named config subsets with inheritance and tag-based server selection | `[profiles.<name>]` |
 
 Each entity supports `[entity.adapters.<tool>]` subtables for tool-specific extensions
@@ -237,7 +238,7 @@ install.sh                  # curl-based installer (repo root, not scripts/)
 | `am session list/export/search` | Cross-tool session harvest |
 | `am tui` | Interactive terminal dashboard (Silvery/React) |
 | `am serve` | Local web UI server (Hono) |
-| `am search <query>` | Search the MCP registry for packages (`--tag`, `--verified`) |
+| `am search <query>` | Search the MCP registry for packages (`--limit`, `--no-cache`) |
 | `am install <packages>` | Install MCP server packages from the registry (`--version`, `--dry-run`) |
 | `am uninstall <name>` | Remove an MCP server package from config (`--dry-run`) |
 | `am update` | Check for and apply MCP registry updates (`--dry-run`) |
@@ -270,6 +271,13 @@ instantiation -- only detected tools are activated.
 
 **Drift detection over overwrite (ADR-0006):** `am status` uses structural comparison
 to detect native config edits. Surfaces drift rather than silently overwriting.
+Catalog-ahead deltas — the catalog holds an instruction/skill the native file lacks,
+or a managed block a tool removed — are deliberately surfaced as `added-in-config`
+("pending (in catalog, not yet applied)"), NOT as drift, because am is the source of
+truth and a bare `am apply` simply re-writes them. This is a deliberate conflation
+(a24e / ws4-drift-relabel-catalog-ahead) of the prior "managed block locally removed"
+warning: a forward delta is pending work, not divergence. The human label wording lives
+in `src/commands/status.ts` `formatDriftChangeLine`.
 
 **Application-level encryption (ADR-0012):** AES-256-GCM for secrets in TOML. Key
 from env var or file. Encrypted values are safe to commit to git.
@@ -283,7 +291,14 @@ storage. Config accessed via git provider API. Wiki browsing + server CRUD from
 both local and worker web UIs.
 
 **MCP tool grouping (ADR-0021):** `settings.mcp_serve.tools` is the GLOBAL tool-group
-ceiling — a discovery-time filter over the 6 groups (core/registry/a2a/wiki/session/acp).
+ceiling over the 6 groups (core/registry/a2a/wiki/session/acp). When UNSET it defaults to
+`["core"]` and acts as a discovery-time filter only (ADR-0021's default-surface guarantee:
+calling a non-core tool without configuring groups still dispatches, gated by tier/auth).
+When EXPLICITLY configured it is also a DISPATCH boundary — a de-listed group's tool is
+refused at `tools/call` with -32601, not merely hidden from `tools/list` (detection keys
+off the explicit-set flag, not a value-comparison against the default). This explicit-set
+dispatch enforcement sits BELOW zod argument validation, so a malformed call still surfaces
+the precise zod error rather than the ceiling rejection.
 
 **Runtime access-scoping profiles (ADR-0055, supersedes ADR-0021's global-only model):**
 the active profile's optional `[profiles.<name>.scope]` projects a RUNTIME access

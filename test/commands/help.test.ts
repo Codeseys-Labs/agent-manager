@@ -8,11 +8,15 @@ import { COMMAND_GROUPS, renderGroupedHelp } from "../../src/help";
  * the grouped help output (ADR-0029: "Hidden aliases are omitted from help
  * but still route").
  *
- *   - `agents` — pure alias for `agent` (same `agentsCommand` export).
- *   - `acp`    — niche protocol-ops surface (`am acp session …`); the
- *                user-facing entry points are `run` and `flow`, both grouped.
+ *   - `agents`      — pure alias for `agent` (same `agentsCommand` export).
+ *   - `acp`         — niche protocol-ops surface (`am acp session …`); the
+ *                     user-facing entry points are `run` and `flow`, both grouped.
+ *   - `marketplace` — pillar 4 is deferred to v2 (README "Bundles from git";
+ *                     supersedes ADR-0039/ADR-0052). The command still routes
+ *                     (`am marketplace …` works) but is hidden from `am --help`
+ *                     discovery for v1.
  */
-const HIDDEN_ALIASES = new Set(["agents", "acp"]);
+const HIDDEN_ALIASES = new Set(["agents", "acp", "marketplace"]);
 
 /**
  * Parse the `subCommands: { … }` block of src/cli.ts and return every
@@ -78,8 +82,27 @@ describe("grouped help output (ADR-0029)", () => {
       }
     });
 
-    it("has 8 groups", () => {
-      expect(COMMAND_GROUPS).toHaveLength(8);
+    it("has 7 groups", () => {
+      // ws3-cdc6: the "Marketplace commands" group was removed for v1 (pillar 4
+      // deferred to v2). Its only entry (`marketplace`) is now a hidden alias.
+      expect(COMMAND_GROUPS).toHaveLength(7);
+    });
+
+    it("does not list the deferred marketplace command", () => {
+      const groupedNames = COMMAND_GROUPS.flatMap((g) => g.commands.map(([name]) => name));
+      expect(groupedNames).not.toContain("marketplace");
+      // And no group is titled "Marketplace commands" anymore.
+      expect(COMMAND_GROUPS.map((g) => g.heading)).not.toContain("Marketplace commands");
+    });
+
+    it("groups mcp-superset under Tool commands (pillar-orthogonal enforcement tool)", () => {
+      // ws3-cdc6: mcp-superset is a one-off enforcement tool, not a long-running
+      // interface like mcp-serve/tui/serve/completion — it belongs with the
+      // other tooling (doctor/adapter) under "Tool commands".
+      const toolGroup = COMMAND_GROUPS.find((g) => g.heading === "Tool commands");
+      const interfaceGroup = COMMAND_GROUPS.find((g) => g.heading === "Interface commands");
+      expect(toolGroup?.commands.map(([name]) => name)).toContain("mcp-superset");
+      expect(interfaceGroup?.commands.map(([name]) => name)).not.toContain("mcp-superset");
     });
   });
 
@@ -122,18 +145,21 @@ describe("grouped help output (ADR-0029)", () => {
       expect(output).toContain("am <command> --help");
     });
 
-    it("groups are ordered: Config, Git, Registry, Marketplace, Agent, Wiki, Tool, Interface", () => {
+    it("groups are ordered: Config, Git, Registry, Agent, Wiki, Tool, Interface", () => {
       const headings = COMMAND_GROUPS.map((g) => g.heading);
       expect(headings).toEqual([
         "Config commands",
         "Git commands",
         "Registry commands",
-        "Marketplace commands",
         "Agent commands",
         "Wiki commands",
         "Tool commands",
         "Interface commands",
       ]);
+    });
+
+    it("renderGroupedHelp output omits the marketplace command", () => {
+      expect(renderGroupedHelp("9.9.9")).not.toContain("marketplace");
     });
   });
 });

@@ -3,7 +3,8 @@ import { readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join, parse as parsePath } from "node:path";
 import * as TOML from "@iarna/toml";
-import { isNotFound } from "../lib/errors";
+import { ZodError } from "zod";
+import { AmError, formatZodError, isNotFound } from "../lib/errors";
 import { tomlStringify } from "../lib/toml";
 import { atomicWriteFile } from "./atomic-write";
 import type {
@@ -40,18 +41,85 @@ export function resolveProjectConfig(startDir: string): string | null {
   }
 }
 
-/** Read and validate a global config file. Throws on missing file or validation error. */
-export async function readConfig(path: string): Promise<Config> {
-  const raw = await readFile(path, "utf-8");
-  const parsed = TOML.parse(raw);
-  return ConfigSchema.parse(parsed);
+/** Re-exported so config callers can distinguish ENOENT from parse/schema errors. */
+export { isNotFound } from "../lib/errors";
+
+/**
+ * Is `err` a `@iarna/toml` syntax error?
+ *
+ * The package does not export its error class, so we match on the `name`
+ * property it sets (`TomlError`). The error is a plain `Error` (not a
+ * `SyntaxError`), and its `message` already embeds the `row`/`col`/`pos` of
+ * the offending byte — so callers can surface that verbatim.
+ */
+function isTomlError(err: unknown): err is Error {
+  return err instanceof Error && err.name === "TomlError";
 }
 
-/** Read and validate a project config file. Throws on missing file or validation error. */
+/**
+ * Parse + validate already-read TOML bytes into a typed config.
+ *
+ * Centralizes the TOML-parse → schema-validate pipeline AND the error
+ * classification both `readConfig`/`readProjectConfig` need: a TOML syntax
+ * error becomes `AmError(CONFIG_PARSE_ERROR)` (carrying the parser's
+ * row/col message) and a Zod validation error becomes
+ * `AmError(CONFIG_SCHEMA_ERROR)` (carrying the first failing field path).
+ *
+ * ENOENT is NOT handled here — it originates from `readFile`, never from
+ * parse/validate — so the `tryReadConfig` ENOENT→null contract is unchanged.
+ */
+function parseConfigBytes<T>(
+  raw: string,
+  path: string,
+  schema: { parse: (input: unknown) => T },
+): T {
+  let parsed: unknown;
+  try {
+    parsed = TOML.parse(raw);
+  } catch (err: unknown) {
+    if (isTomlError(err)) {
+      throw new AmError(
+        `Config at ${path} is not valid TOML`,
+        err.message.trim(),
+        "CONFIG_PARSE_ERROR",
+      );
+    }
+    throw err;
+  }
+  try {
+    return schema.parse(parsed);
+  } catch (err: unknown) {
+    if (err instanceof ZodError) {
+      const issues = formatZodError(err);
+      throw new AmError(
+        `Config at ${path} failed validation`,
+        issues[0] ?? "schema validation failed",
+        "CONFIG_SCHEMA_ERROR",
+      );
+    }
+    throw err;
+  }
+}
+
+/**
+ * Read and validate a global config file.
+ *
+ * Throws on missing file (ENOENT, surfaced raw so `tryReadConfig` can map it
+ * to null), on malformed TOML (`AmError` `CONFIG_PARSE_ERROR`), and on schema
+ * violations (`AmError` `CONFIG_SCHEMA_ERROR`).
+ */
+export async function readConfig(path: string): Promise<Config> {
+  const raw = await readFile(path, "utf-8");
+  return parseConfigBytes(raw, path, ConfigSchema);
+}
+
+/**
+ * Read and validate a project config file. Same error contract as
+ * `readConfig` — see its doc comment.
+ */
 export async function readProjectConfig(path: string): Promise<ProjectConfig> {
   const raw = await readFile(path, "utf-8");
-  const parsed = TOML.parse(raw);
-  return ProjectConfigSchema.parse(parsed);
+  return parseConfigBytes(raw, path, ProjectConfigSchema);
 }
 
 /** Like readConfig but returns null on ENOENT. Rethrows other errors. */
@@ -75,10 +143,14 @@ export async function tryReadProjectConfig(path: string): Promise<ProjectConfig 
 }
 
 /**
- * Write a Config to TOML with ordered sections:
+ * Serialize a Config to TOML with ordered sections:
  * settings → servers → skills → instructions → profiles → adapters
+ *
+ * Extracted from `writeConfig` so callers that need the rendered bytes
+ * WITHOUT writing them to disk (e.g. `am init` folding `config.toml` into its
+ * single init commit) share the exact same serialization path.
  */
-export async function writeConfig(path: string, config: Config): Promise<void> {
+export function serializeConfig(config: Config): string {
   // Build an ordered object so TOML.stringify preserves section order
   const ordered: Record<string, unknown> = {};
 
@@ -87,11 +159,19 @@ export async function writeConfig(path: string, config: Config): Promise<void> {
   if (config.skills) ordered.skills = config.skills;
   if (config.agents) ordered.agents = config.agents;
   if (config.instructions) ordered.instructions = config.instructions;
+  if (config.commands) ordered.commands = config.commands;
   if (config.profiles) ordered.profiles = config.profiles;
   if (config.adapters) ordered.adapters = config.adapters;
 
-  const toml = tomlStringify(ordered);
-  await atomicWriteFile(path, toml);
+  return tomlStringify(ordered);
+}
+
+/**
+ * Write a Config to TOML with ordered sections:
+ * settings → servers → skills → instructions → profiles → adapters
+ */
+export async function writeConfig(path: string, config: Config): Promise<void> {
+  await atomicWriteFile(path, serializeConfig(config));
 }
 
 /**
@@ -107,6 +187,7 @@ export async function writeProjectConfig(path: string, config: ProjectConfig): P
   if (config.skills) ordered.skills = config.skills;
   if (config.agents) ordered.agents = config.agents;
   if (config.instructions) ordered.instructions = config.instructions;
+  if (config.commands) ordered.commands = config.commands;
   if (config.env) ordered.env = config.env;
   if (config.adapters) ordered.adapters = config.adapters;
 
@@ -115,21 +196,97 @@ export async function writeProjectConfig(path: string, config: ProjectConfig): P
 }
 
 /**
+ * Field-level merge of a higher-precedence keyed map (`b`) over a lower one
+ * (`a`). For a key present in BOTH maps the two ENTRIES are deep-merged at the
+ * field grain (`{ ...a[key], ...b[key] }`) so a higher layer that restates only
+ * ONE field of a same-named entry does NOT drop the sibling fields the lower
+ * layer set (M12 data-loss). Keys present in only one map pass through; a field
+ * `b` sets still wins on conflict.
+ *
+ * Returns `undefined` when both inputs are absent so the caller can keep the
+ * "omit-when-empty" Config shape that serializeConfig / TOML writeback expect.
+ *
+ * Entry merge is one level deep BY DESIGN: it heals the
+ * whole-entry-replacement bug without redefining nested-field semantics (e.g.
+ * an entry's own `env` / `adapters` map) that no layer-merge caller relies on.
+ */
+function mergeKeyedMap<V>(
+  a: Record<string, V> | undefined,
+  b: Record<string, V> | undefined,
+): Record<string, V> | undefined {
+  if (!a && !b) return undefined;
+  const result: Record<string, V> = { ...a };
+  for (const [key, bVal] of Object.entries(b ?? {})) {
+    const aVal = result[key];
+    result[key] =
+      aVal && typeof aVal === "object" && typeof bVal === "object"
+        ? ({ ...aVal, ...bVal } as V)
+        : bVal;
+  }
+  return result;
+}
+
+/**
+ * Servers carry a `transport` discriminant (ADR-0057): a stdio server forbids
+ * `url` (StdioServerSchema's `url: z.undefined()`), while a remote one allows
+ * it. The field-grain deep-merge in `mergeKeyedMap` is discriminant-BLIND, so a
+ * lower remote layer (`{ transport: "sse", url }`) restated as stdio by a higher
+ * layer (`{ command, transport: "stdio" }`) leaves a stale `url` on the merged
+ * stdio entry — schema-invalid, and `loadResolvedConfig` does NOT re-validate,
+ * so a stdio adapter export could leak the dead remote endpoint downstream.
+ *
+ * This post-merge step mirrors `merge.ts/mergeServers`, which drops `url` once
+ * the result resolves to stdio. We apply it ONLY to the servers map: the other
+ * keyed maps (skills/agents/instructions/commands/profiles) have no transport
+ * discriminant and need no field reconciliation.
+ *
+ * `transport` is treated as defaulting to "stdio" when absent, matching
+ * `ServerSchema`'s preprocess step — an entry that drops transport AND restates
+ * no url is already valid, but one that inherits a remote url from the lower
+ * layer while resolving to stdio must shed it.
+ */
+function reconcileServerDiscriminant<V>(
+  servers: Record<string, V> | undefined,
+): Record<string, V> | undefined {
+  if (!servers) return servers;
+  const result: Record<string, V> = {};
+  for (const [name, srv] of Object.entries(servers)) {
+    if (srv && typeof srv === "object") {
+      const entry = srv as Record<string, unknown>;
+      const transport = entry.transport ?? "stdio";
+      if (transport === "stdio" && "url" in entry) {
+        const { url: _url, ...rest } = entry;
+        result[name] = rest as V;
+        continue;
+      }
+    }
+    result[name] = srv;
+  }
+  return result;
+}
+
+/**
  * Merge two configs. `b` has higher precedence than `a`.
  *
- * - Servers/Skills/Instructions: union (spread), same-name key in b wins
+ * - Servers/Skills/Instructions/Agents/Commands/Profiles: union of keys;
+ *   a same-named entry present in both layers is DEEP-merged at the field grain
+ *   (b's fields win, a's untouched fields survive) — see `mergeKeyedMap`.
+ * - Servers additionally pass through `reconcileServerDiscriminant`, which sheds
+ *   a stale `url` inherited from a remote lower layer when the merged entry
+ *   resolves to stdio — without it the merged server is StdioServerSchema-invalid
+ *   (seed 1fcc).
  * - Settings: shallow merge, b's keys override a's
  * - Adapters: shallow merge by adapter name
  */
 export function mergeConfigs(a: Config, b: Config): Config {
   return {
     settings: a.settings || b.settings ? { ...a.settings, ...b.settings } : undefined,
-    servers: a.servers || b.servers ? { ...a.servers, ...b.servers } : undefined,
-    skills: a.skills || b.skills ? { ...a.skills, ...b.skills } : undefined,
-    instructions:
-      a.instructions || b.instructions ? { ...a.instructions, ...b.instructions } : undefined,
-    agents: a.agents || b.agents ? { ...a.agents, ...b.agents } : undefined,
-    profiles: a.profiles || b.profiles ? { ...a.profiles, ...b.profiles } : undefined,
+    servers: reconcileServerDiscriminant(mergeKeyedMap(a.servers, b.servers)),
+    skills: mergeKeyedMap(a.skills, b.skills),
+    instructions: mergeKeyedMap(a.instructions, b.instructions),
+    agents: mergeKeyedMap(a.agents, b.agents),
+    commands: mergeKeyedMap(a.commands, b.commands),
+    profiles: mergeKeyedMap(a.profiles, b.profiles),
     adapters: a.adapters || b.adapters ? { ...a.adapters, ...b.adapters } : undefined,
   };
 }
@@ -141,6 +298,7 @@ export function projectToConfig(proj: ProjectConfig): Config {
     skills: proj.skills,
     instructions: proj.instructions,
     agents: proj.agents,
+    commands: proj.commands,
     adapters: proj.adapters,
   };
 

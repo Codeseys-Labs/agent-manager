@@ -1,4 +1,6 @@
 import { describe, expect, it } from "bun:test";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import {
   SUBCOMMANDS,
   TOP_LEVEL_COMMANDS,
@@ -6,6 +8,24 @@ import {
   generateFishCompletion,
   generateZshCompletion,
 } from "../../src/commands/completion";
+
+/**
+ * Parse the `subCommands: { … }` block of src/cli.ts and return every
+ * registered key. Mirrors the parser in help.test.ts so the completion list
+ * can never silently advertise (or omit) a command relative to the real
+ * surface (ws3-cdc6: `init-project` was a phantom completion entry).
+ */
+function registeredSubcommands(): string[] {
+  const src = readFileSync(join(import.meta.dir, "../../src/cli.ts"), "utf-8");
+  const block = src.match(/subCommands:\s*\{([\s\S]*?)\n\s*\},/);
+  if (!block) throw new Error("could not locate subCommands block in cli.ts");
+  const names: string[] = [];
+  const re = /(?:^|\n)\s*(?:"([\w-]+)"|([\w-]+)):\s*\(\)\s*=>/g;
+  for (let m = re.exec(block[1]); m !== null; m = re.exec(block[1])) {
+    names.push(m[1] ?? m[2]);
+  }
+  return names;
+}
 
 describe("am completion", () => {
   describe("TOP_LEVEL_COMMANDS", () => {
@@ -41,7 +61,6 @@ describe("am completion", () => {
       "flow",
       "marketplace",
       "completion",
-      "init-project",
     ] as const;
 
     for (const cmd of expected) {
@@ -49,6 +68,26 @@ describe("am completion", () => {
         expect(TOP_LEVEL_COMMANDS).toContain(cmd);
       });
     }
+
+    it("does not advertise the phantom init-project command", () => {
+      // ws3-cdc6: `init-project` is not a registered subcommand in cli.ts, so
+      // completing it pointed users at a command that does not exist.
+      expect(TOP_LEVEL_COMMANDS as readonly string[]).not.toContain("init-project");
+    });
+
+    it("only lists commands that are actually registered in cli.ts", () => {
+      // No phantom commands: every completable top-level command must map back
+      // to a real subCommands entry in cli.ts (the inverse — every registered
+      // command being completable — is intentionally NOT required, since niche
+      // surfaces like setup/secrets/pair/acp are omitted from completion).
+      const registered = new Set(registeredSubcommands());
+      for (const cmd of TOP_LEVEL_COMMANDS) {
+        expect(
+          registered.has(cmd),
+          `completion lists "${cmd}" but cli.ts does not register it`,
+        ).toBe(true);
+      }
+    });
   });
 
   describe("SUBCOMMANDS", () => {

@@ -111,6 +111,25 @@ hallucinated. The Scope is a CEILING: it can NEVER widen beyond the global
 MUST NOT silently widen the surface (mirror the PROFILE_NOT_FOUND guard in
 src/commands/use.ts).
 
+> **Refinement (M1, post-acceptance — clarifies, does NOT supersede the
+> backward-compat guarantee).** The header states the global
+> `settings.mcp_serve.tools` ceiling "stays a discovery-only filter for
+> backward-compat." That guarantee applies to the UNSET default (which resolves
+> to `["core"]`): calling a non-core tool without configuring groups still
+> dispatches, gated by tier/auth — unchanged. But once an operator EXPLICITLY
+> sets `settings.mcp_serve.tools`, that narrowing is a deliberate access
+> boundary and is now enforced at `tools/call` too (a de-listed group's tool
+> returns -32601), not merely hidden from `tools/list`. The discovery-only
+> leak (a de-listed group still callable at dispatch) was the M1 finding.
+> Detection keys off the explicit-set flag (`tools !== undefined`), NOT a
+> value-comparison against `["core"]`, so a user who explicitly sets
+> `tools = ["core"]` gets dispatch enforcement while an unset config does not —
+> the profile scope remains the primary dispatch boundary, and the default
+> surface is unchanged. The explicit-ceiling gate
+> (`isOutsideExplicitCeiling`, server.ts) sits BELOW zod argument validation so
+> a malformed call still surfaces the precise zod error rather than the ceiling
+> rejection.
+
 ### Decision 3 — Phase 1 connection-supplied Scope (stdio, cheap, ships now)
 
 stdio is one-client-per-process, so "connection-supplied profile" reduces to

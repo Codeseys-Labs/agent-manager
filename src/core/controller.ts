@@ -20,7 +20,7 @@
 
 import { join } from "node:path";
 import { getAdapter, getDetectedAdapters, listAdapters } from "../adapters/registry";
-import type { Adapter } from "../adapters/types";
+import type { Adapter, DiffChange } from "../adapters/types";
 import {
   buildResolvedConfig,
   loadResolvedConfig,
@@ -203,6 +203,24 @@ export async function withConfig<T>(
  */
 export const APPLY_SAFE_DEFAULTS = { diff: true, force: false } as const;
 
+/**
+ * Does this diff delta represent REAL drift the fail-closed gate must refuse to
+ * silently overwrite — or only a benign FORWARD delta that `am apply` resolves?
+ *
+ * `added-in-config` (catalog-ahead, e.g. right after `am add server`) is the
+ * normal pre-apply state: the catalog holds an entry the native config does not
+ * yet have, and applying simply WRITES it. It is not a divergence the user
+ * needs to reconcile, so it must NOT trip the `--force` skip — that would force
+ * the user to `--force` a server they just added (and make `apply --dry-run`
+ * disagree with live `apply`). Real drift is a NATIVE-side change the apply
+ * would clobber: `added-locally` (a server hand-added to the tool),
+ * `removed-locally` (a managed entry deleted from the tool), or `modified` (a
+ * field hand-edited in the tool). (ws4-drift-relabel-catalog-ahead)
+ */
+function isRealDriftChange(change: DiffChange): boolean {
+  return change.type !== "added-in-config";
+}
+
 export interface ApplyResolvedOptions {
   dryRun?: boolean;
   /** Restrict to a single adapter by name. */
@@ -316,11 +334,30 @@ export async function applyResolved(
     if (selectBackendName(config) === "age" || configContainsAgeEnvelope(config)) {
       ageBackend = await getDefaultBackend(configDir, { config, override: "age" });
     }
-    const { config: interpolated } = await interpolateEnvAsync(config, {
-      encryptionKey: encryptionKey ?? undefined,
-      ageBackend,
-    });
+    const { config: interpolated, warnings: interpolationWarnings } = await interpolateEnvAsync(
+      config,
+      {
+        encryptionKey: encryptionKey ?? undefined,
+        ageBackend,
+      },
+    );
     const resolved = buildResolvedConfig(interpolated, profileName, configDir);
+
+    // ws3 empty-overwrite guard (brownfield-wipe lineage). A live apply whose
+    // RESOLVED catalog is empty — no servers AND no instructions/skills/agents
+    // — would have every adapter export an empty native config, blanking a
+    // populated hand-managed file (the `~/.claude.json` wipe class). This is
+    // the tail of the init→add→undo→apply --force chain: once `am undo`
+    // rewound the catalog to empty, `am apply --force` blindly overwrote the
+    // still-populated native config. We refuse this per-adapter below, EVEN
+    // under --force, when the adapter's native config actually holds content
+    // (its diff() reports `drifted` with removed-locally/modified changes).
+    // Dry-run is exempt: it writes nothing, so the preview is harmless.
+    const catalogEmpty =
+      Object.keys(resolved.servers ?? {}).length === 0 &&
+      Object.keys(resolved.instructions ?? {}).length === 0 &&
+      Object.keys(resolved.skills ?? {}).length === 0 &&
+      Object.keys(resolved.agents ?? {}).length === 0;
 
     // P1-H default-passthrough signpost. `buildResolvedConfig` only filters
     // the catalog when a matching `[profiles.<name>]` exists; otherwise the
@@ -332,6 +369,19 @@ export async function applyResolved(
     // tools and how to narrow it. This stays advisory (no exit code change).
     const notices: string[] = [];
     const profileScoped = interpolated.profiles?.[profileName] !== undefined;
+
+    // M9 interpolation-warning surfacing. `interpolateEnvAsync` is non-strict by
+    // default: an unresolved `${VAR}` is NOT thrown — it pushes a warning and
+    // leaves the literal `${VAR}` text in place. Previously these warnings were
+    // discarded here, so an apply with a missing env var wrote a literal `${VAR}`
+    // (or an undecryptable placeholder) into the native config with zero surfaced
+    // signal — a silently-broken server reported as a clean apply. Surface each
+    // via the existing advisory `notices` channel (ADR-0040: controller is
+    // I/O-free; surfaces render notices). Strictness/default-fail behaviour is
+    // unchanged — we no longer SWALLOW the warning, we don't START throwing.
+    for (const w of interpolationWarnings) {
+      notices.push(`interpolation: ${w}`);
+    }
 
     // Issue #3 URL-credential guard: refuse to write native configs that would
     // leak a credential embedded in a URL query param.
@@ -413,6 +463,44 @@ export async function applyResolved(
 
     for (const adapter of adapters) {
       try {
+        // ws3 empty-overwrite guard: when the resolved catalog is empty and
+        // this is a LIVE apply, probe the adapter's native config BEFORE any
+        // export. If diff() reports the native config holds content the empty
+        // catalog would erase (`drifted` with non-additive changes), refuse to
+        // overwrite it — EVEN under --force. --force opts into overwriting a
+        // DRIFTED config with the user's catalog; it does NOT opt into blanking
+        // a populated config with an empty one (that is never a deliberate
+        // intent and is the wipe-out chain's final step). A diff() that throws
+        // means drift is unknown — also refuse (fail-closed). `unmanaged` /
+        // `in-sync` (no native file, or already empty) fall through to the
+        // normal path so a genuinely-empty environment is unaffected.
+        if (catalogEmpty && !options.dryRun) {
+          let nativePopulated: boolean;
+          let probeError: string | undefined;
+          try {
+            const probe = await adapter.diff(resolved);
+            nativePopulated = probe.status === "drifted" && probe.changes.length > 0;
+          } catch (e: unknown) {
+            // Drift unknown → treat as possibly-populated and refuse.
+            nativePopulated = true;
+            probeError = (e instanceof Error ? e.message : String(e)) || "diff failed";
+          }
+          if (nativePopulated) {
+            const reason = probeError
+              ? `drift check failed (${probeError}); drift state unknown`
+              : "the native config still holds entries the empty catalog would erase";
+            results.push({
+              adapter: adapter.meta.name,
+              files: [],
+              warnings: [
+                `refusing to overwrite a populated native config with an EMPTY catalog — ${reason}. This usually means the catalog was reverted/emptied (e.g. after \`am undo\`). Restore the catalog (\`git -C <config-dir> log\`) before applying; --force does NOT override this guard.`,
+              ],
+            });
+            skipped.push(adapter.meta.name);
+            continue;
+          }
+        }
+
         // ADR-0038 (`--diff` / `--force`): when caller asks for diff, run
         // adapter.diff() against the resolved config first. The result is
         // attached to the per-adapter output AND used to gate the live
@@ -435,12 +523,15 @@ export async function applyResolved(
           try {
             const diff = await adapter.diff(resolved);
             driftSummary = { status: diff.status, changes: diff.changes.length };
-            if (
-              !options.dryRun &&
-              !options.force &&
-              diff.status === "drifted" &&
-              diff.changes.length > 0
-            ) {
+            // Only REAL drift trips the fail-closed skip. A delta whose changes
+            // are ALL `added-in-config` (catalog-ahead, e.g. right after
+            // `am add server`) is a benign forward delta the apply resolves by
+            // writing — it must NOT force the user into `--force`. Gate on the
+            // change TYPES, not on `diff.status` alone (which is still "drifted"
+            // for any non-empty delta and is relied on elsewhere).
+            // (ws4-drift-relabel-catalog-ahead)
+            const hasRealDrift = diff.changes.some(isRealDriftChange);
+            if (!options.dryRun && !options.force && diff.status === "drifted" && hasRealDrift) {
               skipDueToDrift = true;
             }
           } catch (e: unknown) {
@@ -481,9 +572,13 @@ export async function applyResolved(
             adapter: adapter.meta.name,
             files: [],
             warnings: [
+              // Offer BOTH remedies (ws4-6fd2): `--force` overwrites the native
+              // drift (destructive — loses the hand edits), while
+              // `am import <tool>` folds the drifted native state back into the
+              // catalog NON-destructively. Lead with the safe option.
               `drift detected (${driftSummary?.changes ?? 0} change${
                 (driftSummary?.changes ?? 0) === 1 ? "" : "s"
-              }); refusing to overwrite — re-run with --force to apply anyway`,
+              }); refusing to overwrite — run \`am import ${adapter.meta.name}\` to fold the native changes into the catalog, or re-run with --force to overwrite them`,
             ],
             ...(driftSummary ? { diff: driftSummary } : {}),
           });

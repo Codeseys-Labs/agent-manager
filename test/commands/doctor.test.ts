@@ -2,10 +2,12 @@ import { afterEach, describe, expect, test } from "bun:test";
 import * as fs from "node:fs";
 import { join } from "node:path";
 import { getAdapter, listAdapters } from "../../src/adapters/registry";
+import { collectDoctorChecks, doctorCommand } from "../../src/commands/doctor";
 import { writeConfig } from "../../src/core/config";
-import { getStatus, initRepo } from "../../src/core/git";
+import { commitAll, getStatus, initRepo } from "../../src/core/git";
 import { ConfigSchema } from "../../src/core/schema";
 import type { Config } from "../../src/core/schema";
+import { encryptValue, importKey } from "../../src/core/secrets";
 import { type TestDir, createTestDir } from "../helpers/tmp";
 
 describe("am doctor", () => {
@@ -130,5 +132,442 @@ describe("am doctor", () => {
     const status = await getStatus(configDir);
     // No remote configured in test
     expect(status.remotes.length).toBe(0);
+  });
+
+  // ws6-skill-deps-missing-agent (R2/297e): doctor must flag a skill whose
+  // SKILL.md references an agent the catalog does not provide.
+  test("warns when a skill references an absent agent", async () => {
+    dir = await createTestDir("am-doctor-deps-");
+    const configDir = dir.path;
+    await initRepo(configDir);
+
+    const skillDir = join(configDir, "skills", "researcher");
+    fs.mkdirSync(skillDir, { recursive: true });
+    fs.writeFileSync(
+      join(skillDir, "SKILL.md"),
+      "# Researcher\n\nFan out with Task(subagent_type='hyperresearch-fetcher').\n",
+    );
+
+    const config: Config = {
+      settings: { default_profile: "default" },
+      skills: {
+        researcher: { path: skillDir, description: "Research skill" },
+      },
+    };
+    await writeConfig(join(configDir, "config.toml"), config);
+
+    const checks = await collectDoctorChecks(configDir, configDir);
+    const depCheck = checks.find((c) => c.name === "Skill dependencies");
+    expect(depCheck).toBeDefined();
+    expect(depCheck?.status).toBe("warn");
+    expect(depCheck?.message).toContain("hyperresearch-fetcher");
+    expect(depCheck?.message).toContain("researcher");
+  });
+
+  // ws-c7d6-doctor-active-profile (R2-7): the skill-dependency check must
+  // resolve the SAME catalog `am status` does — i.e. honor the persisted active
+  // profile (active → default_profile → "default"), not just `default_profile`.
+  // Construct a config where the active profile EXCLUDES the agent (so the
+  // skill's reference dangles) while default_profile INCLUDES it (so under
+  // default_profile the check would pass). doctor and status must agree on the
+  // active-profile result.
+  test("skill-dependency check honors the persisted active profile", async () => {
+    dir = await createTestDir("am-doctor-active-profile-");
+    const configDir = dir.path;
+    await initRepo(configDir);
+
+    const skillDir = join(configDir, "skills", "researcher");
+    fs.mkdirSync(skillDir, { recursive: true });
+    fs.writeFileSync(
+      join(skillDir, "SKILL.md"),
+      "# Researcher\n\nFan out with Task(subagent_type='hyperresearch-fetcher').\n",
+    );
+
+    const config: Config = {
+      settings: { default_profile: "full" },
+      skills: {
+        researcher: { path: skillDir, description: "Research skill" },
+      },
+      agents: {
+        "hyperresearch-fetcher": { name: "hyperresearch-fetcher", prompt: "Fetch sources." },
+        decoy: { name: "decoy", prompt: "Unrelated agent." },
+      },
+      profiles: {
+        // `full` includes both the skill and the agent → reference resolves.
+        full: { description: "Full", skills: ["researcher"], agents: ["hyperresearch-fetcher"] },
+        // `minimal` includes the skill and lists ONLY the decoy agent. A
+        // non-empty agents list activates buildResolvedConfig's agent filter,
+        // so `hyperresearch-fetcher` is excluded and the skill's reference
+        // dangles. (An empty `agents: []` would mean "no filter / include all",
+        // which is NOT what we want to exercise here.)
+        minimal: { description: "Minimal", skills: ["researcher"], agents: ["decoy"] },
+      },
+    };
+    await writeConfig(join(configDir, "config.toml"), config);
+
+    // Persist `minimal` as the active profile — the one that makes the dep dangle.
+    const { writeActiveProfile, readActiveProfile } = await import("../../src/core/state");
+    await writeActiveProfile(configDir, "minimal");
+    expect(await readActiveProfile(configDir)).toBe("minimal");
+
+    // doctor must resolve the active profile (`minimal`), under which the agent
+    // is filtered out, so the skill reference dangles → warn.
+    const checks = await collectDoctorChecks(configDir, configDir);
+    const depCheck = checks.find((c) => c.name === "Skill dependencies");
+    expect(depCheck).toBeDefined();
+    expect(depCheck?.status).toBe("warn");
+    expect(depCheck?.message).toContain("hyperresearch-fetcher");
+
+    // status must resolve the SAME catalog. Recompute its missing-deps set the
+    // way status.ts does (active → default_profile → "default") and assert they
+    // agree: same profile, same missing-dep set.
+    const { loadResolvedConfig, buildResolvedConfig } = await import("../../src/core/config");
+    const { findMissingSkillAgentDeps } = await import("../../src/core/skill-deps");
+    const loaded = await loadResolvedConfig({ configDir });
+    const statusProfile =
+      (await readActiveProfile(configDir)) ?? loaded.settings?.default_profile ?? "default";
+    expect(statusProfile).toBe("minimal");
+    const statusResolved = buildResolvedConfig(loaded, statusProfile, configDir);
+    const statusMissing = findMissingSkillAgentDeps(statusResolved);
+    expect(statusMissing).toEqual([{ skill: "researcher", agent: "hyperresearch-fetcher" }]);
+    // doctor reported a warn for the same dangling reference status found.
+    expect(statusMissing.length).toBeGreaterThan(0);
+    expect(depCheck?.status).toBe("warn");
+  });
+
+  test("passes the skill-dependency check when the referenced agent exists", async () => {
+    dir = await createTestDir("am-doctor-deps-ok-");
+    const configDir = dir.path;
+    await initRepo(configDir);
+
+    const skillDir = join(configDir, "skills", "researcher");
+    fs.mkdirSync(skillDir, { recursive: true });
+    fs.writeFileSync(
+      join(skillDir, "SKILL.md"),
+      "# Researcher\n\nFan out with Task(subagent_type='hyperresearch-fetcher').\n",
+    );
+
+    const config: Config = {
+      settings: { default_profile: "default" },
+      skills: {
+        researcher: { path: skillDir, description: "Research skill" },
+      },
+      agents: {
+        "hyperresearch-fetcher": { name: "hyperresearch-fetcher", prompt: "Fetch sources." },
+      },
+    };
+    await writeConfig(join(configDir, "config.toml"), config);
+
+    const checks = await collectDoctorChecks(configDir, configDir);
+    const depCheck = checks.find((c) => c.name === "Skill dependencies");
+    expect(depCheck).toBeDefined();
+    expect(depCheck?.status).toBe("ok");
+  });
+
+  // ws3-cdc6: doctor must flag a config whose profiles form a circular (or
+  // self-referential / unknown-parent) inheritance chain. ConfigSchema accepts
+  // it, but resolveProfile throws — so the "Profile inheritance" check runs the
+  // resolver to surface the defect.
+  test("flags circular profile inheritance", async () => {
+    dir = await createTestDir("am-doctor-circular-");
+    const configDir = dir.path;
+    await initRepo(configDir);
+
+    fs.writeFileSync(
+      join(configDir, "config.toml"),
+      `[settings]
+default_profile = "a"
+
+[profiles.a]
+inherits = "b"
+
+[profiles.b]
+inherits = "a"
+`,
+    );
+
+    const checks = await collectDoctorChecks(configDir, configDir);
+    const inhCheck = checks.find((c) => c.name === "Profile inheritance");
+    expect(inhCheck).toBeDefined();
+    expect(inhCheck?.status).toBe("fail");
+    expect(inhCheck?.message).toMatch(/[Cc]ircular inheritance/);
+  });
+
+  test("flags an unknown profile parent", async () => {
+    dir = await createTestDir("am-doctor-unknown-parent-");
+    const configDir = dir.path;
+    await initRepo(configDir);
+
+    fs.writeFileSync(
+      join(configDir, "config.toml"),
+      `[settings]
+default_profile = "child"
+
+[profiles.child]
+inherits = "ghost"
+`,
+    );
+
+    const checks = await collectDoctorChecks(configDir, configDir);
+    const inhCheck = checks.find((c) => c.name === "Profile inheritance");
+    expect(inhCheck).toBeDefined();
+    expect(inhCheck?.status).toBe("fail");
+    expect(inhCheck?.message).toMatch(/[Uu]nknown profile/);
+  });
+
+  test("passes the profile-inheritance check on a clean chain", async () => {
+    dir = await createTestDir("am-doctor-inherit-ok-");
+    const configDir = dir.path;
+    await initRepo(configDir);
+
+    const config: Config = {
+      settings: { default_profile: "child" },
+      profiles: {
+        base: { description: "Base" },
+        child: { description: "Child", inherits: "base" },
+      },
+    };
+    await writeConfig(join(configDir, "config.toml"), config);
+
+    const checks = await collectDoctorChecks(configDir, configDir);
+    const inhCheck = checks.find((c) => c.name === "Profile inheritance");
+    expect(inhCheck).toBeDefined();
+    expect(inhCheck?.status).toBe("ok");
+  });
+
+  // fix-0-1: the config.toml check must surface a typed AmError's detail (the
+  // offending field path, carried in the AmError suggestion by parseConfigBytes)
+  // AND redact any secret-shaped value it echoes. A schema-invalid server whose
+  // NAME is a GitHub token forces the Zod issue path to echo the token; the
+  // check must report a fail, keep the diagnostic, and replace the token with
+  // the redaction placeholder. Mirrors the MCP `am_doctor` redaction test.
+  test("config.toml check redacts secret-shaped values in validation errors", async () => {
+    dir = await createTestDir("am-doctor-redact-");
+    const configDir = dir.path;
+    await initRepo(configDir);
+
+    const secretToken = "ghp_abcdefghijklmnopqrstuvwxyz0123456789";
+    // Write a raw, schema-invalid config (server missing `command`) whose name
+    // is the secret token, bypassing writeConfig which would reject it.
+    fs.writeFileSync(
+      join(configDir, "config.toml"),
+      `[servers."${secretToken}"]\ntransport = "stdio"\n`,
+    );
+
+    const checks = await collectDoctorChecks(configDir, configDir);
+    const configCheck = checks.find((c) => c.name === "config.toml");
+    expect(configCheck).toBeDefined();
+    expect(configCheck?.status).toBe("fail");
+    // The diagnostic detail (the field path) survives, but the token is gone.
+    expect(configCheck?.message).toContain("Parse/validation error:");
+    expect(configCheck?.message).not.toContain(secretToken);
+    expect(configCheck?.message).toContain("[REDACTED_GH_TOKEN]");
+  });
+
+  // ws-doctor-health (agent-manager-2424) BUG 2: encrypted envelopes present
+  // but the key is lost = apply is hard-broken. The "Encryption integrity"
+  // check must FAIL (not warn) so healthy:false.
+  test("reports a fail when an enc: envelope exists but no key is present", async () => {
+    dir = await createTestDir("am-doctor-enc-nokey-");
+    const configDir = dir.path;
+    await initRepo(configDir);
+
+    // Point the key path at a location that does not exist, and ensure no env
+    // key shadows it — loadKey must return null.
+    const keyPath = join(configDir, "keystore", "key");
+    const origKeyPath = process.env.AM_KEY_PATH;
+    const origEnvKey = process.env.AM_ENCRYPTION_KEY;
+    process.env.AM_KEY_PATH = keyPath;
+    Reflect.deleteProperty(process.env, "AM_ENCRYPTION_KEY");
+    try {
+      // Encrypt a real envelope with an ephemeral key (not persisted to disk),
+      // then write it into settings.env so the catalog has ciphertext but the
+      // resolvable key is gone.
+      const { generateKey } = await import("../../src/core/secrets");
+      const ephemeral = await importKey(await generateKey());
+      const envelope = await encryptValue("super-secret", ephemeral);
+      expect(envelope.startsWith("enc:v1:")).toBe(true);
+
+      const config: Config = {
+        settings: { default_profile: "default", env: { API_TOKEN: envelope } },
+        profiles: { default: { description: "Default" } },
+      };
+      await writeConfig(join(configDir, "config.toml"), config);
+
+      const checks = await collectDoctorChecks(configDir, configDir);
+      const integrity = checks.find((c) => c.name === "Encryption integrity");
+      expect(integrity).toBeDefined();
+      expect(integrity?.status).toBe("fail");
+      expect(integrity?.message).toContain(keyPath);
+      // healthy is derived from the absence of any "fail" check.
+      expect(checks.some((c) => c.status === "fail")).toBe(true);
+    } finally {
+      if (origKeyPath === undefined) Reflect.deleteProperty(process.env, "AM_KEY_PATH");
+      else process.env.AM_KEY_PATH = origKeyPath;
+      if (origEnvKey === undefined) Reflect.deleteProperty(process.env, "AM_ENCRYPTION_KEY");
+      else process.env.AM_ENCRYPTION_KEY = origEnvKey;
+    }
+  });
+
+  test("reports healthy when an enc: envelope exists AND the key loads", async () => {
+    dir = await createTestDir("am-doctor-enc-key-");
+    const configDir = dir.path;
+    await initRepo(configDir);
+
+    const origKeyPath = process.env.AM_KEY_PATH;
+    const origEnvKey = process.env.AM_ENCRYPTION_KEY;
+    Reflect.deleteProperty(process.env, "AM_KEY_PATH");
+    try {
+      const { generateKey } = await import("../../src/core/secrets");
+      const keyB64 = await generateKey();
+      // Supply the key via AM_ENCRYPTION_KEY so loadKey resolves it without
+      // touching any on-disk OS data dir.
+      process.env.AM_ENCRYPTION_KEY = keyB64;
+      const key = await importKey(keyB64);
+      const envelope = await encryptValue("super-secret", key);
+
+      const config: Config = {
+        settings: { default_profile: "default", env: { API_TOKEN: envelope } },
+        profiles: { default: { description: "Default" } },
+      };
+      await writeConfig(join(configDir, "config.toml"), config);
+
+      const checks = await collectDoctorChecks(configDir, configDir);
+      const integrity = checks.find((c) => c.name === "Encryption integrity");
+      expect(integrity).toBeDefined();
+      expect(integrity?.status).toBe("ok");
+      expect(checks.some((c) => c.status === "fail")).toBe(false);
+    } finally {
+      if (origKeyPath === undefined) Reflect.deleteProperty(process.env, "AM_KEY_PATH");
+      else process.env.AM_KEY_PATH = origKeyPath;
+      if (origEnvKey === undefined) Reflect.deleteProperty(process.env, "AM_ENCRYPTION_KEY");
+      else process.env.AM_ENCRYPTION_KEY = origEnvKey;
+    }
+  });
+
+  // A green config with no encrypted envelopes and no key must NOT trip the
+  // integrity check (mirrors the `am setup --json` healthy path). The missing
+  // key stays a benign warn via the separate "Encryption key" check.
+  test("does not fail the no-secrets-no-key path", async () => {
+    dir = await createTestDir("am-doctor-no-enc-");
+    const configDir = dir.path;
+    await initRepo(configDir);
+
+    const keyPath = join(configDir, "keystore", "missing-key");
+    const origKeyPath = process.env.AM_KEY_PATH;
+    const origEnvKey = process.env.AM_ENCRYPTION_KEY;
+    process.env.AM_KEY_PATH = keyPath;
+    Reflect.deleteProperty(process.env, "AM_ENCRYPTION_KEY");
+    try {
+      const config: Config = {
+        settings: { default_profile: "default", env: { PLAIN: "not-a-secret" } },
+        profiles: { default: { description: "Default" } },
+      };
+      await writeConfig(join(configDir, "config.toml"), config);
+
+      const checks = await collectDoctorChecks(configDir, configDir);
+      // No envelopes → the integrity check is skipped entirely.
+      expect(checks.find((c) => c.name === "Encryption integrity")).toBeUndefined();
+      expect(checks.some((c) => c.status === "fail")).toBe(false);
+    } finally {
+      if (origKeyPath === undefined) Reflect.deleteProperty(process.env, "AM_KEY_PATH");
+      else process.env.AM_KEY_PATH = origKeyPath;
+      if (origEnvKey === undefined) Reflect.deleteProperty(process.env, "AM_ENCRYPTION_KEY");
+      else process.env.AM_ENCRYPTION_KEY = origEnvKey;
+    }
+  });
+});
+
+// ws-doctor-health (agent-manager-2424) BUG 1: `am doctor --json` must let its
+// exit code track health — nonzero on a failing check, 0 when only warnings.
+describe("am doctor --json exit code", () => {
+  let dir: TestDir;
+  const origConfigDir = process.env.AM_CONFIG_DIR;
+  const origKeyPath = process.env.AM_KEY_PATH;
+  const origEnvKey = process.env.AM_ENCRYPTION_KEY;
+  const origLog = console.log;
+  let logged: string[] = [];
+
+  const handler = doctorCommand as unknown as {
+    run: (ctx: { args: Record<string, unknown> }) => Promise<void>;
+  };
+
+  afterEach(async () => {
+    console.log = origLog;
+    if (origConfigDir === undefined) Reflect.deleteProperty(process.env, "AM_CONFIG_DIR");
+    else process.env.AM_CONFIG_DIR = origConfigDir;
+    if (origKeyPath === undefined) Reflect.deleteProperty(process.env, "AM_KEY_PATH");
+    else process.env.AM_KEY_PATH = origKeyPath;
+    if (origEnvKey === undefined) Reflect.deleteProperty(process.env, "AM_ENCRYPTION_KEY");
+    else process.env.AM_ENCRYPTION_KEY = origEnvKey;
+    process.exitCode = 0;
+    if (dir) await dir.cleanup();
+  });
+
+  function capture(): void {
+    logged = [];
+    console.log = (...args: unknown[]) => {
+      logged.push(args.map(String).join(" "));
+    };
+  }
+
+  test("exits nonzero and emits healthy:false on a failing check", async () => {
+    dir = await createTestDir("am-doctor-json-fail-");
+    const configDir = dir.path;
+    await initRepo(configDir);
+    process.env.AM_CONFIG_DIR = configDir;
+
+    // Force a deterministic fail: enc: envelope present but key unresolvable.
+    const keyPath = join(configDir, "keystore", "key");
+    process.env.AM_KEY_PATH = keyPath;
+    Reflect.deleteProperty(process.env, "AM_ENCRYPTION_KEY");
+
+    const { generateKey } = await import("../../src/core/secrets");
+    const ephemeral = await importKey(await generateKey());
+    const envelope = await encryptValue("super-secret", ephemeral);
+    const config: Config = {
+      settings: { default_profile: "default", env: { API_TOKEN: envelope } },
+      profiles: { default: { description: "Default" } },
+    };
+    await writeConfig(join(configDir, "config.toml"), config);
+    await commitAll(configDir, "init");
+
+    process.exitCode = 0;
+    capture();
+    await handler.run({ args: { json: true, quiet: false, verbose: false } });
+
+    expect(process.exitCode).toBe(1);
+    const payload = JSON.parse(logged.join("\n"));
+    expect(payload.healthy).toBe(false);
+  });
+
+  test("exits 0 and emits healthy:true when only warnings are present", async () => {
+    dir = await createTestDir("am-doctor-json-warn-");
+    const configDir = dir.path;
+    await initRepo(configDir);
+    process.env.AM_CONFIG_DIR = configDir;
+
+    // No encrypted envelopes; a missing key is only a warn here.
+    const keyPath = join(configDir, "keystore", "missing-key");
+    process.env.AM_KEY_PATH = keyPath;
+    Reflect.deleteProperty(process.env, "AM_ENCRYPTION_KEY");
+
+    const config: Config = {
+      settings: { default_profile: "default" },
+      profiles: { default: { description: "Default" } },
+    };
+    await writeConfig(join(configDir, "config.toml"), config);
+    await commitAll(configDir, "init");
+
+    process.exitCode = 0;
+    capture();
+    await handler.run({ args: { json: true, quiet: false, verbose: false } });
+
+    expect(process.exitCode).toBe(0);
+    const payload = JSON.parse(logged.join("\n"));
+    expect(payload.healthy).toBe(true);
+    // Sanity: there is at least one warning (e.g. no git remote) so this is a
+    // genuine warnings-only case, not an all-green one.
+    expect(payload.checks.some((c: { status: string }) => c.status === "warn")).toBe(true);
   });
 });

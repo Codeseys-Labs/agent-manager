@@ -299,6 +299,108 @@ describe("am add skill", () => {
     process.exitCode = 0;
   });
 
+  test("--source help text does not advertise git+/marketplace as working", async () => {
+    // Docs-truth: only local:<path> is implemented (parseSkillSource rejects
+    // git+/marketplace). The flag description must not present unimplemented
+    // sources as supported. (ws2-e5c8-docs-truth)
+    const { addCommand } = await import("../../src/commands/add");
+    const sourceArg = (addCommand.args as Record<string, { description?: string }>).source;
+    expect(sourceArg.description).toContain("local:<path>");
+    expect(sourceArg.description).not.toMatch(/git\+<url>|marketplace-ref/);
+    // The description should make the unsupported status explicit.
+    expect(sourceArg.description).toMatch(/not yet supported/);
+  });
+
+  test("portability — warns on a host-absolute path in the SKILL.md body", async () => {
+    ({ dir, configDir } = await setupConfigDir());
+    workspace = await createTestDir("am-add-skill-ws-");
+    // SKILL.md body hard-codes the author's home dir (R1/297e).
+    const skillPath = await makeSkillDir(
+      workspace.path,
+      "host-path-skill",
+      "---\nname: host-path-skill\ndescription: A skill\n---\n\n# host-path-skill\n\nRun /home/baladita/.local/share/uv/tools/hyperresearch/bin/hr\n",
+    );
+
+    const { addCommand } = await import("../../src/commands/add");
+    await addCommand.run!({
+      args: {
+        _: ["skill", "host-path-skill"],
+        path: skillPath,
+        json: false,
+        quiet: false,
+        verbose: false,
+      } as any,
+      rawArgs: [],
+      cmd: addCommand as any,
+    });
+
+    // The portability finding is surfaced as a warning on stderr and is NOT
+    // silenced; the skill is still added (lint signal, not a hard gate).
+    expect(consoleErrors.some((l) => /host-absolute path/.test(l))).toBe(true);
+    expect(consoleErrors.some((l) => l.includes("/home/baladita/"))).toBe(true);
+    const updated = await readConfig(join(configDir, "config.toml"));
+    expect(updated.skills?.["host-path-skill"]).toBeDefined();
+  });
+
+  test("portability — JSON mode includes the finding in the envelope", async () => {
+    ({ dir, configDir } = await setupConfigDir());
+    workspace = await createTestDir("am-add-skill-ws-");
+    const skillPath = await makeSkillDir(
+      workspace.path,
+      "host-path-json-skill",
+      "---\nname: host-path-json-skill\ndescription: A skill\n---\n\n# x\n\nsee /Users/baladita/.config/foo\n",
+    );
+
+    const { addCommand } = await import("../../src/commands/add");
+    await addCommand.run!({
+      args: {
+        _: ["skill", "host-path-json-skill"],
+        path: skillPath,
+        json: true,
+        quiet: false,
+        verbose: false,
+      } as any,
+      rawArgs: [],
+      cmd: addCommand as any,
+    });
+
+    const jsonLine = consoleOutput.find((l) => l.includes('"action"'));
+    expect(jsonLine).toBeDefined();
+    const parsed = JSON.parse(jsonLine!);
+    expect(parsed.portability).toBeDefined();
+    expect(parsed.portability).toHaveLength(1);
+    expect(parsed.portability[0].kind).toBe("macos");
+    expect(parsed.portability[0].match).toBe("/Users/baladita/");
+  });
+
+  test("portability — clean SKILL.md emits no portability warning or envelope field", async () => {
+    ({ dir, configDir } = await setupConfigDir());
+    workspace = await createTestDir("am-add-skill-ws-");
+    const skillPath = await makeSkillDir(
+      workspace.path,
+      "clean-skill",
+      "---\nname: clean-skill\ndescription: A skill\n---\n\n# x\n\nRun ./scripts/run.sh\n",
+    );
+
+    const { addCommand } = await import("../../src/commands/add");
+    await addCommand.run!({
+      args: {
+        _: ["skill", "clean-skill"],
+        path: skillPath,
+        json: true,
+        quiet: false,
+        verbose: false,
+      } as any,
+      rawArgs: [],
+      cmd: addCommand as any,
+    });
+
+    expect(consoleErrors.some((l) => /host-absolute path/.test(l))).toBe(false);
+    const jsonLine = consoleOutput.find((l) => l.includes('"action"'));
+    const parsed = JSON.parse(jsonLine!);
+    expect(parsed.portability).toBeUndefined();
+  });
+
   test("JSON mode emits the action envelope on stdout", async () => {
     ({ dir, configDir } = await setupConfigDir());
     workspace = await createTestDir("am-add-skill-ws-");

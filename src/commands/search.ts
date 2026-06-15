@@ -7,9 +7,7 @@ export const searchCommand = defineCommand({
   meta: { name: "search", description: "Search the MCP registry for packages" },
   args: {
     query: { type: "positional", description: "Search query", required: true },
-    tag: { type: "string", description: "Filter by tag" },
-    verified: { type: "boolean", description: "Show only verified packages" },
-    limit: { type: "string", description: "Max results (default: 20)" },
+    limit: { type: "string", description: "Max results (default: 20, max: 100)" },
     "no-cache": { type: "boolean", description: "Bypass cache", default: false },
     json: { type: "boolean", description: "JSON output", default: false },
     quiet: { type: "boolean", alias: "q", default: false },
@@ -20,8 +18,6 @@ export const searchCommand = defineCommand({
     const skipCache = args["no-cache"] ?? false;
 
     const filters: RegistrySearchFilters = {};
-    if (args.tag) filters.tag = args.tag;
-    if (args.verified) filters.verified = true;
     if (args.limit) filters.limit = parsePositiveInt(args.limit, "limit", 20);
     if (!filters.limit) filters.limit = 20;
 
@@ -72,7 +68,8 @@ export const searchCommand = defineCommand({
       );
     }
 
-    info(`\n${result.packages.length} of ${result.total} result(s)`, opts);
+    const more = result.nextCursor ? " (more available)" : "";
+    info(`\n${result.packages.length} result(s)${more}`, opts);
   },
 });
 

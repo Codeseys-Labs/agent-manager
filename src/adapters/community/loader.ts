@@ -21,6 +21,22 @@ const ADAPTERS_TOML = "adapters.toml";
 const proxyCache = new Map<string, CommunityAdapterProxy>();
 
 /**
+ * Outcome of a checksum verification.
+ *
+ *   - `verified`  — a pin existed and the on-disk bytes matched it.
+ *   - `skipped`   — no pin existed but the source is `local:`, so the check
+ *                   was deliberately skipped (NOTHING was verified). Callers
+ *                   that report integrity status must NOT claim "verified"
+ *                   here — there was no pin to verify against.
+ *
+ * Mismatches and missing-pin-on-non-local sources THROW (they never return a
+ * result), so the type only enumerates the non-throwing outcomes.
+ */
+export type ChecksumVerification =
+  | { verified: true; skipped: false }
+  | { verified: false; skipped: true; reason: "local-no-pin" };
+
+/**
  * Verify the SHA256 checksum of an adapter binary against the stored checksum.
  *
  * Behavior:
@@ -29,25 +45,26 @@ const proxyCache = new Map<string, CommunityAdapterProxy>();
  *     it). A missing checksum means either the TOML was hand-edited or the
  *     adapter was installed by an older am version; either way we refuse to
  *     spawn arbitrary code. User fix: `am adapter verify <name>`.
- *   - No checksum + `local:` source → WARN, allow. Local adapters are the
- *     user's own code under active development; requiring a re-pin on every
- *     edit would be noise.
+ *   - No checksum + `local:` source → WARN, return `{ skipped: true }`.
+ *     Local adapters are the user's own code under active development;
+ *     requiring a re-pin on every edit would be noise. NOTE: nothing was
+ *     verified in this case — the caller must not report it as "verified".
  *   - Mismatched checksum → THROW (tamper detection).
- *   - Matching checksum → allow.
+ *   - Matching checksum → return `{ verified: true }`.
  */
 export async function verifyChecksum(
   name: string,
   command: string,
   storedChecksum: string | undefined,
   source?: string,
-): Promise<void> {
+): Promise<ChecksumVerification> {
   if (!storedChecksum) {
     const isLocal = source?.startsWith("local:");
     if (isLocal) {
       console.error(
         `warning: community adapter "${name}" is a local adapter with no checksum — skipping integrity check`,
       );
-      return;
+      return { verified: false, skipped: true, reason: "local-no-pin" };
     }
     throw new Error(
       `Adapter "${name}" has no checksum in adapters.toml. Refusing to spawn untrusted code. Run \`am adapter verify ${name}\` to inspect the adapter, then reinstall with \`am adapter install <source> --force\` to re-pin the checksum.`,
@@ -80,6 +97,8 @@ export async function verifyChecksum(
       `Adapter binary checksum mismatch for ${name}. Expected ${expectedHash}, got ${actualHash}. The adapter may have been tampered with.`,
     );
   }
+
+  return { verified: true, skipped: false };
 }
 
 /** Read and parse adapters.toml. Returns empty record if file doesn't exist. */

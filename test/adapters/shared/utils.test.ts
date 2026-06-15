@@ -265,4 +265,41 @@ describe("spliceMarkerBlock", () => {
     expect(result).toContain("New");
     expect(result).not.toContain("Old");
   });
+
+  // ── Fail-closed guard (H3) ──────────────────────────────────────
+
+  test("refuses to splice when am:end precedes am:begin (out-of-order)", () => {
+    const userProse = "User prose between out-of-order markers.";
+    const existing = `# Header\n\n${AM_END}\n${userProse}\n${AM_BEGIN}\n\n# Footer`;
+    const newBlock = `${AM_BEGIN}\nNew\n${AM_END}`;
+    const warnings: string[] = [];
+    const result = spliceMarkerBlock(newBlock, existing, warnings, "AGENTS.md");
+    // Returned unchanged — no corruption, no new block.
+    expect(result).toBe(existing);
+    expect(result).toContain(userProse);
+    expect(result).not.toContain("\nNew\n");
+    expect(warnings.some((w) => w.includes("AGENTS.md"))).toBe(true);
+  });
+
+  test("refuses to splice on a single unpaired am:begin (no duplicate block)", () => {
+    const existing = `# Header\n\n${AM_BEGIN}\nDangling.`;
+    const newBlock = `${AM_BEGIN}\nNew\n${AM_END}`;
+    const warnings: string[] = [];
+    const result = spliceMarkerBlock(newBlock, existing, warnings, "AGENTS.md");
+    expect(result).toBe(existing);
+    const beginCount = (result.match(/<!-- am:begin -->/g) || []).length;
+    expect(beginCount).toBe(1);
+    expect(warnings.some((w) => w.includes("AGENTS.md"))).toBe(true);
+  });
+
+  test("refuses to splice on a single unpaired am:end (no duplicate block)", () => {
+    const existing = `# Header\n\nManual.\n${AM_END}`;
+    const newBlock = `${AM_BEGIN}\nNew\n${AM_END}`;
+    const warnings: string[] = [];
+    const result = spliceMarkerBlock(newBlock, existing, warnings, "AGENTS.md");
+    expect(result).toBe(existing);
+    const endCount = (result.match(/<!-- am:end -->/g) || []).length;
+    expect(endCount).toBe(1);
+    expect(warnings.some((w) => w.includes("AGENTS.md"))).toBe(true);
+  });
 });

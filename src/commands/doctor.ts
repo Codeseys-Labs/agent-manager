@@ -1,15 +1,23 @@
 import * as fs from "node:fs";
 import { join } from "node:path";
 import { defineCommand } from "citty";
-import { ZodError } from "zod";
 import { getAdapter, listAdapters } from "../adapters/registry";
 import { getBackupStats } from "../core/apply-backup";
-import { resolveConfigDir, resolveProjectConfig, tryReadConfig } from "../core/config";
+import {
+  buildResolvedConfig,
+  resolveConfigDir,
+  resolveProjectConfig,
+  tryReadConfig,
+} from "../core/config";
 import { getStatus } from "../core/git";
+import { resolveProfile } from "../core/resolver";
 import { scanConfigForSecrets } from "../core/secret-detection";
-import { legacyKeyPath, resolveKeyPath } from "../core/secrets";
-import { errorMessage } from "../lib/errors";
+import { isAnyEnvelope, legacyKeyPath, loadKey, resolveKeyPath } from "../core/secrets";
+import { findMissingSkillAgentDeps } from "../core/skill-deps";
+import { errorDetail, errorMessage } from "../lib/errors";
 import { error, info, output } from "../lib/output";
+import { redactSecretish } from "../lib/redact";
+import { readActiveProfile } from "./use";
 
 export interface Check {
   name: string;
@@ -92,25 +100,19 @@ export async function collectDoctorChecks(
       checks.push({ name: "config.toml", status: "ok", message: "Valid" });
     }
   } catch (err: unknown) {
-    if (err instanceof ZodError) {
-      const issues = err.issues
-        .map(
-          (i: { path: (string | number)[]; message: string }) =>
-            `${i.path.join(".")}: ${i.message}`,
-        )
-        .join("; ");
-      checks.push({
-        name: "config.toml",
-        status: "fail",
-        message: `Validation errors: ${issues}`,
-      });
-    } else {
-      checks.push({
-        name: "config.toml",
-        status: "fail",
-        message: `Parse error: ${errorMessage(err)}`,
-      });
-    }
+    // `tryReadConfig` always wraps parse/schema failures in a typed `AmError`
+    // (CONFIG_PARSE_ERROR / CONFIG_SCHEMA_ERROR) — the raw `ZodError` never
+    // reaches here anymore — so a single branch handles both. `errorDetail`
+    // folds the AmError suggestion (which carries the offending field path,
+    // e.g. a secret-shaped server name) back into the surfaced text, and
+    // `redactSecretish` scrubs any echoed secret to a `[REDACTED_*]`
+    // placeholder so the diagnostic stays useful without leaking credentials —
+    // matching the MCP `am_doctor` path.
+    checks.push({
+      name: "config.toml",
+      status: "fail",
+      message: `Parse/validation error: ${redactSecretish(errorDetail(err))}`,
+    });
   }
 
   // 4. Detected AI tools
@@ -188,6 +190,61 @@ export async function collectDoctorChecks(
     });
   } catch {
     // Absent: good.
+  }
+
+  // 6c. Encryption integrity — encrypted envelopes present but key lost.
+  //     The plain "Encryption key" check above (#6) only warns when the key
+  //     is absent, which is benign when there are no secrets to decrypt. The
+  //     hard-broken case is: encrypted envelopes (`enc:v1:`/`enc:v2:age:`)
+  //     exist in the config but `loadKey` cannot produce a key — `am apply`
+  //     then fails or leaks ciphertext, so this is a FAIL, not a warn.
+  try {
+    const integrityConfig = await tryReadConfig(join(configDir, "config.toml"));
+    if (integrityConfig) {
+      const envelopeBuckets: Array<Record<string, string> | undefined> = [
+        integrityConfig.settings?.env,
+      ];
+      if (integrityConfig.servers) {
+        for (const server of Object.values(integrityConfig.servers)) {
+          envelopeBuckets.push(server.env);
+        }
+      }
+      if (integrityConfig.profiles) {
+        for (const profile of Object.values(integrityConfig.profiles)) {
+          envelopeBuckets.push(profile.env);
+        }
+      }
+
+      let envelopeCount = 0;
+      for (const bucket of envelopeBuckets) {
+        if (!bucket) continue;
+        for (const value of Object.values(bucket)) {
+          if (isAnyEnvelope(value)) envelopeCount += 1;
+        }
+      }
+
+      if (envelopeCount > 0) {
+        const key = await loadKey(configDir);
+        if (key === null) {
+          checks.push({
+            name: "Encryption integrity",
+            status: "fail",
+            message: `${envelopeCount} encrypted secret(s) present but the key at ${keyPath} is missing/unreadable — secrets cannot be decrypted and \`am apply\` will fail or leak ciphertext. Restore the key or re-encrypt with a new one.`,
+          });
+        } else {
+          checks.push({
+            name: "Encryption integrity",
+            status: "ok",
+            message: `${envelopeCount} encrypted secret(s) present and the key at ${keyPath} loads`,
+          });
+        }
+      }
+      // No envelopes: nothing to decrypt — skip (a missing key is already a
+      // benign warn via check #6, and we must not fail the common
+      // no-secrets-no-key setup path).
+    }
+  } catch {
+    // Config already validated above; a failure here is non-fatal.
   }
 
   // 7. Project config in cwd
@@ -330,6 +387,79 @@ export async function collectDoctorChecks(
     // Config already checked above, skip silently
   }
 
+  // 9b. Skill → agent dependency closure (R2/297e, ws6-skill-deps-missing-agent).
+  //     A skill body (SKILL.md) may delegate to a named subagent via
+  //     `Task(subagent_type='...')`. If the catalog provides no matching agent
+  //     the skill is broken at runtime, so flag each dangling reference.
+  try {
+    const configForDeps = await tryReadConfig(join(configDir, "config.toml"));
+    if (configForDeps) {
+      // Resolve the SAME catalog `am status` does: honor the persisted active
+      // profile first (ws-c7d6-doctor-active-profile / R2-7), falling back to
+      // default_profile, then "default". status.ts uses this exact precedence —
+      // if doctor only read default_profile the two commands could disagree on
+      // which catalog they check.
+      const profileName =
+        (await readActiveProfile(configDir)) ??
+        (configForDeps.settings?.default_profile as string | undefined) ??
+        "default";
+      const resolved = buildResolvedConfig(configForDeps, profileName, configDir);
+      const missingDeps = findMissingSkillAgentDeps(resolved);
+      if (missingDeps.length > 0) {
+        const detail = missingDeps
+          .map((d) => `skill ${d.skill} references missing agent ${d.agent}`)
+          .join("; ");
+        checks.push({
+          name: "Skill dependencies",
+          status: "warn",
+          message: `${missingDeps.length} skill→agent reference(s) point to an absent agent: ${detail}. Add the agent(s) to the catalog or fix the skill's Task(subagent_type=...) reference.`,
+        });
+      } else {
+        checks.push({
+          name: "Skill dependencies",
+          status: "ok",
+          message: "All skill agent references resolve to catalog agents",
+        });
+      }
+    }
+  } catch {
+    // Config already validated above; a failure here is non-fatal.
+  }
+
+  // 9c. Profile inheritance closure (ws3-cdc6). ConfigSchema accepts a config
+  //     whose profiles inherit in a circle (a→b→a), self-reference (a→a), or
+  //     point at an unknown parent — but resolveProfile (the resolver the
+  //     gateway and `am apply` rely on) throws on all three. Run it per profile
+  //     so doctor surfaces the defect instead of letting it blow up later.
+  try {
+    const configForInherit = await tryReadConfig(join(configDir, "config.toml"));
+    if (configForInherit?.profiles) {
+      const inheritErrors: string[] = [];
+      for (const name of Object.keys(configForInherit.profiles)) {
+        try {
+          resolveProfile(name, configForInherit);
+        } catch (err: unknown) {
+          inheritErrors.push(`${name}: ${errorMessage(err)}`);
+        }
+      }
+      if (inheritErrors.length > 0) {
+        checks.push({
+          name: "Profile inheritance",
+          status: "fail",
+          message: `${inheritErrors.length} profile(s) fail to resolve: ${inheritErrors.join("; ")}. Fix the \`inherits\` chain (no cycles, self-references, or unknown parents).`,
+        });
+      } else {
+        checks.push({
+          name: "Profile inheritance",
+          status: "ok",
+          message: "All profiles resolve (no inheritance cycles or unknown parents)",
+        });
+      }
+    }
+  } catch {
+    // Config already validated above; a failure here is non-fatal.
+  }
+
   // 10. Betterleaks scanner
   const { isBetterleaksAvailable, getBetterleaksVersion } = await import("../core/betterleaks");
   if (isBetterleaksAvailable()) {
@@ -404,6 +534,10 @@ export const doctorCommand = defineCommand({
     const healthy = !hasFailures;
 
     if (args.json) {
+      // Mirror the non-JSON branch: failures set a nonzero exit code, warnings
+      // do not. Previously this branch returned before any exit-code logic, so
+      // `am doctor --json` always exited 0 even when `healthy: false`.
+      if (hasFailures) process.exitCode = 1;
       output({ healthy, checks }, opts);
       return;
     }

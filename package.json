@@ -86,6 +86,7 @@
   "license": "MIT",
   "overrides": {
     "@silvery/commander": "0.8.1",
-    "@chenglou/pretext": "0.0.7"
+    "@chenglou/pretext": "0.0.7",
+    "esbuild": "0.28.1"
   }
 }

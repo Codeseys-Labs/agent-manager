@@ -3,8 +3,41 @@ import { join } from "node:path";
 import { readConfig, writeConfig } from "../../src/core/config";
 import { initRepo } from "../../src/core/git";
 import type { Config } from "../../src/core/schema";
-import type { RegistryPackage } from "../../src/registry/types";
+import type { ServerListResponse } from "../../src/registry/types";
 import { type TestDir, createTestDir } from "../helpers/tmp";
+
+// `am update` resolves provenance.package ("tavily-mcp", a short name) via the
+// v0 search route, so the fetch body is a list envelope. The server name's
+// trailing segment matches the short name so getPackage's segment-match picks it.
+function tavilyList(version: string): ServerListResponse {
+  return {
+    servers: [
+      {
+        server: {
+          name: "io.github.tavily/tavily-mcp",
+          description: "Web search via Tavily",
+          version,
+          packages: [
+            {
+              registryType: "npm",
+              identifier: "tavily-mcp",
+              version,
+              transport: { type: "stdio" },
+            },
+          ],
+        },
+        _meta: {
+          "io.modelcontextprotocol.registry/official": {
+            publishedAt: "2024-01-01T00:00:00Z",
+            updatedAt: "2024-07-01T00:00:00Z",
+            isLatest: true,
+          },
+        },
+      },
+    ],
+    metadata: { count: 1 },
+  };
+}
 
 let consoleOutput: string[] = [];
 let consoleErrors: string[] = [];
@@ -75,19 +108,7 @@ describe("am update", () => {
     const configPath = join(configDir, "config.toml");
     await writeConfig(configPath, config);
 
-    const newerPkg: RegistryPackage = {
-      name: "tavily-mcp",
-      description: "Web search via Tavily",
-      author: "tavily",
-      version: "2.0.0",
-      verified: true,
-      tags: ["search"],
-      downloads: 5000,
-      created_at: "2024-01-01T00:00:00Z",
-      updated_at: "2024-07-01T00:00:00Z",
-      server: { command: "bunx", args: ["tavily-mcp@2.0.0"] },
-    };
-    mockFetchResponse(newerPkg);
+    mockFetchResponse(tavilyList("2.0.0"));
 
     const { updateCommand } = await import("../../src/commands/update");
     await updateCommand.run!({
@@ -176,17 +197,7 @@ describe("am update", () => {
     const configPath = join(configDir, "config.toml");
     await writeConfig(configPath, config);
 
-    mockFetchResponse({
-      name: "tavily-mcp",
-      description: "Web search",
-      author: "tavily",
-      version: "2.0.0",
-      verified: true,
-      tags: ["search"],
-      created_at: "2024-01-01T00:00:00Z",
-      updated_at: "2024-07-01T00:00:00Z",
-      server: { command: "bunx", args: ["tavily-mcp@2.0.0"] },
-    } as RegistryPackage);
+    mockFetchResponse(tavilyList("2.0.0"));
 
     const { updateCommand } = await import("../../src/commands/update");
     await updateCommand.run!({
@@ -262,6 +273,68 @@ describe("am update", () => {
     expect(allOutput).toContain("500");
   });
 
+  // ── Fail-closed: non-TTY destructive confirmation gate (ws5-e7f6 gap 2) ──
+  // Applying registry updates OVERWRITES existing server definitions in the
+  // catalog. With a candidate update available, a run without --yes and without
+  // --json under non-TTY stdin (the default under bun test) cannot prompt, so
+  // the command MUST refuse (exit non-zero, leave the catalog untouched), not
+  // silently apply. Regression guard against the previous `&& process.stdin.isTTY`
+  // gate that failed OPEN in any non-TTY context (scripts, CI, piped stdin).
+  test("FAILS CLOSED: non-TTY without --yes refuses to apply updates (exit 1, no mutation)", async () => {
+    dir = await createTestDir("am-update-");
+    const configDir = dir.path;
+    process.env.AM_CONFIG_DIR = configDir;
+    await initRepo(configDir);
+
+    const config: Config = {
+      servers: {
+        tavily: {
+          command: "bunx",
+          args: ["tavily-mcp@1.0.0"],
+          transport: "stdio",
+          enabled: true,
+          _registry: {
+            source: "mcp-registry",
+            package: "tavily-mcp",
+            version: "1.0.0",
+            installed_at: "2024-01-01T00:00:00Z",
+          },
+        },
+      },
+    };
+    const configPath = join(configDir, "config.toml");
+    await writeConfig(configPath, config);
+
+    // A newer version is available → there IS a candidate that would be applied.
+    mockFetchResponse(tavilyList("2.0.0"));
+
+    // Sanity: under bun test stdin is non-TTY (no interactive prompt possible).
+    expect(Boolean(process.stdin.isTTY)).toBe(false);
+
+    const { updateCommand } = await import("../../src/commands/update");
+    await updateCommand.run!({
+      args: {
+        "dry-run": false,
+        yes: false, // NO force flag → must fail closed under non-TTY
+        "no-cache": true,
+        json: false,
+        quiet: false,
+        verbose: false,
+      } as any,
+      rawArgs: [],
+      cmd: updateCommand as any,
+    });
+
+    // Refused: non-zero exit and a clear message…
+    expect(process.exitCode).toBe(1);
+    const allErrors = consoleErrors.join("\n");
+    expect(allErrors).toContain("Refusing to apply");
+    expect(allErrors).toContain("--yes");
+    // …and the catalog version is UNCHANGED (no destructive mutation).
+    const after = await readConfig(configPath);
+    expect(after.servers?.tavily._registry!.version).toBe("1.0.0");
+  });
+
   test("reports all servers up to date when versions match", async () => {
     dir = await createTestDir("am-update-");
     const configDir = dir.path;
@@ -285,17 +358,7 @@ describe("am update", () => {
     };
     await writeConfig(join(configDir, "config.toml"), config);
 
-    mockFetchResponse({
-      name: "tavily-mcp",
-      description: "Same version",
-      author: "tavily",
-      version: "1.0.0",
-      verified: true,
-      tags: [],
-      created_at: "2024-01-01T00:00:00Z",
-      updated_at: "2024-01-01T00:00:00Z",
-      server: { command: "bunx", args: ["tavily-mcp@1.0.0"] },
-    } as RegistryPackage);
+    mockFetchResponse(tavilyList("1.0.0"));
 
     const { updateCommand } = await import("../../src/commands/update");
     await updateCommand.run!({

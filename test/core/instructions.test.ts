@@ -9,9 +9,11 @@ import {
   generateClaudeMd,
   generateCopilotInstruction,
   generateCursorMdc,
+  generateGeminiMd,
   generateKiroSteering,
   generateWindsurfRule,
   resolveInstructionContent,
+  spliceWikiBlock,
 } from "../../src/core/instructions";
 
 // ── Helpers ─────────────────────────────────────────────────────
@@ -167,6 +169,52 @@ describe("generateClaudeMd", () => {
     const result = generateClaudeMd({});
     expect(result).toBe("");
   });
+
+  // ── Marker splice guard (H3): malformed markers must NOT corrupt content ──
+
+  test("refuses to splice when am:end precedes am:begin (out-of-order)", () => {
+    // User prose sits BETWEEN an out-of-order end/begin pair. The old code
+    // sliced before+after with after starting before beginIdx, dropping this
+    // prose and scrambling the result. Guard must refuse and return unchanged.
+    const userProse = "IMPORTANT user prose that must survive.";
+    const existing = `# Project\n\n<!-- am:end -->\n${userProse}\n<!-- am:begin -->\n\nTail.`;
+    const instructions = {
+      rule1: makeInstruction({ content: "New managed." }),
+    };
+    const result = generateClaudeMd(instructions, existing);
+    // Refuse: existing content returned UNCHANGED (no corruption, no new block).
+    expect(result).toBe(existing);
+    expect(result).toContain(userProse);
+    // Did not inject the new managed block (would be a second/duplicate block).
+    expect(result).not.toContain("New managed.");
+  });
+
+  test("refuses to splice when only am:begin present (unpaired marker)", () => {
+    // Only a begin marker exists. The old guard was false so it fell through
+    // to the append branch, emitting a SECOND begin/end block (duplication).
+    const existing = "# Project\n\n<!-- am:begin -->\nDangling managed content.";
+    const instructions = {
+      rule1: makeInstruction({ content: "New managed." }),
+    };
+    const result = generateClaudeMd(instructions, existing);
+    // Refuse: returned unchanged, no duplicate block appended.
+    expect(result).toBe(existing);
+    const beginCount = (result.match(/<!-- am:begin -->/g) || []).length;
+    expect(beginCount).toBe(1);
+    expect(result).not.toContain("New managed.");
+  });
+
+  test("refuses to splice when only am:end present (unpaired marker)", () => {
+    const existing = "# Project\n\nManual content.\n<!-- am:end -->\nMore.";
+    const instructions = {
+      rule1: makeInstruction({ content: "New managed." }),
+    };
+    const result = generateClaudeMd(instructions, existing);
+    expect(result).toBe(existing);
+    const endCount = (result.match(/<!-- am:end -->/g) || []).length;
+    expect(endCount).toBe(1);
+    expect(result).not.toContain("New managed.");
+  });
 });
 
 // ── generateAgentsMd ────────────────────────────────────────────
@@ -202,6 +250,121 @@ describe("generateAgentsMd", () => {
     const result = generateAgentsMd(instructions);
     expect(result).toContain("First.");
     expect(result).toContain("Second.");
+  });
+
+  // FIX 1 (seed 0967): the core generate*Md helpers must thread a `warnings`
+  // sink into spliceMarkerBlock so a malformed-marker refusal surfaces a
+  // diagnostic instead of being silently dropped (windsurf routes through here).
+  test("pushes a warning when markers are malformed (warnings sink supplied)", () => {
+    const existing = "# Agents\n\n<!-- am:end -->\nUser prose.\n<!-- am:begin -->";
+    const instructions = {
+      rule1: makeInstruction({ content: "New managed." }),
+    };
+    const warnings: string[] = [];
+    const result = generateAgentsMd(instructions, existing, warnings);
+    // Fail-closed: unchanged content.
+    expect(result).toBe(existing);
+    // The diagnostic is NOT dropped — it lands in the supplied sink.
+    expect(warnings.length).toBe(1);
+    expect(warnings[0]).toContain("AGENTS.md");
+    expect(warnings[0]).toContain("malformed");
+  });
+});
+
+// ── generateGeminiMd (FIX 1: warnings threading) ────────────────
+
+describe("generateGeminiMd", () => {
+  test("generates content with am markers", () => {
+    const instructions = {
+      rule1: makeInstruction({ content: "Gemini rule." }),
+    };
+    const result = generateGeminiMd(instructions);
+    expect(result).toContain("<!-- am:begin -->");
+    expect(result).toContain("Gemini rule.");
+    expect(result).toContain("<!-- am:end -->");
+  });
+
+  // FIX 1 (seed 0967): gemini-cli routes through this core helper; a malformed
+  // marker must surface a warning rather than be silently dropped.
+  test("pushes a warning when markers are malformed (warnings sink supplied)", () => {
+    const existing = "# Gemini\n\n<!-- am:begin -->\nDangling.";
+    const instructions = {
+      rule1: makeInstruction({ content: "New managed." }),
+    };
+    const warnings: string[] = [];
+    const result = generateGeminiMd(instructions, existing, warnings);
+    expect(result).toBe(existing);
+    expect(warnings.length).toBe(1);
+    expect(warnings[0]).toContain("GEMINI.md");
+    expect(warnings[0]).toContain("malformed");
+    expect(result).not.toContain("New managed.");
+  });
+});
+
+// ── spliceWikiBlock (FIX 2: out-of-order marker guard) ──────────
+
+describe("spliceWikiBlock", () => {
+  const WIKI = "<!-- am:wiki:begin -->\nWiki context.\n<!-- am:wiki:end -->";
+
+  test("replaces a well-formed existing wiki block in place", () => {
+    const content =
+      "# Project\n\n<!-- am:wiki:begin -->\nOld wiki.\n<!-- am:wiki:end -->\n\nTrailing prose.";
+    const result = spliceWikiBlock(WIKI, content);
+    expect(result).toContain("Wiki context.");
+    expect(result).not.toContain("Old wiki.");
+    expect(result).toContain("Trailing prose.");
+    expect(result).toContain("# Project");
+  });
+
+  // FIX 2 (seed ef33): reversed am:wiki:end-before-begin markers must NOT
+  // corrupt/delete content. The old guard checked only presence (!== -1) and
+  // sliced with `after` starting before `beginIdx`, dropping the prose between
+  // the real markers. Mirror spliceMarkerBlock: refuse + preserve.
+  test("refuses to splice when am:wiki:end precedes am:wiki:begin (out-of-order)", () => {
+    const userProse = "IMPORTANT wiki-adjacent prose that must survive.";
+    const content = `# Project\n\n<!-- am:wiki:end -->\n${userProse}\n<!-- am:wiki:begin -->\n\nTail.`;
+    const warnings: string[] = [];
+    const result = spliceWikiBlock(WIKI, content, warnings, "AGENTS.md");
+    // Fail-closed: content returned UNCHANGED, no corruption.
+    expect(result).toBe(content);
+    expect(result).toContain(userProse);
+    // Did not inject the new wiki block over the scrambled markers.
+    expect(result).not.toContain("Wiki context.");
+    // Diagnostic surfaced.
+    expect(warnings.length).toBe(1);
+    expect(warnings[0]).toContain("AGENTS.md");
+    expect(warnings[0]).toContain("malformed");
+  });
+
+  test("refuses to splice when only am:wiki:begin present (unpaired marker)", () => {
+    const content = "# Project\n\n<!-- am:wiki:begin -->\nDangling wiki content.";
+    const warnings: string[] = [];
+    const result = spliceWikiBlock(WIKI, content, warnings, "GEMINI.md");
+    expect(result).toBe(content);
+    const beginCount = (result.match(/<!-- am:wiki:begin -->/g) || []).length;
+    expect(beginCount).toBe(1);
+    expect(result).not.toContain("Wiki context.");
+    expect(warnings.length).toBe(1);
+    expect(warnings[0]).toContain("missing am:wiki:end");
+  });
+
+  test("refuses to splice when only am:wiki:end present (unpaired marker)", () => {
+    const content = "# Project\n\nManual.\n<!-- am:wiki:end -->\nMore.";
+    const warnings: string[] = [];
+    const result = spliceWikiBlock(WIKI, content, warnings, "GEMINI.md");
+    expect(result).toBe(content);
+    expect(result).not.toContain("Wiki context.");
+    expect(warnings.length).toBe(1);
+    expect(warnings[0]).toContain("missing am:wiki:begin");
+  });
+
+  test("inserts before am:end when no wiki markers present", () => {
+    const content = "<!-- am:begin -->\nManaged.\n<!-- am:end -->\n";
+    const result = spliceWikiBlock(WIKI, content);
+    expect(result).toContain("Wiki context.");
+    expect(result).toContain("Managed.");
+    // Wiki block sits before the am:end marker.
+    expect(result.indexOf("Wiki context.")).toBeLessThan(result.indexOf("<!-- am:end -->"));
   });
 });
 
@@ -377,5 +540,25 @@ describe("generateKiroSteering", () => {
     expect(result).toContain("Some manual content.");
     expect(result).toContain("<!-- am:begin -->");
     expect(result).toContain("Managed.");
+  });
+
+  test("refuses to splice when am:end precedes am:begin (out-of-order)", () => {
+    const userProse = "Steering prose that must survive.";
+    const existing = `---\ninclusion: always\n---\n\n<!-- am:end -->\n${userProse}\n<!-- am:begin -->`;
+    const instr = makeInstruction({ content: "New managed." });
+    const result = generateKiroSteering(instr, existing);
+    expect(result).toBe(existing);
+    expect(result).toContain(userProse);
+    expect(result).not.toContain("New managed.");
+  });
+
+  test("refuses to splice when only am:begin present (unpaired marker)", () => {
+    const existing = "---\ninclusion: always\n---\n\n<!-- am:begin -->\nDangling.";
+    const instr = makeInstruction({ content: "New managed." });
+    const result = generateKiroSteering(instr, existing);
+    expect(result).toBe(existing);
+    const beginCount = (result.match(/<!-- am:begin -->/g) || []).length;
+    expect(beginCount).toBe(1);
+    expect(result).not.toContain("New managed.");
   });
 });

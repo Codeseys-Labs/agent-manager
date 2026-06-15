@@ -139,6 +139,7 @@ function readServersFromFile(
       name,
       command: entry.command ?? entry.url ?? "",
       scope,
+      ...(entry.url && { url: entry.url }),
       ...(entry.args && { args: entry.args }),
       ...(entry.env && { env: entry.env }),
       ...(transport && { transport }),

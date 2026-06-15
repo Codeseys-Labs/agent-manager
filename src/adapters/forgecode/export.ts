@@ -55,7 +55,9 @@ export async function exportConfig(
       } catch {
         // No existing file
       }
-      let agentsMdContent = spliceMarkerBlock(block, existingContent);
+      // Fail-closed marker guard (H3): malformed markers leave the file
+      // unchanged and surface a warning rather than scrambling user prose.
+      let agentsMdContent = spliceMarkerBlock(block, existingContent, warnings, "AGENTS.md");
 
       // Inject wiki context if enabled
       const configDir = options.projectPath;

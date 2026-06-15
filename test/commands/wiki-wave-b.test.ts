@@ -125,7 +125,10 @@ describe("ADR-0044 Wave B — wiki init/migrate/publish/pull", () => {
     configHome = await createTestDir("adr44-wb-cfg-");
     savedEnv = process.env.AM_CONFIG_DIR;
     process.env.AM_CONFIG_DIR = configHome.path;
-    savedCwd = process.cwd();
+    // Pin the cwd restore target to the repo root (seed 8c51): if an earlier
+    // test file leaked a deleted tmp cwd, capturing process.cwd() here would
+    // reinstate it and leak onward. The repo root is always a valid directory.
+    savedCwd = join(import.meta.dir, "..", "..");
     stubProjectToml(projectDir.path);
     process.chdir(projectDir.path);
     projectName = resolveProjectName(projectDir.path);

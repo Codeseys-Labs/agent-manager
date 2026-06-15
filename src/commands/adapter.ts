@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { mkdir, readFile, rm } from "node:fs/promises";
-import { join } from "node:path";
+import { join, win32 as winPath } from "node:path";
 import { defineCommand } from "citty";
 import {
   getCommunityAdapterConfig,
@@ -8,6 +8,7 @@ import {
   readAdaptersToml,
   removeCommunityAdapterConfig,
   setCommunityAdapterConfig,
+  verifyChecksum,
   writeAdaptersToml,
 } from "../adapters/community/loader";
 import { CommunityAdapterProxy } from "../adapters/community/proxy";
@@ -16,6 +17,7 @@ import { getAdapter, isBuiltInAdapter, listAllAdapters } from "../adapters/regis
 import { resolveConfigDir } from "../core/config";
 import { commitAll } from "../core/git";
 import { amError, debug, error, info, output } from "../lib/output";
+import { validateMarketplaceUrl } from "../marketplace/security";
 
 // ── list ───────────────────────────────────────────────────────────
 
@@ -322,11 +324,13 @@ const updateSubcommand = defineCommand({
           continue;
         }
 
+        const isNpm = config.source.startsWith("npm:");
+
         // For npm sources, re-run npm install to get latest.
         // --ignore-scripts: community adapter; lifecycle scripts would run
         // as the user on update without a prompt, giving an attacker a path
         // to RCE via a compromised package version.
-        if (config.source.startsWith("npm:")) {
+        if (isNpm) {
           const adapterDir = join(configDir, "adapters", name);
           const pkg = config.source.replace("npm:", "");
           const proc = Bun.spawn(["npm", "install", pkg, "--ignore-scripts"], {
@@ -338,6 +342,26 @@ const updateSubcommand = defineCommand({
           if (exitCode !== 0) {
             error(`Failed to update "${name}".`, opts);
             results.push({ name, action: "failed" });
+            process.exitCode = 1;
+            continue;
+          }
+        } else {
+          // git/local sources are NOT re-fetched here, so the bytes on disk are
+          // exactly what was pinned at install time. Verify them against the
+          // recorded pin BEFORE spawning — otherwise we would (a) execute
+          // tampered code during validation and (b) re-pin its hash as the new
+          // "trusted" checksum, laundering the tamper. Mirrors the loader's
+          // pre-spawn integrity gate (loader.ts verifyChecksum at load time).
+          try {
+            await verifyChecksum(name, config.command, config.checksum, config.source);
+          } catch (err) {
+            error(
+              `Refusing to update "${name}": ${err instanceof Error ? err.message : err}`,
+              opts,
+            );
+            // Fail closed: do NOT spawn, do NOT re-pin tampered bytes.
+            results.push({ name, action: "tampered" });
+            process.exitCode = 1;
             continue;
           }
         }
@@ -347,15 +371,22 @@ const updateSubcommand = defineCommand({
           const proxy = await CommunityAdapterProxy.create(config.command);
           info(`Updated "${name}" — ${proxy.meta.displayName} v${proxy.meta.version}`, opts);
           proxy.kill();
-          // Re-pin the checksum against the freshly installed bits. Without
-          // this, the next load would fail because the hash on disk no
-          // longer matches the stored hash.
-          const newChecksum = await computeChecksum(config.command);
-          await setCommunityAdapterConfig(configDir, name, { ...config, checksum: newChecksum });
+          if (isNpm) {
+            // Re-pin the checksum against the freshly installed bits. Without
+            // this, the next load would fail because the hash on disk no longer
+            // matches the stored hash. Only legitimately re-fetched sources
+            // earn a new pin.
+            const newChecksum = await computeChecksum(config.command);
+            await setCommunityAdapterConfig(configDir, name, { ...config, checksum: newChecksum });
+          }
+          // git/local: bytes were not re-fetched and just passed verification
+          // above, so the pin is already correct — leave it untouched. Re-pinning
+          // here is what blessed tampered bytes in the H5 finding.
           results.push({ name, action: "updated" });
         } catch {
           error(`Adapter "${name}" failed validation after update.`, opts);
           results.push({ name, action: "failed" });
+          process.exitCode = 1;
         }
       }
 
@@ -375,6 +406,11 @@ const verifySubcommand = defineCommand({
   meta: { name: "verify", description: "Health-check a community adapter" },
   args: {
     name: { type: "positional", description: "Adapter name", required: true },
+    exec: {
+      type: "boolean",
+      description: "Spawn the adapter after the checksum gate. --no-exec verifies the pin only.",
+      default: true,
+    },
     json: { type: "boolean", description: "JSON output", default: false },
     quiet: { type: "boolean", alias: "q", default: false },
     verbose: { type: "boolean", alias: "v", default: false },
@@ -394,6 +430,69 @@ const verifySubcommand = defineCommand({
 
       info(`Verifying "${name}"...`, opts);
       debug(`Command: ${config.command}`, opts);
+
+      // H6 fix: verify the pinned checksum BEFORE spawning. `verify` is the
+      // documented recovery path the loader points users to when integrity
+      // checks fail — it must not be the one command that executes tampered
+      // bytes. Mirror the loader's pre-spawn gate (loader.ts verifyChecksum):
+      // on mismatch (or missing pin on a non-local source) emit a
+      // verification-error result and fail closed without spawning.
+      let verification: Awaited<ReturnType<typeof verifyChecksum>>;
+      try {
+        verification = await verifyChecksum(name, config.command, config.checksum, config.source);
+      } catch (err) {
+        const result = {
+          adapter: name,
+          status: "error" as const,
+          error: err instanceof Error ? err.message : String(err),
+        };
+        if (args.json) {
+          output(result, opts);
+        } else {
+          error(`Verification failed: ${result.error}`, opts);
+        }
+        process.exitCode = 1;
+        return;
+      }
+
+      // --no-exec (exec=false): static verification only, no spawn. What we
+      // report depends on whether a pin actually existed to verify:
+      //   - genuine pin matched (git/npm/local with a stored checksum) →
+      //     status:"ok", checksumVerified:true.
+      //   - local adapter with NO stored checksum → verifyChecksum warn-skips
+      //     (nothing was verified). Reporting checksumVerified:true here would
+      //     be a lie for a command whose job is integrity confirmation. Report
+      //     status:"skipped", checksumVerified:false so the operator knows no
+      //     integrity check happened.
+      if (!args.exec) {
+        if (verification.skipped) {
+          const result = {
+            adapter: name,
+            status: "skipped" as const,
+            checksumVerified: false,
+            reason: "no checksum pinned (local adapter)",
+          };
+          if (args.json) {
+            output(result, opts);
+          } else {
+            info("  Checksum:     skipped (no pin — local adapter)", opts);
+            info("  Status:       skipped (no checksum to verify, --no-exec)", opts);
+          }
+          return;
+        }
+        const result = {
+          adapter: name,
+          status: "ok" as const,
+          checksumVerified: true,
+        };
+        if (args.json) {
+          output(result, opts);
+        } else {
+          info("  Checksum:     verified", opts);
+          info("  Status:       ok (checksum only, --no-exec)", opts);
+        }
+        return;
+      }
 
       let proxy: CommunityAdapterProxy;
       try {
@@ -500,16 +599,23 @@ export function resolveSource(source: string): {
   sourceType: "npm" | "git" | "local";
   installCmd: string[];
 } {
-  // Local path
-  if (source.startsWith("./") || source.startsWith("/") || source.startsWith("local:")) {
+  // Local path. Matches POSIX (`./`, `/`), the explicit `local:` prefix, and
+  // Windows shapes the npm fall-through would otherwise misclassify as a
+  // package: a drive-letter path (`C:\repo`, `c:/repo`) and a backslash-relative
+  // path (`.\repo`). The drive-letter regex matches setup.ts:182.
+  if (
+    source.startsWith("./") ||
+    source.startsWith(".\\") ||
+    source.startsWith("/") ||
+    source.startsWith("local:") ||
+    /^[a-zA-Z]:[\\/]/.test(source) // Windows drive path (C:\ or c:/)
+  ) {
     const path = source.replace(/^local:/, "");
-    // Derive name from directory basename
-    const name =
-      path
-        .split("/")
-        .filter(Boolean) // drop empty segments from trailing or doubled slashes
-        .pop()
-        ?.replace(/^am-adapter-/, "") ?? "";
+    // Derive name from directory basename. win32.basename handles BOTH "/" and
+    // "\" separators (and strips the drive letter), so it is correct for Windows
+    // path strings regardless of the host OS we are running on — node:path's
+    // POSIX basename leaves backslashes intact and would leak the whole path.
+    const name = winPath.basename(path).replace(/^am-adapter-/, "");
     validateAdapterName(name);
     return { name, sourceType: "local", installCmd: [] };
   }
@@ -521,7 +627,15 @@ export function resolveSource(source: string): {
     source.startsWith("git://") ||
     source.endsWith(".git")
   ) {
+    // Strip the npm-style `git+` prefix (git+https://… → https://…) before
+    // validating; isomorphic-git / `git clone` accept the bare URL.
     const url = source.replace(/^git\+/, "");
+    // FAIL CLOSED on cleartext / unauthenticated clone URLs: route the resolved
+    // URL through the canonical marketplace validator, which enforces https:
+    // (rejecting git://, http://, ftp://, …) and rejects embedded credentials
+    // (user:pass@host) — both classic supply-chain / MITM vectors for a clone
+    // we will execute. validateMarketplaceUrl throws MarketplaceSecurityError.
+    validateMarketplaceUrl(url);
     // Derive name from repo basename
     const repoName =
       url

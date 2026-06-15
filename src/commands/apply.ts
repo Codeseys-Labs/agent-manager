@@ -138,20 +138,31 @@ export async function resolveApplyTargets(
 /**
  * Classify why an adapter was skipped (apply-summary-line item).
  *
- * The controller funnels two distinct fail-closed paths into the same
+ * The controller funnels three distinct fail-closed paths into the same
  * `skipped[]` list:
  *   - SEC-4 drift gate: native config DRIFTED → warning starts "drift detected"
  *   - SEC-4b diff-error: `adapter.diff()` THREW (drift UNKNOWN) → warning
  *     starts "drift check failed"
- * The two need different operator guidance ("rerun --force to overwrite the
- * drift you saw" vs. "the drift state could not even be read"). We classify
- * off the controller's warning prefixes — the single source of truth for the
- * skip reason — rather than re-deriving state in the CLI.
+ *   - ws3 empty-overwrite guard: the RESOLVED catalog is empty but the native
+ *     config is populated → warning starts "refusing to overwrite a populated
+ *     native config with an EMPTY catalog". Unlike the other two, --force does
+ *     NOT override this guard, so its operator guidance must NOT say "rerun
+ *     with --force".
+ * The three need different operator guidance. We classify off the controller's
+ * warning prefixes — the single source of truth for the skip reason — rather
+ * than re-deriving state in the CLI.
  */
-type SkipReason = "drift-detected" | "diff-error";
+type SkipReason = "drift-detected" | "diff-error" | "empty-overwrite";
 
 function classifySkip(warnings: string[]): SkipReason {
   const joined = warnings.join(" ");
+  // ws3 empty-overwrite guard fires first: its message also contains
+  // "drift check failed" in the diff-threw sub-case, so match it BEFORE the
+  // generic diff-error branch to avoid mislabeling it as a --force-recoverable
+  // skip.
+  if (joined.includes("refusing to overwrite a populated native config with an EMPTY catalog")) {
+    return "empty-overwrite";
+  }
   // "drift check failed (...)" is the diff-error (state unknown) path.
   if (joined.includes("drift check failed")) return "diff-error";
   // "drift detected (...)" — and any other gate — falls back to drift-detected.
@@ -427,6 +438,9 @@ export const applyCommand = defineCommand({
         const driftNames = skipResults
           .filter((r) => classifySkip(r.warnings) === "drift-detected")
           .map((r) => r.adapter);
+        const emptyOverwriteNames = skipResults
+          .filter((r) => classifySkip(r.warnings) === "empty-overwrite")
+          .map((r) => r.adapter);
 
         const parts: string[] = [];
         if (driftNames.length > 0) {
@@ -437,6 +451,13 @@ export const applyCommand = defineCommand({
         if (diffErrorNames.length > 0) {
           parts.push(
             `${diffErrorNames.length} skipped (drift check failed — state unknown; rerun with --force) [${diffErrorNames.join(", ")}]`,
+          );
+        }
+        if (emptyOverwriteNames.length > 0) {
+          // ws3: --force does NOT override the empty-overwrite guard, so the
+          // guidance steers to restoring the catalog rather than forcing.
+          parts.push(
+            `${emptyOverwriteNames.length} skipped (empty catalog would erase a populated native config; restore the catalog) [${emptyOverwriteNames.join(", ")}]`,
           );
         }
         info(

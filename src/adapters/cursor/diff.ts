@@ -66,13 +66,15 @@ export function diffConfig(
     }
   }
 
-  // Find servers removed locally (in resolved but not in native)
+  // Catalog-ahead: server in the catalog but not yet in native. A FORWARD delta
+  // (`am add server`), not a local removal — `am apply` resolves it by writing
+  // the server, so label it `added-in-config`. (ws4-drift-relabel-catalog-ahead)
   for (const name of Object.keys(expected)) {
     if (!(name in allNative)) {
       changes.push({
         entity: "server",
         name,
-        type: "removed-locally",
+        type: "added-in-config",
       });
     }
   }
@@ -106,10 +108,13 @@ export function diffConfig(
         // File doesn't exist — instruction missing from native
       }
       if (nativeContent === null) {
+        // Catalog-ahead: instruction in the catalog but not yet written to the
+        // native .mdc file. A FORWARD delta `am apply` resolves by writing it,
+        // not a local removal. (ws4-drift-relabel-catalog-ahead)
         changes.push({
           entity: "instruction",
           name,
-          type: "removed-locally",
+          type: "added-in-config",
         });
       } else if (!nativeContent.includes(instr.content.trim())) {
         changes.push({

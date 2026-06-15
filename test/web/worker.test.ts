@@ -484,6 +484,193 @@ describe("Worker — OAuth flow (unknown provider)", () => {
   });
 });
 
+// ---------------------------------------------------------------------------
+// SESSION_SECRET strength/presence guard (W-m8-session-secret)
+//
+// Session cookies carry a live git PAT, encrypted with an AES-GCM key derived
+// from SESSION_SECRET via HKDF with a FIXED salt. A missing or weak
+// SESSION_SECRET yields trivially-forgeable/decryptable session cookies. The
+// guard MUST fail closed: when SESSION_SECRET is unset or <32 chars, the auth
+// middleware and OAuth callback return 500 BEFORE touching session crypto.
+// ---------------------------------------------------------------------------
+
+describe("Worker — SESSION_SECRET guard (fail closed)", () => {
+  // A presented cookie is required so the middleware reaches the crypto path
+  // (a missing cookie short-circuits at 401 before the secret matters).
+  const SOME_COOKIE = { headers: { cookie: "am_session=anything" } };
+
+  it("auth middleware returns 500 when SESSION_SECRET is unset", async () => {
+    const env = { ...MOCK_ENV, SESSION_SECRET: undefined as unknown as string };
+    const res = await app.request("/api/repos", SOME_COOKIE, env);
+    expect(res.status).toBe(500);
+    const data = (await res.json()) as { error: string };
+    expect(data.error.toLowerCase()).toContain("session_secret");
+  });
+
+  it("auth middleware returns 500 when SESSION_SECRET is empty", async () => {
+    const env = { ...MOCK_ENV, SESSION_SECRET: "" };
+    const res = await app.request("/api/repos", SOME_COOKIE, env);
+    expect(res.status).toBe(500);
+  });
+
+  it("auth middleware returns 500 when SESSION_SECRET is shorter than 32 chars", async () => {
+    const env = { ...MOCK_ENV, SESSION_SECRET: "too-short-secret" }; // 16 chars
+    const res = await app.request("/api/repos", SOME_COOKIE, env);
+    expect(res.status).toBe(500);
+    const data = (await res.json()) as { error: string };
+    expect(data.error.toLowerCase()).toContain("session_secret");
+  });
+
+  it("auth middleware does NOT leak the secret value in the error body", async () => {
+    const env = { ...MOCK_ENV, SESSION_SECRET: "short-but-secret" };
+    const res = await app.request("/api/repos", SOME_COOKIE, env);
+    expect(res.status).toBe(500);
+    const body = await res.text();
+    expect(body).not.toContain("short-but-secret");
+  });
+
+  it("auth middleware proceeds past the guard when SESSION_SECRET is >=32 chars", async () => {
+    // 32-char secret with an undecryptable cookie → guard passes, crypto runs,
+    // decrypt fails → 401 (NOT 500). Proves the guard is length-gated, not a
+    // blanket failure, and that a strong secret reaches the crypto path.
+    const env = { ...MOCK_ENV, SESSION_SECRET: "a".repeat(32) };
+    const res = await app.request("/api/repos", SOME_COOKIE, env);
+    expect(res.status).toBe(401);
+  });
+
+  it("guard runs BEFORE crypto: exactly-31-char secret is rejected (boundary)", async () => {
+    const env = { ...MOCK_ENV, SESSION_SECRET: "a".repeat(31) };
+    const res = await app.request("/api/repos", SOME_COOKIE, env);
+    expect(res.status).toBe(500);
+  });
+
+  it("OAuth callback returns 500 when SESSION_SECRET is unset", async () => {
+    const env = { ...MOCK_ENV, SESSION_SECRET: undefined as unknown as string };
+    const res = await app.request(
+      "/auth/github/callback?code=abc&state=xyz",
+      { headers: { cookie: "am_oauth_state=anything" } },
+      env,
+    );
+    expect(res.status).toBe(500);
+    const data = (await res.json()) as { error: string };
+    expect(data.error.toLowerCase()).toContain("session_secret");
+  });
+
+  it("OAuth callback returns 500 when SESSION_SECRET is shorter than 32 chars", async () => {
+    const env = { ...MOCK_ENV, SESSION_SECRET: "too-short" };
+    const res = await app.request(
+      "/auth/github/callback?code=abc&state=xyz",
+      { headers: { cookie: "am_oauth_state=anything" } },
+      env,
+    );
+    expect(res.status).toBe(500);
+  });
+
+  it("OAuth callback guard fires before any session decryption (forged state)", async () => {
+    // With a weak secret a forged state cookie could otherwise be decrypted.
+    // The guard must reject with 500 before reaching the CSRF/decrypt logic,
+    // never surfacing the 403 'CSRF check failed' that the crypto path returns.
+    const env = { ...MOCK_ENV, SESSION_SECRET: "weak" };
+    const res = await app.request(
+      "/auth/github/callback?code=abc&state=forged",
+      { headers: { cookie: "am_oauth_state=forged-cookie" } },
+      env,
+    );
+    expect(res.status).toBe(500);
+    expect(res.status).not.toBe(403);
+  });
+
+  // ── /auth/:provider/login guard (ws-80ad-oauth-secret-guard) ──────
+  //
+  // The login handler mints an `am_oauth_state` cookie via encryptSession().
+  // Because HKDF deriveKey does NOT throw on an empty/short key, a weak/missing
+  // SESSION_SECRET produces a forgeable CSRF-state cookie. The guard must fire
+  // at the TOP of the handler — before encryptSession — and return 500 without
+  // setting any am_oauth_state cookie.
+
+  it("login returns 500 when SESSION_SECRET is unset (no state cookie minted)", async () => {
+    const env = { ...MOCK_ENV, SESSION_SECRET: undefined as unknown as string };
+    const res = await app.request("/auth/github/login", {}, env);
+    expect(res.status).toBe(500);
+    const data = (await res.json()) as { error: string };
+    expect(data.error.toLowerCase()).toContain("session_secret");
+    // A forgeable state cookie must NOT have been minted.
+    expect(res.headers.get("set-cookie") ?? "").not.toContain("am_oauth_state=");
+  });
+
+  it("login returns 500 when SESSION_SECRET is shorter than 32 chars (no state cookie)", async () => {
+    const env = { ...MOCK_ENV, SESSION_SECRET: "too-short-secret" }; // 16 chars
+    const res = await app.request("/auth/github/login", {}, env);
+    expect(res.status).toBe(500);
+    const data = (await res.json()) as { error: string };
+    expect(data.error.toLowerCase()).toContain("session_secret");
+    expect(res.headers.get("set-cookie") ?? "").not.toContain("am_oauth_state=");
+  });
+
+  it("login guard fires before the unknown-provider / not-configured checks", async () => {
+    // The guard sits at the very top, so even a weak-secret request that would
+    // otherwise 302-redirect (valid provider + creds) fails closed with 500
+    // and never mints a cookie.
+    const env = { ...MOCK_ENV, SESSION_SECRET: "weak" };
+    const res = await app.request("/auth/github/login", {}, env);
+    expect(res.status).toBe(500);
+    expect(res.status).not.toBe(302);
+    expect(res.headers.get("set-cookie") ?? "").not.toContain("am_oauth_state=");
+  });
+
+  it("login proceeds normally (302 + state cookie) when SESSION_SECRET is strong", async () => {
+    // Positive case: a valid >=32-char secret preserves the prior behavior.
+    const env = { ...MOCK_ENV, SESSION_SECRET: "a".repeat(32) };
+    const res = await app.request("/auth/github/login", {}, env);
+    expect(res.status).toBe(302);
+    const cookie = res.headers.get("set-cookie") ?? "";
+    expect(cookie).toContain("am_oauth_state=");
+    expect(cookie).toContain("Max-Age=300");
+  });
+
+  // ── /auth/check guard (ws-80ad-oauth-secret-guard) ────────────────
+  //
+  // /auth/check decrypts the am_session cookie (which carries a live PAT). A
+  // weak/missing SESSION_SECRET makes that cookie trivially decryptable, so the
+  // guard must fail closed with 500 before decryptSession runs.
+
+  it("auth/check returns 500 when SESSION_SECRET is unset", async () => {
+    const env = { ...MOCK_ENV, SESSION_SECRET: undefined as unknown as string };
+    const res = await app.request("/auth/check", SOME_COOKIE, env);
+    expect(res.status).toBe(500);
+    const data = (await res.json()) as { error: string };
+    expect(data.error.toLowerCase()).toContain("session_secret");
+  });
+
+  it("auth/check returns 500 when SESSION_SECRET is shorter than 32 chars", async () => {
+    const env = { ...MOCK_ENV, SESSION_SECRET: "too-short" };
+    const res = await app.request("/auth/check", SOME_COOKIE, env);
+    expect(res.status).toBe(500);
+    const data = (await res.json()) as { error: string };
+    expect(data.error.toLowerCase()).toContain("session_secret");
+  });
+
+  it("auth/check does NOT leak the secret value in the error body", async () => {
+    const env = { ...MOCK_ENV, SESSION_SECRET: "short-but-secret" };
+    const res = await app.request("/auth/check", SOME_COOKIE, env);
+    expect(res.status).toBe(500);
+    const body = await res.text();
+    expect(body).not.toContain("short-but-secret");
+  });
+
+  it("auth/check with a strong secret + no cookie preserves authenticated:false (200)", async () => {
+    // Positive case: a strong secret must NOT turn the unauthenticated path
+    // into a 500. No cookie → short-circuits to authenticated:false BEFORE the
+    // guard (the guard sits after the missing-cookie check), proving the guard
+    // is length-gated, not a blanket failure.
+    const env = { ...MOCK_ENV, SESSION_SECRET: "a".repeat(32) };
+    const res = await app.request("/auth/check", {}, env);
+    expect(res.status).toBe(200);
+    const data = (await res.json()) as { authenticated: boolean };
+    expect(data.authenticated).toBe(false);
+  });
+});
+
 // ── Worker crypto (deriveKey, encryptSession, decryptSession) ────
 //
 // These functions are module-private in src/web/worker.ts (not exported).
@@ -568,6 +755,392 @@ describe("Worker — session cookie roundtrip (via OAuth callback mock)", () => 
       expect(checkData.user?.login).toBe("testuser");
     } finally {
       globalThis.fetch = originalFetch;
+    }
+  });
+
+  it("GET /api/config/:owner/:repo redacts secrets and never returns raw plaintext", async () => {
+    // W-l3-worker-redact: the worker config-read endpoint used to return
+    // `{ raw: content, parsed }` with `parsed` straight from TOML.parse — no
+    // redaction. A repo config carrying an enc: envelope leaked the full
+    // ciphertext, and a plaintext-looking secret (or one embedded in a remote
+    // URL) leaked verbatim through BOTH `raw` and `parsed`. The endpoint now
+    // applies the canonical two-pass redactor and drops `raw` entirely.
+    const ENC_ENVELOPE = "enc:v2:age:YWdlLWVuY3J5cHRlZC1zZWNyZXQtY2lwaGVydGV4dC1ib2R5LWhlcmU=";
+    const ENC_BODY_FRAGMENT = "YWdlLWVuY3J5cHRlZC1zZWNyZXQtY2lwaGVydGV4dC1ib2R5LWhlcmU=";
+    const PLAIN_TOKEN = "tvly-plaintextkey0123456789";
+    const CRED_URL = "https://alice:p4ssw0rdInUrl@remote.example.com/mcp";
+    const REMOTE_CONFIG_TOML = [
+      "[settings.env]",
+      `LEGACY_API_KEY = "${ENC_ENVELOPE}"`,
+      `TAVILY_API_KEY = "${PLAIN_TOKEN}"`,
+      "",
+      "[servers.remote]",
+      `command = "${CRED_URL}"`,
+      'transport = "streamable-http"',
+      "enabled = true",
+      "",
+      "[servers.remote.headers]",
+      'Authorization = "Bearer rawplaintextheaderkey"',
+      "",
+    ].join("\n");
+
+    // Step 1: mint a real encrypted session cookie via the OAuth callback flow.
+    const loginRes = await req("/auth/github/login");
+    const oauthStateCookie = (loginRes.headers.get("set-cookie") ?? "").match(
+      /am_oauth_state=([^;]+)/,
+    )?.[1];
+    const stateParam = new URL(loginRes.headers.get("location") ?? "").searchParams.get("state");
+    expect(oauthStateCookie).toBeTruthy();
+    expect(stateParam).toBeTruthy();
+
+    const originalFetch = globalThis.fetch;
+    const mockFetch = async (input: string | URL | Request, init?: RequestInit) => {
+      const url =
+        typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+      if (url === "https://github.com/login/oauth/access_token") {
+        return new Response(JSON.stringify({ access_token: "gho_mock_token_for_config" }), {
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+      if (url === "https://api.github.com/user") {
+        return new Response(
+          JSON.stringify({ login: "testuser", avatar_url: "https://example.com/avatar.png" }),
+          { headers: { "Content-Type": "application/json" } },
+        );
+      }
+      // The config-read endpoint fetches the repo's config.toml via fileUrl().
+      if (url === "https://api.github.com/repos/owner/repo/contents/config.toml") {
+        return new Response(REMOTE_CONFIG_TOML, {
+          headers: { "Content-Type": "text/plain" },
+        });
+      }
+      return originalFetch(input, init);
+    };
+    globalThis.fetch = Object.assign(mockFetch, {
+      preconnect: originalFetch.preconnect,
+    }) as typeof fetch;
+
+    try {
+      const callbackRes = await app.request(
+        `/auth/github/callback?code=mock_code&state=${stateParam}`,
+        { headers: { cookie: `am_oauth_state=${oauthStateCookie}` } },
+        MOCK_ENV,
+      );
+      expect(callbackRes.status).toBe(302);
+      const sessionCookieValue = (callbackRes.headers.get("set-cookie") ?? "").match(
+        /am_session=([^;]+)/,
+      )?.[1];
+      expect(sessionCookieValue).toBeTruthy();
+
+      // Step 2: read the repo config with the authenticated session cookie.
+      const res = await app.request(
+        "/api/config/owner/repo",
+        { headers: { cookie: `am_session=${sessionCookieValue}` } },
+        MOCK_ENV,
+      );
+      expect(res.status).toBe(200);
+
+      const data = (await res.json()) as {
+        raw?: unknown;
+        parsed: {
+          settings?: { env?: Record<string, string> };
+          servers?: Record<string, { command?: string; headers?: Record<string, string> }>;
+        };
+      };
+
+      // The unredacted raw TOML text must NOT ride out at all.
+      expect(data.raw).toBeUndefined();
+
+      // Structural redaction of the enc: envelope and plaintext-by-location.
+      expect(data.parsed.settings?.env?.LEGACY_API_KEY).toBe("[encrypted]");
+      expect(data.parsed.settings?.env?.TAVILY_API_KEY).toBe("[redacted]");
+      expect(data.parsed.servers?.remote?.headers?.Authorization).toBe("[redacted]");
+      // Credential userinfo stripped from the URL; host stays legible.
+      expect(data.parsed.servers?.remote?.command).not.toContain("p4ssw0rdInUrl");
+      expect(data.parsed.servers?.remote?.command).toContain("remote.example.com");
+
+      // Belt and suspenders: NO secret value or ciphertext body survives
+      // anywhere in the serialized response.
+      const serialized = JSON.stringify(data);
+      expect(serialized).not.toContain(ENC_BODY_FRAGMENT);
+      expect(serialized).not.toContain("enc:v2:age:");
+      expect(serialized).not.toContain(PLAIN_TOKEN);
+      expect(serialized).not.toContain("p4ssw0rdInUrl");
+      expect(serialized).not.toContain("rawplaintextheaderkey");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it("GET /api/config/:owner/:repo withholds raw content when TOML parse fails", async () => {
+    // Fail-closed: if the remote config is not valid TOML we cannot structurally
+    // redact it, so the raw text (which may carry plaintext secrets) must NOT be
+    // returned. Regression for the old parse-fail branch that echoed `raw`.
+    const SECRET_IN_BROKEN_CONFIG = "sk-ant-brokenconfigsecret0123456789";
+    const BROKEN_TOML = `this is not = = valid toml ${SECRET_IN_BROKEN_CONFIG} [[[`;
+
+    const loginRes = await req("/auth/github/login");
+    const oauthStateCookie = (loginRes.headers.get("set-cookie") ?? "").match(
+      /am_oauth_state=([^;]+)/,
+    )?.[1];
+    const stateParam = new URL(loginRes.headers.get("location") ?? "").searchParams.get("state");
+
+    const originalFetch = globalThis.fetch;
+    const mockFetch = async (input: string | URL | Request, init?: RequestInit) => {
+      const url =
+        typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+      if (url === "https://github.com/login/oauth/access_token") {
+        return new Response(JSON.stringify({ access_token: "gho_mock_token_broken" }), {
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+      if (url === "https://api.github.com/repos/owner/repo/contents/config.toml") {
+        return new Response(BROKEN_TOML, { headers: { "Content-Type": "text/plain" } });
+      }
+      return originalFetch(input, init);
+    };
+    globalThis.fetch = Object.assign(mockFetch, {
+      preconnect: originalFetch.preconnect,
+    }) as typeof fetch;
+
+    try {
+      const callbackRes = await app.request(
+        `/auth/github/callback?code=mock_code&state=${stateParam}`,
+        { headers: { cookie: `am_oauth_state=${oauthStateCookie}` } },
+        MOCK_ENV,
+      );
+      const sessionCookieValue = (callbackRes.headers.get("set-cookie") ?? "").match(
+        /am_session=([^;]+)/,
+      )?.[1];
+
+      const res = await app.request(
+        "/api/config/owner/repo",
+        { headers: { cookie: `am_session=${sessionCookieValue}` } },
+        MOCK_ENV,
+      );
+      expect(res.status).toBe(200);
+      const body = await res.text();
+      // Raw content withheld; the embedded secret never leaks.
+      const data = JSON.parse(body) as { raw?: unknown; parsed: null };
+      expect(data.raw).toBeUndefined();
+      expect(data.parsed).toBeNull();
+      expect(body).not.toContain(SECRET_IN_BROKEN_CONFIG);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  // ── Wiki path-traversal guard (W-l4-worker-wiki-path) ───────────
+  //
+  // The worker wiki endpoints interpolate project/type/slug query params
+  // directly into a remote file path:
+  //   pages-by-slug → `wiki/projects/${project}/${type}/${slug}.md`
+  //   pages-list    → `wiki/projects/${project}` (parseTree prefix)
+  // Without validation, `slug=../../secret`, `project=../x`, or a crafted
+  // `type` escapes the wiki dir and lets an authenticated caller fetch
+  // arbitrary repo files (config.toml, .github workflows, source). Every
+  // component MUST be validated against a strict allowlist BEFORE the path
+  // is composed; failures return 400 and the traversal fetch never fires.
+
+  /** Mint a real encrypted session cookie + return a fetch mock that records
+   *  every URL the worker requests, so we can prove no traversal path is hit. */
+  async function authedSessionWithUrlSpy(): Promise<{
+    cookie: string;
+    urls: string[];
+    restore: () => void;
+  }> {
+    const loginRes = await req("/auth/github/login");
+    const oauthStateCookie = (loginRes.headers.get("set-cookie") ?? "").match(
+      /am_oauth_state=([^;]+)/,
+    )?.[1];
+    const stateParam = new URL(loginRes.headers.get("location") ?? "").searchParams.get("state");
+
+    const originalFetch = globalThis.fetch;
+    const urls: string[] = [];
+    const mockFetch = async (input: string | URL | Request, init?: RequestInit) => {
+      const url =
+        typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+      urls.push(url);
+      if (url === "https://github.com/login/oauth/access_token") {
+        return new Response(JSON.stringify({ access_token: "gho_mock_token_wiki" }), {
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+      if (url === "https://api.github.com/user") {
+        return new Response(
+          JSON.stringify({ login: "testuser", avatar_url: "https://example.com/avatar.png" }),
+          { headers: { "Content-Type": "application/json" } },
+        );
+      }
+      // Any wiki tree/file fetch: return a benign empty-ish payload so the
+      // handler completes. The test asserts on STATUS and the recorded URLs.
+      if (url.includes("/git/trees/")) {
+        return new Response(JSON.stringify({ tree: [] }), {
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+      if (url.includes("/contents/")) {
+        return new Response("# page body", { headers: { "Content-Type": "text/plain" } });
+      }
+      return originalFetch(input, init);
+    };
+    globalThis.fetch = Object.assign(mockFetch, {
+      preconnect: originalFetch.preconnect,
+    }) as typeof fetch;
+
+    const callbackRes = await app.request(
+      `/auth/github/callback?code=mock_code&state=${stateParam}`,
+      { headers: { cookie: `am_oauth_state=${oauthStateCookie}` } },
+      MOCK_ENV,
+    );
+    const sessionCookieValue = (callbackRes.headers.get("set-cookie") ?? "").match(
+      /am_session=([^;]+)/,
+    )?.[1];
+    // Drop the OAuth-flow URLs so callers only see wiki-endpoint requests.
+    urls.length = 0;
+    return {
+      cookie: `am_session=${sessionCookieValue}`,
+      urls,
+      restore: () => {
+        globalThis.fetch = originalFetch;
+      },
+    };
+  }
+
+  it("wiki pages-by-slug rejects slug='../../secret' with 400 (no traversal fetch)", async () => {
+    const { cookie, urls, restore } = await authedSessionWithUrlSpy();
+    try {
+      const res = await app.request(
+        `/api/wiki/owner/repo/pages/${encodeURIComponent("../../secret")}?project=myproj`,
+        { headers: { cookie } },
+        MOCK_ENV,
+      );
+      expect(res.status).toBe(400);
+      // The traversal path must never have been requested upstream.
+      expect(urls.some((u) => u.includes(".."))).toBe(false);
+      expect(urls.some((u) => u.includes("/contents/"))).toBe(false);
+    } finally {
+      restore();
+    }
+  });
+
+  it("wiki pages-by-slug rejects project='../x' with 400", async () => {
+    const { cookie, urls, restore } = await authedSessionWithUrlSpy();
+    try {
+      const res = await app.request(
+        `/api/wiki/owner/repo/pages/validslug?project=${encodeURIComponent("../x")}`,
+        { headers: { cookie } },
+        MOCK_ENV,
+      );
+      expect(res.status).toBe(400);
+      expect(urls.some((u) => u.includes(".."))).toBe(false);
+    } finally {
+      restore();
+    }
+  });
+
+  it("wiki pages-by-slug rejects an unknown type with 400", async () => {
+    const { cookie, urls, restore } = await authedSessionWithUrlSpy();
+    try {
+      const res = await app.request(
+        `/api/wiki/owner/repo/pages/validslug?project=myproj&type=${encodeURIComponent("../../etc")}`,
+        { headers: { cookie } },
+        MOCK_ENV,
+      );
+      expect(res.status).toBe(400);
+      expect(urls.some((u) => u.includes(".."))).toBe(false);
+    } finally {
+      restore();
+    }
+  });
+
+  it("wiki pages-by-slug rejects a non-allowlisted (but traversal-free) type", async () => {
+    // `bogus` has no `..` but is not a known wiki subdir — fixed-set guard.
+    const { cookie, restore } = await authedSessionWithUrlSpy();
+    try {
+      const res = await app.request(
+        "/api/wiki/owner/repo/pages/validslug?project=myproj&type=bogus",
+        { headers: { cookie } },
+        MOCK_ENV,
+      );
+      expect(res.status).toBe(400);
+    } finally {
+      restore();
+    }
+  });
+
+  it("wiki pages-by-slug accepts valid lowercase-hyphen components", async () => {
+    const { cookie, urls, restore } = await authedSessionWithUrlSpy();
+    try {
+      const res = await app.request(
+        "/api/wiki/owner/repo/pages/my-page-01?project=my-proj_2&type=decisions",
+        { headers: { cookie } },
+        MOCK_ENV,
+      );
+      expect(res.status).toBe(200);
+      const data = (await res.json()) as { slug: string; type: string; content: string };
+      expect(data.slug).toBe("my-page-01");
+      expect(data.type).toBe("decisions");
+      // The composed path is the expected, non-escaping one.
+      expect(
+        urls.some((u) => u.endsWith("/contents/wiki/projects/my-proj_2/decisions/my-page-01.md")),
+      ).toBe(true);
+    } finally {
+      restore();
+    }
+  });
+
+  it("wiki pages-by-slug accepts a valid global page (no project)", async () => {
+    const { cookie, urls, restore } = await authedSessionWithUrlSpy();
+    try {
+      const res = await app.request(
+        "/api/wiki/owner/repo/pages/global-page?type=entities",
+        { headers: { cookie } },
+        MOCK_ENV,
+      );
+      expect(res.status).toBe(200);
+      expect(urls.some((u) => u.endsWith("/contents/wiki/global/entities/global-page.md"))).toBe(
+        true,
+      );
+    } finally {
+      restore();
+    }
+  });
+
+  it("wiki pages-list rejects project='../x' with 400 (no tree fetch)", async () => {
+    const { cookie, urls, restore } = await authedSessionWithUrlSpy();
+    try {
+      const res = await app.request(
+        `/api/wiki/owner/repo/pages?project=${encodeURIComponent("../x")}`,
+        { headers: { cookie } },
+        MOCK_ENV,
+      );
+      expect(res.status).toBe(400);
+      // The tree fetch must not fire for an invalid project.
+      expect(urls.some((u) => u.includes("/git/trees/"))).toBe(false);
+    } finally {
+      restore();
+    }
+  });
+
+  it("wiki pages-list accepts a valid project and a global listing", async () => {
+    const { cookie, restore } = await authedSessionWithUrlSpy();
+    try {
+      const projRes = await app.request(
+        "/api/wiki/owner/repo/pages?project=my-proj_2",
+        { headers: { cookie } },
+        MOCK_ENV,
+      );
+      expect(projRes.status).toBe(200);
+
+      const globalRes = await app.request(
+        "/api/wiki/owner/repo/pages",
+        { headers: { cookie } },
+        MOCK_ENV,
+      );
+      expect(globalRes.status).toBe(200);
+    } finally {
+      restore();
     }
   });
 

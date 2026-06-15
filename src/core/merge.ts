@@ -332,7 +332,18 @@ function pickLonger(existing?: string, incoming?: string): string | undefined {
  * - tags: union
  * - description: keep longer
  * - enabled: keep existing
+ * - transport: survives for remote servers in BOTH branches — never coerce a
+ *   remote (sse / streamable-http) server back to stdio just because the
+ *   incoming payload left transport implicit (force) or differed (auto)
+ * - url: preserve the remote endpoint (existing wins, falls back to incoming) —
+ *   RemoteServerSchema.url is dropped otherwise, silently degrading the server
  * - _registry: preserve existing provenance
+ * - adapters: preserve the existing adapter-scoped passthrough subtable in BOTH
+ *   branches — it is the round-trip sink for adapterExtras and ImportedServer
+ *   carries no `adapters` field, so dropping it loses adapter config
+ * - _marketplace: preserve existing marketplace provenance in BOTH branches —
+ *   ImportedServer carries no `_marketplace` field, so dropping it strips the
+ *   plugin/extension origin that `am marketplace` reasons about
  */
 export function mergeServers(
   existing: Server,
@@ -340,29 +351,55 @@ export function mergeServers(
   strategy: MergeStrategy = "auto",
 ): Server {
   if (strategy === "force") {
-    return {
+    // Prefer the incoming transport, but fall back to the existing one rather
+    // than defaulting to "stdio": a remote server whose incoming payload omits
+    // transport must stay remote.
+    const transport = incoming.transport ?? existing.transport ?? "stdio";
+    const base = {
       command: incoming.command,
       args: incoming.args,
       env: incoming.env,
-      transport: incoming.transport ?? "stdio",
       description: incoming.description,
       tags: incoming.tags,
       enabled: incoming.enabled ?? true,
       _registry: existing._registry,
+      // ImportedServer carries neither `adapters` nor `_marketplace`, so the
+      // existing server is the sole source — carry both through rather than
+      // silently dropping the adapter-scoped passthrough (the round-trip sink
+      // for adapterExtras) and the marketplace provenance block.
+      adapters: existing.adapters,
+      _marketplace: existing._marketplace,
     };
+    if (transport === "stdio") {
+      return { ...base, transport };
+    }
+    // Remote: carry the url forward (existing wins, falls back to incoming) so
+    // an sse / streamable-http server isn't silently stripped of its endpoint.
+    return { ...base, transport, url: existing.url ?? incoming.url } as Server;
   }
 
-  return {
+  // auto: keep existing transport (it is authoritative for the matched server).
+  const base = {
     command: existing.command,
     args: unionArgs(existing.args, incoming.args),
     env: mergeEnv(existing.env, incoming.env),
-    transport: existing.transport,
     description: pickLonger(existing.description, incoming.description),
     tags: unionTags(existing.tags, incoming.tags),
     enabled: existing.enabled,
     _registry: existing._registry,
+    // auto = existing/merged precedence; ImportedServer carries neither field,
+    // so existing is authoritative for the passthrough subtable + provenance.
     adapters: existing.adapters,
+    _marketplace: existing._marketplace,
   };
+  if (existing.transport === "stdio") {
+    return { ...base, transport: existing.transport };
+  }
+  return {
+    ...base,
+    transport: existing.transport,
+    url: existing.url ?? incoming.url,
+  } as Server;
 }
 
 /**

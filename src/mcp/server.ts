@@ -35,6 +35,7 @@ import type { Config, McpToolGroup, Settings } from "../core/schema";
 import { interpolateEnvAsync, legacyKeyPath, loadKey, resolveKeyPath } from "../core/secrets";
 import { filterMessages, formatJson, formatMarkdown } from "../core/session";
 import type { SessionSummary } from "../core/session";
+import { errorDetail, isNotFound } from "../lib/errors";
 import {
   redactConfigPlaintextSecrets,
   redactConfigSecrets,
@@ -188,6 +189,16 @@ export interface ToolContext {
     profileName: string;
     scope: ResolvedScope | undefined;
     ceiling: McpToolGroup[];
+    /**
+     * R2-4: true when the gateway is failing CLOSED (malformed config, or an
+     * explicit-but-missing confinement profile). In that state `isToolScoped`
+     * STILL admits the DIAGNOSTIC_SCOPE_EXEMPT tools (am_doctor, am_get_scope),
+     * but the resolved `scope`/`ceiling` here are both empty — so a naive
+     * `buildScopeManifest` would report `effectiveTools = []`, contradicting
+     * the no-drift invariant (those two tools are provably callable). The
+     * am_get_scope handler reconciles the manifest against this flag.
+     */
+    scopeFailClosed?: boolean;
   };
 }
 
@@ -410,16 +421,47 @@ export function checkWriteAuth(
 }
 
 /**
- * Read-only tools that disclose the FULL merged config (which may carry
- * secrets the redactor cannot guarantee it caught). When an operator has gone
- * to the trouble of configuring AM_MCP_TOKEN, a tokenless client should not be
- * able to pull the merged config wholesale — even redacted, it leaks server
- * names, internal URLs, and the shape of the deployment.
+ * Read-only tools that disclose sensitive payloads the redactor cannot
+ * guarantee it caught. When an operator has gone to the trouble of configuring
+ * AM_MCP_TOKEN, a tokenless client should not be able to pull these wholesale.
  *
- * This is a defense-in-depth gate layered ON TOP OF the two-pass redaction in
- * `redactSecrets`: redaction is the last line, this gate is the first.
+ *   - `am_config_show` dumps the FULL merged config — even redacted, it leaks
+ *     server names, internal URLs, and the shape of the deployment.
+ *   - `am_session_export` / `am_session_search` (W-m2-session-redact) return
+ *     VERBATIM session transcript content (full message bodies / 200-char
+ *     snippets). A transcript routinely contains a user's pasted credentials,
+ *     internal paths, and proprietary code — exactly the data a tokenless
+ *     client must not be able to exfiltrate when a token is configured.
+ *     `am_session_list` is deliberately NOT here: it returns only
+ *     id/count/timestamp summaries (no message content), so it stays ungated.
+ *
+ * This is a defense-in-depth gate layered ON TOP OF the redaction passes
+ * (`redactSecrets` for config, `redactSecretish` over the session handler
+ * output): redaction is the last line, this gate is the first.
  */
-const SENSITIVE_READONLY_TOOLS = new Set<string>(["am_config_show"]);
+const SENSITIVE_READONLY_TOOLS = new Set<string>([
+  "am_config_show",
+  "am_session_export",
+  "am_session_search",
+]);
+
+/**
+ * ws2 (seed 6a89): the always-available diagnostic/recovery tools. When
+ * `refreshSettings` fails CLOSED because the on-disk config could not be
+ * parsed/validated (a malformed `[profiles.x.scope]`, a non-object `scope`, a
+ * broken server table, …), the runtime scope is pinned to deny-all so a typo can
+ * never WIDEN the surface to the configured ceiling. But a deny-all that also
+ * hid the health-check and scope-audit tools would soft-brick the gateway: an
+ * agent could no longer SEE *why* the config is broken over MCP. These two
+ * core, read-only tools exist precisely to surface and reason about that state,
+ * so the dispatch gate exempts them — but ONLY while `scopeFailClosed` is set
+ * (a validly-parsed narrow profile keeps full ADR-0055 semantics). They leak no
+ * config payload that the dangerous ceiling would: `am_doctor` reports
+ * pass/fail checks (secret-redacted via safeErrorMessage), and `am_get_scope`
+ * reports the boundary itself. `am_config_show` is deliberately NOT here — it
+ * dumps the merged config and is separately token-gated.
+ */
+const DIAGNOSTIC_SCOPE_EXEMPT = new Set<string>(["am_doctor", "am_get_scope"]);
 
 /**
  * Decide whether a SENSITIVE read-only tool (full-config disclosure) may
@@ -532,7 +574,7 @@ export function toolGroupCatalog(): ToolCatalogEntry[] {
 
 // ── Permission check ────────────────────────────────────────────
 
-function checkPermission(
+export function checkPermission(
   tier: ToolTier,
   settings?: Settings,
 ): { allowed: boolean; reason?: string } {
@@ -552,7 +594,11 @@ function checkPermission(
         "Write-remote tools require opt-in. Set settings.mcp_serve.allow_push = true in config.toml",
     };
   }
-  return { allowed: true };
+  // Fail closed: any tier outside the ToolTier union (e.g. a typo'd literal
+  // smuggled in via an `as ToolTier` cast that bypassed the literal-type
+  // check) is denied rather than silently allowed. A write-tier tool must
+  // never default-ALLOW with no opt-in just because its tier is unrecognised.
+  return { allowed: false, reason: "Unknown tool tier — denied (fail-closed)." };
 }
 
 // ── Secret redaction ───────────────────────────────────────────
@@ -845,9 +891,7 @@ const TOOL_SCHEMAS: Record<string, z.ZodTypeAny> = {
   // ── registry ──────────────────────────────────────────────
   am_registry_search: withAuth({
     query: zStrNonEmpty,
-    tag: zStr.optional(),
-    verified: zBool.optional(),
-    limit: zNum.int().positive().max(1000).optional(),
+    limit: zNum.int().positive().max(100).optional(),
   }),
   am_registry_install: withAuth({ name: zStrNonEmpty, env: zStrMap.optional() }),
   am_registry_list_installed: withAuth({}),
@@ -1052,8 +1096,43 @@ function defineTools(): ToolEntry[] {
         // (ADR-0055 Decision 6): same profile name, same scope object, same
         // ceiling the dispatch gate just used.
         if (ctx?.activeScope) {
-          const { profileName, scope, ceiling } = ctx.activeScope;
-          return buildScopeManifest(profileName, catalog, ceiling, scope);
+          const { profileName, scope, ceiling, scopeFailClosed } = ctx.activeScope;
+          const manifest = buildScopeManifest(profileName, catalog, ceiling, scope);
+          // R2-4 / seed 22b7 no-drift: the gateway ALWAYS admits the
+          // DIAGNOSTIC_SCOPE_EXEMPT tools (am_doctor, am_get_scope) regardless of
+          // the scope verdict — `isToolScoped` exempts them while failing CLOSED,
+          // and `isOutsideExplicitCeiling` (seed f747) exempts them under an
+          // explicit ceiling that omits their `core` group with no active
+          // profile. In both of those states the raw `isToolInScope` manifest
+          // lists them as excluded (rule 1: group ∉ ceiling), contradicting "the
+          // manifest can NEVER drift from enforcement" — that very contradiction
+          // is how THIS handler ran. Promote the exempt names into
+          // effectiveTools (and out of excludedTools) whenever they would
+          // otherwise show as excluded, so the audit surface matches what the
+          // gate actually allows. The promotion is non-widening: only the two
+          // fixed recovery tools move, and only if the catalog registers them.
+          void scopeFailClosed; // enforcement is unconditional; flag no longer gates this.
+          {
+            // Only promote exempt names that the catalog actually contains (the
+            // manifest's effective ∪ excluded IS the catalog projection), so we
+            // never invent a tool that isn't registered. Handlers are free
+            // functions (no `this`), so derive the catalog from the manifest.
+            const known = new Set([...manifest.effectiveTools, ...manifest.excludedTools]);
+            const excludedExempt = new Set(
+              manifest.excludedTools.filter(
+                (name) => DIAGNOSTIC_SCOPE_EXEMPT.has(name) && known.has(name),
+              ),
+            );
+            if (excludedExempt.size > 0) {
+              const effective = new Set(manifest.effectiveTools);
+              for (const name of excludedExempt) effective.add(name);
+              manifest.effectiveTools = [...effective].sort();
+              manifest.excludedTools = manifest.excludedTools.filter(
+                (name) => !excludedExempt.has(name),
+              );
+            }
+          }
+          return manifest;
         }
         // FALLBACK (no gateway context — e.g. a direct in-process handler call
         // in a unit test): resolve the persisted/default profile with the SAME
@@ -1200,10 +1279,13 @@ function defineTools(): ToolEntry[] {
           checks.push({
             name: "config.toml",
             status: "fail",
-            // safeErrorMessage (not errorMessage): a malformed config can echo a
-            // secret value back inside a Zod/TOML parse error; am_doctor is
-            // read-only and reachable by a tokenless client (R2-LOW).
-            message: `Parse/validation error: ${safeErrorMessage(err)}`,
+            // errorDetail (not errorMessage) folds the AmError suggestion — which
+            // carries the offending field path (e.g. a secret-shaped server name)
+            // for CONFIG_SCHEMA_ERROR/CONFIG_PARSE_ERROR — back into the surfaced
+            // text; redactSecretish (not raw) then scrubs it, because a malformed
+            // config can echo a secret value and am_doctor is read-only and
+            // reachable by a tokenless client (R2-LOW).
+            message: `Parse/validation error: ${redactSecretish(errorDetail(err))}`,
           });
         }
 
@@ -1435,11 +1517,19 @@ function defineTools(): ToolEntry[] {
           ...(args.noSystem ? { noSystem: true } : {}),
         };
 
+        // W-m2-session-redact (defense-in-depth): a session transcript routinely
+        // carries a user's pasted credentials. Even an AUTHORIZED export must
+        // not echo a secret back verbatim, so scrub every string leaf through
+        // `redactSecretish` before it crosses the MCP trust boundary. This is
+        // layered ON TOP OF the SENSITIVE_READONLY_TOOLS token gate above.
         if (format === "json") {
-          return formatJson(session, filter);
+          // Serialize → redact → re-parse so EVERY string leaf (message
+          // content, tool output, metadata) is scrubbed uniformly, regardless
+          // of nesting. The dispatch layer re-serializes the returned object.
+          return JSON.parse(redactSecretish(JSON.stringify(formatJson(session, filter))));
         }
         return {
-          content: formatMarkdown(session, filter),
+          content: redactSecretish(formatMarkdown(session, filter)),
         };
       },
     },
@@ -1514,7 +1604,13 @@ function defineTools(): ToolEntry[] {
                 project: session.project ?? null,
                 matches: matched.slice(0, 5).map((m) => ({
                   role: m.role,
-                  snippet: m.content.length > 200 ? `${m.content.slice(0, 200)}...` : m.content,
+                  // W-m2-session-redact (defense-in-depth): the raw 200-char
+                  // snippet can carry a pasted credential. Scrub it through
+                  // `redactSecretish` so even an authorized search never echoes
+                  // a secret back, layered on top of the token gate above.
+                  snippet: redactSecretish(
+                    m.content.length > 200 ? `${m.content.slice(0, 200)}...` : m.content,
+                  ),
                 })),
               });
             }
@@ -1928,14 +2024,9 @@ function defineTools(): ToolEntry[] {
           type: "object",
           properties: {
             query: { type: "string", description: "Search query" },
-            tag: { type: "string", description: "Filter by tag" },
-            verified: {
-              type: "boolean",
-              description: "Show only verified packages",
-            },
             limit: {
               type: "number",
-              description: "Max results (default: 20)",
+              description: "Max results (default: 20, max: 100)",
             },
           },
           required: ["query"],
@@ -1945,8 +2036,6 @@ function defineTools(): ToolEntry[] {
       handler: async (args) => {
         const { search } = await import("../registry/client");
         const filters: import("../registry/types").RegistrySearchFilters = {};
-        if (args.tag) filters.tag = args.tag as string;
-        if (args.verified) filters.verified = true;
         filters.limit = (args.limit as number) ?? 20;
         const result = await search(args.query as string, filters);
         return result;
@@ -2545,7 +2634,7 @@ function defineTools(): ToolEntry[] {
           required: ["agent", "prompt"],
         },
       },
-      tier: "write-remote" as ToolTier,
+      tier: "write-remote" satisfies ToolTier,
       handler: async (args, ctx) => {
         warnDeprecated("am_run_agent", "am_agent_invoke");
         return invokeAgentImpl(args, ctx);
@@ -2558,7 +2647,7 @@ function defineTools(): ToolEntry[] {
           "[DEPRECATED — use am_agent_list] List all agents from the unified registry (config overrides, ACP built-in, A2A roster). Shows protocol availability (ACP/A2A/both).",
         inputSchema: { type: "object", properties: {} },
       },
-      tier: "read-only" as ToolTier,
+      tier: "read-only" satisfies ToolTier,
       handler: async () => {
         warnDeprecated("am_acp_list_agents", "am_agent_list");
         const { listAllAgentsAsync } = await import("../core/agent-registry");
@@ -2584,7 +2673,7 @@ function defineTools(): ToolEntry[] {
           "[DEPRECATED — use am_agent_session_list] List active LIVE ACP sessions from the session directory (agent subprocesses currently running or persisted).",
         inputSchema: { type: "object", properties: {} },
       },
-      tier: "read-only" as ToolTier,
+      tier: "read-only" satisfies ToolTier,
       handler: async (args) => {
         warnDeprecated("am_acp_session_list", "am_agent_session_list");
         return listAgentSessionsImpl(args);
@@ -2603,7 +2692,7 @@ function defineTools(): ToolEntry[] {
           required: ["sessionId"],
         },
       },
-      tier: "write-remote" as ToolTier,
+      tier: "write-remote" satisfies ToolTier,
       handler: async (args, ctx) => {
         warnDeprecated("am_acp_session_cancel", "am_agent_session_cancel");
         return cancelSessionImpl(args, ctx);
@@ -2660,7 +2749,7 @@ function defineTools(): ToolEntry[] {
           required: ["agent", "prompt"],
         },
       },
-      tier: "write-remote" as ToolTier,
+      tier: "write-remote" satisfies ToolTier,
       handler: async (args, ctx) => invokeAgentImpl(args, ctx),
     },
     {
@@ -2678,7 +2767,7 @@ function defineTools(): ToolEntry[] {
           },
         },
       },
-      tier: "read-only" as ToolTier,
+      tier: "read-only" satisfies ToolTier,
       handler: async (args) => listAgentSessionsImpl(args),
     },
     {
@@ -2695,7 +2784,7 @@ function defineTools(): ToolEntry[] {
           required: ["sessionId"],
         },
       },
-      tier: "write-remote" as ToolTier,
+      tier: "write-remote" satisfies ToolTier,
       handler: async (args, ctx) => cancelSessionImpl(args, ctx),
     },
     {
@@ -2712,7 +2801,7 @@ function defineTools(): ToolEntry[] {
           required: ["sessionId"],
         },
       },
-      tier: "read-only" as ToolTier,
+      tier: "read-only" satisfies ToolTier,
       handler: async (args) => {
         const sessionId = args.sessionId as string;
         const entry = activeSessions.get(sessionId);
@@ -2741,7 +2830,7 @@ function defineTools(): ToolEntry[] {
           "Detect which ACP/A2A agents are available on this host. Combines the unified agent registry with PATH + adapter-derived liveness signals for local install. Returns `locallyInstalled` (true/false/null) — scoped to local ACP install only; it does NOT probe A2A remote endpoints. For agents with A2A endpoints, use `am_agent_status` or `am_agent_invoke` to probe remote reachability. NOTE (2026-05-02): the legacy field `reachable` is emitted alongside `locallyInstalled` for one release of backward compatibility. Consumers should migrate to `locallyInstalled`; `reachable` will be removed in v0.6.",
         inputSchema: { type: "object", properties: {} },
       },
-      tier: "read-only" as ToolTier,
+      tier: "read-only" satisfies ToolTier,
       handler: async () => {
         const { listAllAgentsAsync } = await import("../core/agent-registry");
         const { detectAllAgents } = await import("../core/agent-detection");
@@ -3156,6 +3245,17 @@ export class McpServer {
    */
   private scope?: ResolvedScope;
   /**
+   * ws2 (seed 6a89): set true when `refreshSettings` could not parse/validate the
+   * on-disk config (ZodError / non-ENOENT). In that state the declared boundary
+   * cannot be trusted, so `this.scope` is pinned to the maximally-restrictive
+   * empty scope (deny-all) and `this.settings` to an empty ceiling. The dispatch
+   * gate exempts ONLY the diagnostic/recovery tools (DIAGNOSTIC_SCOPE_EXEMPT) so
+   * an operator can still SEE and FIX the breakage over MCP. This flag scopes the
+   * exemption to the fail-closed state — a deliberately-narrow (validly-parsed)
+   * profile keeps full ADR-0055 scope semantics with no diagnostic bypass.
+   */
+  private scopeFailClosed = false;
+  /**
    * ADR-0055 Decision 6: the active profile NAME that `this.scope` was resolved
    * from (connection `am.profile` → state.toml → default). Recorded alongside
    * `this.scope` by `resolveActiveScope` so the `am_get_scope` audit tool can
@@ -3224,7 +3324,11 @@ export class McpServer {
   // the auth check: JSON-RPC envelope validation, init-state gating,
   // protocolVersion negotiation, and batch id deduplication. See
   // handleRequest and serve below for entry points.
-  constructor(opts?: { auth?: AuthConfig; enforceInitGate?: boolean }) {
+  constructor(opts?: {
+    auth?: AuthConfig;
+    enforceInitGate?: boolean;
+    connectionProfile?: string;
+  }) {
     this.tools = defineTools();
     // Secure default: no token, no unsafe-local escape hatch. Write-tier tool
     // calls are refused until the caller wires an AuthConfig explicitly.
@@ -3235,6 +3339,15 @@ export class McpServer {
     // use) default to already-initialized so they don't need to simulate
     // the handshake.
     if (opts?.enforceInitGate) this.initialized = false;
+    // ADR-0055: an explicit `connectionProfile` (fed by `am mcp-serve
+    // --profile <name>`) seeds the connection-scoped profile and takes
+    // PRECEDENCE over the AM_MCP_PROFILE env. The `initialize` handler only
+    // falls back to the experimental capability / env when this is still
+    // unset, so a flag-supplied profile always wins the resolution in
+    // resolveActiveScope (connectionProfile is the first term it considers).
+    if (typeof opts?.connectionProfile === "string" && opts.connectionProfile.length > 0) {
+      this.connectionProfile = opts.connectionProfile;
+    }
   }
 
   /** Override auth config (useful for tests). */
@@ -3255,9 +3368,37 @@ export class McpServer {
       const projectFile = resolveProjectConfig(process.cwd());
       const config = await loadResolvedConfig({ configDir, projectFile });
       this.settings = config.settings;
+      // Reset to normal semantics BEFORE resolving — the config parsed cleanly,
+      // so the only way the gateway still ends up failing closed is if
+      // resolveActiveScope hit the explicit-but-missing profile branch (an
+      // operator/client named a confinement profile that is a typo or was
+      // deleted). That branch sets `scopeFailClosed = true` itself, so we must
+      // not clobber it afterwards. (fix-1-0)
+      this.scopeFailClosed = false;
       this.scope = await this.resolveActiveScope(config, configDir);
-    } catch {
-      // Keep existing settings if re-read fails
+    } catch (err) {
+      // ws2 (seed 6a89) K-CRIT: distinguish "config genuinely absent" from
+      // "config present but INVALID". loadResolvedConfig swallows ENOENT inside
+      // tryReadConfig (a missing file yields `{}`), so an ENOENT reaching here is
+      // benign (e.g. a transient stat race) — keep the prior settings/scope, the
+      // undefined-scope = global-ceiling default is correct when there is no
+      // declared boundary.
+      //
+      // ANY OTHER throw means the config FILE EXISTS but failed to parse/validate
+      // — a typo'd `[profiles.x.scope] tool_groups = ['bogus']` fails the z.enum,
+      // or `scope` is a non-object: ConfigSchema.parse throws a ZodError that
+      // tryReadConfig rethrows. We must NOT keep `this.scope` at its undefined
+      // field default, because isToolInScope(..., undefined) treats the whole
+      // ceiling as in-scope and the tools/call gate `if (this.scope && ...)` is
+      // bypassed entirely — a malformed confinement profile would expose the FULL
+      // ceiling. Mirror resolveActiveScope's broken-inheritance branch: fail
+      // CLOSED to a maximally-restrictive scope (empty tool_groups narrows every
+      // group out — isToolInScope rule 4) and pin the ceiling to nothing, so
+      // ceiling ∩ ∅ denies every tool until the config is fixed.
+      if (isNotFound(err)) return; // genuinely absent → keep prior benign behaviour
+      this.settings = { mcp_serve: { tools: [] } };
+      this.scope = { toolGroups: [], allowTools: [], denyTools: [] };
+      this.scopeFailClosed = true; // gate exempts only DIAGNOSTIC_SCOPE_EXEMPT
     }
   }
 
@@ -3266,11 +3407,27 @@ export class McpServer {
    * precedence: this connection's `am.profile` (initialize) → the persisted
    * active profile (state.toml) → settings.default_profile → "default".
    *
-   * Fail-safe directions (an access boundary must NEVER widen):
-   *  - Profile NAME absent from config.profiles (typo, implicit "default" with
-   *    no profiles table, removed profile): return `undefined` = the global
-   *    ceiling unchanged (today's behaviour). There is no declared boundary to
-   *    enforce, so we don't invent a narrower one.
+   * Fail-safe directions (an access boundary must NEVER widen). The pivotal
+   * distinction is whether the active-profile name was supplied EXPLICITLY (a
+   * connection `am.profile`, the persisted state.toml profile, or
+   * `settings.default_profile`) versus produced by the bare hardcoded `"default"`
+   * literal fallback (no profile named anywhere) — AND whether the name is the
+   * conventional `"default"` sentinel:
+   *  - Name absent from config.profiles, came from an EXPLICIT source, AND is a
+   *    NON-`"default"` name (typo, deleted/renamed confinement profile): an
+   *    operator/client who deliberately named a confining profile must NEVER be
+   *    silently widened to the global ceiling. Fail CLOSED to a
+   *    maximally-restrictive scope (mirrors the broken-inheritance branch below
+   *    and refreshSettings' invalid-config branch), and set `scopeFailClosed` so
+   *    the diagnostic-tool exemption still lets the operator SEE + fix the
+   *    breakage over MCP.
+   *  - Name absent from config.profiles but it resolves to the `"default"`
+   *    sentinel (the bare literal fallback with nothing named anywhere, OR an
+   *    explicit `default_profile = "default"`) with no `default` profile defined:
+   *    return `undefined` = the global ceiling unchanged. This is the universal
+   *    "I want the implicit default" idiom — a fresh/minimal config with no
+   *    profiles table never declared a boundary, so we don't invent a narrower
+   *    one (and we don't break the fresh-install case).
    *  - Profile EXISTS but `resolveProfile` THROWS (unknown `inherits` parent, or
    *    circular inheritance — K-CRIT): the profile is structurally broken. We do
    *    NOT fail open to `undefined` (that would expose the full ceiling and
@@ -3284,17 +3441,44 @@ export class McpServer {
     config: Config,
     configDir: string,
   ): Promise<ResolvedScope | undefined> {
-    const profileName =
+    // Capture which source supplied the name BEFORE the `?? "default"` fallback.
+    // `explicit !== undefined` means an operator/client deliberately named a
+    // profile (connection am.profile → persisted state.toml → default_profile);
+    // `explicit === undefined` means we fell through to the bare hardcoded
+    // "default" literal (no profile named anywhere). The fail-safe direction
+    // for a MISSING profile depends entirely on this distinction. (fix-1-0)
+    const explicit =
       this.connectionProfile ??
       (await readActiveProfile(configDir)) ??
-      config.settings?.default_profile ??
-      "default";
+      config.settings?.default_profile;
+    const profileName = explicit ?? "default";
     // Record the resolved name so am_get_scope reports the SAME active profile
     // the gateway gated on (Decision 6 no-drift), regardless of which branch
     // below produces the scope.
     this.activeProfileName = profileName;
     if (!config.profiles?.[profileName]) {
-      // No such profile → no declared boundary → global ceiling (never wider).
+      // Distinguish a deliberately-named CONFINEMENT profile from the
+      // conventional "default" sentinel. `profileName === "default"` (whether it
+      // arrived via the bare hardcoded fallback OR an explicit
+      // `default_profile = "default"`) with no `default` profile defined is the
+      // universal "I want the implicit default" idiom — there is no declared
+      // boundary, so the global ceiling is correct (never wider) and the
+      // fresh/minimal-config case stays working.
+      if (explicit !== undefined && profileName !== "default") {
+        // The name came from an EXPLICIT source, names a NON-default profile,
+        // but that profile does not exist (typo, or a confinement profile that
+        // was deleted/renamed). An access boundary must NEVER widen: do NOT fall
+        // through to `undefined` (the global ceiling) — that would silently void
+        // a confinement profile the operator deliberately bound. Fail CLOSED to
+        // a maximally-restrictive scope (mirrors the broken-inheritance branch
+        // and refreshSettings' invalid-config branch) and pin scopeFailClosed so
+        // the diagnostic-tool exemption (DIAGNOSTIC_SCOPE_EXEMPT) still lets the
+        // operator see + fix the breakage over MCP. K-CRIT: never widen on a
+        // missing explicit name.
+        this.scopeFailClosed = true;
+        return { toolGroups: [], allowTools: [], denyTools: [] };
+      }
+      // No declared boundary → global ceiling (never wider).
       return undefined;
     }
     try {
@@ -3311,8 +3495,73 @@ export class McpServer {
   /** ADR-0055: is a tool visible/callable under the global ceiling intersected
    * with the active profile's Scope? Used by both tools/list and tools/call. */
   private isToolScoped(toolName: string): boolean {
+    // ws2 (seed 6a89): while failing closed on a malformed config, expose ONLY
+    // the diagnostic/recovery tools so the breakage can still be seen + fixed
+    // over MCP. Everything else (the dangerous ceiling the typo could have
+    // widened to) stays denied. The flag confines this bypass to the fail-closed
+    // state — a validly-parsed narrow profile gets no diagnostic exemption.
+    if (this.scopeFailClosed) return DIAGNOSTIC_SCOPE_EXEMPT.has(toolName);
     const ceiling = this.settings?.mcp_serve?.tools ?? DEFAULT_TOOL_GROUPS;
     return isToolInScope(toolName, getToolGroup(toolName), ceiling, this.scope);
+  }
+
+  /**
+   * M1 (ADR-0055 Decision 2, dispatch refinement): the global tool-group
+   * ceiling (`settings.mcp_serve.tools`) is a DISCOVERY-only filter when it is
+   * UNSET — the historical ADR-0021 default-surface guarantee: calling a
+   * non-core tool without configuring groups has always worked (gated by
+   * tier/auth, not group), so the implicit `['core']` default must NOT reject
+   * at dispatch. But once an operator EXPLICITLY sets the ceiling, the narrowing
+   * is a real access boundary that must be enforced at tools/call too — hiding a
+   * tool from tools/list is not a boundary (an agent can call a name it saw
+   * before or hallucinated).
+   *
+   * Detection keys off the explicit-set flag (`tools !== undefined`), NOT a
+   * value-comparison against `['core']`: a user who deliberately sets
+   * `tools = ['core']` gets the ceiling enforced; an unset config does not. This
+   * is a NARROWER enforcement than the profile-scope gate (which always engages
+   * when `this.scope` is defined) and is intentionally additive — it never
+   * widens the surface, only rejects calls the explicit ceiling already hides.
+   *
+   * Returns true ⇒ the call must be REFUSED with -32601. The fail-closed states
+   * are handled by the profile-scope gate / `isToolScoped`; this method only
+   * reports the explicit-ceiling verdict and never overrides a diagnostic
+   * exemption (the fail-closed branch sets `tools = []`, an explicit empty
+   * ceiling, but DIAGNOSTIC_SCOPE_EXEMPT tools are checked via isToolScoped in
+   * the profile-scope gate first).
+   */
+  private isOutsideExplicitCeiling(toolName: string): boolean {
+    // seed f747 (regression fix): the diagnostic/recovery tools (am_doctor,
+    // am_get_scope) are NEVER outside any ceiling. The profile-scope gate above
+    // already exempts them via `isToolScoped`, but that gate only engages when a
+    // Scope is active (`this.scope` defined). With an explicit ceiling that omits
+    // `core` and NO active profile, the profile-scope gate is skipped, so this
+    // gate would brick the exact tools an operator needs to SEE and FIX the
+    // broken config. Match the profile-scope path's exemption semantics here so
+    // diagnostics stay callable regardless of how the ceiling is configured —
+    // pre-e900 behaviour. This carve-out is non-widening: it only re-admits the
+    // two fixed recovery tools, never any other group.
+    if (DIAGNOSTIC_SCOPE_EXEMPT.has(toolName)) return false;
+    // Fail-closed states (malformed/missing-confinement config) set
+    // `this.settings = { mcp_serve: { tools: [] } }` — an EXPLICIT empty ceiling
+    // — but their surface is authoritatively owned by the profile-scope gate via
+    // `isToolScoped`, which preserves the DIAGNOSTIC_SCOPE_EXEMPT recovery tools
+    // (am_doctor, am_get_scope). This gate must NOT second-guess that and brick
+    // the very tools that exist to fix the breakage. Defer entirely.
+    if (this.scopeFailClosed) return false;
+    // Only an EXPLICITLY-configured ceiling is a dispatch boundary. `undefined`
+    // ⇒ the implicit default ⇒ discovery-only (ADR-0021 backward-compat).
+    if (this.settings?.mcp_serve?.tools === undefined) return false;
+    // The explicit ceiling rejects iff the tool's group is not in it. Reuse the
+    // same isToolInScope the gateway enforces elsewhere; passing `undefined` for
+    // the scope isolates the CEILING decision (rule 1) from any profile
+    // narrowing — the profile-scope gate above already applied `this.scope`.
+    return !isToolInScope(
+      toolName,
+      getToolGroup(toolName),
+      this.settings.mcp_serve.tools,
+      undefined,
+    );
   }
 
   /**
@@ -3471,14 +3720,21 @@ export class McpServer {
         // the AM_MCP_PROFILE env fallback). stdio is one-client-per-process, so
         // this scopes the whole process. The Scope itself is resolved lazily in
         // refreshSettings (which runs before tools/list and tools/call).
-        const caps = params.capabilities as Record<string, unknown> | undefined;
-        const experimental = caps?.experimental as Record<string, unknown> | undefined;
-        const expProfile = experimental?.["am.profile"];
-        const envProfile = process.env.AM_MCP_PROFILE;
-        if (typeof expProfile === "string" && expProfile.length > 0) {
-          this.connectionProfile = expProfile;
-        } else if (typeof envProfile === "string" && envProfile.length > 0) {
-          this.connectionProfile = envProfile;
+        //
+        // Precedence: an explicit `--profile` flag (seeded into
+        // `connectionProfile` by the constructor) is the operator's deliberate
+        // binding and OUTRANKS both the experimental capability and the env —
+        // so we only consult those channels when no flag was supplied.
+        if (this.connectionProfile === undefined) {
+          const caps = params.capabilities as Record<string, unknown> | undefined;
+          const experimental = caps?.experimental as Record<string, unknown> | undefined;
+          const expProfile = experimental?.["am.profile"];
+          const envProfile = process.env.AM_MCP_PROFILE;
+          if (typeof expProfile === "string" && expProfile.length > 0) {
+            this.connectionProfile = expProfile;
+          } else if (typeof envProfile === "string" && envProfile.length > 0) {
+            this.connectionProfile = envProfile;
+          }
         }
         // Flip the init flag AFTER we've decided this is a valid initialize.
         // A failed negotiation (above) does NOT mark the session initialized.
@@ -3556,12 +3812,17 @@ export class McpServer {
         // ADR-0055 Decision 2: when a profile declares a `scope`, it is an
         // access boundary enforced at DISPATCH too, not only at discovery —
         // hiding a tool from tools/list is not a boundary (an agent can call a
-        // name it saw before switching profile, or hallucinated). We gate calls
-        // ONLY when a Scope is active: the global `settings.mcp_serve.tools`
-        // groups remain a DISCOVERY-only filter (ADR-0021 semantics — calling a
-        // non-core tool without configuring groups has always worked and is
-        // gated by tier/auth, not group). `this.scope` is defined only when the
-        // active profile opted into scoping. (refreshSettings ran above.)
+        // name it saw before switching profile, or hallucinated). This gate
+        // engages ONLY when a Scope is active (`this.scope` is defined only when
+        // the active profile opted into scoping).
+        //
+        // The UNSET global `settings.mcp_serve.tools` ceiling remains a
+        // DISCOVERY-only filter (ADR-0021 default-surface guarantee — calling a
+        // non-core tool without configuring groups has always worked, gated by
+        // tier/auth, not group). M1 refines this WITHOUT widening the default:
+        // once the ceiling is EXPLICITLY configured it becomes a dispatch
+        // boundary too, enforced by the separate `isOutsideExplicitCeiling` gate
+        // BELOW zod validation. (refreshSettings ran above.)
         if (this.scope && !this.isToolScoped(toolName)) {
           // Use the name resolveActiveScope actually resolved the enforced scope
           // from (connection am.profile → state.toml → default_profile → default).
@@ -3640,6 +3901,28 @@ export class McpServer {
           }
         }
 
+        // M1 (ADR-0055 Decision 2, dispatch refinement): when the operator
+        // EXPLICITLY configured `settings.mcp_serve.tools`, the ceiling is an
+        // access boundary enforced at dispatch — a de-listed group's tool is
+        // refused, not merely hidden from tools/list (hiding is not a boundary).
+        // This is DELIBERATELY positioned AFTER zod validation so a call missing
+        // a required argument still surfaces the precise zod contract error
+        // ('rejects missing X'), not this group rejection. The UNSET default is
+        // discovery-only (isOutsideExplicitCeiling returns false), preserving
+        // ADR-0021's default-surface guarantee — calling a non-core tool without
+        // configuring groups still works. The profile-scope gate above
+        // (`this.scope && …`) is unchanged and independent.
+        if (this.isOutsideExplicitCeiling(toolName)) {
+          return {
+            jsonrpc: "2.0",
+            id,
+            error: {
+              code: -32601,
+              message: `Tool "${toolName}" is outside the configured global tool-group ceiling (settings.mcp_serve.tools). Its tool group is not exposed. Use tools/list to see the tools the ceiling exposes, or add its group to settings.mcp_serve.tools.`,
+            },
+          };
+        }
+
         try {
           // Wave D: build the ToolContext. Extract a progressToken from
           // params._meta (standard MCP convention). When present, we emit
@@ -3658,6 +3941,11 @@ export class McpServer {
             profileName: this.activeProfileName,
             scope: this.scope,
             ceiling: this.settings?.mcp_serve?.tools ?? DEFAULT_TOOL_GROUPS,
+            // R2-4: propagate the fail-closed flag so am_get_scope can reconcile
+            // its manifest with the dispatch gate's DIAGNOSTIC_SCOPE_EXEMPT
+            // carve-out (isToolScoped admits am_doctor/am_get_scope here even
+            // though scope ∩ ceiling is empty), keeping the no-drift invariant.
+            scopeFailClosed: this.scopeFailClosed,
           };
           const ctx: ToolContext = {
             progressToken,

@@ -24,6 +24,7 @@ import {
   readFileSync,
   readdirSync,
   readlinkSync,
+  realpathSync,
   rmSync,
   statSync,
   symlinkSync,
@@ -133,6 +134,65 @@ export function getProjectWikiDir(projectName: string): string {
   return join(resolveConfigDir(), "wiki", "projects", projectName);
 }
 
+/**
+ * Returns true iff the link at `wikiLink` is already pointing at `target`, so
+ * `createProjectWikiLink` can short-circuit instead of recreating it.
+ *
+ * L10 fix — Windows junction churn. On POSIX, the link's `readlink` target is
+ * the exact string we passed to `symlinkSync`, so a plain string comparison
+ * fires the fast-path reliably. On win32 the wiki link is created as a
+ * **junction** (see `createProjectWikiLink` below), and `readlinkSync` on a
+ * junction returns a fully-resolved, normalised path — typically prefixed with
+ * `\\?\`, re-cased, and using `\` separators — which never `===` the
+ * `join()`-built `target` string. That made the fast-path dead on Windows: the
+ * junction was torn down and recreated on every call, generating filesystem
+ * churn (and a window where the link briefly does not exist).
+ *
+ * The fix is platform-split:
+ *   - non-win32: keep the original string-equality check on the symlink target;
+ *   - win32: treat junctions as links and compare `realpathSync` of BOTH the
+ *     existing link and the intended target, so two paths that resolve to the
+ *     same inode (regardless of `\\?\`/casing/separator differences) count as a
+ *     match.
+ *
+ * `platform` is injectable for testing so the win32 branch can be exercised on
+ * a POSIX CI host; it defaults to the real `process.platform`.
+ */
+export function wikiLinkMatchesTarget(
+  wikiLink: string,
+  target: string,
+  platform: NodeJS.Platform = process.platform,
+): boolean {
+  let stat: ReturnType<typeof lstatSync>;
+  try {
+    stat = lstatSync(wikiLink);
+  } catch {
+    return false;
+  }
+
+  if (platform === "win32") {
+    // A win32 wiki link is a junction (lstat reports it as a directory, not a
+    // symbolic link) — treat both junctions and symlinks as "links" here. Then
+    // compare by resolved real path so a junction whose readlink target is the
+    // normalised `\\?\`-prefixed form still matches the intended target.
+    if (!stat.isSymbolicLink() && !stat.isDirectory()) return false;
+    try {
+      return realpathSync(wikiLink) === realpathSync(target);
+    } catch {
+      return false;
+    }
+  }
+
+  // POSIX: the link must be a symlink and its raw target must equal what we
+  // would write — this is the exact string we passed to `symlinkSync`.
+  if (!stat.isSymbolicLink()) return false;
+  try {
+    return readlinkSync(wikiLink) === target;
+  } catch {
+    return false;
+  }
+}
+
 /** Create the symlink from project to central AM wiki. (ADR-0022) */
 export function createProjectWikiLink(projectDir: string, projectName: string): void {
   const amDir = join(projectDir, ".agent-manager");
@@ -145,17 +205,11 @@ export function createProjectWikiLink(projectDir: string, projectName: string): 
   // Ensure .agent-manager dir exists in the project
   require("node:fs").mkdirSync(amDir, { recursive: true });
 
-  // Create symlink (skip if exists and points to right target)
+  // Create symlink (skip if exists and points to right target). The match check
+  // is platform-aware (L10): on win32 it compares resolved real paths so an
+  // already-correct junction short-circuits instead of churning every call.
   if (existsSync(wikiLink)) {
-    try {
-      const stat = lstatSync(wikiLink);
-      if (stat.isSymbolicLink()) {
-        const existingTarget = readlinkSync(wikiLink);
-        if (existingTarget === target) return; // already correct
-      }
-    } catch {
-      /* can't read, recreate */
-    }
+    if (wikiLinkMatchesTarget(wikiLink, target)) return; // already correct
     // Remove existing
     rmSync(wikiLink, { recursive: true, force: true });
   }

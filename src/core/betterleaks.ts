@@ -1,6 +1,7 @@
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { chmodSync, existsSync, mkdirSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { resolveConfigDir } from "./config";
 
@@ -16,23 +17,30 @@ const GITHUB_REPO = "betterleaks/betterleaks";
  * release or a MITM on the redirect chain meant code execution in the user's
  * config dir.
  *
- * Keyed by the release asset filename (`platformBinaryName()`), value is the
- * lowercase hex SHA-256 of that asset.
+ * Keyed by the release ARCHIVE asset filename (`platformBinaryName()`), value
+ * is the lowercase hex SHA-256 of that ARCHIVE. Upstream releases the binary
+ * inside a `.tar.gz` (darwin/linux) or `.zip` (windows) archive — the asset
+ * names use `x64`/`arm64` (NOT `amd64`) and carry the archive extension. The
+ * checksum is computed over the archive bytes (matching the upstream
+ * `checksums.txt`), and `installBetterleaks` verifies BEFORE extracting the
+ * `betterleaks` binary out of the archive.
  *
- * TODO(P2-H): populate with the REAL upstream checksums for
- * betterleaks v1.1.1. These cannot be obtained offline; until they are filled
- * in, every platform's pin is the empty-string sentinel and installation
- * FAILS CLOSED (see `verifyChecksum`) unless the operator supplies the
- * expected digest out-of-band via `AM_BETTERLEAKS_SHA256` or explicitly
- * accepts the risk via `AM_ALLOW_UNVERIFIED_BETTERLEAKS=1`.
+ * Digests below are verified dual-source (gh release API + the v1.1.1
+ * `checksums.txt`).
  */
 const BETTERLEAKS_SHA256: Record<string, string> = {
-  [`betterleaks_${BETTERLEAKS_VERSION}_darwin_arm64`]: "",
-  [`betterleaks_${BETTERLEAKS_VERSION}_darwin_amd64`]: "",
-  [`betterleaks_${BETTERLEAKS_VERSION}_linux_arm64`]: "",
-  [`betterleaks_${BETTERLEAKS_VERSION}_linux_amd64`]: "",
-  [`betterleaks_${BETTERLEAKS_VERSION}_windows_arm64.exe`]: "",
-  [`betterleaks_${BETTERLEAKS_VERSION}_windows_amd64.exe`]: "",
+  [`betterleaks_${BETTERLEAKS_VERSION}_darwin_arm64.tar.gz`]:
+    "81eb78a8328f9159421855f282a03ad40c2cfeaa7c7a79f4c42308d705be31c4",
+  [`betterleaks_${BETTERLEAKS_VERSION}_darwin_x64.tar.gz`]:
+    "9462919fc8b625cc86f5ca216a0ca8366b1492c795f2a52710338e38875078f4",
+  [`betterleaks_${BETTERLEAKS_VERSION}_linux_arm64.tar.gz`]:
+    "97b774367630846a5f2298f7f3e3f8096f0567d3fc0275b1b63c0e1e16f856f1",
+  [`betterleaks_${BETTERLEAKS_VERSION}_linux_x64.tar.gz`]:
+    "d590d5f051e49f6769c61dc8cebbce947b20a4042e2915ee234760f81a01c8c4",
+  [`betterleaks_${BETTERLEAKS_VERSION}_windows_arm64.zip`]:
+    "27897dbe70defaa8ce5e2d0cbbcdbe49708376def2e8ec91ea48d39aa44b6440",
+  [`betterleaks_${BETTERLEAKS_VERSION}_windows_x64.zip`]:
+    "df3078b80fe0ec9144b10e34b1e29779f1e0e4ad5cbba430eea240b6a3894d70",
 };
 
 /** Where we store the managed betterleaks binary */
@@ -104,8 +112,16 @@ export function getBetterleaksVersion(): string | null {
   }
 }
 
-/** Determine the correct binary name for this platform */
-function platformBinaryName(): string {
+/**
+ * Determine the correct release ARCHIVE asset name for this platform.
+ *
+ * Upstream v1.1.1 assets are named e.g. `betterleaks_1.1.1_linux_x64.tar.gz`
+ * — the arch is `x64`/`arm64` (NOT node's `x64`/`arm64`→`amd64` rename), and
+ * the artifact is a `.tar.gz` (darwin/linux) or `.zip` (windows) ARCHIVE, not
+ * a bare executable. The CI workflow (.github/workflows/ci.yml) downloads
+ * `betterleaks_${VER}_linux_x64.tar.gz` — this is the canonical naming.
+ */
+export function platformBinaryName(): string {
   const os = process.platform;
   const arch = process.arch;
 
@@ -114,11 +130,11 @@ function platformBinaryName(): string {
   else if (os === "win32") osStr = "windows";
   else osStr = "linux";
 
-  let archStr: string;
-  if (arch === "arm64") archStr = "arm64";
-  else archStr = "amd64";
+  // node's process.arch reports "x64" for 64-bit Intel/AMD; betterleaks assets
+  // use "x64" too (the old "amd64" mapping pointed at a non-existent asset).
+  const archStr = arch === "arm64" ? "arm64" : "x64";
 
-  const ext = os === "win32" ? ".exe" : "";
+  const ext = os === "win32" ? ".zip" : ".tar.gz";
   return `betterleaks_${BETTERLEAKS_VERSION}_${osStr}_${archStr}${ext}`;
 }
 
@@ -190,8 +206,85 @@ export function verifyBetterleaksChecksum(
 }
 
 /**
+ * Extract the `betterleaks` executable from a release ARCHIVE into `destPath`.
+ *
+ * Upstream ships the binary inside a `.tar.gz` (darwin/linux) or `.zip`
+ * (windows) archive, with the binary named `betterleaks` (unix) or
+ * `betterleaks.exe` (windows) at the archive root. We write the archive bytes
+ * to a temp file (already checksum-verified by the caller), shell out to the
+ * platform-standard extractor (`tar -xzf` / `unzip`), and copy the extracted
+ * binary to `destPath`. The temp dir is always cleaned up.
+ *
+ * Returns `{ ok: true }` on success or `{ ok: false, error }` describing the
+ * failure (missing extractor, archive without the expected entry, etc.).
+ */
+function extractBetterleaksBinary(
+  archiveBytes: Uint8Array,
+  isZip: boolean,
+  destPath: string,
+): { ok: true } | { ok: false; error: string } {
+  const work = mkdtempSync(join(tmpdir(), "am-betterleaks-extract-"));
+  const entryName = process.platform === "win32" ? "betterleaks.exe" : "betterleaks";
+  try {
+    const archivePath = join(work, isZip ? "archive.zip" : "archive.tar.gz");
+    const { writeFileSync, copyFileSync } = require("node:fs") as typeof import("node:fs");
+    writeFileSync(archivePath, Buffer.from(archiveBytes));
+
+    // Extract just the betterleaks binary into the work dir.
+    const extract = isZip
+      ? // -o overwrite, -j junk paths (binary lands directly in `work`),
+        // -d destination dir. `unzip` is present on the windows runner via
+        // bundled tooling; on unix it's the standard zip extractor.
+        spawnSync("unzip", ["-o", "-j", archivePath, entryName, "-d", work], {
+          stdio: "pipe",
+          timeout: 30000,
+          ...SPAWN_ENV,
+        })
+      : // tar is universal on darwin/linux (and present on the windows runner).
+        spawnSync("tar", ["-xzf", archivePath, "-C", work, entryName], {
+          stdio: "pipe",
+          timeout: 30000,
+          ...SPAWN_ENV,
+        });
+
+    if (extract.error || (typeof extract.status === "number" && extract.status !== 0)) {
+      const stderr = extract.stderr?.toString().trim();
+      const reason = extract.error ? extract.error.message : `exit ${extract.status}`;
+      return {
+        ok: false,
+        error: `Failed to extract betterleaks from archive (${reason})${stderr ? `: ${stderr}` : ""}`,
+      };
+    }
+
+    const extracted = join(work, entryName);
+    if (!existsSync(extracted)) {
+      return {
+        ok: false,
+        error: `Archive did not contain the expected "${entryName}" entry`,
+      };
+    }
+
+    copyFileSync(extracted, destPath);
+    return { ok: true };
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    return { ok: false, error: msg };
+  } finally {
+    try {
+      rmSync(work, { recursive: true, force: true });
+    } catch {
+      /* best-effort temp cleanup */
+    }
+  }
+}
+
+/**
  * Install betterleaks into the agent-manager config directory.
- * Downloads the binary from GitHub releases and verifies it runs.
+ *
+ * Flow (P2-H supply-chain): download the release ARCHIVE → verify the pinned
+ * SHA-256 over the ARCHIVE bytes (fail-closed BEFORE anything is extracted or
+ * made executable) → extract the `betterleaks` binary out of the archive →
+ * chmod+exec → verify it runs.
  */
 export async function installBetterleaks(): Promise<{
   success: boolean;
@@ -201,11 +294,12 @@ export async function installBetterleaks(): Promise<{
   const binDir = betterleaksBinDir();
   const binPath = betterleaksBinPath();
   const url = downloadUrl();
+  const isZip = process.platform === "win32";
 
   mkdirSync(binDir, { recursive: true });
 
   try {
-    // Download using fetch (Bun native)
+    // Download the ARCHIVE using fetch (Bun native)
     const response = await fetch(url, { redirect: "follow" });
     if (!response.ok) {
       return {
@@ -218,15 +312,20 @@ export async function installBetterleaks(): Promise<{
     const buffer = await response.arrayBuffer();
     const bytes = new Uint8Array(buffer);
 
-    // P2-H: verify the pinned SHA-256 BEFORE the binary is written
-    // executable. Fail-closed — never chmod+exec an unverified download.
+    // P2-H: verify the pinned SHA-256 over the ARCHIVE bytes BEFORE we extract
+    // or exec anything. The pin map is keyed on the archive asset name and the
+    // digest is over the archive, so this now matches. Fail-closed — never
+    // extract+exec an unverified download.
     const check = verifyBetterleaksChecksum(bytes);
     if (!check.ok) {
       return { success: false, path: binPath, error: check.reason };
     }
 
-    const { writeFile } = await import("node:fs/promises");
-    await writeFile(binPath, Buffer.from(bytes));
+    // Extract the binary out of the verified archive into the managed bin dir.
+    const extracted = extractBetterleaksBinary(bytes, isZip, binPath);
+    if (!extracted.ok) {
+      return { success: false, path: binPath, error: extracted.error };
+    }
 
     // Make executable on Unix
     if (process.platform !== "win32") {

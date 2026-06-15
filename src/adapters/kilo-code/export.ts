@@ -9,6 +9,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { generateWikiContext, spliceWikiBlock } from "../../core/instructions.ts";
 import { writeExportFiles } from "../shared/export-utils.ts";
+import { AM_BEGIN, AM_END, spliceMarkerBlock } from "../shared/utils.ts";
 import type {
   ExportOptions,
   ExportResult,
@@ -18,9 +19,6 @@ import type {
 } from "../types.ts";
 import { findKiloExtensionStoragePath } from "./detect.ts";
 import { parseJsonc } from "./jsonc.ts";
-
-const AM_BEGIN = "<!-- am:begin -->";
-const AM_END = "<!-- am:end -->";
 
 /**
  * Export resolved config to Kilo Code native files.
@@ -213,26 +211,19 @@ function generateInstructionBlock(config: ResolvedConfig): string | null {
 function generateAgentsMd(
   existingPath: string,
   managedContent: string,
-  _warnings: string[],
+  warnings: string[],
 ): string {
   const block = `${AM_BEGIN}\n${managedContent}\n${AM_END}`;
 
-  let existingContent = "";
+  let existingContent: string | undefined;
   try {
     const fs = require("node:fs");
     existingContent = fs.readFileSync(existingPath, "utf-8");
   } catch {
-    return `${block}\n`;
+    // No existing file
   }
 
-  // Replace existing managed section
-  const beginIdx = existingContent.indexOf(AM_BEGIN);
-  const endIdx = existingContent.indexOf(AM_END);
-  if (beginIdx !== -1 && endIdx !== -1) {
-    const before = existingContent.slice(0, beginIdx);
-    const after = existingContent.slice(endIdx + AM_END.length);
-    return before + block + after;
-  }
-
-  return `${existingContent.trimEnd()}\n\n${block}\n`;
+  // Fail-closed marker guard (H3): malformed markers leave the file unchanged
+  // and surface a warning rather than scrambling user prose.
+  return spliceMarkerBlock(block, existingContent, warnings, "AGENTS.md");
 }

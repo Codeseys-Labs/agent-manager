@@ -114,6 +114,31 @@ they are load-bearing, and the acceptance test each one must pass.
 
 ---
 
+## 4b. Audit verdict — do the acceptance tests pass today? (2026-06-13)
+
+Each requirement above was checked against the **current code**, by running the
+acceptance test in a sandbox (real CLI, `AM_CONFIG_DIR` redirected) and by
+tracing the code path. Every FAIL/PARTIAL was then adversarially re-checked by
+a second reviewer instructed to *refute* it. **None were refuted.**
+
+| Req | Capability | Verdict | One-line reality |
+|---|---|---|---|
+| 1 | Portability lint on import/vendor | **FAIL** | No code scans artifact *bodies* for host-absolute paths; macOS bundle vendors silently broken on Linux. (seed `98d1`) |
+| 2 | Bundle dependency closure | **FAIL** | Nothing parses skill `Task(subagent_type=…)` refs; `SkillSchema` has no deps field; `am status` never flags a skill whose agent is absent. (seed `7b65`) |
+| 3 | Type identity, never guessed | **PARTIAL** | `z.discriminatedUnion` exists but is **server-only** (ADR-0057); `command` is not a modeled entity; `am add` takes the kind as a positional arg, not a declared in-file discriminant. (seed `cc7d`, ADR-0058 proposed) |
+| 4 | Documented working cross-machine path | **PARTIAL** | `am setup --from [--ssh]` works end-to-end, but README twice claims `am pull` auto-applies (lines 382, 762) when `pull.ts:40` only prints a hint; `git+` skill source is an unconditional stub. (seed `484e`; overlaps `9497`/`e5c8`) |
+| 5 | Never transport plaintext secrets | **FAIL** | Reproduced end-to-end: `FOO_KEY` / `AWS_BEARER_TOKEN_BEDROCK` stored as plaintext, **committed to git**, and `am secret scan` reports clean even with betterleaks active. Detection is key-NAME-only; no generic `*_KEY`/`*_TOKEN` suffix or entropy fallback. (open High bug `257c`) |
+
+**Bottom line:** the field report's thesis holds. `am`'s *architecture* maps to
+all five problems, but three capabilities (portability lint, dependency
+closure, generic-secret detection) are **absent in code**, and two
+(discriminated artifact identity, cross-machine docs) are partial. The
+workaround was easier precisely because these gaps are real today.
+
+Audit method + full evidence: 5 parallel investigators + adversarial
+verification pass, 2026-06-13. R5 is the most urgent (security: plaintext
+credential committed to git with a false "clean" scan).
+
 ## 5. Disposition of the workaround
 
 The upload server, its `claude-uploader` skill, and the Windows port-forward

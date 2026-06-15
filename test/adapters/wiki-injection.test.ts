@@ -178,7 +178,10 @@ describe("ADR-0054 R7 — apply-time wiki injection across remaining adapters", 
     configHome = await createTestDir("r7-wf-cfg-");
     savedEnv = process.env.AM_CONFIG_DIR;
     process.env.AM_CONFIG_DIR = configHome.path;
-    savedCwd = process.cwd();
+    // Pin the cwd restore target to the repo root (seed 8c51): capturing
+    // process.cwd() here would reinstate a deleted tmp cwd if an earlier file
+    // leaked one. The repo root is always a valid directory.
+    savedCwd = join(import.meta.dir, "..", "..");
     // cwd becomes the project so the wiki resolver finds the project `.am-wiki/`.
     await project.write(".agent-manager.toml", "# am marker\n");
     process.chdir(project.path);

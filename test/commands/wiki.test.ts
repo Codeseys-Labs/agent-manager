@@ -8,6 +8,7 @@ import {
   lintSubcommand,
   listSubcommand,
   pathSubcommand,
+  resolveEditor,
   searchSubcommand,
   showSubcommand,
   wikiCommand,
@@ -34,6 +35,11 @@ let consoleErrors: string[] = [];
 const origLog = console.log;
 const origError = console.error;
 const origConfigDir = process.env.AM_CONFIG_DIR;
+// Order-independence guard (seed 8c51): the chdir-based describe blocks below
+// restore cwd in afterEach. Pin the restore target to the repo root rather than
+// process.cwd() at module load, so a leaked (deleted) tmp cwd from an earlier
+// test file can never be captured and reinstated here.
+const REPO_ROOT = join(import.meta.dir, "..", "..");
 
 function captureConsole(): void {
   consoleOutput = [];
@@ -378,7 +384,7 @@ describe("am wiki: --global threading for lint/graph (BUG-1 regression)", () => 
   let configDir: string;
   let globalWikiDir: string;
   let projectDir: string;
-  const origCwd = process.cwd();
+  const origCwd = REPO_ROOT;
 
   beforeEach(async () => {
     dir = await createTestDir("am-wiki-global-");
@@ -501,7 +507,7 @@ describe("am wiki: --global threading for briefing/export (QW-followup)", () => 
   let configDir: string;
   let globalWikiDir: string;
   let projectDir: string;
-  const origCwd = process.cwd();
+  const origCwd = REPO_ROOT;
 
   beforeEach(async () => {
     dir = await createTestDir("am-wiki-global-be-");
@@ -885,7 +891,7 @@ describe("am wiki show: supersession + coverage read surfaces (WAVE G-WIKIREAD)"
 describe("am wiki add: visibility-boundary feedback (W1-3)", () => {
   let dir: TestDir;
   let projectDir: string;
-  const origCwd = process.cwd();
+  const origCwd = REPO_ROOT;
 
   async function getAdd(): Promise<{
     run: (ctx: { args: Record<string, unknown> }) => Promise<void>;
@@ -1022,5 +1028,65 @@ describe("am wiki add: visibility-boundary feedback (W1-3)", () => {
     const payload = JSON.parse(consoleOutput.join("\n"));
     expect(payload.visibleAcrossProjects).toBe(true);
     expect(payload.globalRequestedButLocal).toBe(false);
+  });
+});
+
+describe("am wiki resolve: editor fallback is platform-aware (L11)", () => {
+  const origEditor = process.env.EDITOR;
+  const origVisual = process.env.VISUAL;
+
+  beforeEach(() => {
+    // biome-ignore lint/performance/noDelete: env var must be ABSENT, not "undefined"
+    delete process.env.EDITOR;
+    // biome-ignore lint/performance/noDelete: env var must be ABSENT, not "undefined"
+    delete process.env.VISUAL;
+  });
+
+  afterEach(() => {
+    if (origEditor === undefined) {
+      // biome-ignore lint/performance/noDelete: env var cleanup
+      delete process.env.EDITOR;
+    } else {
+      process.env.EDITOR = origEditor;
+    }
+    if (origVisual === undefined) {
+      // biome-ignore lint/performance/noDelete: env var cleanup
+      delete process.env.VISUAL;
+    } else {
+      process.env.VISUAL = origVisual;
+    }
+  });
+
+  test("falls back to notepad on win32 when EDITOR and VISUAL are unset", () => {
+    expect(resolveEditor("win32")).toBe("notepad");
+  });
+
+  test("falls back to vi on non-win32 (linux) when EDITOR and VISUAL are unset", () => {
+    expect(resolveEditor("linux")).toBe("vi");
+  });
+
+  test("falls back to vi on non-win32 (darwin) when EDITOR and VISUAL are unset", () => {
+    expect(resolveEditor("darwin")).toBe("vi");
+  });
+
+  test("EDITOR wins over the platform fallback", () => {
+    process.env.EDITOR = "code --wait";
+    expect(resolveEditor("win32")).toBe("code --wait");
+  });
+
+  test("VISUAL is used when EDITOR is unset", () => {
+    process.env.VISUAL = "nvim";
+    expect(resolveEditor("win32")).toBe("nvim");
+  });
+
+  test("EDITOR takes precedence over VISUAL", () => {
+    process.env.EDITOR = "vim -f";
+    process.env.VISUAL = "nvim";
+    expect(resolveEditor("linux")).toBe("vim -f");
+  });
+
+  test("defaults platform argument to the current process.platform", () => {
+    const expected = process.platform === "win32" ? "notepad" : "vi";
+    expect(resolveEditor()).toBe(expected);
   });
 });

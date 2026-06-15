@@ -49,7 +49,11 @@ const origLog = console.log;
 const origError = console.error;
 const origConfigDir = process.env.AM_CONFIG_DIR;
 const origKeyPath = process.env.AM_KEY_PATH;
-const origCwd = process.cwd();
+// Order-independence guard (seed 8c51): one test here chdir's into a tmp dir and
+// restores cwd in afterEach. Pin the restore target to the repo root rather than
+// process.cwd() at module load so a leaked (deleted) tmp cwd from an earlier file
+// is never captured and reinstated.
+const origCwd = join(import.meta.dir, "..", "..");
 
 function capture(): void {
   out = [];

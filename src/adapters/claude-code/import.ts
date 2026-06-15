@@ -7,6 +7,7 @@
 
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { type HostPathFinding, scanBodyForHostPaths } from "../../core/portability.ts";
 import type {
   ImportOptions,
   ImportResult,
@@ -205,17 +206,23 @@ function readSkillsDir(skillsDir: string, warnings: string[]): ImportedSkill[] {
     if (!fileExistsSync(skillMd)) continue;
 
     let description: string | undefined;
+    let portability: HostPathFinding[] | undefined;
     try {
       const content = fs.readFileSync(skillMd, "utf-8");
       const firstLine = content.split("\n").find((l: string) => l.trim().length > 0);
       if (firstLine) {
         description = firstLine.replace(/^#\s+/, "").trim();
       }
+      // Portability lint (R1/297e): flag host-absolute paths hard-coded in the
+      // skill body so they surface during import rather than breaking silently
+      // when the skill is shared / cloned onto another host.
+      const findings = scanBodyForHostPaths(content);
+      if (findings.length > 0) portability = findings;
     } catch {
-      // Description is optional
+      // Description and portability scan are both best-effort.
     }
 
-    skills.push({ name: entry, path: entryPath, description });
+    skills.push({ name: entry, path: entryPath, description, ...(portability && { portability }) });
   }
 
   return skills;

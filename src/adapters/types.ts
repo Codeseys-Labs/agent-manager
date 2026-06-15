@@ -1,3 +1,4 @@
+import type { HostPathFinding } from "../core/portability.ts";
 import type {
   ResolvedAgent,
   ResolvedConfig,
@@ -56,6 +57,10 @@ export interface ImportedServer {
   args?: string[];
   env?: Record<string, string>;
   transport?: "stdio" | "streamable-http" | "sse";
+  // Optional remote endpoint for sse / streamable-http transports. Mirrors
+  // RemoteServerSchema.url (core/schema.ts). Carried through merge so a
+  // brownfield import of a remote server does not silently drop its url.
+  url?: string;
   description?: string;
   tags?: string[];
   enabled?: boolean;
@@ -76,6 +81,12 @@ export interface ImportedSkill {
   name: string;
   path: string;
   description?: string;
+  /**
+   * Portability lint findings from scanning SKILL.md's body for host-absolute
+   * paths (R1/297e). Present only when the producer (readSkillsDir) ran the
+   * scan; an empty array means "scanned, clean". Consumed by `am import`.
+   */
+  portability?: HostPathFinding[];
 }
 
 export interface ImportResult {

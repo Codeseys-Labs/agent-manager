@@ -136,6 +136,26 @@ export const SkillSchema = z.object({
 });
 export type Skill = z.infer<typeof SkillSchema>;
 
+// --- Command Schema (ADR-0058) ---
+// `command` is the 6th catalog entity. It DIVERGES from the other five (Server,
+// Instruction, Skill, AgentProfile, Profile) by carrying an explicit
+// `type: z.literal("command")` discriminant — for those five the TOML section
+// name IS the kind (no in-file `type:` field). The literal extends the
+// ServerSchema.transport discriminated-union precedent (ADR-0057) to the
+// TOP-LEVEL artifact KIND, so `am add command --from <file.md>` can classify
+// DETERMINISTICALLY from a declared `kind:` frontmatter rather than guessing.
+// v1 scope is round-trip persistence only: resolver / profile-selection /
+// adapter-export wiring is explicitly deferred (see ADR-0058).
+export const CommandSchema = z.object({
+  type: z.literal("command"),
+  path: z.string(),
+  description: z.string(),
+  tags: z.array(z.string()).optional(),
+  _marketplace: MarketplaceProvenanceSchema.optional(),
+  adapters: adaptersPassthrough,
+});
+export type Command = z.infer<typeof CommandSchema>;
+
 // --- Agent Variant Schema (ADR-0036) ---
 // A variant is a named { protocol, command, args, env, permission_policy? }
 // tuple: one agent entry, many ways to launch it (anthropic direct vs Bedrock
@@ -333,6 +353,7 @@ export const ConfigSchema = z.object({
   skills: z.record(z.string(), SkillSchema).optional(),
   agents: z.record(z.string(), AgentProfileSchema).optional(),
   instructions: z.record(z.string(), InstructionSchema).optional(),
+  commands: z.record(z.string(), CommandSchema).optional(),
   profiles: z.record(z.string(), ProfileSchema).optional(),
   adapters: adaptersPassthrough,
 });
@@ -351,6 +372,7 @@ export const ProjectConfigSchema = z.object({
   skills: z.record(z.string(), SkillSchema).optional(),
   agents: z.record(z.string(), AgentProfileSchema).optional(),
   instructions: z.record(z.string(), InstructionSchema).optional(),
+  commands: z.record(z.string(), CommandSchema).optional(),
   env: z.record(z.string(), z.string()).optional(),
   adapters: adaptersPassthrough,
 });

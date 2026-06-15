@@ -66,13 +66,13 @@ export async function exportConfig(
       } catch {
         // No existing file
       }
-      let agentsMdContent = generateAgentsMd(targetInstructions, existingContent);
+      let agentsMdContent = generateAgentsMd(targetInstructions, existingContent, warnings);
       if (agentsMdContent) {
         // Inject wiki context if enabled (ADR-0054 R7)
         const configDir = options.projectPath;
         const wikiBlock = await generateWikiContext(configDir, config.settings);
         if (wikiBlock) {
-          agentsMdContent = spliceWikiBlock(wikiBlock, agentsMdContent);
+          agentsMdContent = spliceWikiBlock(wikiBlock, agentsMdContent, warnings, "AGENTS.md");
         }
         files.push({ path: agentsMdPath, content: agentsMdContent, written: false });
       }

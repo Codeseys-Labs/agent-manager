@@ -9,8 +9,8 @@ import {
 } from "../core/config";
 import { withConfig } from "../core/controller";
 import { buildScopeManifest, resolveProfile } from "../core/resolver";
-import { DEFAULT_MCP_TOOL_GROUPS } from "../core/schema";
-import type { Config, Profile } from "../core/schema";
+import { DEFAULT_MCP_TOOL_GROUPS, MCP_TOOL_GROUPS } from "../core/schema";
+import type { Config, McpToolGroup, Profile, ProfileScope } from "../core/schema";
 import { AmError, errorMessage, requireConfig } from "../lib/errors";
 import { amError, error, info, output } from "../lib/output";
 import { toolGroupCatalog } from "../mcp/server";
@@ -23,8 +23,24 @@ export const profileCommand = defineCommand({
     show: () => Promise.resolve(profileShowCommand),
     create: () => Promise.resolve(profileCreateCommand),
     delete: () => Promise.resolve(profileDeleteCommand),
+    scope: () => Promise.resolve(profileScopeCommand),
   },
 });
+
+/**
+ * Parse a comma-separated CLI value into a trimmed, de-duped, non-empty list.
+ * Returns `undefined` for an absent flag (distinct from an empty list, which
+ * carries meaning for `tool_groups`: an explicit empty narrows every group out).
+ */
+function parseCsv(raw: unknown): string[] | undefined {
+  if (typeof raw !== "string") return undefined;
+  const out: string[] = [];
+  for (const part of raw.split(",")) {
+    const t = part.trim();
+    if (t.length > 0 && !out.includes(t)) out.push(t);
+  }
+  return out;
+}
 
 export const profileListCommand = defineCommand({
   meta: { name: "list", description: "List all profiles" },
@@ -267,12 +283,25 @@ export const profileDeleteCommand = defineCommand({
           }
         }
 
-        // Confirmation prompt. Skipped (and the delete proceeds) when --yes is
-        // passed OR when running non-interactively (--json or no TTY), matching
-        // the codebase convention used by `am uninstall`/`am update`. This
-        // keeps the command from hanging on a prompt in scripts/CI; the change
-        // is recoverable via `am undo` (withConfig auto-commits).
-        if (!args.yes && !args.json && process.stdin.isTTY) {
+        // Confirmation prompt.
+        // FAIL CLOSED: deleting a profile is destructive, so it must never
+        // proceed unconfirmed. When confirmation is required (no --yes) but we
+        // cannot interactively prompt (non-TTY stdin: scripts, CI, piped input)
+        // and --json was not passed (the structured/automation contract),
+        // REFUSE rather than silently deleting. The previous
+        // `&& process.stdin.isTTY` guard failed OPEN — under a non-TTY it
+        // skipped the prompt and deleted the profile without consent. This now
+        // matches the fail-closed convention used by `am uninstall`/`am update`;
+        // operators in non-TTY contexts must pass --yes.
+        if (!args.yes && !args.json) {
+          if (!process.stdin.isTTY) {
+            process.exitCode = 1;
+            error(
+              `Refusing to delete profile "${name}" without confirmation. stdin is not a TTY — pass --yes to confirm non-interactively.`,
+              opts,
+            );
+            return { result: undefined, changed: false };
+          }
           const confirmed = await confirm({
             message: `Delete profile '${name}'? This cannot be undone.`,
           });
@@ -293,6 +322,139 @@ export const profileDeleteCommand = defineCommand({
           result: undefined,
           changed: true,
           commitMessage: `delete profile: ${name}`,
+        };
+      });
+    } catch (err) {
+      amError(err, opts);
+      process.exitCode = 1;
+    }
+  },
+});
+
+export const profileScopeCommand = defineCommand({
+  meta: {
+    name: "scope",
+    description: "Set a profile's runtime MCP tool-access scope (ADR-0055)",
+  },
+  args: {
+    name: { type: "positional", description: "Profile name", required: true },
+    "tool-groups": {
+      type: "string",
+      description: `Comma-separated tool groups to allow (${MCP_TOOL_GROUPS.join(", ")})`,
+    },
+    "allow-tools": {
+      type: "string",
+      description: "Comma-separated individual tool names to allow",
+    },
+    "deny-tools": {
+      type: "string",
+      description: "Comma-separated individual tool names to deny (deny wins)",
+    },
+    clear: {
+      type: "boolean",
+      description: "Remove the scope entirely (profile exposes the full ceiling)",
+      default: false,
+    },
+    json: { type: "boolean", description: "JSON output", default: false },
+    quiet: { type: "boolean", alias: "q", default: false },
+    verbose: { type: "boolean", alias: "v", default: false },
+  },
+  async run({ args }) {
+    const opts = { json: args.json, quiet: args.quiet, verbose: args.verbose };
+    try {
+      const configDir = resolveConfigDir();
+      const name = args.name;
+
+      // Parse + VALIDATE the inputs BEFORE opening the RMW transaction. An
+      // unknown tool group must fail CLOSED — we abort with a nonzero exit and
+      // commit nothing rather than writing a partial/widened scope (SECURITY:
+      // an invalid group can never silently alter the runtime access boundary).
+      const toolGroups = parseCsv(args["tool-groups"]);
+      const allowTools = parseCsv(args["allow-tools"]);
+      const denyTools = parseCsv(args["deny-tools"]);
+
+      if (toolGroups !== undefined) {
+        const valid = new Set<string>(MCP_TOOL_GROUPS);
+        const unknown = toolGroups.filter((g) => !valid.has(g));
+        if (unknown.length > 0) {
+          process.exitCode = 1;
+          error(
+            `Unknown tool group(s): ${unknown.join(", ")}. Valid groups: ${MCP_TOOL_GROUPS.join(", ")}.`,
+            opts,
+          );
+          return;
+        }
+      }
+
+      // Fail CLOSED when no scope is specified and --clear is absent. An empty
+      // `scope = {}` resolves to scopeDeclared=true with toolGroups=undefined,
+      // which isToolInScope evaluates as the FULL ceiling — so writing it would
+      // silently WIDEN a previously-narrowed profile (e.g. tool_groups=["core"])
+      // back to everything. That contradicts the command's invariant and is a
+      // fail-open hole in the keystone access-control write surface. Require an
+      // explicit scope or an explicit --clear; commit nothing otherwise.
+      if (
+        !args.clear &&
+        toolGroups === undefined &&
+        allowTools === undefined &&
+        denyTools === undefined
+      ) {
+        process.exitCode = 1;
+        error(
+          "Specify at least one of --tool-groups / --allow-tools / --deny-tools, or use --clear to remove the scope.",
+          opts,
+        );
+        return;
+      }
+
+      await withConfig(configDir, async (config) => {
+        requireConfig(config);
+
+        if (!config.profiles?.[name]) {
+          process.exitCode = 1;
+          error(`Profile "${name}" does not exist.`, opts);
+          return { result: undefined, changed: false };
+        }
+
+        if (args.clear) {
+          if (config.profiles[name].scope === undefined) {
+            info(`Profile "${name}" has no scope to clear.`, opts);
+            if (args.json) output({ profile: name, scope: null, action: "clear" }, opts);
+            return { result: undefined, changed: false };
+          }
+          // Reconstruct without `scope` rather than `delete` (lint/noDelete) or
+          // `scope = undefined` (the @iarna/toml serializer rejects undefined
+          // values). Dropping the key entirely restores the global-ceiling
+          // default for this profile.
+          const { scope: _dropped, ...rest } = config.profiles[name];
+          config.profiles[name] = rest;
+          info(`Cleared scope for profile "${name}"`, opts);
+          if (args.json) output({ profile: name, scope: null, action: "clear" }, opts);
+          return {
+            result: undefined,
+            changed: true,
+            commitMessage: `set profile scope: ${name}`,
+          };
+        }
+
+        // Build the scope, dropping empty arrays so we never persist noise.
+        // `tool_groups` is preserved even when empty (an explicit empty list is
+        // a meaningful deny-all-groups boundary), but parseCsv only yields an
+        // empty array if the flag was passed as an empty string.
+        const scope: ProfileScope = {};
+        if (toolGroups !== undefined) scope.tool_groups = toolGroups as McpToolGroup[];
+        if (allowTools && allowTools.length > 0) scope.allow_tools = allowTools;
+        if (denyTools && denyTools.length > 0) scope.deny_tools = denyTools;
+
+        config.profiles[name].scope = scope;
+
+        info(`Set scope for profile "${name}"`, opts);
+        if (args.json) output({ profile: name, scope, action: "scope" }, opts);
+
+        return {
+          result: undefined,
+          changed: true,
+          commitMessage: `set profile scope: ${name}`,
         };
       });
     } catch (err) {

@@ -22,6 +22,7 @@ import git from "isomorphic-git";
 import type { Adapter } from "../../src/adapters/types";
 import {
   type WizardImportArgs,
+  __setClackForTests,
   __setDetectedAdaptersForTests,
   __setImporterForTests,
   guessRepoUrl,
@@ -47,6 +48,14 @@ let consoleErrors: string[] = [];
 const origLog = console.log;
 const origError = console.error;
 const origConfigDir = process.env.AM_CONFIG_DIR;
+// Order-independence guards (seed 8c51): a sibling test file can leak cwd into a
+// deleted tmp dir, a TTY flag, or the CI env var. Each of those can flip the
+// wizard's mode resolution or break the git/withConfig calls these tests drive.
+// Snapshot a KNOWN-GOOD baseline at module load and re-pin it per test so the
+// suite is robust to whatever ran before it.
+const repoRoot = join(import.meta.dir, "..", "..");
+const origTTY = process.stdin.isTTY;
+const origCI = process.env.CI;
 
 function captureConsole(): void {
   consoleOutput = [];
@@ -121,6 +130,20 @@ describe("am setup", () => {
   let dir: TestDir;
 
   beforeEach(async () => {
+    // Re-pin a known-good cwd FIRST: an earlier test file may have chdir'd into
+    // a tmp dir that has since been cleaned up, leaving process.cwd() pointing at
+    // a deleted directory. The wizard's git/withConfig/doctor calls would then
+    // fail or behave unpredictably, surfacing as an order-dependent flake here.
+    process.chdir(repoRoot);
+    // Neutralize TTY/CI so the wizard's interactive guard resolves deterministically
+    // regardless of what a sibling interactive-path test left behind.
+    process.stdin.isTTY = false;
+    process.env.CI = "1";
+    // Reset every test seam to a known baseline at the START of the test (not just
+    // at cleanup) so a leaked importer/clack/detection override from another file
+    // can never bleed into a test before it sets its own.
+    __setClackForTests(null);
+    __setImporterForTests(null);
     dir = await createTestDir("am-setup-");
     process.env.AM_CONFIG_DIR = join(dir.path, "cfg");
     // Force a hermetic, empty tool set everywhere the wizard or the apply
@@ -136,12 +159,24 @@ describe("am setup", () => {
     __setDetectedAdaptersForTests(null);
     __setAdapterResolverForTests(null);
     __setImporterForTests(null);
+    __setClackForTests(null);
     process.exitCode = 0;
     if (origConfigDir === undefined) {
       // biome-ignore lint/performance/noDelete: env var cleanup
       delete process.env.AM_CONFIG_DIR;
     } else {
       process.env.AM_CONFIG_DIR = origConfigDir;
+    }
+    // Restore the global baseline so THIS file does not leak into later files.
+    // Restore to the deterministic repo root (never a process.cwd() snapshot that
+    // could itself be polluted).
+    process.chdir(repoRoot);
+    process.stdin.isTTY = origTTY;
+    if (origCI === undefined) {
+      // biome-ignore lint/performance/noDelete: env var cleanup
+      delete process.env.CI;
+    } else {
+      process.env.CI = origCI;
     }
     if (dir) await dir.cleanup();
   });

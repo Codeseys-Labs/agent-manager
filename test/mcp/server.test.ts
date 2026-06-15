@@ -2,10 +2,10 @@ import { afterEach, describe, expect, mock, test } from "bun:test";
 import { join } from "node:path";
 import { writeConfig } from "../../src/core/config";
 import { addRemote, initRepo } from "../../src/core/git";
-import type { Config } from "../../src/core/schema";
+import type { Config, Settings } from "../../src/core/schema";
 import type { Session, SessionReader, SessionSummary } from "../../src/core/session";
 import { writeActiveProfile } from "../../src/core/state";
-import { McpServer } from "../../src/mcp/server";
+import { McpServer, checkPermission } from "../../src/mcp/server";
 import { type TestDir, createTestDir } from "../helpers/tmp";
 
 type JsonRpcResult = Record<string, any>;
@@ -320,7 +320,12 @@ describe("MCP server", () => {
 
   test("am_config_show returns config", async () => {
     await setupConfig({
+      // The active profile must actually EXIST: fix-1-0 fails CLOSED when an
+      // explicitly-named profile (`default_profile`) is absent from the profiles
+      // table, which would deny this non-diagnostic read tool. Define `dev` so
+      // the gateway resolves a real scope and the tool stays callable.
       settings: { default_profile: "dev" },
+      profiles: { dev: {} },
       servers: {
         fetch: { command: "uvx", args: ["mcp-server-fetch"], transport: "stdio", enabled: true },
       },
@@ -593,6 +598,13 @@ describe("MCP server", () => {
   // read-only, tokenless client. A Zod error echoes the offending VALUE — here
   // an invalid `transport` enum whose value is a GitHub token — so the message
   // must pass through safeErrorMessage before it leaves the process.
+  //
+  // ws2 (seed 6a89) regression guard: the config is structurally INVALID (a
+  // server missing `command`), so refreshSettings fails CLOSED. am_doctor MUST
+  // still run — it is the recovery/diagnostic tool that EXISTS to surface exactly
+  // this kind of breakage — so the scope dispatch gate exempts it (see
+  // DIAGNOSTIC_SCOPE_EXEMPT). A regression that bricked am_doctor here would mean
+  // a broken config could no longer be diagnosed over MCP.
   test("am_doctor redacts secret-shaped values in config validation errors", async () => {
     await setupConfig({});
     const secretToken = "ghp_abcdefghijklmnopqrstuvwxyz0123456789";
@@ -1307,6 +1319,275 @@ describe("MCP server", () => {
     });
     // Circular chain → fail closed → out-of-scope refusal, not exposure.
     expect(call?.error?.code).toBe(-32601);
+  });
+
+  // ws2 (seed 6a89) regression: a profile whose `scope` SUBTABLE is malformed —
+  // e.g. `tool_groups = ["bogus"]` fails the z.enum, or `scope` is not an object —
+  // makes ConfigSchema.parse THROW a ZodError. tryReadConfig rethrows it (only
+  // ENOENT is swallowed), loadResolvedConfig throws, and refreshSettings used to
+  // swallow it in its catch — leaving this.settings AND this.scope at their field
+  // defaults (undefined). isToolInScope(..., undefined) returns true for the whole
+  // ceiling, and the tools/call gate `if (this.scope && ...)` was bypassed
+  // entirely. Net: a typo in a confinement profile's scope exposed the FULL
+  // ceiling. The fix fails CLOSED: a present-but-invalid config sets this.scope to
+  // an empty (maximally-restrictive) scope so the ceiling∩∅ denies everything.
+  // This is distinct from the broken-inheritance case (resolveProfile throws);
+  // here the throw is inside ConfigSchema.parse, BEFORE resolveActiveScope runs.
+  test("a malformed profile.scope (invalid tool_groups) fails CLOSED, never exposes the ceiling", async () => {
+    dir = await createTestDir("am-mcp-badscope-");
+    const configDir = dir.path;
+    process.env.AM_CONFIG_DIR = configDir;
+    await initRepo(configDir);
+    // Write RAW TOML — writeConfig would refuse to serialize an invalid scope,
+    // so we hand-author the malformed on-disk config the bug requires. The
+    // ceiling is wide (core+registry) so a fail-OPEN regression would be obvious.
+    await dir.write(
+      "config.toml",
+      [
+        "[settings]",
+        'default_profile = "locked"',
+        "",
+        "[settings.mcp_serve]",
+        'tools = ["core", "registry"]',
+        "",
+        "[profiles.locked.scope]",
+        'tool_groups = ["bogus"]', // not in MCP_TOOL_GROUPS → z.enum throws
+        "",
+      ].join("\n"),
+    );
+    const server = new McpServer({ auth: { token: undefined, allowUnsafeLocal: true } });
+
+    // tools/list must NOT fall back to the global ceiling. The invalid scope
+    // confines to ∅, EXCEPT the always-available diagnostic/recovery tools
+    // (am_doctor, am_get_scope) that exist to surface exactly this breakage.
+    const list = await server.handleRequest({ jsonrpc: "2.0", id: 130, method: "tools/list" });
+    const names = (list?.result as JsonRpcResult).tools.map((t: { name: string }) => t.name).sort();
+    expect(names).toEqual(["am_doctor", "am_get_scope"]); // diagnostics only — fail closed
+    // The dangerous ceiling (registry + the rest of core) is NOT exposed:
+    expect(names).not.toContain("am_status");
+    expect(names).not.toContain("am_apply");
+    expect(names).not.toContain("am_registry_search");
+
+    // tools/call for an in-ceiling, NON-diagnostic tool must be REFUSED at
+    // dispatch, not silently callable. This is the core of the leak: the dispatch
+    // gate must engage even though the config never parsed.
+    const call = await server.handleRequest({
+      jsonrpc: "2.0",
+      id: 131,
+      method: "tools/call",
+      params: { name: "am_status", arguments: {} },
+    });
+    expect(call?.error).toBeDefined();
+    expect(call?.error?.code).toBe(-32601);
+
+    // A registry (non-core, dangerous) tool is likewise refused — proving the
+    // malformed scope did NOT widen the surface to the configured ceiling.
+    const reg = await server.handleRequest({
+      jsonrpc: "2.0",
+      id: 134,
+      method: "tools/call",
+      params: { name: "am_registry_search", arguments: { query: "x" } },
+    });
+    expect(reg?.error?.code).toBe(-32601);
+  });
+
+  // ws2 (seed 6a89) regression, second shape: `scope` itself is not a table
+  // (e.g. a bare string). Same fail-CLOSED requirement — distinct only in WHICH
+  // z.parse rule throws. Also selects the profile via the persisted state.toml
+  // active profile (not default_profile) to exercise that resolution term.
+  test("a profile.scope that is not a table fails CLOSED via the state.toml-active profile", async () => {
+    dir = await createTestDir("am-mcp-badscope2-");
+    const configDir = dir.path;
+    process.env.AM_CONFIG_DIR = configDir;
+    await initRepo(configDir);
+    await dir.write(
+      "config.toml",
+      [
+        "[settings.mcp_serve]",
+        'tools = ["core", "registry"]',
+        "",
+        "[profiles.locked]",
+        'scope = "not-a-table"', // scope must be an object → ConfigSchema.parse throws
+        "",
+      ].join("\n"),
+    );
+    await writeActiveProfile(configDir, "locked"); // persisted `am use locked`
+    const server = new McpServer({ auth: { token: undefined, allowUnsafeLocal: true } });
+
+    const list = await server.handleRequest({ jsonrpc: "2.0", id: 132, method: "tools/list" });
+    const names = (list?.result as JsonRpcResult).tools.map((t: { name: string }) => t.name).sort();
+    expect(names).toEqual(["am_doctor", "am_get_scope"]); // diagnostics only — fail closed
+
+    const call = await server.handleRequest({
+      jsonrpc: "2.0",
+      id: 133,
+      method: "tools/call",
+      params: { name: "am_registry_search", arguments: { query: "x" } },
+    });
+    expect(call?.error?.code).toBe(-32601);
+  });
+
+  // ── M1: an EXPLICITLY-configured global ceiling is enforced at DISPATCH ──
+  //
+  // ADR-0055 Decision 2 keeps the global `settings.mcp_serve.tools` ceiling a
+  // DISCOVERY-only filter for the DEFAULT (unset) case — so calling a non-core
+  // tool without configuring groups keeps working (ADR-0021 backward-compat).
+  // BUT once an operator EXPLICITLY narrows the ceiling, that narrowing is a
+  // real access boundary: a de-listed group must reject at tools/call too, not
+  // just disappear from tools/list. Hiding a tool is not a boundary — an agent
+  // can call a name it saw before, or hallucinated. Detection is by the
+  // explicit-set flag (tools !== undefined), NOT by value-comparing to ['core'].
+
+  test("M1: an explicitly-set ceiling rejects an out-of-ceiling tools/call (not just hides it)", async () => {
+    // tools = ['core'] is the SAME set as the unset default, but set EXPLICITLY.
+    // This proves the gate keys off the explicit-set flag, not the value.
+    await setupConfig({
+      settings: { mcp_serve: { tools: ["core"] } },
+    });
+    const server = new McpServer({ auth: { token: undefined, allowUnsafeLocal: true } });
+
+    // Hidden from discovery (ADR-0021 behaviour, unchanged):
+    const list = await server.handleRequest({ jsonrpc: "2.0", id: 200, method: "tools/list" });
+    const names = (list?.result as JsonRpcResult).tools.map((t: { name: string }) => t.name);
+    expect(names).not.toContain("am_wiki_search");
+    expect(names).toContain("am_status"); // core still visible
+
+    // …AND refused at dispatch — the M1 leak. -32601 with a ceiling message.
+    const call = await server.handleRequest({
+      jsonrpc: "2.0",
+      id: 201,
+      method: "tools/call",
+      params: { name: "am_wiki_search", arguments: { query: "x" } },
+    });
+    expect(call?.error).toBeDefined();
+    expect(call?.error?.code).toBe(-32601);
+    expect(call?.error?.message).toContain("ceiling");
+  });
+
+  test("M1 regression: the UNSET (default) ceiling still dispatches non-core tools (ADR-0021)", async () => {
+    // No settings.mcp_serve.tools at all → tools is `undefined` → the explicit
+    // ceiling gate must NOT engage. am_wiki_search is hidden from tools/list
+    // (default surface is core) but a direct call has ALWAYS worked and must
+    // keep working — gated only by tier/auth, never by group. (The naive M1 fix
+    // of dropping `this.scope &&` would 32601 this — the regression guard.)
+    await setupConfig({});
+    const server = new McpServer({ auth: { token: undefined, allowUnsafeLocal: true } });
+    const call = await server.handleRequest({
+      jsonrpc: "2.0",
+      id: 202,
+      method: "tools/call",
+      params: { name: "am_wiki_search", arguments: { query: "anything" } },
+    });
+    // Not refused by the ceiling: either a successful result envelope or a
+    // tool-internal error — but NEVER the -32601 group-boundary rejection.
+    expect(call?.error?.code).not.toBe(-32601);
+  });
+
+  test("M1: the explicit-ceiling reject is positioned AFTER zod validation", async () => {
+    // am_wiki_search is OUTSIDE an explicit ['core'] ceiling AND its `query`
+    // arg is required. A client calling it with NO arguments must see the ZOD
+    // validation error (the contract violation), not the ceiling rejection —
+    // i.e. the ceiling gate must sit BELOW zod so 'rejects missing X' tests keep
+    // hitting zod first. (Both reject, but the diagnostic must be the precise one.)
+    await setupConfig({
+      settings: { mcp_serve: { tools: ["core"] } },
+    });
+    const server = new McpServer({ auth: { token: undefined, allowUnsafeLocal: true } });
+    const call = await server.handleRequest({
+      jsonrpc: "2.0",
+      id: 203,
+      method: "tools/call",
+      params: { name: "am_wiki_search", arguments: {} }, // missing required `query`
+    });
+    // Zod runs first → an isError result envelope, NOT a -32601 ceiling error.
+    expect(call?.error).toBeUndefined();
+    const result = call?.result as JsonRpcResult;
+    expect(result?.isError).toBe(true);
+    const payload = JSON.parse(result.content[0].text);
+    expect(typeof payload.error).toBe("string");
+    // The zod error mentions the offending field, never the group/ceiling.
+    expect(payload.error.toLowerCase()).not.toContain("ceiling");
+  });
+
+  test("M1: an explicit ceiling that INCLUDES the group still dispatches (no over-rejection)", async () => {
+    // The explicit-ceiling gate must reject ONLY out-of-ceiling tools. A tool
+    // whose group IS in the explicit ceiling must dispatch normally — guards
+    // against a future flip where the explicit-set gate over-blocks in-ceiling
+    // tools (which would brick legitimately-configured deployments).
+    await setupConfig({
+      settings: { mcp_serve: { tools: ["core", "wiki"] } },
+    });
+    const server = new McpServer({ auth: { token: undefined, allowUnsafeLocal: true } });
+    const call = await server.handleRequest({
+      jsonrpc: "2.0",
+      id: 204,
+      method: "tools/call",
+      params: { name: "am_wiki_search", arguments: { query: "x" } },
+    });
+    // wiki IS in the ceiling → never the -32601 ceiling rejection.
+    expect(call?.error?.code).not.toBe(-32601);
+  });
+
+  // seed f747 (regression): an explicit ceiling that OMITS `core` with NO active
+  // profile (this.scope === undefined) skips the profile-scope gate entirely — so
+  // only the explicit-ceiling gate runs. That gate must still exempt the
+  // diagnostic/recovery tools (am_doctor, am_get_scope), or it bricks the very
+  // tools an operator needs to SEE and FIX the broken ceiling. Pre-e900 these
+  // were callable regardless of the ceiling; the e900 change regressed it.
+  test("seed f747: an explicit ceiling omitting core still dispatches diagnostics (am_doctor, am_get_scope) but blocks non-diagnostic core tools", async () => {
+    // tools = ['registry'] omits core. No profile → this.scope is undefined, so
+    // the profile-scope gate (which exempts diagnostics via isToolScoped) never
+    // engages — only isOutsideExplicitCeiling runs.
+    await setupConfig({
+      settings: { mcp_serve: { tools: ["registry"] } },
+    });
+    const server = new McpServer({ auth: { token: undefined, allowUnsafeLocal: true } });
+
+    // am_doctor (core, DIAGNOSTIC_SCOPE_EXEMPT) must NOT be refused by the ceiling.
+    const doctor = await server.handleRequest({
+      jsonrpc: "2.0",
+      id: 220,
+      method: "tools/call",
+      params: { name: "am_doctor", arguments: {} },
+    });
+    expect(doctor?.error?.code).not.toBe(-32601);
+
+    // am_get_scope (core, DIAGNOSTIC_SCOPE_EXEMPT) must NOT be refused either.
+    const scope = await server.handleRequest({
+      jsonrpc: "2.0",
+      id: 221,
+      method: "tools/call",
+      params: { name: "am_get_scope", arguments: {} },
+    });
+    expect(scope?.error?.code).not.toBe(-32601);
+
+    // A non-diagnostic core tool (am_status — am_init is not an MCP tool) IS
+    // blocked: core is outside the explicit ['registry'] ceiling. -32601 with a
+    // ceiling message proves the gate is the boundary, not auth/zod.
+    const status = await server.handleRequest({
+      jsonrpc: "2.0",
+      id: 222,
+      method: "tools/call",
+      params: { name: "am_status", arguments: {} },
+    });
+    expect(status?.error).toBeDefined();
+    expect(status?.error?.code).toBe(-32601);
+    expect(status?.error?.message).toContain("ceiling");
+
+    // seed 22b7 (no-drift): am_get_scope's manifest must NOT report an empty
+    // effectiveTools while the diagnostics are actually callable. The raw
+    // isToolInScope manifest would exclude am_doctor/am_get_scope (core ∉
+    // ['registry'] ceiling), contradicting enforcement. The handler promotes the
+    // exempt names into effectiveTools so the manifest matches the gate.
+    const m = JSON.parse((scope?.result as JsonRpcResult).content[0].text);
+    expect(m.ceiling).toEqual(["registry"]);
+    expect(m.effectiveTools).toContain("am_doctor");
+    expect(m.effectiveTools).toContain("am_get_scope");
+    expect(m.excludedTools).not.toContain("am_doctor");
+    expect(m.excludedTools).not.toContain("am_get_scope");
+    // The blocked non-diagnostic core tool stays excluded.
+    expect(m.effectiveTools).not.toContain("am_status");
+    expect(m.excludedTools).toContain("am_status");
   });
 
   test("AM_MCP_PROFILE env selects the connection scope at initialize", async () => {
@@ -2236,6 +2517,47 @@ describe("am_agent_detect — reachable compat alias (2026-05-02..v0.6)", () => 
       expect(entry).toHaveProperty("locallyInstalled");
       expect(entry).toHaveProperty("reachable");
       expect(entry.reachable).toBe(entry.locallyInstalled as unknown as typeof entry.reachable);
+    }
+  });
+});
+
+// ── checkPermission fail-closed (L2/dd56) ───────────────────────────
+//
+// The ToolTier union is 'read-only' | 'write-local' | 'write-remote', but
+// nine tool definitions assign their tier via `as ToolTier` casts that bypass
+// the literal-type check. A future typo'd tier ("write-remot", "write_local")
+// would therefore compile. checkPermission MUST default-DENY any tier outside
+// the known union — otherwise a mis-tagged write-tier tool would silently
+// default-ALLOW with no opt-in / no auth gate.
+describe("checkPermission fail-closed default", () => {
+  test("read-only and write-local are allowed (baseline)", () => {
+    expect(checkPermission("read-only").allowed).toBe(true);
+    expect(checkPermission("write-local").allowed).toBe(true);
+  });
+
+  test("write-remote is denied without opt-in, allowed with allow_push", () => {
+    expect(checkPermission("write-remote").allowed).toBe(false);
+    const optedIn = { mcp_serve: { allow_push: true } } as unknown as Settings;
+    expect(checkPermission("write-remote", optedIn).allowed).toBe(true);
+  });
+
+  test("an unknown tier (cast past the union) is DENIED, not default-allowed", () => {
+    // Simulate a typo'd `tier: "..." as ToolTier` cast reaching the gate.
+    const bogusTier = "write-remot" as unknown as Parameters<typeof checkPermission>[0];
+    const decision = checkPermission(bogusTier);
+    expect(decision.allowed).toBe(false);
+    expect(decision.reason).toMatch(/fail-closed/i);
+
+    // Even with allow_push set (opt-in for a *known* remote tier), an
+    // unrecognised tier must still be refused — opt-in is tier-specific.
+    const optedIn = { mcp_serve: { allow_push: true } } as unknown as Settings;
+    expect(checkPermission(bogusTier, optedIn).allowed).toBe(false);
+  });
+
+  test("empty-string and arbitrary tiers are DENIED", () => {
+    for (const bogus of ["", "WRITE-LOCAL", "admin", "write_local", "remote"]) {
+      const t = bogus as unknown as Parameters<typeof checkPermission>[0];
+      expect(checkPermission(t).allowed).toBe(false);
     }
   });
 });

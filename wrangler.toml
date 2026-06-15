@@ -21,4 +21,9 @@ ENVIRONMENT = "production"
 # Secrets (set via `wrangler secret put <NAME>`):
 #   GITHUB_CLIENT_ID     — GitHub OAuth App client ID
 #   GITHUB_CLIENT_SECRET — GitHub OAuth App client secret
-#   SESSION_SECRET       — random string for cookie signing
+#   SESSION_SECRET       — random string used to derive the AES-GCM session-cookie
+#                          key (HKDF, fixed salt). MUST be >= 32 characters: it is
+#                          the sole source of key entropy and the cookie carries a
+#                          live git PAT. The worker fails closed (HTTP 500) if it is
+#                          unset or shorter than 32 chars. Generate with e.g.
+#                          `openssl rand -base64 32`.

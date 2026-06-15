@@ -21,6 +21,7 @@ import {
   deriveBareEnvName,
   formatCredentialHits,
   rewriteUrlParam,
+  rewriteUserinfoCredential,
   scanServersForUrlCredentials,
   scanUrlForCredentials,
 } from "../../src/core/url-credentials";
@@ -59,8 +60,11 @@ describe("scanUrlForCredentials", () => {
     expect(hits).toHaveLength(0);
   });
 
-  test("skips short values under 8 chars", () => {
-    const hits = scanUrlForCredentials("https://example.com/mcp/?apiKey=short");
+  test("skips short values under 8 chars on NON-credential-named keys", () => {
+    // M7 update: the <8 length floor only bounds false positives on keys that
+    // are NOT credential-named. A short value under a credential-named key
+    // (e.g. apiKey=short) IS now flagged — see the M7 gap-2 test below.
+    const hits = scanUrlForCredentials("https://example.com/mcp/?ref=short");
     expect(hits).toHaveLength(0);
   });
 
@@ -89,6 +93,40 @@ describe("scanUrlForCredentials", () => {
       const hits = scanUrlForCredentials(`https://example.com/?${key}=longenoughvalue123`);
       expect(hits.length, `missed ${key}`).toBeGreaterThan(0);
     }
+  });
+
+  // ── M7 gap 2: short credential-NAMED values must still be flagged ──
+  test("M7 gap-2: flags a SHORT credential-named query value (token=abc123)", () => {
+    // The <8 length floor must NOT exempt a credential-NAMED key. A short
+    // `token` value is still a leaked credential — fail closed.
+    const hits = scanUrlForCredentials("https://example.com/mcp/?token=abc123");
+    expect(hits).toHaveLength(1);
+    expect(hits[0].queryKey).toBe("token");
+    expect(hits[0].rawValue).toBe("abc123");
+  });
+
+  test("M7 gap-2 negative: a SHORT non-credential-named value (page=2) is NOT flagged", () => {
+    // Bound false positives: the length floor still applies to keys that are
+    // not credential-named, so short pagination/option params stay clean.
+    const hits = scanUrlForCredentials("https://example.com/mcp/?page=2&limit=10");
+    expect(hits).toHaveLength(0);
+  });
+
+  // ── M7 gap 3: userinfo credentials (https://user:s3cret@host) ──
+  test("M7 gap-3: detects userinfo credential https://user:s3cret@host", () => {
+    const hits = scanUrlForCredentials("https://user:s3cret@host.example.com/mcp/");
+    expect(hits.length).toBeGreaterThan(0);
+    // The raw password must be captured for the encrypt-on-ingest path…
+    const userinfoHit = hits.find((h) => h.rawValue === "s3cret");
+    expect(userinfoHit, "userinfo password not captured").toBeDefined();
+    // …and the redacted preview must NOT leak the full secret.
+    expect(userinfoHit?.redactedValue).not.toBe("s3cret");
+  });
+
+  test("M7 gap-3: a userinfo URL with no credentials is NOT flagged", () => {
+    // No username/password → nothing to flag.
+    const hits = scanUrlForCredentials("https://host.example.com/mcp/?page=2");
+    expect(hits).toHaveLength(0);
   });
 });
 
@@ -145,6 +183,38 @@ describe("scanServersForUrlCredentials", () => {
     expect(hits[0].serverName).toBe("wrapped");
     expect(hits[0].queryKey).toBe("api_key");
   });
+
+  // ── M7 gap 1: server.env values were never scanned ──
+  test("M7 gap-1: detects a credential URL inside a server.env value", () => {
+    // A credential URL stashed in env was undetected at apply/ingest because
+    // the scan never iterated server.env. Now it must surface with
+    // source:'env' and the originating envKey.
+    const hits = scanServersForUrlCredentials({
+      enved: {
+        command: "npx",
+        args: ["-y", "some-mcp"],
+        env: {
+          MCP_ENDPOINT: "https://mcp.example.com/?api_key=abcdefghijklmnop1234",
+          UNRELATED: "plain-value",
+        },
+      },
+    });
+    expect(hits).toHaveLength(1);
+    expect(hits[0].serverName).toBe("enved");
+    expect(hits[0].queryKey).toBe("api_key");
+    expect(hits[0].source).toBe("env");
+    expect(hits[0].envKey).toBe("MCP_ENDPOINT");
+  });
+
+  test("M7 gap-1: env values that are not URLs are ignored", () => {
+    const hits = scanServersForUrlCredentials({
+      enved: {
+        command: "npx",
+        env: { TOKEN: "abcdef1234567890", REGION: "us-east-1" },
+      },
+    });
+    expect(hits).toHaveLength(0);
+  });
 });
 
 describe("formatCredentialHits", () => {
@@ -192,6 +262,26 @@ describe("formatCredentialHits", () => {
     // The second raw credential (in a DIFFERENT param) must not leak
     // into the suggested-fix line.
     expect(msg).not.toContain(rawTwo);
+  });
+
+  test("M7 gap-3 regression: userinfo raw secret NEVER leaks in the suggested fix", () => {
+    // searchParams.set would APPEND a query param and leave the raw
+    // `user:s3cretLONGvalue@` in the authority — leaking plaintext in the
+    // copy-paste fix. The userinfo-aware path rewrites/masks the authority.
+    const rawPw = "s3cretLONGvalue123";
+    const rawUser = "adminUSERvalue456";
+    const url = `https://${rawUser}:${rawPw}@host.example.com/mcp/`;
+    const hits = scanUrlForCredentials(url).map((h) => ({
+      ...h,
+      serverName: "u",
+      source: "command" as const,
+    }));
+    const msg = formatCredentialHits(hits);
+    // Neither raw userinfo secret may appear anywhere in the output.
+    expect(msg, "raw password leaked").not.toContain(rawPw);
+    expect(msg, "raw username leaked").not.toContain(rawUser);
+    // The placeholder must be present.
+    expect(msg).toContain("${PASSWORD}");
   });
 });
 
@@ -247,5 +337,72 @@ describe("rewriteUrlParam (write-path-safe, non-masking)", () => {
     expect(display).toContain("api_key=${API_KEY}");
     expect(display).not.toContain("SECRETTWO67890"); // masked for safe copy-paste
     expect(display).toContain("REDACTED");
+  });
+
+  test("seed 2ce0: does NOT append a bogus param when the key is not a query param", () => {
+    // A userinfo "password" key is NOT a query param. The old code did
+    // searchParams.set("password", …) which APPENDED `?password=${VAR}` while
+    // leaving `user:s3cret@` PLAINTEXT in the authority. The guard now leaves the
+    // URL untouched so the caller's post-check fails closed instead of emitting a
+    // corrupted-yet-still-leaking URL.
+    const url = "https://user:s3cret@host.example.com/mcp";
+    const out = rewriteUrlParam(url, "password", "${HOST_PASSWORD}");
+    expect(out).toBe(url); // unchanged — no bogus ?password=
+    expect(out).not.toContain("?password=");
+    expect(out).not.toContain("&password=");
+  });
+});
+
+describe("rewriteUserinfoCredential (write-path-safe userinfo rewrite)", () => {
+  test("rewrites the userinfo password to a literal ${VAR}, removing plaintext", () => {
+    const out = rewriteUserinfoCredential(
+      "https://user:s3cr3tpass@host.example.com/mcp",
+      "password",
+      "${HOST_PASSWORD}",
+    );
+    expect(out).not.toContain("s3cr3tpass");
+    expect(out).toContain("${HOST_PASSWORD}");
+    expect(out).not.toContain("%24%7B"); // literal, not percent-encoded
+  });
+
+  test("rewrites the userinfo username and leaves the password sibling intact", () => {
+    // Unlike the display path, the write path must NOT mask the sibling — the
+    // ingest loop encrypts each hit in its own pass.
+    const out = rewriteUserinfoCredential(
+      "https://adminUSER:s3cr3tpass@host.example.com/mcp",
+      "username",
+      "${HOST_USERNAME}",
+    );
+    expect(out).not.toContain("adminUSER");
+    expect(out).toContain("${HOST_USERNAME}");
+    expect(out).toContain("s3cr3tpass"); // sibling preserved for its own pass
+  });
+
+  test("returns the input unchanged for a non-URL string", () => {
+    expect(rewriteUserinfoCredential("not-a-url", "password", "${X}")).toBe("not-a-url");
+  });
+
+  test("seed 756a: two-pass user:pass@host leaves BOTH placeholders well-formed ${VAR}", () => {
+    // A user:pass@host URL emits TWO userinfo hits, so --fix runs this twice
+    // against the same mutating value. Pass 1 (password) writes ${HOST_PASSWORD};
+    // pass 2 (username) must NOT re-percent-encode the sibling placeholder into
+    // $%7BHOST_PASSWORD%7D (which the interpolation engine cannot read back).
+    const afterPass1 = rewriteUserinfoCredential(
+      "https://adminUSER:s3cr3tpass@host.example.com/mcp",
+      "password",
+      "${HOST_PASSWORD}",
+    );
+    const afterPass2 = rewriteUserinfoCredential(afterPass1, "username", "${HOST_USERNAME}");
+
+    // No plaintext survives either pass.
+    expect(afterPass2).not.toContain("s3cr3tpass");
+    expect(afterPass2).not.toContain("adminUSER");
+    // BOTH placeholders are literal ${VAR}, NOT percent-encoded.
+    expect(afterPass2).toContain("${HOST_USERNAME}");
+    expect(afterPass2).toContain("${HOST_PASSWORD}");
+    expect(afterPass2).not.toContain("%7B"); // no $%7B...%7D corruption
+    expect(afterPass2).not.toContain("%24"); // no double-encoded $
+    // The well-formed result matches the interpolation engine's ${VAR} pattern.
+    expect(afterPass2).toMatch(/\$\{HOST_USERNAME\}:\$\{HOST_PASSWORD\}@/);
   });
 });

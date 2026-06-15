@@ -219,6 +219,43 @@ describe("windsurf exportConfig()", () => {
     expect(agentsMdFile!.content).toContain("<!-- am:end -->");
   });
 
+  // FIX 1 (seed 0967): windsurf routes AGENTS.md through the core
+  // generateAgentsMd helper. A malformed marker must be fail-closed (file
+  // preserved) AND surface a warning — not silently dropped.
+  test("surfaces a warning when existing AGENTS.md has malformed markers", async () => {
+    dir = await createTestDir("am-ws-export-");
+    const userProse = "Hand-written prose that must survive.";
+    // Out-of-order: am:end precedes am:begin.
+    await dir.write("AGENTS.md", `# Notes\n\n<!-- am:end -->\n${userProse}\n<!-- am:begin -->\n`);
+    const cfg = config({
+      instructions: {
+        "ws-rules": {
+          name: "ws-rules",
+          content: "Use strict TypeScript.",
+          scope: "always",
+          globs: [],
+          description: "",
+          targets: ["windsurf"],
+          adapters: {},
+        },
+      },
+    });
+
+    const result = await exportConfig(cfg, { projectPath: dir.path, dryRun: true }, dir.path);
+
+    // Warning surfaced (not silently dropped).
+    expect(result.warnings.length).toBeGreaterThanOrEqual(1);
+    expect(result.warnings.some((w) => w.includes("AGENTS.md") && w.includes("malformed"))).toBe(
+      true,
+    );
+
+    // Fail-closed: the AGENTS.md file content is preserved unchanged.
+    const agentsMdFile = result.files.find((f) => toPosix(f.path).endsWith("AGENTS.md"));
+    expect(agentsMdFile).toBeDefined();
+    expect(agentsMdFile!.content).toContain(userProse);
+    expect(agentsMdFile!.content).not.toContain("Use strict TypeScript.");
+  });
+
   test("generates .windsurf/skills/ from resolved skills", async () => {
     dir = await createTestDir("am-ws-export-");
     const projectDir = `${dir.path}/project`;

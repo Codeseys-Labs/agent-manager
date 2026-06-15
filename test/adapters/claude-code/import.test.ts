@@ -245,4 +245,35 @@ describe("importConfig()", () => {
     const result = importConfig({ entities: ["skills"] }, dir.path);
     expect(result.skills).toHaveLength(0);
   });
+
+  test("portability — flags a foreign-host absolute path in the SKILL.md body", async () => {
+    dir = await createTestDir("am-import-");
+    // A skill body that hard-codes the author's home dir (R1/297e). On Linux
+    // this is a foreign-host absolute path the moment it's shared elsewhere.
+    await dir.write(
+      ".claude/skills/hyperresearch/SKILL.md",
+      "# Hyperresearch\n\nRun /home/baladita/.local/share/uv/tools/hyperresearch/bin/hr to start.",
+    );
+
+    const result = importConfig({ entities: ["skills"] }, dir.path);
+    const skill = result.skills.find((s) => s.name === "hyperresearch");
+    expect(skill).toBeDefined();
+    expect(skill?.portability).toBeDefined();
+    expect(skill?.portability).toHaveLength(1);
+    expect(skill?.portability?.[0].kind).toBe("linux");
+    expect(skill?.portability?.[0].match).toBe("/home/baladita/");
+  });
+
+  test("portability — clean SKILL.md leaves the portability field unset", async () => {
+    dir = await createTestDir("am-import-");
+    await dir.write(
+      ".claude/skills/portable/SKILL.md",
+      "# Portable\n\nRun ./scripts/run.sh from the repo root.",
+    );
+
+    const result = importConfig({ entities: ["skills"] }, dir.path);
+    const skill = result.skills.find((s) => s.name === "portable");
+    expect(skill).toBeDefined();
+    expect(skill?.portability).toBeUndefined();
+  });
 });

@@ -81,7 +81,10 @@ describe("am wiki: catalog-derived NER auto-linking (WIKI-FIX-2 / ADR-0054 R3)",
   let configDir: string;
   let projectDir: string;
   let projectWiki: string;
-  const origCwd = process.cwd();
+  // Order-independence guard (seed 8c51): pin the cwd restore target to the repo
+  // root rather than process.cwd() at module load, so a leaked (deleted) tmp cwd
+  // from an earlier test file is never captured and reinstated.
+  const origCwd = join(import.meta.dir, "..", "..");
 
   beforeEach(async () => {
     dir = await createTestDir("am-wiki-catalog-ner-");

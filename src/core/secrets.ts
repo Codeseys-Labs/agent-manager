@@ -1,6 +1,7 @@
 import { mkdir, readFile, stat, unlink } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
+import { AmError } from "../lib/errors";
 import { atomicWriteFile } from "./atomic-write";
 import type { Config } from "./schema";
 import type { SecretEnvelope, SecretsBackend } from "./secrets-backend";
@@ -14,6 +15,50 @@ const KEY_LENGTH = 256;
 const IV_LENGTH = 12;
 
 // --- Key storage path resolution ---
+
+/**
+ * Resolve an OS-appropriate DATA-directory path for `subpath` (M15).
+ *
+ * This is the single shared platform switch behind every per-machine
+ * private-key location. Both the AES master key (`resolveKeyPath`) and the
+ * age identity (`resolveIdentityDir` in `core/secrets-age.ts`) route through
+ * here so the two — same class of per-machine secret material — can never
+ * again drift to inconsistent OS locations.
+ *
+ * The DATA dir lives OUTSIDE the agent-manager config dir (which is a git
+ * repo) so that `commitAll` cannot stage and push private material alongside
+ * the ciphertext it protects.
+ *
+ * - macOS:   ~/Library/Application Support/<subpath>
+ * - Linux:   $XDG_DATA_HOME/<subpath>  (default ~/.local/share/<subpath>)
+ * - Windows: %APPDATA%/<subpath>
+ * - Other:   ~/.local/share/<subpath>  (XDG fallback)
+ *
+ * `subpath` is a relative, separator-portable suffix (e.g.
+ * `"agent-manager/key"` or `"agent-manager/identities"`). It is split on `/`
+ * and re-joined with `node:path.join` so the result uses the host separator.
+ * Callers layer their OWN env overrides (`AM_KEY_PATH`, `AM_AGE_IDENTITY_DIR`)
+ * AHEAD of this helper — this function intentionally does not read those so
+ * each key kind keeps an independent override.
+ */
+export function resolveDataDir(subpath: string): string {
+  const segments = subpath.split("/").filter((s) => s.length > 0);
+  const platform = process.platform;
+  const home = homedir();
+
+  if (platform === "darwin") {
+    return join(home, "Library", "Application Support", ...segments);
+  }
+
+  if (platform === "win32") {
+    const appData = process.env.APPDATA ?? join(home, "AppData", "Roaming");
+    return join(appData, ...segments);
+  }
+
+  // Linux + other POSIX: XDG_DATA_HOME or ~/.local/share
+  const xdgDataHome = process.env.XDG_DATA_HOME ?? join(home, ".local", "share");
+  return join(xdgDataHome, ...segments);
+}
 
 /**
  * Return the OS-appropriate data directory path for the AES master key.
@@ -31,26 +76,12 @@ const IV_LENGTH = 12;
  * Respects `AM_KEY_PATH` env var as an absolute override for tests/advanced use.
  */
 export function resolveKeyPath(): string {
-  // Explicit override (tests, advanced users)
+  // Explicit override (tests, advanced users) — ahead of the shared helper.
   if (process.env.AM_KEY_PATH) {
     return process.env.AM_KEY_PATH;
   }
 
-  const platform = process.platform;
-  const home = homedir();
-
-  if (platform === "darwin") {
-    return join(home, "Library", "Application Support", "agent-manager", "key");
-  }
-
-  if (platform === "win32") {
-    const appData = process.env.APPDATA ?? join(home, "AppData", "Roaming");
-    return join(appData, "agent-manager", "key");
-  }
-
-  // Linux + other POSIX: XDG_DATA_HOME or ~/.local/share
-  const xdgDataHome = process.env.XDG_DATA_HOME ?? join(home, ".local", "share");
-  return join(xdgDataHome, "agent-manager", "key");
+  return resolveDataDir("agent-manager/key");
 }
 
 /** Return the legacy (insecure) key path inside the config dir. */
@@ -202,7 +233,23 @@ export async function decryptValue(encrypted: string, key: CryptoKey): Promise<s
   const ctB64 = payload.slice(colonIdx + 1);
   const iv = Uint8Array.from(atob(ivB64), (c) => c.charCodeAt(0));
   const ct = Uint8Array.from(atob(ctB64), (c) => c.charCodeAt(0));
-  const plaintext = await crypto.subtle.decrypt({ name: ALGO, iv }, key, ct);
+  let plaintext: ArrayBuffer;
+  try {
+    plaintext = await crypto.subtle.decrypt({ name: ALGO, iv }, key, ct);
+  } catch (err) {
+    // AES-GCM authenticated decryption throws a bare `OperationError`
+    // ("Cipher job failed" / "The operation failed for an operation-specific
+    // reason") when the key doesn't match the envelope (or the ciphertext is
+    // corrupt) — raw WebCrypto noise with no actionable guidance. Re-raise as
+    // an AmError that names the key-path remedy. We deliberately echo NEITHER
+    // the ciphertext (`encrypted`/`ct`) NOR any key material — only the
+    // key-file location, which is non-secret.
+    throw new AmError(
+      "Failed to decrypt secret — the encryption key does not match this envelope (or the value is corrupt).",
+      `Check that the correct key is present at ${resolveKeyPath()} (run \`am secret generate-key\` or \`am pair\` to provision it). Original error: ${err instanceof Error ? err.name : String(err)}`,
+      "SECRET_DECRYPT_FAILED",
+    );
+  }
   return new TextDecoder().decode(plaintext);
 }
 

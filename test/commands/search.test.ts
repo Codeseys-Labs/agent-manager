@@ -1,8 +1,8 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import type { RegistrySearchResult } from "../../src/registry/types";
+import type { ServerListResponse, ServerResponse } from "../../src/registry/types";
 
 // We mock `fetch` at the global level instead of mocking the module.
-// The registry client uses global fetch internally.
+// The registry client uses global fetch internally, speaking the v0 wire shape.
 
 let consoleOutput: string[] = [];
 let consoleErrors: string[] = [];
@@ -18,10 +18,22 @@ function mockFetchResponse(data: unknown, status = 200) {
     })) as unknown as typeof fetch;
 }
 
-function mockFetchError(message: string) {
-  globalThis.fetch = (async () => {
-    throw new Error(message);
-  }) as unknown as typeof fetch;
+function serverEntry(
+  name: string,
+  description: string,
+  version: string,
+  pkg: ServerResponse["server"]["packages"],
+): ServerResponse {
+  return {
+    server: { name, description, version, packages: pkg },
+    _meta: {
+      "io.modelcontextprotocol.registry/official": {
+        publishedAt: "2024-01-01T00:00:00Z",
+        updatedAt: "2024-06-01T00:00:00Z",
+        isLatest: true,
+      },
+    },
+  };
 }
 
 describe("am search", () => {
@@ -45,24 +57,18 @@ describe("am search", () => {
   });
 
   test("parses positional query argument and calls search", async () => {
-    const result: RegistrySearchResult = {
-      packages: [
-        {
-          name: "tavily-mcp",
-          description: "Web search via Tavily",
-          author: "tavily",
-          version: "1.0.0",
-          verified: true,
-          tags: ["search"],
-          downloads: 1000,
-          created_at: "2024-01-01T00:00:00Z",
-          updated_at: "2024-06-01T00:00:00Z",
-          server: { command: "bunx", args: ["tavily-mcp@latest"] },
-        },
+    const result: ServerListResponse = {
+      servers: [
+        serverEntry("io.github.tavily/tavily-mcp", "Web search via Tavily", "1.0.0", [
+          {
+            registryType: "npm",
+            identifier: "tavily-mcp",
+            version: "1.0.0",
+            transport: { type: "stdio" },
+          },
+        ]),
       ],
-      total: 1,
-      page: 1,
-      per_page: 20,
+      metadata: { count: 1 },
     };
     mockFetchResponse(result);
 
@@ -79,30 +85,24 @@ describe("am search", () => {
       cmd: searchCommand as any,
     });
 
-    // Should have rendered the table with tavily-mcp
+    // Should have rendered the table with the remapped server name.
     const allOutput = consoleOutput.join("\n");
     expect(allOutput).toContain("tavily-mcp");
   });
 
   test("formats output as table (non-json)", async () => {
-    const result: RegistrySearchResult = {
-      packages: [
-        {
-          name: "tavily-mcp",
-          description: "Web search via Tavily",
-          author: "tavily",
-          version: "1.0.0",
-          verified: true,
-          tags: ["search"],
-          downloads: 500,
-          created_at: "2024-01-01T00:00:00Z",
-          updated_at: "2024-06-01T00:00:00Z",
-          server: { command: "bunx", args: ["tavily-mcp@latest"] },
-        },
+    const result: ServerListResponse = {
+      servers: [
+        serverEntry("io.github.tavily/tavily-mcp", "Web search via Tavily", "1.0.0", [
+          {
+            registryType: "npm",
+            identifier: "tavily-mcp",
+            version: "1.0.0",
+            transport: { type: "stdio" },
+          },
+        ]),
       ],
-      total: 1,
-      page: 1,
-      per_page: 20,
+      metadata: { count: 1 },
     };
     mockFetchResponse(result);
 
@@ -120,28 +120,22 @@ describe("am search", () => {
     // Row data
     expect(allOutput).toContain("tavily-mcp");
     expect(allOutput).toContain("Web search via Tavily");
-    expect(allOutput).toContain("1 of 1 result(s)");
+    expect(allOutput).toContain("1 result(s)");
   });
 
   test("returns JSON array with --json", async () => {
-    const result: RegistrySearchResult = {
-      packages: [
-        {
-          name: "fetch-mcp",
-          description: "Fetch URLs",
-          author: "test",
-          version: "2.0.0",
-          verified: false,
-          tags: ["utility"],
-          downloads: 100,
-          created_at: "2024-01-01T00:00:00Z",
-          updated_at: "2024-06-01T00:00:00Z",
-          server: { command: "uvx", args: ["mcp-server-fetch"] },
-        },
+    const result: ServerListResponse = {
+      servers: [
+        serverEntry("io.github.test/fetch-mcp", "Fetch URLs", "2.0.0", [
+          {
+            registryType: "pypi",
+            identifier: "mcp-server-fetch",
+            version: "2.0.0",
+            transport: { type: "stdio" },
+          },
+        ]),
       ],
-      total: 1,
-      page: 1,
-      per_page: 20,
+      metadata: { count: 1 },
     };
     mockFetchResponse(result);
 
@@ -155,16 +149,13 @@ describe("am search", () => {
     expect(consoleOutput.length).toBeGreaterThan(0);
     const parsed = JSON.parse(consoleOutput[0]);
     expect(parsed.packages).toBeArray();
-    expect(parsed.packages[0].name).toBe("fetch-mcp");
+    expect(parsed.packages[0].name).toBe("io.github.test/fetch-mcp");
+    // Remapped server config: pypi → uvx.
+    expect(parsed.packages[0].server.command).toBe("uvx");
   });
 
   test("handles empty results", async () => {
-    const result: RegistrySearchResult = {
-      packages: [],
-      total: 0,
-      page: 1,
-      per_page: 20,
-    };
+    const result: ServerListResponse = { servers: [], metadata: { count: 0 } };
     mockFetchResponse(result);
 
     const { searchCommand } = await import("../../src/commands/search");
@@ -204,11 +195,11 @@ describe("am search", () => {
     expect(allErrors).toContain("500");
   });
 
-  test("passes tag filter via query params", async () => {
+  test("builds the v0 query string (search + version + limit; no tag/verified)", async () => {
     let capturedUrl = "";
     globalThis.fetch = (async (input: string | URL | Request) => {
       capturedUrl = typeof input === "string" ? input : input.toString();
-      return new Response(JSON.stringify({ packages: [], total: 0, page: 1, per_page: 20 }), {
+      return new Response(JSON.stringify({ servers: [], metadata: { count: 0 } }), {
         status: 200,
         headers: { "Content-Type": "application/json" },
       });
@@ -218,8 +209,6 @@ describe("am search", () => {
     await searchCommand.run!({
       args: {
         query: "search",
-        tag: "web",
-        verified: true,
         limit: "5",
         json: false,
         quiet: false,
@@ -230,8 +219,10 @@ describe("am search", () => {
       cmd: searchCommand as any,
     });
 
-    expect(capturedUrl).toContain("tag=web");
-    expect(capturedUrl).toContain("verified=true");
+    expect(capturedUrl).toContain("search=search");
+    expect(capturedUrl).toContain("version=latest");
     expect(capturedUrl).toContain("limit=5");
+    expect(capturedUrl).not.toContain("tag=");
+    expect(capturedUrl).not.toContain("verified=");
   });
 });

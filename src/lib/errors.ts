@@ -9,6 +9,26 @@ export function errorMessage(err: unknown): string {
   return String(err);
 }
 
+/**
+ * Like `errorMessage`, but for `AmError` it also folds the `suggestion` into
+ * the returned string (`<message>: <suggestion>`).
+ *
+ * Config parse/schema failures (`parseConfigBytes`) carry the offending field
+ * path — which may echo a secret-shaped value the user typed (e.g. a token
+ * used as a server name) — in the `AmError.suggestion`, NOT the `.message`.
+ * Callers that only render `.message` (doctor's config.toml check) would drop
+ * that detail entirely, which both hides the diagnostic AND, paradoxically,
+ * removes the secret-shaped token before it can be redacted. Folding the
+ * suggestion back in keeps the diagnostic visible; the call site still passes
+ * the result through a redactor so any echoed secret becomes `[REDACTED_*]`.
+ */
+export function errorDetail(err: unknown): string {
+  if (err instanceof AmError && err.suggestion) {
+    return `${err.message}: ${err.suggestion}`;
+  }
+  return errorMessage(err);
+}
+
 /** Check if error is a Node.js file-not-found error */
 export function isNotFound(err: unknown): boolean {
   return err instanceof Error && "code" in err && (err as NodeJS.ErrnoException).code === "ENOENT";

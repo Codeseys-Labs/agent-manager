@@ -92,7 +92,13 @@ describe("diffConfig()", () => {
     expect(added).toBeDefined();
   });
 
-  test("detects server removed locally", async () => {
+  test("labels catalog-ahead server as added-in-config, not removed-locally", async () => {
+    // Catalog-ahead: the user just ran `am add server tavily`. The native
+    // config still only has `fetch`; the catalog has both. This is a FORWARD
+    // delta `am apply` resolves by writing tavily — NOT a local removal. It
+    // must be labeled `added-in-config` so the controller drift gate treats it
+    // as benign and a bare `am apply` writes it without --force.
+    // (ws4-drift-relabel-catalog-ahead)
     dir = await createTestDir("am-diff-");
     await dir.write(
       ".claude.json",
@@ -119,9 +125,13 @@ describe("diffConfig()", () => {
     });
 
     const result = diffConfig(cfg, {}, dir.path);
+    // diff() still reports `drifted` for any non-empty delta (status semantics
+    // are unchanged — other code relies on them); the FIX is the change TYPE.
     expect(result.status).toBe("drifted");
-    const removed = result.changes.find((c) => c.name === "tavily" && c.type === "removed-locally");
-    expect(removed).toBeDefined();
+    const pending = result.changes.find((c) => c.name === "tavily");
+    expect(pending?.type).toBe("added-in-config");
+    // Catalog-ahead must NOT surface as a local removal anywhere.
+    expect(result.changes.some((c) => c.type === "removed-locally")).toBe(false);
   });
 
   test("detects modified server fields", async () => {

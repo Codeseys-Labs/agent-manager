@@ -13,15 +13,32 @@ import type { Server } from "../../src/core/schema";
 // ── Helpers ──────────────────────────────────────────────────────────
 
 function makeServer(overrides: Partial<Server> & { command: string }): Server {
+  const transport = overrides.transport ?? "stdio";
+  if (transport === "stdio") {
+    return {
+      command: overrides.command,
+      args: overrides.args,
+      env: overrides.env,
+      transport: "stdio",
+      description: overrides.description,
+      tags: overrides.tags,
+      enabled: overrides.enabled ?? true,
+      _registry: overrides._registry,
+      _marketplace: overrides._marketplace,
+      adapters: overrides.adapters,
+    };
+  }
   return {
     command: overrides.command,
     args: overrides.args,
     env: overrides.env,
-    transport: overrides.transport ?? "stdio",
+    transport,
+    url: "url" in overrides ? (overrides as { url?: string }).url : undefined,
     description: overrides.description,
     tags: overrides.tags,
     enabled: overrides.enabled ?? true,
     _registry: overrides._registry,
+    _marketplace: overrides._marketplace,
     adapters: overrides.adapters,
   };
 }
@@ -35,6 +52,7 @@ function makeImported(
     args: overrides.args,
     env: overrides.env,
     transport: overrides.transport,
+    url: overrides.url,
     description: overrides.description,
     tags: overrides.tags,
     enabled: overrides.enabled,
@@ -532,6 +550,208 @@ describe("mergeServers", () => {
     const merged = mergeServers(existing, incoming, "auto");
     expect(merged.env).toEqual({ NEW_KEY: "val" });
   });
+
+  // ── Remote server url / transport preservation (W-m10) ──────────────
+  //
+  // RemoteServerSchema carries an optional `url` and a non-stdio transport.
+  // Both branches of mergeServers must preserve them or an sse / streamable-http
+  // server silently degrades into a stdio server with no url (data loss).
+
+  test("auto — preserves url and transport for an sse remote server", () => {
+    const existing = makeServer({
+      command: "https://mcp.example.com/sse",
+      transport: "sse",
+      url: "https://mcp.example.com/sse",
+    });
+    const incoming = makeImported({
+      name: "remote",
+      command: "https://mcp.example.com/sse",
+      transport: "sse",
+      url: "https://mcp.example.com/sse",
+    });
+
+    const merged = mergeServers(existing, incoming, "auto");
+    expect(merged.transport).toBe("sse");
+    expect(merged.url).toBe("https://mcp.example.com/sse");
+  });
+
+  test("auto — preserves url and transport for a streamable-http remote server", () => {
+    const existing = makeServer({
+      command: "https://mcp.example.com/mcp",
+      transport: "streamable-http",
+      url: "https://mcp.example.com/mcp",
+    });
+    const incoming = makeImported({
+      name: "remote",
+      command: "https://mcp.example.com/mcp",
+      transport: "streamable-http",
+      url: "https://mcp.example.com/mcp",
+    });
+
+    const merged = mergeServers(existing, incoming, "auto");
+    expect(merged.transport).toBe("streamable-http");
+    expect(merged.url).toBe("https://mcp.example.com/mcp");
+  });
+
+  test("auto — falls back to incoming url when existing url is absent", () => {
+    const existing = makeServer({
+      command: "https://mcp.example.com/sse",
+      transport: "sse",
+    });
+    const incoming = makeImported({
+      name: "remote",
+      command: "https://mcp.example.com/sse",
+      transport: "sse",
+      url: "https://mcp.example.com/sse",
+    });
+
+    const merged = mergeServers(existing, incoming, "auto");
+    expect(merged.url).toBe("https://mcp.example.com/sse");
+    expect(merged.transport).toBe("sse");
+  });
+
+  test("force — preserves url and transport for an sse remote server", () => {
+    // Per the W-m10 field strategy, url uses `existing.url ?? incoming.url`,
+    // so the existing endpoint is retained when present. The key invariant
+    // exercised here is that a remote server keeps a non-undefined url and a
+    // remote transport through a force-merge (it is not dropped / coerced).
+    const existing = makeServer({
+      command: "https://old.example.com/sse",
+      transport: "sse",
+      url: "https://old.example.com/sse",
+    });
+    const incoming = makeImported({
+      name: "remote",
+      command: "https://new.example.com/sse",
+      transport: "sse",
+      url: "https://new.example.com/sse",
+    });
+
+    const merged = mergeServers(existing, incoming, "force");
+    expect(merged.transport).toBe("sse");
+    expect(merged.url).toBe("https://old.example.com/sse");
+  });
+
+  test("force — does NOT coerce a remote server to stdio when incoming omits transport", () => {
+    // A force-merge where the incoming payload restates a remote server but
+    // (as several importers do) leaves transport implicit. The existing server
+    // is unambiguously remote; the merged result must remain remote, not stdio.
+    const existing = makeServer({
+      command: "https://mcp.example.com/sse",
+      transport: "sse",
+      url: "https://mcp.example.com/sse",
+    });
+    const incoming = makeImported({
+      name: "remote",
+      command: "https://mcp.example.com/sse",
+      url: "https://mcp.example.com/sse",
+      // transport intentionally omitted
+    });
+
+    const merged = mergeServers(existing, incoming, "force");
+    expect(merged.transport).toBe("sse");
+    expect(merged.url).toBe("https://mcp.example.com/sse");
+  });
+
+  test("force — falls back to incoming url when existing url is absent", () => {
+    const existing = makeServer({
+      command: "https://mcp.example.com/sse",
+      transport: "sse",
+    });
+    const incoming = makeImported({
+      name: "remote",
+      command: "https://mcp.example.com/sse",
+      transport: "sse",
+      url: "https://mcp.example.com/sse",
+    });
+
+    const merged = mergeServers(existing, incoming, "force");
+    expect(merged.url).toBe("https://mcp.example.com/sse");
+    expect(merged.transport).toBe("sse");
+  });
+
+  test("stdio merge leaves url undefined", () => {
+    const existing = makeServer({ command: "test-mcp", transport: "stdio" });
+    const incoming = makeImported({ name: "test", command: "test-mcp" });
+
+    const auto = mergeServers(existing, incoming, "auto");
+    expect(auto.url).toBeUndefined();
+    expect(auto.transport).toBe("stdio");
+
+    const force = mergeServers(existing, incoming, "force");
+    expect(force.url).toBeUndefined();
+    expect(force.transport).toBe("stdio");
+  });
+
+  // ── adapters passthrough + _marketplace provenance preservation (ws-0d29) ──
+  //
+  // ImportedServer carries no `adapters` / `_marketplace` field, so the existing
+  // server is the sole source for both. A re-merge must NOT silently strip the
+  // adapter-scoped passthrough subtable (the round-trip sink for adapterExtras)
+  // or the marketplace provenance block — both survive under auto AND force.
+
+  const marketplaceProvenance = {
+    source: "claude-plugin" as const,
+    package: "example-plugin",
+    version: "1.2.3",
+    imported_at: "2026-01-01T00:00:00.000Z",
+    install_path: "/plugins/example",
+  };
+
+  test("auto — preserves adapters passthrough and _marketplace provenance", () => {
+    const existing = makeServer({
+      command: "test-mcp",
+      adapters: { "claude-code": { alwaysAllow: ["search"] } },
+      _marketplace: marketplaceProvenance,
+    });
+    const incoming = makeImported({ name: "test", command: "test-mcp" });
+
+    const merged = mergeServers(existing, incoming, "auto");
+    expect(merged.adapters).toEqual({ "claude-code": { alwaysAllow: ["search"] } });
+    expect(merged._marketplace).toEqual(marketplaceProvenance);
+  });
+
+  test("force — preserves adapters passthrough and _marketplace provenance", () => {
+    const existing = makeServer({
+      command: "bunx",
+      args: ["tavily-mcp@latest"],
+      adapters: { "claude-code": { alwaysAllow: ["search"] } },
+      _marketplace: marketplaceProvenance,
+    });
+    const incoming = makeImported({
+      name: "tavily",
+      command: "npx",
+      args: ["-y", "tavily-mcp@0.3.2"],
+    });
+
+    const merged = mergeServers(existing, incoming, "force");
+    // force: incoming wins on the merge-able fields...
+    expect(merged.command).toBe("npx");
+    // ...but the schema-only passthrough + provenance survive (incoming has none).
+    expect(merged.adapters).toEqual({ "claude-code": { alwaysAllow: ["search"] } });
+    expect(merged._marketplace).toEqual(marketplaceProvenance);
+  });
+
+  test("force — preserves adapters and _marketplace on a remote server", () => {
+    const existing = makeServer({
+      command: "https://mcp.example.com/sse",
+      transport: "sse",
+      url: "https://mcp.example.com/sse",
+      adapters: { cursor: { headers: { Authorization: "${TOKEN}" } } },
+      _marketplace: marketplaceProvenance,
+    });
+    const incoming = makeImported({
+      name: "remote",
+      command: "https://mcp.example.com/sse",
+      transport: "sse",
+      url: "https://mcp.example.com/sse",
+    });
+
+    const merged = mergeServers(existing, incoming, "force");
+    expect(merged.transport).toBe("sse");
+    expect(merged.adapters).toEqual({ cursor: { headers: { Authorization: "${TOKEN}" } } });
+    expect(merged._marketplace).toEqual(marketplaceProvenance);
+  });
 });
 
 // ── runMergePipeline ─────────────────────────────────────────────────
@@ -808,5 +1028,49 @@ describe("runMergePipeline", () => {
     expect(result.added[0].name).toBe("exa");
 
     expect(result.conflicts).toHaveLength(0);
+  });
+
+  // ── adapters + _marketplace survive a re-merge through the pipeline (ws-0d29) ──
+
+  test("re-merge — adapters passthrough and _marketplace survive under auto and force", () => {
+    const marketplace = {
+      source: "cursor-extension" as const,
+      package: "tavily-ext",
+      version: "0.9.0",
+      imported_at: "2026-02-02T00:00:00.000Z",
+    };
+    const existing: Record<string, Server> = {
+      tavily: makeServer({
+        command: "bunx",
+        args: ["tavily-mcp@latest"],
+        env: { KEY: "old" },
+        adapters: { "claude-code": { alwaysAllow: ["search"] } },
+        _marketplace: marketplace,
+      }),
+    };
+    // A subsequent import of the same server (exact identity) with new env —
+    // forces an auto-merge / force-merge path rather than an identical skip.
+    const incoming: ImportedServer[] = [
+      makeImported({
+        name: "tavily-cursor",
+        command: "bunx",
+        args: ["tavily-mcp@latest"],
+        env: { KEY: "new", EXTRA: "val" },
+      }),
+    ];
+
+    const auto = runMergePipeline(existing, incoming, "auto", "cursor");
+    expect(auto.merged).toHaveLength(1);
+    expect(auto.merged[0].server.adapters).toEqual({
+      "claude-code": { alwaysAllow: ["search"] },
+    });
+    expect(auto.merged[0].server._marketplace).toEqual(marketplace);
+
+    const force = runMergePipeline(existing, incoming, "force", "cursor");
+    expect(force.merged).toHaveLength(1);
+    expect(force.merged[0].server.adapters).toEqual({
+      "claude-code": { alwaysAllow: ["search"] },
+    });
+    expect(force.merged[0].server._marketplace).toEqual(marketplace);
   });
 });

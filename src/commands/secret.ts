@@ -5,10 +5,13 @@ import { atomicWriteFile } from "../core/atomic-write";
 import { resolveConfigDir, tryReadConfig } from "../core/config";
 import { withConfig } from "../core/controller";
 import {
+  SETTINGS_ENV_SCOPE,
+  type SecretScanResult,
   formatScanReport,
   pickEnvVarName,
   redactSecret,
   scanConfigForSecrets,
+  scanSettingsEnvForSecrets,
   substituteSecret,
 } from "../core/secret-detection";
 import {
@@ -289,7 +292,12 @@ const scanCommand = defineCommand({
       const config = await tryReadConfig(configPath);
       requireConfig(config);
 
-      if (!config.servers || Object.keys(config.servers).length === 0) {
+      const hasServers = !!config.servers && Object.keys(config.servers).length > 0;
+      const hasSettingsEnv = !!config.settings?.env && Object.keys(config.settings.env).length > 0;
+      // Nothing to scan only when BOTH the server table AND settings.env are
+      // empty. A config with no servers can still carry a plaintext secret in
+      // [settings.env] (M6) — that must not be reported as "nothing to scan".
+      if (!hasServers && !hasSettingsEnv) {
         info("No servers configured.", opts);
         return;
       }
@@ -304,7 +312,13 @@ const scanCommand = defineCommand({
         );
       }
 
-      const scanResults = await scanConfigForSecrets(config.servers);
+      // Scan servers AND settings.env. The settings.env block is surfaced under
+      // the synthetic `settings` scope so it flows through formatScanReport, the
+      // JSON output, and the M5 exit-code gate identically to server findings.
+      const serverResults = config.servers ? await scanConfigForSecrets(config.servers) : [];
+      const settingsResult = await scanSettingsEnvForSecrets(config.settings?.env);
+      const scanResults: SecretScanResult[] =
+        settingsResult.secrets.length > 0 ? [...serverResults, settingsResult] : serverResults;
 
       if (scanResults.length === 0) {
         if (args.json) {
@@ -345,6 +359,11 @@ const scanCommand = defineCommand({
           info("", opts);
           info("Run `am secret scan --fix` to auto-substitute and encrypt.", opts);
         }
+        // Gate CI: report-mode (no --fix) must exit nonzero when plaintext
+        // secrets were found, or `am secret scan` can never fail a pipeline
+        // (ws 1f08-secret-scan-exit-code, M5). We reach this branch only after
+        // the zero-findings early return above, so scanResults is non-empty.
+        process.exitCode = 1;
         if (!useBetterleaks) {
           info("", opts);
           info("Tip: Install betterleaks for Tier 2 inline secret scanning:", opts);
@@ -363,19 +382,50 @@ const scanCommand = defineCommand({
       }
       const encryptionKey = key;
 
+      // `inPlace` distinguishes a settings.env value encrypted where it already
+      // lives (no ${VAR} placeholder was written) from a real server-env
+      // substitution (the value moved to settings.env and the server env now
+      // references ${envVar}). The human report renders the two cases
+      // differently so it never claims a substitution that did not happen (W5R).
       interface FixResult {
         substituted: number;
-        fixedSecrets: Array<{ server: string; key: string; envVar: string }>;
+        fixedSecrets: Array<{ server: string; key: string; envVar: string; inPlace: boolean }>;
       }
 
       const fixOutcome = await withConfig<FixResult>(configDir, async (maybeConfig) => {
         requireConfig(maybeConfig);
         const config = maybeConfig;
         let substituted = 0;
-        const fixedSecrets: Array<{ server: string; key: string; envVar: string }> = [];
+        const fixedSecrets: Array<{
+          server: string;
+          key: string;
+          envVar: string;
+          inPlace: boolean;
+        }> = [];
 
         // Re-scan inside the lock so we operate on the current state.
         const freshScan = config.servers ? await scanConfigForSecrets(config.servers) : [];
+
+        // settings.env secrets (M6): a plaintext value under an obviously-secret
+        // key in [settings.env]. The value already lives where encrypted secrets
+        // belong, so the fix is to encrypt IN PLACE — no substitution / move.
+        const freshSettings = await scanSettingsEnvForSecrets(config.settings?.env);
+        for (const secret of freshSettings.secrets) {
+          // Only key-name env findings have a stable home key we can rewrite in
+          // place. Anything else (no key) is skipped rather than risk leaving a
+          // plaintext copy beside an encrypted one (review A+F invariant).
+          if (secret.location !== "env" || !secret.key) continue;
+          const settingsEnv = config.settings?.env;
+          if (!settingsEnv || settingsEnv[secret.key] !== secret.value) continue;
+          settingsEnv[secret.key] = await encryptValue(secret.value, encryptionKey);
+          fixedSecrets.push({
+            server: SETTINGS_ENV_SCOPE,
+            key: secret.key,
+            envVar: secret.key,
+            inPlace: true,
+          });
+          substituted++;
+        }
 
         for (const result of freshScan) {
           const server = config.servers![result.serverName];
@@ -403,6 +453,7 @@ const scanCommand = defineCommand({
               server: result.serverName,
               key: secret.key ?? `args[${secret.index}]`,
               envVar,
+              inPlace: false,
             });
             substituted++;
           }
@@ -422,7 +473,15 @@ const scanCommand = defineCommand({
       } else {
         info(`Substituted and encrypted ${substituted} secret(s):`, opts);
         for (const f of fixedSecrets) {
-          info(`  ${f.server}: ${f.key} -> \${${f.envVar}}`, opts);
+          // In-place encryption rewrote the value where it already lived; there
+          // is no ${VAR} placeholder, so printing the substitution arrow would
+          // misrepresent what happened (W5R). Only the real-substitution case
+          // gets the `key -> ${VAR}` arrow.
+          if (f.inPlace) {
+            info(`  ${f.server}: ${f.key}: encrypted in place`, opts);
+          } else {
+            info(`  ${f.server}: ${f.key} -> \${${f.envVar}}`, opts);
+          }
         }
         info(
           `\nOriginal values stored encrypted in settings.env. Skipped ${totalSecrets - substituted} low-confidence finding(s).`,
@@ -439,6 +498,15 @@ const scanCommand = defineCommand({
 const generateKeyCommand = defineCommand({
   meta: { name: "generate-key", description: "Generate a new encryption key" },
   args: {
+    // L5: do NOT print the raw master key by default. It lands in shell history,
+    // logs, and captured --json output — a credential-exposure footgun. The key
+    // is already persisted to the key file (mode 0o600); inline display is
+    // opt-in via --show-key for the "save it to a password manager" workflow.
+    "show-key": {
+      type: "boolean",
+      description: "Print the raw base64 master key to stdout (default: false)",
+      default: false,
+    },
     json: { type: "boolean", description: "JSON output", default: false },
     quiet: { type: "boolean", alias: "q", default: false },
     verbose: { type: "boolean", alias: "v", default: false },
@@ -446,16 +514,34 @@ const generateKeyCommand = defineCommand({
   async run({ args }) {
     const opts = { json: args.json, quiet: args.quiet, verbose: args.verbose };
     const configDir = resolveConfigDir();
+    // citty exposes a dashed flag under both the dashed and camelCase keys.
+    const showKey = args["show-key"] === true || (args as { showKey?: boolean }).showKey === true;
 
     const base64 = await generateKey();
     await saveKey(configDir, base64);
 
     const keyPath = resolveKeyPath();
     info(`Encryption key generated and saved to ${keyPath}`, opts);
-    info(`Save this key in your password manager: ${base64}`, opts);
+    if (showKey) {
+      info(`Save this key in your password manager: ${base64}`, opts);
+    } else {
+      // Point at the key file instead of echoing the credential.
+      info(
+        "The raw key was written to the key file above. Re-run with --show-key to print it for backup.",
+        opts,
+      );
+    }
 
     if (args.json) {
-      output({ action: "generate-key", key: base64, path: keyPath }, opts);
+      // NEVER include the raw key in JSON unless explicitly requested. Callers
+      // get the path and an explicit keyShown indicator; only --show-key adds key.
+      const payload: { action: string; path: string; keyShown: boolean; key?: string } = {
+        action: "generate-key",
+        path: keyPath,
+        keyShown: showKey,
+      };
+      if (showKey) payload.key = base64;
+      output(payload, opts);
     }
   },
 });

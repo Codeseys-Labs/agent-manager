@@ -63,7 +63,17 @@ interface AtomicWriteOptions {
 
 // ── Backup hook (issue #1) ───────────────────────────────────────────────────
 
-const DEFAULT_KEEP_COUNT = 10;
+/**
+ * Per-write backup retention floor. atomic-write prunes each per-target dir to
+ * at most this many .bak files on every write, so this is the *minimum* number
+ * of backups retained regardless of any proactive sweep config.
+ *
+ * Exported so the proactive sweep (apply-backup.ts) consumes the same constant
+ * — the per-write prune window and the sweep's default keep-count must agree
+ * (W-l8). A second hardcoded `10` in apply-backup.ts would silently diverge if
+ * one were ever changed.
+ */
+export const DEFAULT_KEEP_COUNT = 10;
 
 function configDirFor(): string {
   return process.env.AM_CONFIG_DIR ?? join(homedir(), ".config", "agent-manager");
@@ -105,6 +115,96 @@ interface BackupMeta {
   path: string;
 }
 
+/**
+ * Max attempts to find a non-colliding backup name before giving up. The
+ * canonical name plus this many random-suffixed retries; each retry adds 6
+ * bytes (48 bits) of entropy, so a real collision across all attempts is
+ * astronomically unlikely — the cap only bounds the loop, it is never expected
+ * to be hit in practice.
+ */
+const BACKUP_COLLISION_RETRIES = 8;
+
+/**
+ * Derive a collision-retry name from a canonical `${ts}-${sha}.bak` base by
+ * splicing a random component in *before* the `.bak` extension so the result
+ * still ends in `.bak` (listBackupsForTarget / doctor key off that suffix).
+ */
+function backupRetryName(base: string): string {
+  const rand = randomBytes(6).toString("hex");
+  const ext = ".bak";
+  const stem = base.endsWith(ext) ? base.slice(0, -ext.length) : base;
+  return `${stem}-${rand}${ext}`;
+}
+
+/**
+ * L9: write a backup file collision-safely.
+ *
+ * The backup name is `${ts}-${sha}.bak` where `ts` carries an hrtime
+ * nanosecond tail and `sha` is a short prefix. That narrows but does not
+ * eliminate collisions — two backups landing in the same nanosecond window
+ * with a colliding sha prefix would resolve to the same name and the second
+ * would silently clobber the first, destroying a distinct recovery point.
+ *
+ * Open with the exclusive flag ('wx') so a name collision throws EEXIST
+ * instead of overwriting; on EEXIST retry with a random suffix until a fresh
+ * name lands. Returns the name actually written so the caller records the
+ * correct filename in the manifest.
+ */
+export async function __writeBackupCollisionSafe(
+  dir: string,
+  baseName: string,
+  contents: Buffer,
+  mode: number,
+): Promise<string> {
+  let name = baseName;
+  for (let attempt = 0; ; attempt++) {
+    let handle: Awaited<ReturnType<typeof open>> | null = null;
+    try {
+      // 'wx' === O_WRONLY | O_CREAT | O_EXCL: fails with EEXIST rather than
+      // truncating an existing file. This is the load-bearing guarantee.
+      handle = await open(join(dir, name), "wx", mode);
+      await handle.writeFile(contents);
+      return name;
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === "EEXIST" && attempt < BACKUP_COLLISION_RETRIES) {
+        name = backupRetryName(baseName);
+        continue;
+      }
+      throw err;
+    } finally {
+      if (handle !== null) await handle.close();
+    }
+  }
+}
+
+/** Sync sibling of {@link __writeBackupCollisionSafe}. */
+export function __writeBackupCollisionSafeSync(
+  dir: string,
+  baseName: string,
+  contents: Buffer,
+  mode: number,
+): string {
+  const fsSync = require("node:fs") as typeof import("node:fs");
+  let name = baseName;
+  for (let attempt = 0; ; attempt++) {
+    let fd: number | null = null;
+    try {
+      // 'wx' === O_WRONLY | O_CREAT | O_EXCL: fails with EEXIST not truncate.
+      fd = fsSync.openSync(join(dir, name), "wx", mode);
+      fsSync.writeFileSync(fd, contents);
+      return name;
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === "EEXIST" && attempt < BACKUP_COLLISION_RETRIES) {
+        name = backupRetryName(baseName);
+        continue;
+      }
+      throw err;
+    } finally {
+      if (fd !== null) fsSync.closeSync(fd);
+    }
+  }
+}
+
 function backupEnabled(explicit?: boolean): boolean {
   if (explicit !== undefined) return explicit;
   return process.env.AM_APPLY_BACKUP === "1" || process.env.AM_APPLY_BACKUP === "true";
@@ -131,9 +231,10 @@ async function maybeBackup(target: string, data: string | Uint8Array): Promise<B
   await mkdir(dir, { recursive: true });
   const sha = createHash("sha256").update(current).digest("hex").slice(0, 8);
   const ts = isoBasic();
-  const name = `${ts}-${sha}.bak`;
+  // L9: open with 'wx' so a name collision throws rather than overwriting a
+  // distinct backup; the returned name may carry a random suffix on retry.
+  const name = await __writeBackupCollisionSafe(dir, `${ts}-${sha}.bak`, current, 0o600);
   const path = join(dir, name);
-  await writeFile(path, current, { mode: 0o600 });
   // Persist a pointer manifest so `am undo` can list backups by target.
   const manifestPath = join(dir, "manifest.json");
   let manifest: { target: string; entries: Array<{ name: string; sha: string; ts: string }> } = {
@@ -192,9 +293,10 @@ function maybeBackupSync(target: string, data: string | Uint8Array): BackupMeta 
   fsSync.mkdirSync(dir, { recursive: true });
   const sha = createHash("sha256").update(current).digest("hex").slice(0, 8);
   const ts = isoBasic();
-  const name = `${ts}-${sha}.bak`;
+  // L9: 'wx' exclusive open so a name collision throws rather than clobbering
+  // a distinct backup; the returned name may carry a random suffix on retry.
+  const name = __writeBackupCollisionSafeSync(dir, `${ts}-${sha}.bak`, current, 0o600);
   const path = join(dir, name);
-  fsSync.writeFileSync(path, current, { mode: 0o600 });
   const manifestPath = join(dir, "manifest.json");
   let manifest: { target: string; entries: Array<{ name: string; sha: string; ts: string }> } = {
     target,

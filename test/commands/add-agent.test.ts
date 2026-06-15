@@ -41,9 +41,9 @@ async function setupConfigDir(prefix = "am-add-agent-"): Promise<{
   return { dir, configDir };
 }
 
-async function makePromptFile(base: string, name: string): Promise<string> {
+async function makePromptFile(base: string, name: string, body?: string): Promise<string> {
   const path = join(base, `${name}.md`);
-  await writeFile(path, `# ${name}\n\nYou are ${name}. Be helpful.\n`);
+  await writeFile(path, body ?? `# ${name}\n\nYou are ${name}. Be helpful.\n`);
   return path;
 }
 
@@ -272,6 +272,39 @@ describe("am add agent", () => {
     expect(process.exitCode).toBe(1);
     expect(consoleErrors.some((l) => l.includes("already exists"))).toBe(true);
     process.exitCode = 0;
+  });
+
+  test("portability — warns on a host-absolute path in the prompt-file body", async () => {
+    ({ dir, configDir } = await setupConfigDir());
+    workspace = await createTestDir("am-add-agent-ws-");
+    const promptPath = await makePromptFile(
+      workspace.path,
+      "host-path-agent",
+      "# host-path-agent\n\nYou are an agent. Run /home/baladita/.local/bin/tool first.\n",
+    );
+
+    const { addCommand } = await import("../../src/commands/add");
+    await addCommand.run!({
+      args: {
+        _: ["agent", "host-path-agent"],
+        "prompt-file": promptPath,
+        json: true,
+        quiet: false,
+        verbose: false,
+      } as any,
+      rawArgs: [],
+      cmd: addCommand as any,
+    });
+
+    // Warning surfaced + finding carried in the JSON envelope; agent still added.
+    expect(consoleErrors.some((l) => /host-absolute path/.test(l))).toBe(true);
+    const jsonLine = consoleOutput.find((l) => l.includes('"action"'));
+    const parsed = JSON.parse(jsonLine!);
+    expect(parsed.portability).toBeDefined();
+    expect(parsed.portability[0].kind).toBe("linux");
+    expect(parsed.portability[0].match).toBe("/home/baladita/");
+    const updated = await readConfig(join(configDir, "config.toml"));
+    expect(updated.agents?.["host-path-agent"]).toBeDefined();
   });
 
   test("JSON mode emits the action envelope on stdout", async () => {
